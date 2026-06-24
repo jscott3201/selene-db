@@ -385,7 +385,8 @@ fn walk_catalog_exprs(
 ) -> bool {
     match catalog {
         CatalogOp::CreateNodeType { properties, .. }
-        | CatalogOp::CreateEdgeType { properties, .. } => {
+        | CatalogOp::CreateEdgeType { properties, .. }
+        | CatalogOp::AlterEdgeType { properties, .. } => {
             properties.iter_mut().fold(false, |changed, property| {
                 property
                     .constraints

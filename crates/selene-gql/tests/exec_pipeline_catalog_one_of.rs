@@ -79,6 +79,103 @@ fn create_node_type_op(label: &str) -> PipelineOp {
 }
 
 #[test]
+fn alter_edge_type_widens_endpoints_and_adds_optional_property() {
+    let graph = empty_closed_graph(31090);
+    let mut plan = planned("SHOW EDGE TYPES");
+    plan.pipeline.insert(
+        0,
+        catalog_op("ALTER EDGE TYPE :R (FROM :A, :B, :D TO :C, :E, since STRING)"),
+    );
+    plan.pipeline
+        .insert(0, catalog_op("CREATE EDGE TYPE :R (FROM :A, :B TO :C)"));
+    for label in ["E", "D", "C", "B", "A"] {
+        plan.pipeline.insert(0, create_node_type_op(label));
+    }
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
+    outcome.expect("commit succeeds");
+
+    let graph_type = graph.graph_type().expect("closed graph type");
+    let edge_type = &graph_type.edge_types[0];
+    assert_eq!(
+        edge_type.source_node_type,
+        EdgeEndpointDef::OneOf(vec![0, 1, 3])
+    );
+    assert_eq!(
+        edge_type.target_node_type,
+        EdgeEndpointDef::OneOf(vec![2, 4])
+    );
+    let added = edge_type
+        .properties
+        .iter()
+        .find(|property| property.name == db_string("since"))
+        .expect("optional property was added");
+    assert!(!added.required);
+}
+
+#[test]
+fn alter_edge_type_rejects_endpoint_narrowing() {
+    let graph = empty_closed_graph(31091);
+    let mut plan = planned("SHOW EDGE TYPES");
+    plan.pipeline
+        .insert(0, catalog_op("ALTER EDGE TYPE :E (FROM :A TO :C)"));
+    plan.pipeline
+        .insert(0, catalog_op("CREATE EDGE TYPE :E (FROM :A, :B TO :C)"));
+    for label in ["C", "B", "A"] {
+        plan.pipeline.insert(0, create_node_type_op(label));
+    }
+
+    let err = run_write(&graph, &plan).expect_err("narrowing is rejected");
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("would narrow"),
+        "error should mention narrowing, got {rendered}"
+    );
+}
+
+#[test]
+fn alter_edge_type_rejects_property_redefinition() {
+    let graph = empty_closed_graph(31093);
+    let mut plan = planned("SHOW EDGE TYPES");
+    plan.pipeline
+        .insert(0, catalog_op("ALTER EDGE TYPE :E (since INTEGER)"));
+    plan.pipeline.insert(
+        0,
+        catalog_op("CREATE EDGE TYPE :E (FROM :A TO :B, since STRING)"),
+    );
+    for label in ["B", "A"] {
+        plan.pipeline.insert(0, create_node_type_op(label));
+    }
+
+    let err = run_write(&graph, &plan).expect_err("property redefinition is rejected");
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("redefine property"),
+        "error should mention property redefinition, got {rendered}"
+    );
+}
+
+#[test]
+fn alter_edge_type_rejects_required_property_addition() {
+    let graph = empty_closed_graph(31092);
+    let mut plan = planned("SHOW EDGE TYPES");
+    plan.pipeline
+        .insert(0, catalog_op("ALTER EDGE TYPE :E (since STRING NOT NULL)"));
+    plan.pipeline
+        .insert(0, catalog_op("CREATE EDGE TYPE :E (FROM :A TO :B)"));
+    for label in ["B", "A"] {
+        plan.pipeline.insert(0, create_node_type_op(label));
+    }
+
+    let err = run_write(&graph, &plan).expect_err("required property is rejected");
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("required property"),
+        "error should mention required property, got {rendered}"
+    );
+}
+
+#[test]
 fn create_edge_type_with_enumerated_from_resolves_to_oneof() {
     // Mnemosyne U12 reproducer: three single-label node types A, B, C; an edge
     // with `FROM :A, :B TO :C` must resolve to OneOf([idx_A, idx_B]) at source

@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::Change;
-use selene_persist::{ProviderRegistry, RecoveryProvider, RecoveryResult, SnapshotReader, recover};
+use selene_persist::{
+    ProviderRegistry, RecoveryProvider, RecoveryResult, SectionCompression, SnapshotReader, recover,
+};
 
 fn bench_snapshot_write(c: &mut Criterion) {
     let mut group = c.benchmark_group("persist_snapshot_write");
@@ -42,6 +44,69 @@ fn bench_snapshot_read(c: &mut Criterion) {
                 || {
                     let dir = common::TempDir::new("snapshot-read");
                     let path = common::write_snapshot(dir.path(), 1, bytes);
+                    (dir, path)
+                },
+                |(_dir, path)| {
+                    let mut reader = SnapshotReader::open(&path).expect("snapshot opens");
+                    reader.verify_body_hash().expect("hash verifies");
+                    let sections = reader.sections().to_vec();
+                    let bytes = sections
+                        .iter()
+                        .map(|entry| {
+                            reader
+                                .read_section(entry.provider, entry.sub)
+                                .expect("section reads")
+                                .len()
+                        })
+                        .sum::<usize>();
+                    std::hint::black_box(bytes);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+fn bench_snapshot_uncompressed_write(c: &mut Criterion) {
+    let mut group = c.benchmark_group("persist_snapshot_uncompressed_write");
+    for &scale in common::scales() {
+        let bytes = section_bytes(scale);
+        group.throughput(Throughput::Bytes(bytes as u64));
+        group.bench_function(BenchmarkId::from_parameter(scale), |b| {
+            b.iter_batched(
+                || common::TempDir::new("snapshot-uncompressed-write"),
+                |dir| {
+                    let path = common::write_snapshot_with_compression(
+                        dir.path(),
+                        1,
+                        bytes,
+                        SectionCompression::None,
+                    );
+                    std::hint::black_box(path);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+fn bench_snapshot_uncompressed_read(c: &mut Criterion) {
+    let mut group = c.benchmark_group("persist_snapshot_uncompressed_read");
+    for &scale in common::scales() {
+        let bytes = section_bytes(scale);
+        group.throughput(Throughput::Bytes(bytes as u64));
+        group.bench_function(BenchmarkId::from_parameter(scale), |b| {
+            b.iter_batched(
+                || {
+                    let dir = common::TempDir::new("snapshot-uncompressed-read");
+                    let path = common::write_snapshot_with_compression(
+                        dir.path(),
+                        1,
+                        bytes,
+                        SectionCompression::None,
+                    );
                     (dir, path)
                 },
                 |(_dir, path)| {
@@ -132,6 +197,7 @@ impl RecoveryProvider for RecordingProvider {
 criterion_group! {
     name = snapshot_group;
     config = common::criterion_config();
-    targets = bench_snapshot_write, bench_snapshot_read, bench_full_recovery
+    targets = bench_snapshot_write, bench_snapshot_read, bench_snapshot_uncompressed_write,
+        bench_snapshot_uncompressed_read, bench_full_recovery
 }
 criterion_main!(snapshot_group);

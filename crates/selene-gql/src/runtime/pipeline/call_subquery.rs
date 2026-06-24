@@ -1,6 +1,7 @@
 //! Inline `CALL { ... }` table-subquery pipeline operator.
 
 use selene_core::Value;
+use smallvec::SmallVec;
 
 use crate::{
     BindingTableColumn, BindingTableSchema, ExecutionPlan, PatternPlan, PipelineOp,
@@ -23,12 +24,12 @@ pub(super) fn execute_read_only(
 ) -> Result<BindingTable, ExecutorError> {
     let (input_schema, input_rows) = table.into_parts();
     let output_schema = output_schema(&input_schema, call);
-    let mut output = Vec::new();
+    let target_schema = target_schema(call, &input_schema)?;
+    let mut output = Vec::with_capacity(input_rows.len());
     let mut rows_since_check = 0;
 
     for row in input_rows {
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
-        let target_schema = target_schema(call, &input_schema)?;
         if null_outer_binding_is_plan_pattern_binding(call, &row, &input_schema)? {
             if call.optional {
                 output.push(optional_output_row(call, &row));
@@ -38,7 +39,7 @@ pub(super) fn execute_read_only(
         let seed = seed_binding(call, &row, &input_schema, &target_schema)?;
         let inner = plan_runner::execute_plan_read_only_with_seed(
             &call.body,
-            Some(BindingTable::new(target_schema, vec![seed])),
+            Some(BindingTable::new(target_schema.clone(), vec![seed])),
             ctx,
         )?;
         let yield_indices = yield_indices(call, inner.schema())?;
@@ -107,7 +108,8 @@ fn seed_binding(
     source_schema: &BindingTableSchema,
     target_schema: &BindingTableSchema,
 ) -> Result<Binding, ExecutorError> {
-    let mut values = vec![Value::Null; target_schema.columns.len()];
+    let mut values = SmallVec::<[Value; 8]>::new();
+    values.resize(target_schema.columns.len(), Value::Null);
     for outer in &call.outer_binding_refs {
         let source_index = source_index(source_schema, outer.name.clone())?;
         let value = row.get(source_index).cloned().unwrap_or(Value::Null);
@@ -118,7 +120,7 @@ fn seed_binding(
         )?;
         values[target_index] = value;
     }
-    Ok(Binding::new(values))
+    Ok(Binding::from_parts(values, SmallVec::new()))
 }
 
 fn null_outer_binding_is_plan_pattern_binding(

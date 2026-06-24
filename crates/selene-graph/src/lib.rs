@@ -35,6 +35,7 @@ pub(crate) mod panic_payload;
 pub(crate) mod parallel_scan;
 pub(crate) mod property_index;
 pub(crate) mod provider_fanout;
+pub mod reachability;
 mod recover;
 pub(crate) mod reentry;
 pub(crate) mod schema_index_kind;
@@ -85,6 +86,7 @@ pub use json_search::{
 };
 pub use json_search_candidates::JsonPathContainmentCandidateOptions;
 pub use mutator::Mutator;
+pub use reachability::{ReachabilityDirection, ReachabilityError, ReachableNode};
 pub use selene_core::JsonPathSelector;
 pub use selene_core::{HnswIndexConfig, IvfIndexConfig};
 pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};

@@ -1,61 +1,27 @@
 #![allow(missing_docs)]
 //! `Value` clone cost, `PropertyMap`/diff construction, plus native
-//! vector-value construction and serde baselines.
+//! vector-value construction, JSON rendering, and serde baselines.
 //!
 //! `Value` boxes the formerly oversized variants, so the companion compile-time
 //! `size_of::<Value>` ceiling in `value.rs` is the zero-cost re-bloat tripwire.
-//! This bench keeps the clone rows visible and also covers common one-property
-//! and wide `PropertyMap::from_pairs` construction shapes plus small mutation
-//! diff constructors.
+//! Clone, construction, and mutation rows stay visible as shape-specific
+//! throughput guards.
 
 #[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[path = "value_clone/json.rs"]
+mod json;
+#[path = "value_clone/vector.rs"]
+mod vector;
+
 use std::hint::black_box;
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{
-    PropertyDiff, PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string,
-    exact_vector_top_k, vector_squared_norm,
-};
-use wide::f64x4;
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use selene_core::{LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, VectorValue, db_string};
 
 const N: usize = 1_024;
-const VECTOR_DIMS: &[usize] = &[128, 768, 1536];
-const EXACT_TOP_K_CANDIDATES: usize = 2_048;
-const EXACT_TOP_K: usize = 10;
-const OMLX_EXACT_TOP_K_DIMS: &[usize] = &[1024, 2560, 4096];
-const OMLX_EXACT_TOP_K_CANDIDATES: &[usize] = &[64, 256, 1024, 4096];
-const GPU_BASELINE_CASES: &[GpuBaselineCase] = &[
-    GpuBaselineCase {
-        queries: 1,
-        candidates: 4096,
-        dimension: 1024,
-    },
-    GpuBaselineCase {
-        queries: 8,
-        candidates: 4096,
-        dimension: 1024,
-    },
-    GpuBaselineCase {
-        queries: 8,
-        candidates: 4096,
-        dimension: 2560,
-    },
-    GpuBaselineCase {
-        queries: 16,
-        candidates: 4096,
-        dimension: 1024,
-    },
-];
-
-#[derive(Clone, Copy)]
-struct GpuBaselineCase {
-    queries: usize,
-    candidates: usize,
-    dimension: usize,
-}
 
 // Profile-aware criterion config WITHOUT a selene-testing dep (that crate
 // depends on selene-core, so importing BenchProfile here would cycle).
@@ -148,6 +114,68 @@ fn wide_property_pairs(width: usize) -> Vec<(selene_core::DbString, Value)> {
         .collect()
 }
 
+fn wide_property_pairs_sorted(width: usize) -> Vec<(selene_core::DbString, Value)> {
+    (0..width)
+        .map(|idx| {
+            (
+                db_string(&format!("wide_property_{idx:04}")).expect("key fits DB string cap"),
+                Value::Int(idx as i64),
+            )
+        })
+        .collect()
+}
+
+fn wide_property_keys(prefix: &str, width: usize) -> Vec<selene_core::DbString> {
+    (0..width)
+        .map(|idx| {
+            db_string(&format!("{prefix}_{idx:04}")).expect("property key fits DB string cap")
+        })
+        .collect()
+}
+
+fn wide_compact_key_values(width: usize) -> (Vec<selene_core::DbString>, Vec<Option<Value>>) {
+    (0..width)
+        .rev()
+        .map(|idx| {
+            (
+                db_string(&format!("compact_property_{idx:04}")).expect("key fits DB string cap"),
+                Some(Value::Int(idx as i64)),
+            )
+        })
+        .unzip()
+}
+
+fn wide_compact_key_values_sorted(
+    width: usize,
+) -> (Vec<selene_core::DbString>, Vec<Option<Value>>) {
+    (0..width)
+        .map(|idx| {
+            (
+                db_string(&format!("compact_property_{idx:04}")).expect("key fits DB string cap"),
+                Some(Value::Int(idx as i64)),
+            )
+        })
+        .unzip()
+}
+
+fn wide_labels(width: usize, reverse: bool) -> Vec<selene_core::DbString> {
+    wide_labels_with_prefix("wide_label", width, reverse)
+}
+
+fn wide_labels_with_prefix(
+    prefix: &str,
+    width: usize,
+    reverse: bool,
+) -> Vec<selene_core::DbString> {
+    let mut labels: Vec<_> = (0..width)
+        .map(|idx| db_string(&format!("{prefix}_{idx:04}")).expect("label fits DB string cap"))
+        .collect();
+    if reverse {
+        labels.reverse();
+    }
+    labels
+}
+
 // `print_stderr` deny is locally relaxed to surface the current `Value` size
 // in bench output (so the CORE-06 shrink is visible run-to-run).
 #[allow(clippy::print_stderr)]
@@ -168,6 +196,8 @@ fn bench_value_clone(c: &mut Criterion) {
     group.bench_function("property_map_5", |b| {
         b.iter(|| black_box(black_box(&map).clone()));
     });
+
+    json::bench_json_canonical(&mut group);
 
     let single_pair = single_property_pair();
     group.throughput(Throughput::Elements(1));
@@ -204,7 +234,67 @@ fn bench_value_clone(c: &mut Criterion) {
                 .expect("property map fits core caps")
         });
     });
+    let sorted_pairs = wide_property_pairs_sorted(256);
+    group.bench_function("property_map_from_pairs_256_sorted", |b| {
+        b.iter(|| {
+            PropertyMap::from_pairs(black_box(sorted_pairs.iter().cloned()))
+                .expect("property map fits core caps")
+        });
+    });
+    let standard_map_256 =
+        PropertyMap::from_pairs(sorted_pairs.iter().cloned()).expect("property map fits core caps");
+    group.bench_function("property_map_standard_postcard_encode_256", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&standard_map_256))
+                .expect("standard property map serializes")
+        });
+    });
+    let (compact_keys, compact_values) = wide_compact_key_values(256);
+    group.bench_function("property_map_compact_256_reverse", |b| {
+        b.iter(|| {
+            PropertyMap::compact(
+                black_box(compact_keys.iter().cloned()),
+                black_box(compact_values.iter().cloned()),
+            )
+            .expect("compact property map fits core caps")
+        });
+    });
+    let (compact_keys_sorted, compact_values_sorted) = wide_compact_key_values_sorted(256);
+    group.bench_function("property_map_compact_256_sorted", |b| {
+        b.iter(|| {
+            PropertyMap::compact(
+                black_box(compact_keys_sorted.iter().cloned()),
+                black_box(compact_values_sorted.iter().cloned()),
+            )
+            .expect("compact property map fits core caps")
+        });
+    });
+    let compact_map_256 = PropertyMap::compact(
+        compact_keys_sorted.iter().cloned(),
+        compact_values_sorted.iter().cloned(),
+    )
+    .expect("compact property map fits core caps");
+    group.bench_function("property_map_compact_postcard_encode_256", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&compact_map_256))
+                .expect("compact property map serializes")
+        });
+    });
 
+    group.finish();
+}
+
+fn bench_label_set(c: &mut Criterion) {
+    let mut group = c.benchmark_group("core_label_set");
+    let labels = wide_labels(100, true);
+    group.throughput(Throughput::Elements(labels.len() as u64));
+    group.bench_function("from_iter_100_reverse", |b| {
+        b.iter(|| LabelSet::from_iter(black_box(labels.iter().cloned())));
+    });
+    let sorted_labels = wide_labels(100, false);
+    group.bench_function("from_iter_100_sorted", |b| {
+        b.iter(|| LabelSet::from_iter(black_box(sorted_labels.iter().cloned())));
+    });
     group.finish();
 }
 
@@ -223,439 +313,108 @@ fn bench_change_diff(c: &mut Criterion) {
         });
     });
 
+    let pairs = wide_property_pairs(256);
+    group.throughput(Throughput::Elements(pairs.len() as u64));
+    group.bench_function("property_diff_set_256_reverse", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                black_box(pairs.iter().cloned()),
+                std::iter::empty::<selene_core::DbString>(),
+            )
+            .expect("wide property diff is valid")
+        });
+    });
+    let sorted_pairs = wide_property_pairs_sorted(256);
+    group.bench_function("property_diff_set_256_sorted", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                black_box(sorted_pairs.iter().cloned()),
+                std::iter::empty::<selene_core::DbString>(),
+            )
+            .expect("wide property diff is valid")
+        });
+    });
+    let removed_properties = wide_property_keys("removed_property", 256);
+    group.bench_function("property_diff_removed_256_sorted", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                std::iter::empty::<(selene_core::DbString, Value)>(),
+                black_box(removed_properties.iter().cloned()),
+            )
+            .expect("wide property removal diff is valid")
+        });
+    });
+    let disjoint_set_pairs = wide_property_pairs_sorted(128);
+    let disjoint_removed_properties = wide_property_keys("disjoint_removed_property", 128);
+    group.bench_function("property_diff_set_removed_128_each_sorted", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                black_box(disjoint_set_pairs.iter().cloned()),
+                black_box(disjoint_removed_properties.iter().cloned()),
+            )
+            .expect("wide disjoint property diff is valid")
+        });
+    });
+    let property_diff_256 =
+        PropertyDiff::new(sorted_pairs.iter().cloned(), []).expect("wide property diff is valid");
+    group.bench_function("property_diff_postcard_encode_256_sorted", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&property_diff_256)).expect("property diff serializes")
+        });
+    });
+
+    group.throughput(Throughput::Elements(100));
+    for (name, reverse) in [
+        ("label_diff_added_100_reverse", true),
+        ("label_diff_added_100_sorted", false),
+    ] {
+        let labels = wide_labels(100, reverse);
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                LabelDiff::new(black_box(labels.iter().cloned()), [])
+                    .expect("wide label diff is valid")
+            });
+        });
+    }
+    let removed_labels = wide_labels_with_prefix("removed_label", 100, false);
+    group.bench_function("label_diff_removed_100_sorted", |b| {
+        b.iter(|| {
+            LabelDiff::new([], black_box(removed_labels.iter().cloned()))
+                .expect("wide removed label diff is valid")
+        });
+    });
+    let add_labels = wide_labels_with_prefix("added_label", 50, false);
+    let remove_labels = wide_labels_with_prefix("removed_label", 50, false);
+    group.bench_function("label_diff_added_removed_50_each_sorted", |b| {
+        b.iter(|| {
+            LabelDiff::new(
+                black_box(add_labels.iter().cloned()),
+                black_box(remove_labels.iter().cloned()),
+            )
+            .expect("wide disjoint label diff is valid")
+        });
+    });
+    let sorted_labels = wide_labels(100, false);
+    let label_diff_100 =
+        LabelDiff::new(sorted_labels.iter().cloned(), []).expect("wide label diff is valid");
+    group.bench_function("label_diff_postcard_encode_100_sorted", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&label_diff_100)).expect("label diff serializes")
+        });
+    });
+
     group.finish();
 }
 
 fn vector_components(dim: usize) -> Vec<f32> {
-    vector_components_seeded(dim, 0)
-}
-
-fn vector_components_seeded(dim: usize, seed: usize) -> Vec<f32> {
     (0..dim)
-        .map(|idx| (((idx * 31 + seed * 17) % 1_021) as f32 - 510.0) / 256.0)
+        .map(|idx| (((idx * 31) % 1_021) as f32 - 510.0) / 256.0)
         .collect()
-}
-
-fn bench_vector_value(c: &mut Criterion) {
-    let mut group = c.benchmark_group("core_vector_value");
-    for &dim in VECTOR_DIMS {
-        group.throughput(Throughput::Elements(dim as u64));
-        group.bench_with_input(
-            BenchmarkId::new("construct_validate", dim),
-            &dim,
-            |b, &dim| {
-                b.iter_batched(
-                    || vector_components(dim),
-                    |components| VectorValue::new(black_box(components)).expect("vector is valid"),
-                    BatchSize::SmallInput,
-                );
-            },
-        );
-
-        let vector = VectorValue::new(vector_components(dim)).expect("vector is valid");
-        group.bench_with_input(BenchmarkId::new("clone_arc", dim), &vector, |b, vector| {
-            b.iter(|| black_box(black_box(vector).clone()));
-        });
-
-        let value = Value::Vector(vector);
-        group.bench_with_input(
-            BenchmarkId::new("postcard_roundtrip", dim),
-            &value,
-            |b, value| {
-                b.iter_batched(
-                    || value.clone(),
-                    |value| {
-                        let bytes = postcard::to_allocvec(&value).expect("vector serializes");
-                        let decoded: Value =
-                            postcard::from_bytes(&bytes).expect("vector deserializes");
-                        black_box(decoded)
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
-    }
-    group.finish();
-}
-
-fn bench_vector_distance(c: &mut Criterion) {
-    let mut group = c.benchmark_group("core_vector_distance");
-    for &(name, metric) in &[
-        ("squared_euclidean", VectorMetric::SquaredEuclidean),
-        ("cosine", VectorMetric::Cosine),
-        ("negative_inner_product", VectorMetric::NegativeInnerProduct),
-    ] {
-        for &dim in VECTOR_DIMS {
-            group.throughput(Throughput::Elements(dim as u64));
-            let lhs = VectorValue::new(vector_components_seeded(dim, 1)).expect("vector is valid");
-            let rhs = VectorValue::new(vector_components_seeded(dim, 2)).expect("vector is valid");
-            group.bench_with_input(BenchmarkId::new(name, dim), &dim, |b, _| {
-                b.iter(|| {
-                    metric
-                        .distance(black_box(&lhs), black_box(&rhs))
-                        .expect("same dim")
-                });
-            });
-        }
-    }
-    group.finish();
-}
-
-fn bench_vector_exact_top_k(c: &mut Criterion) {
-    let mut group = c.benchmark_group("core_vector_exact_top_k");
-    group.throughput(Throughput::Elements(EXACT_TOP_K_CANDIDATES as u64));
-
-    let query = VectorValue::new(vector_components_seeded(128, 0)).expect("query is valid");
-    let candidates: Vec<VectorValue> = (0..EXACT_TOP_K_CANDIDATES)
-        .map(|idx| VectorValue::new(vector_components_seeded(128, idx + 1)).expect("valid vector"))
-        .collect();
-    let candidate_refs: Vec<(usize, &VectorValue)> = candidates.iter().enumerate().collect();
-
-    for &(name, metric) in &[
-        (
-            "squared_euclidean_2048x128_k10",
-            VectorMetric::SquaredEuclidean,
-        ),
-        ("cosine_2048x128_k10", VectorMetric::Cosine),
-    ] {
-        group.bench_function(name, |b| {
-            b.iter(|| {
-                exact_vector_top_k(
-                    metric,
-                    black_box(&query),
-                    candidate_refs
-                        .iter()
-                        .map(|(key, vector)| (black_box(*key), black_box(*vector))),
-                    black_box(EXACT_TOP_K),
-                )
-                .expect("all dimensions match")
-            });
-        });
-    }
-
-    group.bench_function("cosine_unbound_loop_2048x128_k10", |b| {
-        b.iter(|| {
-            let mut top_k = VectorTopK::new(black_box(EXACT_TOP_K));
-            for (key, vector) in &candidate_refs {
-                let distance = VectorMetric::Cosine
-                    .distance(black_box(&query), black_box(*vector))
-                    .expect("all dimensions match");
-                top_k.push_distance(black_box(*key), distance);
-            }
-            top_k.into_hits()
-        });
-    });
-
-    for &dim in OMLX_EXACT_TOP_K_DIMS {
-        let query = VectorValue::new(vector_components_seeded(dim, 0)).expect("query is valid");
-        let max_candidate_count = OMLX_EXACT_TOP_K_CANDIDATES
-            .last()
-            .copied()
-            .expect("candidate widths are non-empty");
-        let candidates: Vec<VectorValue> = (0..max_candidate_count)
-            .map(|idx| {
-                VectorValue::new(vector_components_seeded(dim, idx + 1)).expect("valid vector")
-            })
-            .collect();
-        let candidate_refs: Vec<(usize, &VectorValue)> = candidates.iter().enumerate().collect();
-        for &candidate_count in OMLX_EXACT_TOP_K_CANDIDATES {
-            group.throughput(Throughput::Elements(candidate_count as u64));
-            group.bench_function(format!("cosine_omlx_{candidate_count}x{dim}_k10"), |b| {
-                b.iter(|| {
-                    exact_vector_top_k(
-                        VectorMetric::Cosine,
-                        black_box(&query),
-                        candidate_refs
-                            .iter()
-                            .take(black_box(candidate_count))
-                            .map(|(key, vector)| (black_box(*key), black_box(*vector))),
-                        black_box(EXACT_TOP_K),
-                    )
-                    .expect("all dimensions match")
-                });
-            });
-        }
-    }
-
-    group.finish();
-}
-
-fn bench_vector_gpu_baseline(c: &mut Criterion) {
-    let mut group = c.benchmark_group("core_vector_gpu_baseline");
-    for case in GPU_BASELINE_CASES {
-        let fixture = GpuBaselineFixture::build(*case);
-        let score_id = fixture.id("cpu_cosine_rerank");
-        group.throughput(Throughput::Elements(fixture.score_count() as u64));
-        group.bench_function(score_id, |b| {
-            b.iter(|| black_box(fixture.score_all()));
-        });
-
-        let copy_id = fixture.id("host_pack_f32");
-        let mut buffer = vec![0.0f32; fixture.transfer_floats()];
-        group.throughput(Throughput::Bytes(fixture.transfer_bytes() as u64));
-        group.bench_function(copy_id, |b| {
-            b.iter(|| fixture.copy_inputs(black_box(&mut buffer)));
-        });
-
-        let query_copy_id = fixture.id("host_pack_queries_f32");
-        let mut query_buffer = vec![0.0f32; fixture.query_transfer_floats()];
-        group.throughput(Throughput::Bytes(fixture.query_transfer_bytes() as u64));
-        group.bench_function(query_copy_id, |b| {
-            b.iter(|| fixture.copy_queries(black_box(&mut query_buffer)));
-        });
-
-        let candidate_copy_id = fixture.id("host_pack_candidates_f32");
-        let mut candidate_buffer = vec![0.0f32; fixture.candidate_transfer_floats()];
-        group.throughput(Throughput::Bytes(fixture.candidate_transfer_bytes() as u64));
-        group.bench_function(candidate_copy_id, |b| {
-            b.iter(|| fixture.copy_candidates(black_box(&mut candidate_buffer)));
-        });
-
-        let slab_score_id = fixture.id("cpu_cosine_resident_slab");
-        group.throughput(Throughput::Elements(fixture.score_count() as u64));
-        group.bench_function(slab_score_id, |b| {
-            b.iter(|| black_box(fixture.score_all_resident_slab()));
-        });
-    }
-    group.finish();
-}
-
-struct GpuBaselineFixture {
-    case: GpuBaselineCase,
-    queries: Vec<VectorValue>,
-    candidates: Vec<VectorValue>,
-    query_slab: Vec<f32>,
-    candidate_slab: Vec<f32>,
-    query_norms: Vec<f64>,
-    candidate_norms: Vec<f64>,
-}
-
-impl GpuBaselineFixture {
-    fn build(case: GpuBaselineCase) -> Self {
-        let queries: Vec<VectorValue> = (0..case.queries)
-            .map(|idx| {
-                VectorValue::new(vector_components_seeded(case.dimension, idx))
-                    .expect("query vector is valid")
-            })
-            .collect();
-        let candidates: Vec<VectorValue> = (0..case.candidates)
-            .map(|idx| {
-                VectorValue::new(vector_components_seeded(case.dimension, idx + 1_000))
-                    .expect("candidate vector is valid")
-            })
-            .collect();
-        let query_slab = flatten_vectors(&queries);
-        let candidate_slab = flatten_vectors(&candidates);
-        let query_norms = queries.iter().map(vector_squared_norm).collect();
-        let candidate_norms = candidates.iter().map(vector_squared_norm).collect();
-        let fixture = Self {
-            case,
-            queries,
-            candidates,
-            query_slab,
-            candidate_slab,
-            query_norms,
-            candidate_norms,
-        };
-        fixture.assert_resident_slab_matches_canonical();
-        fixture
-    }
-
-    fn id(&self, name: &str) -> String {
-        format!(
-            "{name}_q{}x{}x{}_k{EXACT_TOP_K}",
-            self.case.queries, self.case.candidates, self.case.dimension
-        )
-    }
-
-    const fn score_count(&self) -> usize {
-        self.case.queries * self.case.candidates
-    }
-
-    const fn transfer_floats(&self) -> usize {
-        (self.case.queries + self.case.candidates) * self.case.dimension
-    }
-
-    const fn transfer_bytes(&self) -> usize {
-        self.transfer_floats() * std::mem::size_of::<f32>()
-    }
-
-    const fn query_transfer_floats(&self) -> usize {
-        self.case.queries * self.case.dimension
-    }
-
-    const fn query_transfer_bytes(&self) -> usize {
-        self.query_transfer_floats() * std::mem::size_of::<f32>()
-    }
-
-    const fn candidate_transfer_floats(&self) -> usize {
-        self.case.candidates * self.case.dimension
-    }
-
-    const fn candidate_transfer_bytes(&self) -> usize {
-        self.candidate_transfer_floats() * std::mem::size_of::<f32>()
-    }
-
-    fn score_all(&self) -> usize {
-        let mut hits = 0;
-        for query in &self.queries {
-            hits += exact_vector_top_k(
-                VectorMetric::Cosine,
-                black_box(query),
-                self.candidates
-                    .iter()
-                    .enumerate()
-                    .map(|(key, vector)| (black_box(key), black_box(vector))),
-                black_box(EXACT_TOP_K),
-            )
-            .expect("all dimensions match")
-            .len();
-        }
-        hits
-    }
-
-    fn copy_inputs(&self, destination: &mut [f32]) -> usize {
-        let mut offset = 0;
-        for vector in self.queries.iter().chain(self.candidates.iter()) {
-            let end = offset + vector.dimension();
-            destination[offset..end].copy_from_slice(vector.as_slice());
-            offset = end;
-        }
-        offset
-    }
-
-    fn copy_queries(&self, destination: &mut [f32]) -> usize {
-        destination[..self.query_slab.len()].copy_from_slice(&self.query_slab);
-        self.query_slab.len()
-    }
-
-    fn copy_candidates(&self, destination: &mut [f32]) -> usize {
-        destination[..self.candidate_slab.len()].copy_from_slice(&self.candidate_slab);
-        self.candidate_slab.len()
-    }
-
-    fn score_all_resident_slab(&self) -> usize {
-        let mut hits = 0;
-        for query_idx in 0..self.case.queries {
-            let query = self.query_slice(query_idx);
-            let query_norm = self.query_norms[query_idx];
-            let mut top_k = VectorTopK::new(EXACT_TOP_K);
-            for candidate_idx in 0..self.case.candidates {
-                let candidate = self.candidate_slice(candidate_idx);
-                let distance = cosine_distance_with_norms(
-                    black_box(query),
-                    black_box(candidate),
-                    black_box(query_norm),
-                    black_box(self.candidate_norms[candidate_idx]),
-                );
-                top_k.push_distance(black_box(candidate_idx), distance);
-            }
-            hits += top_k.into_hits().len();
-        }
-        hits
-    }
-
-    fn assert_resident_slab_matches_canonical(&self) {
-        for query_idx in 0..self.case.queries {
-            let exact = exact_vector_top_k(
-                VectorMetric::Cosine,
-                &self.queries[query_idx],
-                self.candidates.iter().enumerate(),
-                EXACT_TOP_K,
-            )
-            .expect("fixture vectors are comparable");
-            let slab = self.resident_slab_top_k(query_idx);
-            assert_eq!(exact.len(), slab.len(), "resident slab hit count drifted");
-            for (exact, slab) in exact.iter().zip(slab.iter()) {
-                assert_eq!(exact.key, slab.key, "resident slab key drifted");
-                assert!(
-                    (exact.distance - slab.distance).abs() <= f64::EPSILON,
-                    "resident slab distance drifted: exact={} slab={}",
-                    exact.distance,
-                    slab.distance
-                );
-            }
-        }
-    }
-
-    fn resident_slab_top_k(&self, query_idx: usize) -> Vec<selene_core::VectorSearchHit<usize>> {
-        let query = self.query_slice(query_idx);
-        let query_norm = self.query_norms[query_idx];
-        let mut top_k = VectorTopK::new(EXACT_TOP_K);
-        for candidate_idx in 0..self.case.candidates {
-            let distance = cosine_distance_with_norms(
-                query,
-                self.candidate_slice(candidate_idx),
-                query_norm,
-                self.candidate_norms[candidate_idx],
-            );
-            top_k.push_distance(candidate_idx, distance);
-        }
-        top_k.into_hits()
-    }
-
-    fn query_slice(&self, index: usize) -> &[f32] {
-        vector_window(&self.query_slab, index, self.case.dimension)
-    }
-
-    fn candidate_slice(&self, index: usize) -> &[f32] {
-        vector_window(&self.candidate_slab, index, self.case.dimension)
-    }
-}
-
-fn flatten_vectors(vectors: &[VectorValue]) -> Vec<f32> {
-    let total_components = vectors.iter().map(VectorValue::dimension).sum();
-    let mut slab = Vec::with_capacity(total_components);
-    for vector in vectors {
-        slab.extend_from_slice(vector.as_slice());
-    }
-    slab
-}
-
-fn vector_window(slab: &[f32], index: usize, dimension: usize) -> &[f32] {
-    let start = index * dimension;
-    &slab[start..start + dimension]
-}
-
-fn cosine_distance_with_norms(
-    query: &[f32],
-    candidate: &[f32],
-    query_norm: f64,
-    candidate_norm: f64,
-) -> f64 {
-    let similarity = dot_slices(query, candidate) / (query_norm.sqrt() * candidate_norm.sqrt());
-    let distance = 1.0 - similarity.clamp(-1.0, 1.0);
-    if distance == 0.0 { 0.0 } else { distance }
-}
-
-fn dot_slices(lhs: &[f32], rhs: &[f32]) -> f64 {
-    let mut chunks_lhs = lhs.chunks_exact(4);
-    let mut chunks_rhs = rhs.chunks_exact(4);
-    let mut product = f64x4::ZERO;
-    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
-        let lhs = f64x4_from_f32(lhs);
-        let rhs = f64x4_from_f32(rhs);
-        product += lhs * rhs;
-    }
-    let mut product = product.reduce_add();
-    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
-        product += f64::from(lhs) * f64::from(rhs);
-    }
-    product
-}
-
-fn f64x4_from_f32(chunk: &[f32]) -> f64x4 {
-    f64x4::from([
-        f64::from(chunk[0]),
-        f64::from(chunk[1]),
-        f64::from(chunk[2]),
-        f64::from(chunk[3]),
-    ])
 }
 
 criterion_group! {
     name = value_clone;
     config = bench_config();
-    targets = bench_value_clone, bench_change_diff, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k, bench_vector_gpu_baseline
+    targets = bench_value_clone, bench_label_set, bench_change_diff, vector::bench_vector_value, vector::bench_vector_distance, vector::bench_vector_exact_top_k, vector::bench_vector_gpu_baseline
 }
 criterion_main!(value_clone);

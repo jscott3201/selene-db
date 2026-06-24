@@ -216,6 +216,12 @@ impl GraphProjection {
         self.out_csr.neighbors_of_dense(dense)
     }
 
+    /// In-neighbors of a dense projection row.
+    #[must_use]
+    pub(crate) fn in_neighbors_dense(&self, dense: u32) -> &[ProjNeighbor] {
+        self.in_csr.neighbors_of_dense(dense)
+    }
+
     /// In-neighbors of `node`, sorted ASC by `node_id` per spec 16 §E03.
     ///
     /// Returns an empty slice when `node` is not in this projection or has no
@@ -527,6 +533,48 @@ mod tests {
         assert_eq!(
             incoming.iter().map(|n| n.weight).collect::<Vec<_>>(),
             vec![1.0, 3.0]
+        );
+    }
+
+    #[test]
+    fn outgoing_csr_orders_mixed_label_neighbors_by_node_id() {
+        let shared = SharedGraph::new(GraphId::new(7_704));
+        let node_label = db_string("T");
+        let early_label = db_string("A");
+        let late_label = db_string("Z");
+        let (source, low, high) = {
+            let mut txn = shared.begin_write();
+            let source = txn
+                .mutator()
+                .create_node(LabelSet::single(node_label.clone()), PropertyMap::new())
+                .unwrap();
+            let low = txn
+                .mutator()
+                .create_node(LabelSet::single(node_label.clone()), PropertyMap::new())
+                .unwrap();
+            let high = txn
+                .mutator()
+                .create_node(LabelSet::single(node_label), PropertyMap::new())
+                .unwrap();
+            txn.mutator()
+                .create_edge(early_label, source, high, PropertyMap::new())
+                .unwrap();
+            txn.mutator()
+                .create_edge(late_label, source, low, PropertyMap::new())
+                .unwrap();
+            txn.commit().unwrap();
+            (source, low, high)
+        };
+
+        let snapshot = shared.read();
+        let proj = GraphProjection::build(&snapshot, &config(), None).unwrap();
+
+        assert_eq!(
+            proj.out_neighbors(source)
+                .iter()
+                .map(|neighbor| neighbor.node_id)
+                .collect::<Vec<_>>(),
+            vec![low, high]
         );
     }
 

@@ -35,8 +35,10 @@ impl VectorCandidateSet {
         I: IntoIterator<Item = NodeId>,
     {
         let mut nodes = nodes.into_iter().collect::<Vec<_>>();
-        nodes.sort_unstable();
-        nodes.dedup();
+        if nodes.len() > 1 && !node_ids_strictly_ascending(&nodes) {
+            nodes.sort_unstable();
+            nodes.dedup();
+        }
         Self { nodes }
     }
 
@@ -89,6 +91,12 @@ impl VectorCandidateSet {
     #[must_use]
     pub fn intersection(&self, other: &Self) -> Self {
         if self.is_empty() || other.is_empty() {
+            return Self::default();
+        }
+        if self.len() == other.len()
+            && (self.nodes[self.nodes.len() - 1] < other.nodes[0]
+                || other.nodes[other.nodes.len() - 1] < self.nodes[0])
+        {
             return Self::default();
         }
         let (small, large) = if self.len() <= other.len() {
@@ -175,6 +183,17 @@ impl VectorCandidateSet {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
+}
+
+fn node_ids_strictly_ascending(nodes: &[NodeId]) -> bool {
+    let mut previous = nodes[0];
+    for &node in &nodes[1..] {
+        if previous >= node {
+            return false;
+        }
+        previous = node;
+    }
+    true
 }
 
 impl AsRef<[NodeId]> for VectorCandidateSet {

@@ -78,6 +78,17 @@ pub enum CatalogOp {
         /// Source span.
         span: SourceSpan,
     },
+    /// Alter an existing edge type through forward-only additive changes.
+    AlterEdgeType {
+        /// Edge type label.
+        label: DbString,
+        /// Optional widened endpoint declaration.
+        endpoints: Option<EdgeEndpointSpec>,
+        /// Property definitions to add.
+        properties: Vec<PlannedTypePropertyDef>,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// Drop a node type.
     DropNodeType {
         /// Node label.

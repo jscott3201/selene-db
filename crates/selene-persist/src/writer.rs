@@ -7,16 +7,19 @@ use std::sync::Arc;
 
 use selene_core::{Change, HlcTimestamp, Origin, metrics};
 
+use crate::compression::ZstdCompressor;
 use crate::entry_header::{
     encode_entry_header, ensure_payload_len, read_entry_header, validate_principal,
 };
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::manifest::Manifest;
-use crate::payload::{WalCompression, encode_changes_with_compression, verify_checksum};
+use crate::payload::{WalCompression, encode_changes_with_compressor, verify_checksum};
 use crate::retention::{PruneOutcome, RetentionPolicy};
 use crate::snapshot_writer::SnapshotBuilder;
 use crate::writer_rotation::{RotationInputs, WalRotationOutcome, rotate_with_manifest};
 use crate::{PersistError, PersistResult, WalEntryHeader};
+
+const WAL_RECORD_BUFFER_RETAIN_LIMIT: usize = 4 * 1024 * 1024;
 
 /// Conventional v1.0 single-file WAL name used by embedders.
 pub const DEFAULT_WAL_FILE_NAME: &str = "wal.log";
@@ -117,10 +120,12 @@ impl WalConfig {
 pub struct WalWriter {
     file: File,
     path: PathBuf,
+    record: Vec<u8>,
     last_sequence: u64,
     snapshot_seq: u64,
     sync_policy: SyncPolicy,
     compression: WalCompression,
+    compressor: Option<ZstdCompressor>,
     entries_since_fsync: u32,
     /// File offset of the last fully-committed entry's end. On any
     /// append-time error, the file is truncated and re-seeked to this
@@ -207,10 +212,12 @@ impl WalWriter {
         Ok(Self {
             file,
             path: path.to_path_buf(),
+            record: Vec::new(),
             last_sequence,
             snapshot_seq: header_snapshot_seq,
             sync_policy,
             compression,
+            compressor: None,
             entries_since_fsync: 0,
             committed_offset: scan.truncate_to,
         })
@@ -237,7 +244,8 @@ impl WalWriter {
         changes: &[Change],
     ) -> PersistResult<u64> {
         validate_principal(principal.as_deref())?;
-        let payload = encode_changes_with_compression(changes, self.compression)?;
+        let payload =
+            encode_changes_with_compressor(changes, self.compression, Some(&mut self.compressor))?;
         let sequence = self.last_sequence + 1;
         let header = WalEntryHeader::new(
             payload.bytes.len(),
@@ -257,12 +265,15 @@ impl WalWriter {
 
         // Single contiguous record. Write it in one syscall via a Vec
         // assembly so partial writes are easier to reason about.
-        let mut record = Vec::with_capacity(header_bytes.len() + payload.bytes.len());
-        record.extend_from_slice(&header_bytes);
-        record.extend_from_slice(&payload.bytes);
+        self.record.clear();
+        self.record
+            .reserve(header_bytes.len() + payload.bytes.len());
+        self.record.extend_from_slice(&header_bytes);
+        self.record.extend_from_slice(&payload.bytes);
+        let record_len = self.record.len();
 
         let result = (|| -> PersistResult<()> {
-            self.file.write_all(&record)?;
+            self.file.write_all(&self.record)?;
             if needs_fsync {
                 self.file.sync_data()?;
             }
@@ -271,17 +282,25 @@ impl WalWriter {
 
         match result {
             Ok(()) => {
-                let new_offset = self.committed_offset.saturating_add(record.len() as u64);
+                let new_offset = self.committed_offset.saturating_add(record_len as u64);
                 self.committed_offset = new_offset;
                 self.last_sequence = sequence;
                 self.entries_since_fsync = if needs_fsync { 0 } else { pending_count };
                 metrics::counter_inc(metrics::WAL_APPENDS_TOTAL);
+                self.trim_record_buffer();
                 Ok(sequence)
             }
             Err(error) => {
                 self.rollback_to_committed_offset();
+                self.trim_record_buffer();
                 Err(error)
             }
+        }
+    }
+
+    fn trim_record_buffer(&mut self) {
+        if self.record.capacity() > WAL_RECORD_BUFFER_RETAIN_LIMIT {
+            self.record = Vec::new();
         }
     }
 

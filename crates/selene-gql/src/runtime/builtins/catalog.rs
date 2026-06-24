@@ -10,7 +10,7 @@ use crate::{
 use super::{
     compaction, create_index, create_text_index, create_vector_index, drop_index, drop_text_index,
     drop_vector_index, feature_status, health, json_candidate_nodes, json_contains_nodes,
-    json_path_contains_nodes, json_path_exists_nodes, json_path_value_nodes,
+    json_path_contains_nodes, json_path_exists_nodes, json_path_value_nodes, reachable_nodes,
     rebuild_vector_indexes, reciprocal_rank_fusion, text_index_stats, text_search,
     vector_candidate_states, vector_index_stats, vector_score_candidate_state,
     vector_score_candidate_state_expanded, vector_score_candidate_state_expanded_batch,
@@ -58,6 +58,8 @@ pub(in crate::runtime) enum BuiltinKind {
     VectorScoreCandidateStateExpandedBatch,
     /// `selene.vector_candidate_states` — maintained candidate-state metadata.
     VectorCandidateStates,
+    /// `selene.reachable_nodes` — transitive graph reachability candidates.
+    ReachableNodes,
     /// `selene.vector_score_expanded_candidates` — exact scoring for graph-expanded candidates.
     VectorScoreExpandedCandidates,
     /// `selene.vector_score_expanded_candidates_batch` — batched graph-expanded scoring.
@@ -170,6 +172,7 @@ impl BuiltinKind {
             | Self::VectorScoreCandidateStateExpanded
             | Self::VectorScoreCandidateStateExpandedBatch
             | Self::VectorCandidateStates
+            | Self::ReachableNodes
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
             | Self::VectorSearchNodesAnn
@@ -224,6 +227,7 @@ impl BuiltinKind {
             | Self::VectorScoreCandidateStateExpanded
             | Self::VectorScoreCandidateStateExpandedBatch
             | Self::VectorCandidateStates
+            | Self::ReachableNodes
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
             | Self::VectorSearchNodesAnn
@@ -281,6 +285,7 @@ impl BuiltinKind {
                 vector_score_candidate_state_expanded_batch::signature()
             }
             Self::VectorCandidateStates => vector_candidate_states::signature(),
+            Self::ReachableNodes => reachable_nodes::signature(),
             Self::VectorScoreExpandedCandidates => vector_score_expanded_candidates::signature(),
             Self::VectorScoreExpandedCandidatesBatch => {
                 vector_score_expanded_candidates_batch::signature()
@@ -351,6 +356,7 @@ impl BuiltinKind {
                 vector_score_candidate_state_expanded_batch::output_columns()
             }
             Self::VectorCandidateStates => vector_candidate_states::output_columns(),
+            Self::ReachableNodes => reachable_nodes::output_columns(),
             Self::VectorScoreExpandedCandidates => {
                 vector_score_expanded_candidates::output_columns()
             }
@@ -434,6 +440,7 @@ impl BuiltinKind {
                 vector_score_candidate_state_expanded_batch::execute(ctx, args)
             }
             Self::VectorCandidateStates => vector_candidate_states::execute(ctx, args),
+            Self::ReachableNodes => reachable_nodes::execute(ctx, args),
             Self::VectorScoreExpandedCandidates => {
                 vector_score_expanded_candidates::execute(ctx, args)
             }
@@ -523,6 +530,7 @@ impl BuiltinKind {
             | Self::VectorScoreCandidateStateExpanded
             | Self::VectorScoreCandidateStateExpandedBatch
             | Self::VectorCandidateStates
+            | Self::ReachableNodes
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
             | Self::VectorSearchNodesAnn
@@ -586,6 +594,7 @@ impl BuiltinKind {
             | Self::VectorScoreCandidateStateExpanded
             | Self::VectorScoreCandidateStateExpandedBatch
             | Self::VectorCandidateStates
+            | Self::ReachableNodes
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
             | Self::VectorSearchNodesAnn

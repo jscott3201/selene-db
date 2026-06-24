@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use roaring::RoaringBitmap;
+use rustc_hash::FxHashMap;
 use selene_core::{EdgeId, GraphId, NodeId, SchemaChange};
 use smallvec::SmallVec;
 
@@ -45,17 +47,22 @@ pub(crate) struct RecoveryState {
     pending_composite_property_index_changes: Vec<PendingCompositeIndex>,
     pending_vector_index_changes: Vec<PendingVectorIndex>,
     pending_text_index_changes: Vec<PendingTextIndex>,
-    nodes: BTreeMap<NodeId, NodeRow>,
-    edges: BTreeMap<EdgeId, EdgeRow>,
-    /// BRIEF-Item-4a STEP 9: the snapshot row (= section position) each
-    /// committed id was decoded at, so `into_graph` materializes snapshot rows
-    /// **positionally** rather than by deriving the row from the id. Aborted-tx
-    /// hole rows (`*Id::TOMBSTONE`) are not recorded — they are re-materialized as
-    /// the pad slots between the real rows the column places. WAL-created ids
-    /// absent here append at the dense end (BRIEF-Item-4c; 4e revisits this for
-    /// WAL events that cross a 4b compaction epoch).
-    node_snapshot_rows: BTreeMap<NodeId, u32>,
-    edge_snapshot_rows: BTreeMap<EdgeId, u32>,
+    /// Recovered node rows keyed by external id. Snapshot rows carry their
+    /// decoded section position; WAL-created rows carry no position and append
+    /// at the dense end during materialization. Companion order vectors preserve
+    /// positional snapshot placement without per-row tree inserts.
+    nodes: FxHashMap<NodeId, RecoveredNodeRow>,
+    /// Snapshot node IDs in decoded positional order.
+    snapshot_node_order: Vec<NodeId>,
+    /// WAL-created node IDs. Sorted only at materialization time.
+    wal_node_order: Vec<NodeId>,
+    /// Recovered edge rows keyed by external id; see `nodes` for the positional
+    /// recovery contract.
+    edges: FxHashMap<EdgeId, RecoveredEdgeRow>,
+    /// Snapshot edge IDs in decoded positional order.
+    snapshot_edge_order: Vec<EdgeId>,
+    /// WAL-created edge IDs. Sorted only at materialization time.
+    wal_edge_order: Vec<EdgeId>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     vector_schemas: Vec<(VectorSchemaKey, VectorSchemaEntry)>,
@@ -74,6 +81,52 @@ pub(crate) struct RecoveryState {
 }
 
 const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
+
+pub(super) struct RecoveredNodeRow {
+    pub(super) row: NodeRow,
+    /// BRIEF-Item-4a STEP 9: snapshot rows materialize at decoded section
+    /// position. WAL-created ids absent from the snapshot append at the dense
+    /// end (BRIEF-Item-4c).
+    snapshot_position: Option<u32>,
+}
+
+impl RecoveredNodeRow {
+    fn from_snapshot(row: NodeRow, position: u32) -> Self {
+        Self {
+            row,
+            snapshot_position: Some(position),
+        }
+    }
+
+    pub(super) fn from_wal(row: NodeRow) -> Self {
+        Self {
+            row,
+            snapshot_position: None,
+        }
+    }
+}
+
+pub(super) struct RecoveredEdgeRow {
+    pub(super) row: EdgeRow,
+    /// Decoded snapshot section position, or `None` for post-snapshot WAL rows.
+    snapshot_position: Option<u32>,
+}
+
+impl RecoveredEdgeRow {
+    fn from_snapshot(row: EdgeRow, position: u32) -> Self {
+        Self {
+            row,
+            snapshot_position: Some(position),
+        }
+    }
+
+    pub(super) fn from_wal(row: EdgeRow) -> Self {
+        Self {
+            row,
+            snapshot_position: None,
+        }
+    }
+}
 
 impl RecoveryState {
     /// Construct an empty recovery accumulator.
@@ -104,32 +157,38 @@ impl RecoveryState {
                 self.meta = Some(payload);
             }
             CORE_NODE_SUB => {
+                let rows = decode_nodes(bytes)?;
+                self.nodes.reserve(rows.len());
                 // BRIEF-Item-4a STEP 9: the section is positional. Record each
                 // committed id's row (= decode position) for positional
                 // materialization; skip `NodeId::TOMBSTONE` hole rows — they are
                 // re-padded between the real rows in `into_graph` and binding
                 // their (absent) id would resurrect an aborted-tx id as NotAlive.
-                for (position, (id, row)) in decode_nodes(bytes)?.into_iter().enumerate() {
+                for (position, (id, row)) in rows.into_iter().enumerate() {
                     if id == NodeId::TOMBSTONE {
                         continue;
                     }
                     let position = u32::try_from(position).map_err(|_| {
                         invalid_payload("CORE/NODE row position exceeds u32::MAX".to_string())
                     })?;
-                    self.node_snapshot_rows.insert(id, position);
-                    self.nodes.insert(id, row);
+                    self.nodes
+                        .insert(id, RecoveredNodeRow::from_snapshot(row, position));
+                    self.snapshot_node_order.push(id);
                 }
             }
             CORE_EDGE_SUB => {
-                for (position, (id, row)) in decode_edges(bytes)?.into_iter().enumerate() {
+                let rows = decode_edges(bytes)?;
+                self.edges.reserve(rows.len());
+                for (position, (id, row)) in rows.into_iter().enumerate() {
                     if id == EdgeId::TOMBSTONE {
                         continue;
                     }
                     let position = u32::try_from(position).map_err(|_| {
                         invalid_payload("CORE/EDGE row position exceeds u32::MAX".to_string())
                     })?;
-                    self.edge_snapshot_rows.insert(id, position);
-                    self.edges.insert(id, row);
+                    self.edges
+                        .insert(id, RecoveredEdgeRow::from_snapshot(row, position));
+                    self.snapshot_edge_order.push(id);
                 }
             }
             CORE_SCMA_SUB => {
@@ -268,26 +327,25 @@ impl RecoveryState {
 
         // BRIEF-Item-4a STEP 9 / BRIEF-Item-4c: materialize each row at its true
         // row index. Snapshot rows use their decoded position
-        // (`node_snapshot_rows`); a WAL-created id absent from the snapshot
-        // appends at the dense end (the live-append slot). Iteration is
-        // id-ascending (BTreeMap), and `insert_node_row` pads-then-sets, so a
-        // snapshot whose rows are not in id order (a compacted snapshot) still
-        // lands each row at its recorded position. The hole slots between
-        // recorded positions are padded with `NodeId::TOMBSTONE` and stay out of
-        // the id->row map.
+        // (`RecoveredNodeRow::snapshot_position`); a WAL-created id absent from the snapshot
+        // appends at the dense end (the live-append slot). Snapshot row ids are
+        // carried in decoded-position order, so a compacted snapshot whose ids
+        // are not row-sorted still lands each row at its recorded position.
+        // WAL-created rows append afterward in id order. The hole slots between
+        // recorded positions are padded with `NodeId::TOMBSTONE` and stay out
+        // of the id->row map.
+        let mut nodes = self.nodes;
+        let mut node_alive = RoaringBitmap::new();
         let mut next_node_id = graph.meta.next_node_id.max(1);
-        for (id, row) in self.nodes {
+        for id in self.snapshot_node_order {
+            let Some(recovered) = nodes.remove(&id) else {
+                return Err(crate::GraphError::Provider(inconsistent(format!(
+                    "snapshot node order referenced missing node {id}"
+                ))));
+            };
             next_node_id = next_node_id.max(id.get().saturating_add(1));
-            // BRIEF-Item-4c: WAL-created ids (absent from the snapshot) APPEND at
-            // the dense end, not `id - 1`. After a compacted snapshot loads (dense
-            // rows, sparse high-water ids) a post-compaction `NodeCreated` would
-            // otherwise re-pad the reclaimed holes on reload. WAL-created ids are
-            // monotonic and greater than every snapshot id, and iteration is
-            // id-ascending, so by the time one is reached every snapshot row is
-            // placed and `len()` is the next dense slot — matching the live
-            // append create path.
-            let row_index = match self.node_snapshot_rows.get(&id) {
-                Some(&position) => position as usize,
+            let row_index = match recovered.snapshot_position {
+                Some(position) => position as usize,
                 None => {
                     let len = graph.node_store.len();
                     // u32::MAX is reserved as RowIndex::TOMBSTONE; the last real
@@ -300,17 +358,63 @@ impl RecoveryState {
                     len
                 }
             };
-            insert_node_row(&mut graph, id, row, row_index)?;
+            if recovered.row.alive {
+                node_alive.insert(row_index as u32);
+            }
+            insert_node_row(&mut graph, id, recovered.row, row_index)?;
         }
+        let mut wal_node_order = self.wal_node_order;
+        wal_node_order.sort_unstable();
+        for id in wal_node_order {
+            let Some(recovered) = nodes.remove(&id) else {
+                return Err(crate::GraphError::Provider(inconsistent(format!(
+                    "WAL node order referenced missing node {id}"
+                ))));
+            };
+            next_node_id = next_node_id.max(id.get().saturating_add(1));
+            // BRIEF-Item-4c: WAL-created ids (absent from the snapshot) APPEND
+            // at the dense end, not `id - 1`. After a compacted snapshot loads
+            // (dense rows, sparse high-water ids) a post-compaction
+            // `NodeCreated` would otherwise re-pad the reclaimed holes on reload.
+            // By the time a WAL-created row is reached every snapshot row is
+            // placed and `len()` is the next dense slot, matching the live append
+            // create path.
+            let len = graph.node_store.len();
+            // u32::MAX is reserved as RowIndex::TOMBSTONE; the last real row is
+            // u32::MAX - 1, so a live row never aliases the sentinel.
+            if !u32::try_from(len).is_ok_and(|row| row != u32::MAX) {
+                return Err(crate::GraphError::Provider(invalid_payload(format!(
+                    "WAL-created node id {id} exceeds the u32 row space"
+                ))));
+            }
+            if recovered.row.alive {
+                node_alive.insert(len as u32);
+            }
+            insert_node_row(&mut graph, id, recovered.row, len)?;
+        }
+        if !nodes.is_empty() {
+            return Err(crate::GraphError::Provider(inconsistent(format!(
+                "{} recovered node rows were not materialized",
+                nodes.len()
+            ))));
+        }
+        graph.node_store.alive = Arc::new(node_alive);
         graph.meta.next_node_id = next_node_id;
 
+        let mut edges = self.edges;
+        let mut edge_alive = RoaringBitmap::new();
         let mut next_edge_id = graph.meta.next_edge_id.max(1);
-        for (id, row) in self.edges {
+        for id in self.snapshot_edge_order {
+            let Some(recovered) = edges.remove(&id) else {
+                return Err(crate::GraphError::Provider(inconsistent(format!(
+                    "snapshot edge order referenced missing edge {id}"
+                ))));
+            };
             next_edge_id = next_edge_id.max(id.get().saturating_add(1));
             // BRIEF-Item-4c: WAL-created edge ids APPEND at the dense end (see the
             // node arm above).
-            let row_index = match self.edge_snapshot_rows.get(&id) {
-                Some(&position) => position as usize,
+            let row_index = match recovered.snapshot_position {
+                Some(position) => position as usize,
                 None => {
                     let len = graph.edge_store.len();
                     // u32::MAX is reserved as RowIndex::TOMBSTONE (see the node arm).
@@ -322,8 +426,41 @@ impl RecoveryState {
                     len
                 }
             };
-            insert_edge_row(&mut graph, id, row, row_index)?;
+            if recovered.row.alive {
+                edge_alive.insert(row_index as u32);
+            }
+            insert_edge_row(&mut graph, id, recovered.row, row_index)?;
         }
+        let mut wal_edge_order = self.wal_edge_order;
+        wal_edge_order.sort_unstable();
+        for id in wal_edge_order {
+            let Some(recovered) = edges.remove(&id) else {
+                return Err(crate::GraphError::Provider(inconsistent(format!(
+                    "WAL edge order referenced missing edge {id}"
+                ))));
+            };
+            next_edge_id = next_edge_id.max(id.get().saturating_add(1));
+            // BRIEF-Item-4c: WAL-created edge ids append at the dense end for
+            // the same reason as WAL-created node ids.
+            let len = graph.edge_store.len();
+            // u32::MAX is reserved as RowIndex::TOMBSTONE (see the node arm).
+            if !u32::try_from(len).is_ok_and(|row| row != u32::MAX) {
+                return Err(crate::GraphError::Provider(invalid_payload(format!(
+                    "WAL-created edge id {id} exceeds the u32 row space"
+                ))));
+            }
+            if recovered.row.alive {
+                edge_alive.insert(len as u32);
+            }
+            insert_edge_row(&mut graph, id, recovered.row, len)?;
+        }
+        if !edges.is_empty() {
+            return Err(crate::GraphError::Provider(inconsistent(format!(
+                "{} recovered edge rows were not materialized",
+                edges.len()
+            ))));
+        }
+        graph.edge_store.alive = Arc::new(edge_alive);
         graph.meta.next_edge_id = next_edge_id;
 
         // Re-register property indexes from SCMA. The empty TypedIndex placeholders

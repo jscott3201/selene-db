@@ -19,7 +19,7 @@ pub(super) fn try_seeded_scan(
     seed: &Binding,
     slots: scan_bind::ScanSlots,
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Option<Vec<(Value, Binding)>>, ExecutorError> {
+) -> Result<Option<Vec<Binding>>, ExecutorError> {
     let Some(index) = slots.binding_index() else {
         return Ok(None);
     };
@@ -42,7 +42,7 @@ pub(super) fn try_seeded_scan(
     if !scan::predicates_pass(scan, pattern, &binding, schema, &entity, ctx)? {
         return Ok(Some(Vec::new()));
     }
-    Ok(Some(vec![(entity, binding)]))
+    Ok(Some(vec![binding]))
 }
 
 fn seeded_entity_row(

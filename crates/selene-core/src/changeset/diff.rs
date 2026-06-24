@@ -45,6 +45,12 @@ struct LabelDiffWire {
     removed: SmallVec<[DbString; 2]>,
 }
 
+#[derive(Serialize)]
+struct LabelDiffWireRef<'a> {
+    added: &'a [DbString],
+    removed: &'a [DbString],
+}
+
 impl Serialize for LabelDiff {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -53,6 +59,14 @@ impl Serialize for LabelDiff {
         // Canonicalize on serialize. `LabelDiff::new` already sorts, so this is
         // a no-op (byte-identical) for constructed diffs. The fields are public,
         // so direct construction still emits canonical wire.
+        if db_strings_are_canonical(&self.added) && db_strings_are_canonical(&self.removed) {
+            return LabelDiffWireRef {
+                added: self.added.as_slice(),
+                removed: self.removed.as_slice(),
+            }
+            .serialize(serializer);
+        }
+
         let mut added = self.added.clone();
         let mut removed = self.removed.clone();
         added.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
@@ -102,7 +116,7 @@ impl PropertyDiff {
         removed: impl IntoIterator<Item = DbString>,
     ) -> CoreResult<Self> {
         let mut set: SmallVec<[(DbString, Value); 4]> = set.into_iter().collect();
-        if set.len() > 1 {
+        if set.len() > 1 && !set.windows(2).all(|pair| pair[0].0 < pair[1].0) {
             set.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
             let mut deduped = SmallVec::new();
             for (key, value) in set {
@@ -117,13 +131,11 @@ impl PropertyDiff {
             set = deduped;
         }
         let removed = sorted_deduped(removed);
-        for (key, _) in set.iter() {
-            if removed.binary_search(key).is_ok() {
-                return Err(CoreError::OverlappingDiff {
-                    kind: "property",
-                    key: key.clone(),
-                });
-            }
+        if let Some(key) = first_property_overlap(&set, &removed) {
+            return Err(CoreError::OverlappingDiff {
+                kind: "property",
+                key: key.clone(),
+            });
         }
         Ok(Self { set, removed })
     }
@@ -141,6 +153,12 @@ struct PropertyDiffWire {
     removed: SmallVec<[DbString; 2]>,
 }
 
+#[derive(Serialize)]
+struct PropertyDiffWireRef<'a> {
+    set: &'a [(DbString, Value)],
+    removed: &'a [DbString],
+}
+
 impl Serialize for PropertyDiff {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -149,6 +167,14 @@ impl Serialize for PropertyDiff {
         // Canonicalize on serialize. `PropertyDiff::new` already sorts, so this
         // is a no-op (byte-identical) for constructed diffs. The fields are
         // public, so direct construction still emits canonical wire.
+        if property_set_is_canonical(&self.set) && db_strings_are_canonical(&self.removed) {
+            return PropertyDiffWireRef {
+                set: self.set.as_slice(),
+                removed: self.removed.as_slice(),
+            }
+            .serialize(serializer);
+        }
+
         let mut set = self.set.clone();
         let mut removed = self.removed.clone();
         set.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
@@ -174,12 +200,10 @@ impl<'de> Deserialize<'de> for PropertyDiff {
             }
         }
         validate_sorted_unique(&wire.removed, "PropertyDiff.removed")?;
-        for (key, _) in wire.set.iter() {
-            if wire.removed.binary_search(key).is_ok() {
-                return Err(serde::de::Error::custom(format!(
-                    "PropertyDiff: key {key} appears in both set and removed",
-                )));
-            }
+        if let Some(key) = first_property_overlap(&wire.set, &wire.removed) {
+            return Err(serde::de::Error::custom(format!(
+                "PropertyDiff: key {key} appears in both set and removed",
+            )));
         }
         Ok(Self {
             set: wire.set,
@@ -190,9 +214,19 @@ impl<'de> Deserialize<'de> for PropertyDiff {
 
 fn sorted_deduped(values: impl IntoIterator<Item = DbString>) -> SmallVec<[DbString; 2]> {
     let mut values: SmallVec<[DbString; 2]> = values.into_iter().collect();
-    values.sort();
-    values.dedup();
+    if values.len() > 1 && !db_strings_are_canonical(&values) {
+        values.sort();
+        values.dedup();
+    }
     values
+}
+
+fn db_strings_are_canonical(values: &[DbString]) -> bool {
+    values.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+fn property_set_is_canonical(set: &[(DbString, Value)]) -> bool {
+    set.windows(2).all(|pair| pair[0].0 < pair[1].0)
 }
 
 fn ensure_disjoint(
@@ -200,15 +234,43 @@ fn ensure_disjoint(
     added: &SmallVec<[DbString; 2]>,
     removed: &SmallVec<[DbString; 2]>,
 ) -> CoreResult<()> {
-    for label in added.iter() {
-        if removed.binary_search(label).is_ok() {
-            return Err(CoreError::OverlappingDiff {
-                kind,
-                key: label.clone(),
-            });
-        }
+    if let Some(label) = first_overlap(added, removed) {
+        return Err(CoreError::OverlappingDiff {
+            kind,
+            key: label.clone(),
+        });
     }
     Ok(())
+}
+
+fn first_overlap<'a>(left: &'a [DbString], right: &[DbString]) -> Option<&'a DbString> {
+    let mut left_index = 0;
+    let mut right_index = 0;
+    while left_index < left.len() && right_index < right.len() {
+        match left[left_index].cmp(&right[right_index]) {
+            std::cmp::Ordering::Less => left_index += 1,
+            std::cmp::Ordering::Greater => right_index += 1,
+            std::cmp::Ordering::Equal => return Some(&left[left_index]),
+        }
+    }
+    None
+}
+
+fn first_property_overlap<'a>(
+    set: &'a [(DbString, Value)],
+    removed: &[DbString],
+) -> Option<&'a DbString> {
+    let mut set_index = 0;
+    let mut removed_index = 0;
+    while set_index < set.len() && removed_index < removed.len() {
+        let key = &set[set_index].0;
+        match key.cmp(&removed[removed_index]) {
+            std::cmp::Ordering::Less => set_index += 1,
+            std::cmp::Ordering::Greater => removed_index += 1,
+            std::cmp::Ordering::Equal => return Some(key),
+        }
+    }
+    None
 }
 
 fn validate_sorted_unique<E: serde::de::Error>(
@@ -230,12 +292,10 @@ fn validate_disjoint<E: serde::de::Error>(
     removed: &SmallVec<[DbString; 2]>,
     kind: &'static str,
 ) -> Result<(), E> {
-    for label in added.iter() {
-        if removed.binary_search(label).is_ok() {
-            return Err(E::custom(format!(
-                "overlapping {kind} diff: {label} appears in both add/set and remove",
-            )));
-        }
+    if let Some(label) = first_overlap(added, removed) {
+        return Err(E::custom(format!(
+            "overlapping {kind} diff: {label} appears in both add/set and remove",
+        )));
     }
     Ok(())
 }

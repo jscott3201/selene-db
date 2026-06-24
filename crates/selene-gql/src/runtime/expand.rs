@@ -215,7 +215,7 @@ fn maybe_emit(
         return Ok(());
     }
 
-    let mut values = row.values().to_vec();
+    let mut values = row.cloned_values();
     values.resize(state.schema.columns.len(), Value::Null);
     if !state.edge_slot.set(&mut values, Value::EdgeRef(edge_id)) {
         return Ok(());
@@ -238,7 +238,7 @@ fn maybe_emit(
     {
         return Ok(());
     }
-    let candidate = Binding::new(values);
+    let candidate = Binding::from_parts(values, row.cloned_insert_sites());
     if !predicates_pass(
         &state.edge.property_predicates,
         state.pattern_plan,
@@ -270,7 +270,7 @@ fn edge_label_matches(edge: &EdgeMatch, edge_id: EdgeId, ctx: &EvalCtx<'_, '_, '
     ctx.tx
         .snapshot()
         .edge_label(edge_id)
-        .is_some_and(|label| scan::label_matches_edge(label_expr, label.clone()))
+        .is_some_and(|label| scan::label_matches_edge(label_expr, label))
 }
 
 fn right_node_matches(edge: &EdgeMatch, node: NodeId, ctx: &EvalCtx<'_, '_, '_, '_>) -> bool {

@@ -318,6 +318,14 @@ fn scrub_ddl(statement: &mut DdlStatement) {
                 scrub_property_def(property);
             }
         }
+        DdlStatement::AlterEdgeType {
+            properties, span, ..
+        } => {
+            *span = SourceSpan::default();
+            for property in properties {
+                scrub_property_def(property);
+            }
+        }
         DdlStatement::ShowNodeTypes(span)
         | DdlStatement::ShowEdgeTypes(span)
         | DdlStatement::ShowIndexes(span)

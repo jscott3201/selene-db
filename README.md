@@ -60,9 +60,9 @@ keeping the Rust crate names stable:
 
 ```toml
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.3.0" }
-selene-graph = { package = "selene-db-graph", version = "1.3.0" }
-selene-gql = { package = "selene-db-gql", version = "1.3.0" }
+selene-core = { package = "selene-db-core", version = "1.4.0" }
+selene-graph = { package = "selene-db-graph", version = "1.4.0" }
+selene-gql = { package = "selene-db-gql", version = "1.4.0" }
 ```
 
 Create a graph, write through the mutation funnel, and query with GQL:
@@ -159,11 +159,31 @@ literals, and `LIST<T>` defaults use recursively validated list literals such as
 with nested field validation for lists, vectors, JSON fields, and nested
 records.
 
+Forward-only edge schema migrations can widen endpoint sets and add optional
+properties without rebuilding the store:
+
+```gql
+ALTER EDGE TYPE :CONCERNS (
+  FROM :Issue, :PullRequest, :Commit TO :Document,
+  commit_sha :: STRING
+)
+```
+
 ## Native Retrieval
 
 The retrieval stack is deliberately composable. selene-db provides graph,
 vector, text, and algorithm primitives; embedders decide the memory or search
 policy that fits their application.
+
+Graph reachability can produce bounded transitive candidate windows from
+explicit roots before vector, text, JSON, or fusion scoring:
+
+```gql
+CALL selene.reachable_nodes($heads, 'SUPPORTS', 1000, 3, 'outgoing')
+YIELD node_id, depth
+RETURN node_id, depth
+ORDER BY depth, node_id
+```
 
 ### Vectors
 
@@ -198,6 +218,20 @@ CALL selene.create_vector_index('Document', 'embedding', 1536, 'turbo_quant')
 ```gql
 CALL selene.vector_search_nodes_ann(
   'Document', 'embedding', $query, 10, 'cosine', 64
+)
+YIELD node_id, distance
+RETURN node_id, distance
+```
+
+Global ANN search can also admit candidates through node-property filters and
+indexed edge-property filters. Pass `NULL, NULL` for the node filter when the
+candidate gate is edge-only, and choose the admitted endpoint with
+`'source'`, `'target'`, or `'both'`.
+
+```gql
+CALL selene.vector_search_nodes_ann(
+  'Document', 'embedding', $query, 10, 'cosine', 64,
+  NULL, NULL, 'SUPPORTS', 'confidence', [0.9, 1.0], 'target'
 )
 YIELD node_id, distance
 RETURN node_id, distance
@@ -269,6 +303,15 @@ CALL selene.create_text_index('Document', 'body')
 
 ```gql
 CALL selene.text_search_nodes('Document', 'body', $query, 10)
+YIELD node_id, score
+RETURN node_id, score
+```
+
+```gql
+CALL selene.text_search_nodes(
+  'Document', 'body', $query, 10,
+  NULL, NULL, 'CITES', 'kind', ['primary'], 'source'
+)
 YIELD node_id, score
 RETURN node_id, score
 ```
@@ -365,6 +408,16 @@ YIELD node_id, score
 RETURN node_id, score
 ORDER BY score DESC
 LIMIT 20
+```
+
+```gql
+CALL algo.pagerank(
+  'projection_name', 0.85, 100, 1e-6, NULL, 'NATURAL',
+  NULL, 'Document', NULL, NULL,
+  'CITES', 'kind', ['primary'], 'target'
+)
+YIELD node_id, score
+RETURN node_id, score
 ```
 
 ## Persistence

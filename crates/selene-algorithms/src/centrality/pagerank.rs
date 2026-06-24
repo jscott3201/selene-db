@@ -115,7 +115,12 @@ fn pagerank_sequential(
     let mut scores: Vec<f64> = personalization.clone();
     let mut new_scores: Vec<f64> = vec![0.0; n_usize];
 
-    let out_neighbors_dense = build_oriented_out_neighbors(proj, config.orientation, checker)?;
+    let out_neighbors_dense = match config.orientation {
+        PageRankOrientation::Natural => None,
+        PageRankOrientation::Reverse | PageRankOrientation::Undirected => Some(
+            build_oriented_out_neighbors(proj, config.orientation, checker)?,
+        ),
+    };
 
     for _ in 0..config.max_iter {
         check_algorithm(checker)?;
@@ -138,14 +143,28 @@ fn pagerank_sequential(
         // mathematically equivalent (sums commute) and runs in O(N + E)
         // regardless of D.
         let mut dangling_mass = 0.0;
-        for u in 0..n_usize {
-            let neighbors = &out_neighbors_dense[u];
-            if neighbors.is_empty() {
-                dangling_mass += scores[u];
-            } else {
-                let contribution = config.damping * scores[u] / neighbors.len() as f64;
-                for &v in neighbors {
-                    new_scores[v as usize] += contribution;
+        if let Some(out_neighbors_dense) = &out_neighbors_dense {
+            for u in 0..n_usize {
+                let neighbors = &out_neighbors_dense[u];
+                if neighbors.is_empty() {
+                    dangling_mass += scores[u];
+                } else {
+                    let contribution = config.damping * scores[u] / neighbors.len() as f64;
+                    for &v in neighbors {
+                        new_scores[v as usize] += contribution;
+                    }
+                }
+            }
+        } else {
+            for (u, &score) in scores.iter().enumerate() {
+                let neighbors = proj.out_neighbors_dense(u as u32);
+                if neighbors.is_empty() {
+                    dangling_mass += score;
+                } else {
+                    let contribution = config.damping * score / neighbors.len() as f64;
+                    for nb in neighbors {
+                        new_scores[nb.dense as usize] += contribution;
+                    }
                 }
             }
         }
@@ -257,8 +276,14 @@ fn build_oriented_out_neighbors(
     let mut rows_since_check = 0usize;
     for d in 0..idx.len() as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
-        let node = idx.node_id_of(d);
-        out_neighbors_dense.push(oriented_out_neighbors(proj, node, orientation));
+        let neighbors = match orientation {
+            PageRankOrientation::Undirected => oriented_undirected_neighbors_dense(proj, d),
+            PageRankOrientation::Natural | PageRankOrientation::Reverse => {
+                let node = idx.node_id_of(d);
+                oriented_out_neighbors(proj, node, orientation)
+            }
+        };
+        out_neighbors_dense.push(neighbors);
     }
     Ok(out_neighbors_dense)
 }
@@ -283,12 +308,23 @@ fn build_pagerank_adjacency(
     let mut rows_since_check = 0usize;
     for d in 0..n_usize as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
-        let node = idx.node_id_of(d);
-        let outgoing = oriented_out_neighbors(proj, node, orientation);
-        let incoming = oriented_in_neighbors(proj, node, orientation);
-        out_degree_dense[d as usize] = outgoing.len();
-        if outgoing.is_empty() {
-            dangling_rows.push(d);
+        let incoming = match orientation {
+            PageRankOrientation::Undirected => oriented_undirected_neighbors_dense(proj, d),
+            PageRankOrientation::Natural | PageRankOrientation::Reverse => {
+                let node = idx.node_id_of(d);
+                let outgoing = oriented_out_neighbors(proj, node, orientation);
+                out_degree_dense[d as usize] = outgoing.len();
+                if outgoing.is_empty() {
+                    dangling_rows.push(d);
+                }
+                oriented_in_neighbors(proj, node, orientation)
+            }
+        };
+        if orientation == PageRankOrientation::Undirected {
+            out_degree_dense[d as usize] = incoming.len();
+            if incoming.is_empty() {
+                dangling_rows.push(d);
+            }
         }
         in_neighbors_dense.push(incoming);
     }
@@ -326,6 +362,13 @@ fn oriented_in_neighbors(
             collect_unique_neighbors_dense(proj.out_neighbors(node), proj.in_neighbors(node))
         }
     }
+}
+
+fn oriented_undirected_neighbors_dense(proj: &GraphProjection, dense: u32) -> Vec<u32> {
+    collect_unique_neighbors_dense(
+        proj.out_neighbors_dense(dense),
+        proj.in_neighbors_dense(dense),
+    )
 }
 
 fn collect_neighbors_dense(neighbors: &[crate::projection::ProjNeighbor]) -> Vec<u32> {

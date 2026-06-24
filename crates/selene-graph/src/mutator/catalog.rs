@@ -275,7 +275,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         Ok(())
     }
 
-    fn current_graph_type(&self) -> GraphResult<GraphTypeDef> {
+    pub(super) fn current_graph_type(&self) -> GraphResult<GraphTypeDef> {
         self.txn
             .read()
             .meta
@@ -292,7 +292,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 ///
 /// Future multi-type-bound graph work should replace this sentinel with a real
 /// graph-type allocator and preserve the ID across WAL replay.
-fn implicit_graph_type_id() -> GraphTypeId {
+pub(super) fn implicit_graph_type_id() -> GraphTypeId {
     GraphTypeId::new(1).expect("implicit graph type id")
 }
 
@@ -330,7 +330,7 @@ fn core_node_type_def(node_type: &NodeTypeDef) -> GraphResult<selene_core::NodeT
     })
 }
 
-fn core_edge_type_def(
+pub(super) fn core_edge_type_def(
     graph_type: &GraphTypeDef,
     edge_type: &EdgeTypeDef,
 ) -> GraphResult<selene_core::EdgeTypeDef> {

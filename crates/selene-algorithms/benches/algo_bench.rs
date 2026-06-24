@@ -12,8 +12,9 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
     ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, PageRankOrientation,
-    Parallelism, TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, scc,
-    scc_count, topological_sort, triangle_count, wcc, wcc_count,
+    Parallelism, TriangleCountConfig, apsp, articulation_points, betweenness, dijkstra,
+    label_propagation, louvain, pagerank, scc, scc_count, sssp, topological_sort, triangle_count,
+    wcc, wcc_count,
 };
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
@@ -38,6 +39,10 @@ const PARALLELISM_BENCH_MODES: &[(&str, Parallelism)] = &[
     ("sequential", Parallelism::Sequential),
     ("auto", Parallelism::Auto),
 ];
+const PAGERANK_ORIENTATION_BENCHES: &[(&str, PageRankOrientation)] = &[
+    ("reverse", PageRankOrientation::Reverse),
+    ("undirected", PageRankOrientation::Undirected),
+];
 
 fn bench_pagerank(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/pagerank");
@@ -55,6 +60,30 @@ fn bench_pagerank(c: &mut Criterion) {
             group.bench_function(BenchmarkId::new(mode, scale_label(scale)), |b| {
                 b.iter(|| black_box(pagerank(&state.projection, config.clone())));
             });
+        }
+    }
+    group.finish();
+}
+
+fn bench_pagerank_orientation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/pagerank_orientation");
+    for &scale in profile_scales() {
+        let state = BenchState::from_dag(scale, 82_205 + scale as u64);
+        for &(orientation_name, orientation) in PAGERANK_ORIENTATION_BENCHES {
+            let config = PageRankConfig {
+                damping: 0.85,
+                max_iter: 100,
+                tolerance: 1e-6,
+                parallelism: Parallelism::Sequential,
+                orientation,
+                personalization: None,
+            };
+            group.bench_function(
+                BenchmarkId::new(orientation_name, scale_label(scale)),
+                |b| {
+                    b.iter(|| black_box(pagerank(&state.projection, config.clone())));
+                },
+            );
         }
     }
     group.finish();
@@ -111,6 +140,49 @@ fn bench_apsp(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_dijkstra(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/dijkstra");
+    for &scale in profile_scales() {
+        let state = BenchState::from_dag(scale, 82_238 + scale as u64);
+        let source = state
+            .projection
+            .iter_nodes()
+            .next()
+            .expect("bench DAG contains nodes");
+        let target = state
+            .projection
+            .iter_nodes()
+            .last()
+            .expect("bench DAG contains nodes");
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| {
+                black_box(
+                    dijkstra(&state.projection, source, target)
+                        .expect("dijkstra bench succeeds")
+                        .expect("bench DAG has a source-to-target path"),
+                )
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_sssp(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/sssp");
+    for &scale in profile_scales() {
+        let state = BenchState::from_dag(scale, 82_239 + scale as u64);
+        let source = state
+            .projection
+            .iter_nodes()
+            .next()
+            .expect("bench DAG contains nodes");
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(sssp(&state.projection, source).expect("sssp bench succeeds")));
+        });
+    }
+    group.finish();
+}
+
 fn bench_topological_sort(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/topological_sort");
     for &scale in profile_scales() {
@@ -163,6 +235,17 @@ fn bench_scc_count(c: &mut Criterion) {
         let state = BenchState::from_planted_community(scale, 82_248 + scale as u64);
         group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
             b.iter(|| black_box(scc_count(&state.projection)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_articulation_points(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/articulation_points");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_249 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(articulation_points(&state.projection)));
         });
     }
     group.finish();
@@ -329,14 +412,18 @@ criterion_group! {
     name = benches;
     config = criterion_config();
     targets = bench_pagerank,
+        bench_pagerank_orientation,
         bench_betweenness,
         bench_triangle_count,
         bench_apsp,
+        bench_dijkstra,
+        bench_sssp,
         bench_topological_sort,
         bench_wcc,
         bench_wcc_count,
         bench_scc,
         bench_scc_count,
+        bench_articulation_points,
         bench_label_propagation,
         bench_louvain
 }

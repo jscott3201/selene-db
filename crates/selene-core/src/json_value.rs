@@ -1,10 +1,10 @@
-use std::{collections::BTreeSet, fmt, sync::Arc};
+use std::{cell::RefCell, fmt, sync::Arc};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{DeserializeSeed, Error as DeError, MapAccess, SeqAccess, Visitor},
 };
-use serde_json::{Map as SerdeJsonMap, Value as SerdeJsonValue};
+use serde_json::{Map as SerdeJsonMap, Value as SerdeJsonValue, map::Entry as SerdeJsonMapEntry};
 
 use crate::{
     CoreError, CoreResult, DbString, db_string::MAX_DB_STRING_BYTES, json_patch::apply_json_patch,
@@ -62,9 +62,13 @@ impl JsonValue {
     /// Build a validated JSON value from an owned serde-json value.
     pub fn new(value: SerdeJsonValue) -> CoreResult<Self> {
         validate_json_value(&value)?;
-        Ok(Self {
+        Ok(Self::from_validated(value))
+    }
+
+    fn from_validated(value: SerdeJsonValue) -> Self {
+        Self {
             value: Arc::new(value),
-        })
+        }
     }
 
     /// Parse and validate a JSON value from text.
@@ -74,10 +78,8 @@ impl JsonValue {
     /// Returns [`CoreError::JsonParse`] when `text` is not valid JSON, or the
     /// usual value-limit errors when the parsed value exceeds engine caps.
     pub fn parse_str(text: &str) -> CoreResult<Self> {
-        let value = parse_json_text(text).map_err(|err| CoreError::JsonParse {
-            message: err.to_string(),
-        })?;
-        Self::new(value)
+        let value = parse_json_text(text).map_err(JsonTextError::into_core_error)?;
+        Ok(Self::from_validated(value))
     }
 
     /// Borrow the underlying serde-json value.
@@ -95,9 +97,10 @@ impl JsonValue {
     /// Return a stable compact JSON rendering with object keys sorted.
     #[must_use]
     pub fn to_canonical_string(&self) -> String {
-        let mut output = String::new();
-        write_json_canonical(self.as_serde(), &mut output);
-        output
+        // serde_json::Map is BTreeMap-backed in this workspace (no
+        // `preserve_order` feature), so compact whole-value serialization
+        // preserves the canonical key order established at parse/construction.
+        serde_json::to_string(self.as_serde()).expect("validated JSON rendering succeeds")
     }
 
     /// Return the JSON data-model type name.
@@ -267,38 +270,118 @@ impl<'de> Deserialize<'de> for JsonValue {
         D: Deserializer<'de>,
     {
         let value = if deserializer.is_human_readable() {
-            StrictJsonValueSeed.deserialize(deserializer)?
+            StrictJsonValueSeed::plain().deserialize(deserializer)?
         } else {
             let value = String::deserialize(deserializer)?;
             parse_json_text(&value).map_err(serde::de::Error::custom)?
         };
-        Self::new(value).map_err(serde::de::Error::custom)
+        Ok(Self::from_validated(value))
     }
 }
 
-fn parse_json_text(text: &str) -> Result<SerdeJsonValue, serde_json::Error> {
+enum JsonTextError {
+    Json(serde_json::Error),
+    Value(CoreError),
+}
+
+impl JsonTextError {
+    fn into_core_error(self) -> CoreError {
+        match self {
+            Self::Json(err) => CoreError::JsonParse {
+                message: err.to_string(),
+            },
+            Self::Value(err) => err,
+        }
+    }
+}
+
+impl fmt::Display for JsonTextError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Json(err) => err.fmt(formatter),
+            Self::Value(err) => err.fmt(formatter),
+        }
+    }
+}
+
+fn parse_json_text(text: &str) -> Result<SerdeJsonValue, JsonTextError> {
+    let value_error = RefCell::new(None);
     let mut deserializer = serde_json::Deserializer::from_str(text);
-    let value = StrictJsonValueSeed.deserialize(&mut deserializer)?;
-    deserializer.end()?;
+    let value = match StrictJsonValueSeed::tracking(&value_error).deserialize(&mut deserializer) {
+        Ok(value) => value,
+        Err(err) => {
+            return Err(value_error
+                .into_inner()
+                .map_or(JsonTextError::Json(err), JsonTextError::Value));
+        }
+    };
+    deserializer.end().map_err(JsonTextError::Json)?;
     Ok(value)
 }
 
-struct StrictJsonValueSeed;
+#[derive(Clone, Copy)]
+struct StrictJsonValueSeed<'a> {
+    value_error: Option<&'a RefCell<Option<CoreError>>>,
+}
 
-impl<'de> DeserializeSeed<'de> for StrictJsonValueSeed {
+impl StrictJsonValueSeed<'_> {
+    fn plain() -> Self {
+        Self { value_error: None }
+    }
+
+    fn tracking<'a>(value_error: &'a RefCell<Option<CoreError>>) -> StrictJsonValueSeed<'a> {
+        StrictJsonValueSeed {
+            value_error: Some(value_error),
+        }
+    }
+
+    fn value_error<E>(self, error: CoreError) -> E
+    where
+        E: DeError,
+    {
+        match self.value_error {
+            Some(value_error) => {
+                let message = error.to_string();
+                if value_error.borrow().is_none() {
+                    *value_error.borrow_mut() = Some(error);
+                }
+                E::custom(message)
+            }
+            None => E::custom(error),
+        }
+    }
+
+    fn validate_string_len<E>(self, len: usize) -> Result<(), E>
+    where
+        E: DeError,
+    {
+        validate_json_string_len(len).map_err(|err| self.value_error(err))
+    }
+
+    fn ensure_container_len<E>(self, len: usize) -> Result<(), E>
+    where
+        E: DeError,
+    {
+        ensure_json_container_len(len).map_err(|err| self.value_error(err))
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for StrictJsonValueSeed<'_> {
     type Value = SerdeJsonValue;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(StrictJsonValueVisitor)
+        deserializer.deserialize_any(StrictJsonValueVisitor { seed: self })
     }
 }
 
-struct StrictJsonValueVisitor;
+struct StrictJsonValueVisitor<'a> {
+    seed: StrictJsonValueSeed<'a>,
+}
 
-impl<'de> Visitor<'de> for StrictJsonValueVisitor {
+impl<'de> Visitor<'de> for StrictJsonValueVisitor<'_> {
     type Value = SerdeJsonValue;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -326,11 +409,19 @@ impl<'de> Visitor<'de> for StrictJsonValueVisitor {
         Ok(SerdeJsonValue::Number(number))
     }
 
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: DeError,
+    {
+        self.seed.validate_string_len(value.len())?;
         Ok(SerdeJsonValue::String(value.to_owned()))
     }
 
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: DeError,
+    {
+        self.seed.validate_string_len(value.len())?;
         Ok(SerdeJsonValue::String(value))
     }
 
@@ -346,7 +437,7 @@ impl<'de> Visitor<'de> for StrictJsonValueVisitor {
     where
         D: Deserializer<'de>,
     {
-        StrictJsonValueSeed.deserialize(deserializer)
+        self.seed.deserialize(deserializer)
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -354,9 +445,10 @@ impl<'de> Visitor<'de> for StrictJsonValueVisitor {
         A: SeqAccess<'de>,
     {
         let mut values = Vec::with_capacity(seq.size_hint().unwrap_or(0));
-        while let Some(value) = seq.next_element_seed(StrictJsonValueSeed)? {
+        while let Some(value) = seq.next_element_seed(self.seed)? {
             values.push(value);
         }
+        self.seed.ensure_container_len(values.len())?;
         Ok(SerdeJsonValue::Array(values))
     }
 
@@ -364,17 +456,23 @@ impl<'de> Visitor<'de> for StrictJsonValueVisitor {
     where
         A: MapAccess<'de>,
     {
-        let mut seen = BTreeSet::new();
         let mut values = SerdeJsonMap::new();
         while let Some(key) = map.next_key::<String>()? {
-            if !seen.insert(key.clone()) {
-                return Err(A::Error::custom(format!(
-                    "duplicate JSON object key '{key}'"
-                )));
+            self.seed.validate_string_len(key.len())?;
+            match values.entry(key) {
+                SerdeJsonMapEntry::Vacant(entry) => {
+                    let value = map.next_value_seed(self.seed)?;
+                    entry.insert(value);
+                }
+                SerdeJsonMapEntry::Occupied(entry) => {
+                    return Err(A::Error::custom(format!(
+                        "duplicate JSON object key '{}'",
+                        entry.key()
+                    )));
+                }
             }
-            let value = map.next_value_seed(StrictJsonValueSeed)?;
-            values.insert(key, value);
         }
+        self.seed.ensure_container_len(values.len())?;
         Ok(SerdeJsonValue::Object(values))
     }
 }
@@ -462,41 +560,6 @@ fn merge_patch_value(target: &mut SerdeJsonValue, patch: &SerdeJsonValue) {
         } else {
             let entry = target.entry(key.clone()).or_insert(SerdeJsonValue::Null);
             merge_patch_value(entry, value);
-        }
-    }
-}
-
-fn write_json_canonical(value: &SerdeJsonValue, output: &mut String) {
-    match value {
-        SerdeJsonValue::Null => output.push_str("null"),
-        SerdeJsonValue::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
-        SerdeJsonValue::Number(value) => output.push_str(&value.to_string()),
-        SerdeJsonValue::String(value) => {
-            output.push_str(&serde_json::to_string(value).expect("JSON string rendering succeeds"));
-        }
-        SerdeJsonValue::Array(values) => {
-            output.push('[');
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    output.push(',');
-                }
-                write_json_canonical(value, output);
-            }
-            output.push(']');
-        }
-        SerdeJsonValue::Object(values) => {
-            output.push('{');
-            let mut entries = values.iter().collect::<Vec<_>>();
-            entries.sort_unstable_by(|lhs, rhs| lhs.0.cmp(rhs.0));
-            for (index, (key, value)) in entries.into_iter().enumerate() {
-                if index > 0 {
-                    output.push(',');
-                }
-                output.push_str(&serde_json::to_string(key).expect("JSON key rendering succeeds"));
-                output.push(':');
-                write_json_canonical(value, output);
-            }
-            output.push('}');
         }
     }
 }

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use rustc_hash::FxHashSet;
 use selene_core::{DbString, NodeId, Value};
+use smallvec::SmallVec;
 
 use crate::{
     AnalyzedType, BindingElement, BindingId, BindingTableColumn, BindingTableSchema,
@@ -446,7 +447,7 @@ pub(crate) fn node_at_index(
 }
 
 pub(crate) fn merge_rows(left: &Binding, right: &Binding, schema: &BindingTableSchema) -> Binding {
-    let mut values = Vec::with_capacity(schema.columns.len());
+    let mut values = SmallVec::<[Value; 8]>::with_capacity(schema.columns.len());
     for index in 0..schema.columns.len() {
         let left_value = left.get(index).cloned().unwrap_or(Value::Null);
         // Null is the row-local unbound sentinel; prefer the bound side.
@@ -456,7 +457,7 @@ pub(crate) fn merge_rows(left: &Binding, right: &Binding, schema: &BindingTableS
             values.push(left_value);
         }
     }
-    Binding::new(values)
+    Binding::from_parts(values, SmallVec::new())
 }
 
 pub(crate) fn resolve_key(

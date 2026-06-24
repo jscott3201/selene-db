@@ -1,7 +1,7 @@
 use roaring::RoaringBitmap;
 use selene_core::{
     CancellationChecker, CoreError, DbString, NodeId, Value, VectorMetric, VectorMetricQuery,
-    VectorTopK, VectorValue,
+    VectorTopK, VectorValue, vector_squared_norm,
 };
 
 use super::{
@@ -104,6 +104,7 @@ impl SeleneGraph {
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorTopK<NodeId>>, VectorSearchError> {
         let mut top_ks = new_batch_top_ks(scorers.len(), k);
+        let use_candidate_norms = uses_cosine_metric(scorers);
         let mut rows_since_check = 0usize;
         for raw_row in rows.iter() {
             rows_since_check += 1;
@@ -111,7 +112,14 @@ impl SeleneGraph {
                 checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
-            self.push_batch_row(label, property, scorers, &mut top_ks, raw_row)?;
+            self.push_batch_row(
+                label,
+                property,
+                scorers,
+                &mut top_ks,
+                raw_row,
+                use_candidate_norms,
+            )?;
         }
         if rows_since_check > 0 {
             checker.note_nodes_scanned(rows_since_check)?;
@@ -128,8 +136,16 @@ impl SeleneGraph {
         rows: &[u32],
     ) -> Result<Vec<VectorTopK<NodeId>>, VectorSearchError> {
         let mut top_ks = new_batch_top_ks(scorers.len(), k);
+        let use_candidate_norms = uses_cosine_metric(scorers);
         for &raw_row in rows {
-            self.push_batch_row(label, property, scorers, &mut top_ks, raw_row)?;
+            self.push_batch_row(
+                label,
+                property,
+                scorers,
+                &mut top_ks,
+                raw_row,
+                use_candidate_norms,
+            )?;
         }
         Ok(top_ks)
     }
@@ -141,6 +157,7 @@ impl SeleneGraph {
         scorers: &[VectorMetricQuery<'_>],
         top_ks: &mut [VectorTopK<NodeId>],
         raw_row: u32,
+        use_candidate_norms: bool,
     ) -> Result<(), VectorSearchError> {
         if !self.node_store.is_alive(raw_row) {
             return Ok(());
@@ -167,12 +184,28 @@ impl SeleneGraph {
         let Some(Value::Vector(vector)) = properties.get(property) else {
             return Ok(());
         };
-        for (scorer, top_k) in scorers.iter().zip(top_ks) {
-            let distance = scorer.distance(vector).map_err(GraphError::from)?;
-            top_k.push_distance(node_id, distance);
+        if use_candidate_norms {
+            let candidate_squared_norm = vector_squared_norm(vector);
+            for (scorer, top_k) in scorers.iter().zip(top_ks) {
+                let distance = scorer
+                    .distance_with_candidate_squared_norm(vector, candidate_squared_norm)
+                    .map_err(GraphError::from)?;
+                top_k.push_distance(node_id, distance);
+            }
+        } else {
+            for (scorer, top_k) in scorers.iter().zip(top_ks) {
+                let distance = scorer.distance(vector).map_err(GraphError::from)?;
+                top_k.push_distance(node_id, distance);
+            }
         }
         Ok(())
     }
+}
+
+fn uses_cosine_metric(scorers: &[VectorMetricQuery<'_>]) -> bool {
+    scorers
+        .first()
+        .is_some_and(|scorer| scorer.metric() == VectorMetric::Cosine)
 }
 
 fn new_batch_top_ks(query_count: usize, k: usize) -> Vec<VectorTopK<NodeId>> {

@@ -100,6 +100,26 @@ fn property_diff_accepts_singleton_set_input() {
 }
 
 #[test]
+fn property_diff_accepts_canonical_set_input() {
+    let first = dbs("change.property.canonical.a");
+    let second = dbs("change.property.canonical.b");
+    let diff = PropertyDiff::new(
+        [
+            (first.clone(), Value::Int(1)),
+            (second.clone(), Value::Int(2)),
+        ],
+        [],
+    )
+    .unwrap();
+
+    assert_eq!(
+        diff.set.as_slice(),
+        &[(first, Value::Int(1)), (second, Value::Int(2))]
+    );
+    assert!(diff.removed.is_empty());
+}
+
+#[test]
 fn property_diff_set_includes_null_value() {
     let property = dbs("change.null");
     let diff = PropertyDiff::new([(property.clone(), Value::Null)], []).unwrap();
@@ -126,6 +146,36 @@ fn property_diff_rejects_overlapping_key() {
             kind: "property",
             ..
         }
+    ));
+}
+
+#[test]
+fn diffs_report_lowest_sorted_overlap() {
+    let beta = dbs("change.overlap.beta");
+    let delta = dbs("change.overlap.delta");
+    let gamma = dbs("change.overlap.gamma");
+
+    let label_err = LabelDiff::new(
+        [gamma.clone(), beta.clone()],
+        [delta.clone(), beta.clone(), gamma.clone()],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        label_err,
+        CoreError::OverlappingDiff { key, .. } if key == beta
+    ));
+
+    let property_err = PropertyDiff::new(
+        [
+            (gamma.clone(), Value::Int(3)),
+            (beta.clone(), Value::Int(2)),
+        ],
+        [delta, beta.clone(), gamma],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        property_err,
+        CoreError::OverlappingDiff { key, .. } if key == beta
     ));
 }
 

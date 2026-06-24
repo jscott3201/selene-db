@@ -1,7 +1,7 @@
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use selene_core::{DbString, LabelSet, NodeId, PropertyMap, Value};
 
@@ -10,6 +10,8 @@ use crate::error::GraphResult;
 use crate::graph::{SeleneGraph, TextIndexEntry};
 
 type TextIndexMap = FxHashMap<(DbString, DbString), TextIndexEntry>;
+type CandidateLabels<'a> = SmallVec<[&'a DbString; 4]>;
+type CandidateProperties<'a> = SmallVec<[&'a DbString; 4]>;
 
 pub(crate) fn apply_node_create(
     indexes: &mut TextIndexMap,
@@ -62,44 +64,33 @@ pub(crate) fn apply_node_update(
     row: u32,
     node_id: NodeId,
 ) {
-    let candidates = candidate_keys(indexes, old_labels, old_props, new_labels, new_props);
-    for (label, property) in candidates {
-        match (
-            indexable_text(old_labels, old_props, &label, &property),
-            indexable_text(new_labels, new_props, &label, &property),
-        ) {
-            (Some(old_text), Some(new_text)) if old_text == new_text => {}
-            (Some(_), Some(new_text)) => {
-                insert_commit(
-                    indexes,
-                    label.clone(),
-                    property.clone(),
-                    new_text,
-                    row,
-                    node_id,
-                );
+    if indexes.is_empty() {
+        return;
+    }
+    let labels = candidate_labels(old_labels, new_labels);
+    let properties = candidate_properties(old_props, new_props);
+    for label in labels {
+        for property in &properties {
+            let key = (label.clone(), (*property).clone());
+            let Some(entry) = indexes.get_mut(&key) else {
+                continue;
+            };
+            match (
+                indexable_text(old_labels, old_props, label, property),
+                indexable_text(new_labels, new_props, label, property),
+            ) {
+                (Some(old_text), Some(new_text)) if old_text == new_text => {}
+                (Some(_), Some(new_text)) => {
+                    Arc::make_mut(&mut entry.index).insert_document(row, node_id, new_text);
+                }
+                (Some(_), None) => {
+                    Arc::make_mut(&mut entry.index).remove_document(row, node_id);
+                }
+                (None, Some(new_text)) => {
+                    Arc::make_mut(&mut entry.index).insert_document(row, node_id, new_text);
+                }
+                (None, None) => {}
             }
-            (Some(old_text), None) => {
-                remove_commit(
-                    indexes,
-                    label.clone(),
-                    property.clone(),
-                    old_text,
-                    row,
-                    node_id,
-                );
-            }
-            (None, Some(new_text)) => {
-                insert_commit(
-                    indexes,
-                    label.clone(),
-                    property.clone(),
-                    new_text,
-                    row,
-                    node_id,
-                );
-            }
-            (None, None) => {}
         }
     }
 }
@@ -120,36 +111,6 @@ pub(crate) fn rebuild_text_indexes(graph: &mut SeleneGraph) -> GraphResult<()> {
     Ok(())
 }
 
-fn candidate_keys(
-    indexes: &TextIndexMap,
-    old_labels: &LabelSet,
-    old_props: &PropertyMap,
-    new_labels: &LabelSet,
-    new_props: &PropertyMap,
-) -> BTreeSet<(DbString, DbString)> {
-    if indexes.is_empty() {
-        return BTreeSet::new();
-    }
-    let mut labels: BTreeSet<DbString> = BTreeSet::new();
-    labels.extend(old_labels.iter().cloned());
-    labels.extend(new_labels.iter().cloned());
-
-    let mut properties: BTreeSet<DbString> = BTreeSet::new();
-    properties.extend(old_props.keys().cloned());
-    properties.extend(new_props.keys().cloned());
-
-    let mut candidates = BTreeSet::new();
-    for label in &labels {
-        for property in &properties {
-            let key = (label.clone(), property.clone());
-            if indexes.contains_key(&key) {
-                candidates.insert(key);
-            }
-        }
-    }
-    candidates
-}
-
 fn indexable_text<'a>(
     labels: &LabelSet,
     props: &'a PropertyMap,
@@ -162,6 +123,37 @@ fn indexable_text<'a>(
     match props.get(property) {
         Some(Value::String(text)) => Some(text.as_str()),
         _ => None,
+    }
+}
+
+fn candidate_labels<'a>(old_labels: &'a LabelSet, new_labels: &'a LabelSet) -> CandidateLabels<'a> {
+    let mut labels = CandidateLabels::new();
+    for label in old_labels.iter() {
+        push_unique(&mut labels, label);
+    }
+    for label in new_labels.iter() {
+        push_unique(&mut labels, label);
+    }
+    labels
+}
+
+fn candidate_properties<'a>(
+    old_props: &'a PropertyMap,
+    new_props: &'a PropertyMap,
+) -> CandidateProperties<'a> {
+    let mut properties = CandidateProperties::new();
+    for property in old_props.keys() {
+        push_unique(&mut properties, property);
+    }
+    for property in new_props.keys() {
+        push_unique(&mut properties, property);
+    }
+    properties
+}
+
+fn push_unique<'a>(values: &mut SmallVec<[&'a DbString; 4]>, value: &'a DbString) {
+    if values.iter().all(|existing| *existing != value) {
+        values.push(value);
     }
 }
 

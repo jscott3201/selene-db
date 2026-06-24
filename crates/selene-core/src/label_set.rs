@@ -207,11 +207,13 @@ where
 
 impl FromIterator<DbString> for LabelSet {
     fn from_iter<T: IntoIterator<Item = DbString>>(iter: T) -> Self {
-        let mut set = Self::new();
-        for label in iter {
-            set.insert(label);
+        let mut labels: SmallVec<[DbString; 3]> = iter.into_iter().collect();
+        if labels.len() <= 1 || labels.windows(2).all(|pair| pair[0] < pair[1]) {
+            return Self(labels);
         }
-        set
+        labels.sort_unstable();
+        labels.dedup();
+        Self(labels)
     }
 }
 
@@ -251,6 +253,15 @@ mod tests {
         let b = label("ls.sorted.b");
         let set = LabelSet::from_iter([b.clone(), a.clone()]);
         assert_eq!(set.iter().cloned().collect::<Vec<_>>(), vec![a, b]);
+    }
+
+    #[test]
+    fn from_iter_accepts_canonical_input() {
+        let a = label("ls.canonical.a");
+        let b = label("ls.canonical.b");
+        let set = LabelSet::from_iter([a.clone(), b.clone()]);
+        assert_eq!(set.iter().cloned().collect::<Vec<_>>(), vec![a, b]);
+        assert!(set.sorted_deduped_invariant_holds());
     }
 
     #[test]

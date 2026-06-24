@@ -22,6 +22,11 @@ fn props(body: &DbString, text: &str, namespace: &DbString, scope: &str) -> Prop
     .expect("test property map is valid")
 }
 
+fn edge_props(property: &DbString, value: &str) -> PropertyMap {
+    PropertyMap::from_pairs([(property.clone(), Value::String(db_string(value)))])
+        .expect("test edge property map is valid")
+}
+
 fn rows(output: StatementOutput) -> BindingTable {
     match output {
         StatementOutput::Rows(table) => table,
@@ -114,6 +119,67 @@ fn seed_fixture(graph: &SharedGraph, with_text_index: bool) -> Vec<NodeId> {
     visible
 }
 
+fn seed_edge_filter_fixture(
+    graph: &SharedGraph,
+    with_text_index: bool,
+) -> (Vec<NodeId>, Vec<NodeId>) {
+    let doc = db_string("TextDoc");
+    let commit = db_string("Commit");
+    let edge = db_string("AT_COMMIT");
+    let body = db_string("body");
+    let namespace = db_string("namespace");
+    let commit_sha = db_string("commit_sha");
+    let mut txn = graph.begin_write();
+    let mut mutator = txn.mutator();
+    let specs = [
+        ("visible", "abc", "graph graph memory retrieval"),
+        ("hidden", "abc", "graph retrieval retrieval"),
+        ("visible", "def", "retrieval graph memory"),
+        ("hidden", "def", "graph graph"),
+        ("visible", "abc", "unrelated archive"),
+    ];
+    let commit_node = mutator
+        .create_node(LabelSet::single(commit), PropertyMap::new())
+        .expect("commit node inserts");
+    let mut abc_nodes = Vec::new();
+    let mut visible_abc_nodes = Vec::new();
+    for (scope, sha, text) in specs {
+        let node = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, text, &namespace, scope),
+            )
+            .expect("text node inserts");
+        mutator
+            .create_edge(
+                edge.clone(),
+                commit_node,
+                node,
+                edge_props(&commit_sha, sha),
+            )
+            .expect("commit edge inserts");
+        if sha == "abc" {
+            abc_nodes.push(node);
+            if scope == "visible" {
+                visible_abc_nodes.push(node);
+            }
+        }
+    }
+    mutator
+        .create_property_index(doc.clone(), namespace.clone(), TypedIndexKind::String)
+        .expect("namespace index creates");
+    mutator
+        .create_edge_property_index(edge, commit_sha, TypedIndexKind::String)
+        .expect("commit edge index creates");
+    if with_text_index {
+        mutator
+            .create_text_index(doc, body)
+            .expect("text index creates");
+    }
+    txn.commit().expect("seed commits");
+    (abc_nodes, visible_abc_nodes)
+}
+
 fn assert_filtered_text_search_matches_full_rust_filter(graph_id: u64, with_text_index: bool) {
     let graph = graph(graph_id);
     let visible = seed_fixture(&graph, with_text_index);
@@ -185,4 +251,68 @@ fn text_search_filter_matches_exact_scan_full_ranking() {
 #[test]
 fn text_search_filter_matches_maintained_text_index_full_ranking() {
     assert_filtered_text_search_matches_full_rust_filter(431_702, true);
+}
+
+fn assert_edge_filtered_text_search_matches_full_rust_filter(graph_id: u64, with_text_index: bool) {
+    let graph = graph(graph_id);
+    let (abc_nodes, visible_abc_nodes) = seed_edge_filter_fixture(&graph, with_text_index);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        db_string("abc"),
+        Value::List(vec![Value::String(db_string("abc"))]),
+    );
+    session.bind_parameter(
+        db_string("visible"),
+        Value::List(vec![Value::String(db_string("visible"))]),
+    );
+
+    let unfiltered = execute_rows(
+        &mut session,
+        "CALL selene.text_search_nodes('TextDoc', 'body', 'graph retrieval', 10) \
+         YIELD node_id, score",
+        &registry,
+    );
+    let expected_edge = hit_pairs(&unfiltered)
+        .into_iter()
+        .filter(|(node, _)| abc_nodes.contains(node))
+        .take(3)
+        .collect::<Vec<_>>();
+    let expected_composed = hit_pairs(&unfiltered)
+        .into_iter()
+        .filter(|(node, _)| visible_abc_nodes.contains(node))
+        .take(3)
+        .collect::<Vec<_>>();
+
+    let edge_filtered = execute_rows(
+        &mut session,
+        "CALL selene.text_search_nodes(
+             'TextDoc', 'body', 'graph retrieval', 3,
+             NULL, NULL,
+             'AT_COMMIT', 'commit_sha', $abc, 'target'
+         ) YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(hit_pairs(&edge_filtered), expected_edge);
+
+    let composed = execute_rows(
+        &mut session,
+        "CALL selene.text_search_nodes(
+             'TextDoc', 'body', 'graph retrieval', 3,
+             'namespace', $visible,
+             'AT_COMMIT', 'commit_sha', $abc, 'target'
+         ) YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(hit_pairs(&composed), expected_composed);
+}
+
+#[test]
+fn text_search_edge_filter_matches_exact_scan_full_ranking() {
+    assert_edge_filtered_text_search_matches_full_rust_filter(431_703, false);
+}
+
+#[test]
+fn text_search_edge_filter_matches_maintained_text_index_full_ranking() {
+    assert_edge_filtered_text_search_matches_full_rust_filter(431_704, true);
 }

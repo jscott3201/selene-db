@@ -1,7 +1,7 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use selene_core::{Change, NodeId, Origin, PropertyMap, db_string};
+use selene_core::{Change, NodeId, Origin, PropertyMap, Value, db_string};
 
 use super::*;
 use crate::{MAX_PRINCIPAL_BYTES, WAL_FILE_HEADER_LEN, WalReader};
@@ -22,6 +22,18 @@ fn changes() -> Vec<Change> {
         id: NodeId::new(1),
         labels: selene_core::LabelSet::single(db_string("writer.node").unwrap()),
         properties: PropertyMap::new(),
+    }]
+}
+
+fn bytes_change(byte_count: usize) -> Vec<Change> {
+    vec![Change::NodeCreated {
+        id: NodeId::new(1),
+        labels: selene_core::LabelSet::single(db_string("writer.node").unwrap()),
+        properties: PropertyMap::from_pairs([(
+            db_string("writer.bytes").unwrap(),
+            Value::Bytes(Arc::from(vec![0x5a_u8; byte_count])),
+        )])
+        .unwrap(),
     }]
 }
 
@@ -56,6 +68,35 @@ fn append_assigns_monotonic_sequences() {
         2
     );
     assert_eq!(writer.last_sequence(), 2);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn record_buffer_reuse_does_not_retain_huge_entries() {
+    let path = temp_path("record-buffer-cap");
+    let mut writer = WalWriter::open_with_compression(
+        &path,
+        WalConfig {
+            sync_policy: SyncPolicy::OnFlushOnly,
+            snapshot_seq: 0,
+        },
+        WalCompression::disabled(),
+    )
+    .unwrap();
+    writer
+        .append(
+            HlcTimestamp::new(1, 0),
+            Origin::Local,
+            None,
+            &bytes_change(WAL_RECORD_BUFFER_RETAIN_LIMIT + 1024),
+        )
+        .unwrap();
+    assert_eq!(writer.record.capacity(), 0);
+
+    writer
+        .append(HlcTimestamp::new(2, 0), Origin::Local, None, &changes())
+        .unwrap();
+    assert!(writer.record.capacity() <= WAL_RECORD_BUFFER_RETAIN_LIMIT);
     let _ = fs::remove_file(path);
 }
 

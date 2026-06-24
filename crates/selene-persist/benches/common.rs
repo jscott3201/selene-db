@@ -239,10 +239,19 @@ pub(crate) fn wal_file_len_with_payload_compression(
 }
 
 pub(crate) fn write_snapshot(dir: &Path, sequence: u64, bytes: usize) -> PathBuf {
+    write_snapshot_with_compression(dir, sequence, bytes, SectionCompression::DEFAULT)
+}
+
+pub(crate) fn write_snapshot_with_compression(
+    dir: &Path,
+    sequence: u64,
+    bytes: usize,
+    compression: SectionCompression,
+) -> PathBuf {
     let mut builder = SnapshotBuilder::new(SnapshotConfig {
         dir: dir.to_path_buf(),
         sequence,
-        compression: SectionCompression::PerSection { level: 1 },
+        compression,
         fsync: false,
     });
     let section_tags = [*b"DAT0", *b"DAT1", *b"DAT2", *b"DAT3", *b"DAT4"];

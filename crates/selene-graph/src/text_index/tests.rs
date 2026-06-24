@@ -243,6 +243,127 @@ fn text_index_reports_stats_and_memory() {
 }
 
 #[test]
+fn text_index_interns_document_terms_with_posting_keys() {
+    let graph = SharedGraph::new(GraphId::new(433_902));
+    let doc = db_string("TextInternedTermsDoc");
+    let body = db_string("body");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("agent graph graph"))),
+            )
+            .unwrap();
+        mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("agent graph retrieval"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let index = graph.build_text_index(&doc, &body).unwrap();
+
+    assert_eq!(index.term_count(), 3);
+    for terms in index.document_terms.values() {
+        for term in terms.iter() {
+            let (posting_term, _) = index
+                .postings
+                .get_key_value(term.as_ref())
+                .expect("document term has postings key");
+            assert!(std::sync::Arc::ptr_eq(term, posting_term));
+        }
+    }
+}
+
+#[test]
+fn text_index_replacement_updates_shared_terms_in_place() {
+    let graph = SharedGraph::new(GraphId::new(433_904));
+    let doc = db_string("TextReplacementDoc");
+    let body = db_string("body");
+    let target;
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        target = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("agent graph graph stale"))),
+            )
+            .unwrap();
+        mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("agent memory current"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let snapshot = graph.read();
+    let row = snapshot
+        .row_for_node_id(target)
+        .expect("target row remains live")
+        .get();
+    let mut index = snapshot.build_text_index(&doc, &body).unwrap();
+    index.insert_document(row, target, "agent graph current current");
+
+    assert_eq!(index.document_count(), 2);
+    assert_eq!(index.stats().total_document_len, 7);
+    assert_eq!(index.search("stale", 10), Vec::new());
+    assert_eq!(
+        index
+            .search("graph", 10)
+            .iter()
+            .map(|hit| hit.node_id)
+            .collect::<Vec<_>>(),
+        vec![target]
+    );
+    let current_postings = index
+        .postings
+        .get("current")
+        .expect("current postings exist");
+    let target_posting = current_postings
+        .iter()
+        .find(|posting| posting.node_id == target)
+        .expect("target has current posting");
+    assert_eq!(target_posting.term_count, 2);
+}
+
+#[test]
+fn text_index_counts_terms_after_inline_accumulator_spill() {
+    let graph = SharedGraph::new(GraphId::new(433_903));
+    let doc = db_string("TextSpilledTermsDoc");
+    let body = db_string("body");
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(
+                    &body,
+                    Value::String(db_string(
+                        "alpha beta gamma delta epsilon zeta eta theta iota kappa alpha kappa",
+                    )),
+                ),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let index = graph.build_text_index(&doc, &body).unwrap();
+
+    assert_eq!(index.term_count(), 10);
+    assert_eq!(index.posting_count(), 10);
+    assert_eq!(index.stats().total_document_len, 12);
+    assert_eq!(index.postings["alpha"][0].term_count, 2);
+    assert_eq!(index.postings["kappa"][0].term_count, 2);
+}
+
+#[test]
 fn text_index_sparse_label_build_does_not_keep_label_row_capacity() {
     let graph = SharedGraph::new(GraphId::new(433_901));
     let doc = db_string("TextSparseDoc");
@@ -393,6 +514,58 @@ fn text_index_candidate_search_matches_global_filter() {
 }
 
 #[test]
+fn text_index_candidate_search_full_cover_matches_global() {
+    let graph = SharedGraph::new(GraphId::new(433_017));
+    let doc = db_string("TextCandidateFullCoverDoc");
+    let body = db_string("body");
+    let node_a;
+    let node_b;
+    let node_c;
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        node_a = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("graph memory graph"))),
+            )
+            .unwrap();
+        node_b = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("graph retrieval"))),
+            )
+            .unwrap();
+        node_c = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("memory retrieval graph"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    let index = graph.build_text_index(&doc, &body).unwrap();
+    let global = index.search("graph memory", 10);
+
+    assert_eq!(
+        index.search_candidates("graph memory", &[node_a, node_b, node_c], 10),
+        global
+    );
+    assert_eq!(
+        index.search_candidates("graph memory", &[node_c, node_b, node_a], 10),
+        global
+    );
+    assert_eq!(
+        index.search_candidates(
+            "graph memory",
+            &[node_c, node_b, node_a, node_a, NodeId::new(999_999)],
+            10,
+        ),
+        global
+    );
+}
+
+#[test]
 fn text_index_candidate_search_dedups_and_ignores_unindexed_nodes() {
     let graph = SharedGraph::new(GraphId::new(433_007));
     let doc = db_string("TextCandidateDedupDoc");
@@ -423,6 +596,12 @@ fn text_index_candidate_search_dedups_and_ignores_unindexed_nodes() {
 
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].node_id, indexed);
+
+    let sorted_hits =
+        index.search_candidates("needle", &[indexed, non_string, NodeId::new(999_999)], 10);
+
+    assert_eq!(sorted_hits.len(), 1);
+    assert_eq!(sorted_hits[0].node_id, indexed);
 }
 
 #[test]

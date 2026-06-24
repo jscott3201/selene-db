@@ -11,7 +11,7 @@ use std::fs;
 
 use selene_core::{
     Change, EdgeEndpointDef as CoreEdgeEndpointDef, GraphId, GraphTypeId, LabelSet, NodeTypeRef,
-    SchemaChange, db_string,
+    PropertyValueType, SchemaChange, db_string,
 };
 use smallvec::smallvec;
 
@@ -97,6 +97,90 @@ fn wal_replay_oneof_edge_type() {
         }
         other => panic!("expected OneOf target endpoint, got {other:?}"),
     }
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn wal_replay_altered_oneof_edge_type() {
+    let dir = temp_dir("wal-replay-oneof-altered");
+    let graph_id = GraphId::new(11314);
+    let base = three_node_type_graph();
+    let shared = SharedGraph::builder(graph_id)
+        .bound_to(base.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let rel = db_string("recover.oneof.altered.affiliated_with").unwrap();
+    let outcome = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        mutator
+            .create_edge_type(
+                rel.clone(),
+                rel.clone(),
+                EdgeEndpointDef::one_of([0, 1]),
+                EdgeEndpointDef::NodeType(2),
+                Vec::<PropertyTypeDef>::new(),
+                ValidationMode::Strict,
+            )
+            .unwrap();
+        mutator
+            .alter_edge_type(
+                rel,
+                Some(EdgeEndpointDef::one_of([0, 1, 2])),
+                None,
+                vec![PropertyTypeDef {
+                    name: db_string("commit_sha").unwrap(),
+                    value_type: PropertyValueType::String,
+                    list_element_type: None,
+                    required: false,
+                    default: None,
+                    immutable: false,
+                    unique: false,
+                    decimal_type: None,
+                    character_string_type: None,
+                    byte_string_type: None,
+                    record_field_types: None,
+                }],
+            )
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    append_wal(&dir, 0, &outcome.changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    let graph_type = recovered.graph_type().unwrap();
+    assert_eq!(graph_type.edge_types.len(), 1);
+    let edge_type = &graph_type.edge_types[0];
+    assert_eq!(
+        edge_type.source_node_type,
+        EdgeEndpointDef::OneOf(vec![0, 1, 2])
+    );
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(2));
+    let property = edge_type
+        .properties
+        .iter()
+        .find(|property| property.name == db_string("commit_sha").unwrap())
+        .expect("altered optional property recovered");
+    assert_eq!(property.value_type, PropertyValueType::String);
+    assert!(!property.required);
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [
+            Change::SchemaChanged {
+                change: SchemaChange::EdgeTypeAddedV2 { .. },
+                ..
+            },
+            Change::SchemaChanged {
+                change: SchemaChange::EdgeTypeDropped { .. },
+                ..
+            },
+            Change::SchemaChanged {
+                change: SchemaChange::EdgeTypeAddedV2 { .. },
+                ..
+            }
+        ]
+    ));
     let _ = fs::remove_dir_all(dir);
 }
 

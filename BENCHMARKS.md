@@ -139,6 +139,17 @@ The same bin also covers open and compact property-map construction paths so
 `from_pairs` stays linearithmic rather than repeated-insert quadratic for
 schema- or record-shaped maps with many properties, plus common one-property
 compact-map construction, compact-map encoding, and mutation diff constructors.
+Already-canonical `from_pairs` inputs are tracked separately from reverse-sorted
+inputs so the constructor can skip redundant sort/dedup work without regressing
+the non-canonical path. Compact-map 256-key rows mirror that guard for closed
+schema-shaped maps. Standard/compact property-map postcard encode rows pin the
+canonical WAL/snapshot serialization path separately from construction cost.
+The `core_change_diff/*` rows cover canonical WAL diff constructors so mutation
+payload construction and postcard serialization stay cheap when callers already
+have sorted property keys.
+The `core_label_set/*` rows cover high-cardinality label-set construction; most
+runtime rows stay at one to three labels, but schema and test fixtures can build
+larger sets and should not pay repeated insertion shifts.
 The `core_vector_value/*` rows are the first native vector
 baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
 round-trip cost at common embedding dimensions. The `core_vector_distance/*`
@@ -171,11 +182,32 @@ production accelerator API.
 |---|---:|---|
 | `core_value_clone/vec_mixed_1024` | 4.41 µs | Clone a 1024-element mixed-variant `Vec<Value>`. Quick local A/B after `DbString` moved to shared storage: 4.63 µs → 4.41 µs. |
 | `core_value_clone/property_map_5` | 45.5 ns | Clone a 5-key `PropertyMap` (Int/Float/String/Duration/ZonedDateTime). Quick local A/B after `DbString` moved to shared storage: 55.2 ns → 45.5 ns. |
+| `core_value_clone/json_canonical_string_metadata` | 184.98 ns (quick) | Render a nested agent-memory JSON metadata document to canonical compact JSON. Latest whole-value serde_json render A/B: 336.64 ns → 184.98 ns by delegating compact rendering to serde_json over the already-sorted object map. Earlier object-order guard: 419.17 ns → 386.24 ns. |
+| `core_value_clone/json_canonical_string_object64` | 3.0605 µs (quick) | Render a 64-field JSON object with nested scalar metadata values. Latest whole-value serde_json render A/B: 5.0618 µs → 3.0605 µs with the same canonical map-order invariant. Earlier object-order guard: 6.2762 µs → 5.8432 µs. |
+| `core_value_clone/json_parse_metadata` | 616.50 ns (quick) | Parse and validate the nested agent-memory JSON metadata document, including duplicate-key detection. Latest PR-local parse-validation A/B: 633.88 ns → 616.50 ns by enforcing JSON caps during strict deserialization and skipping the post-parse validation walk, while using a single object-map entry lookup for duplicate keys. Earlier map-backed duplicate check: 722.23 ns → 572.00 ns. |
+| `core_value_clone/json_parse_object64` | 8.7265 µs (quick) | Parse and validate a 64-field JSON object with nested scalar metadata values. Latest PR-local parse-validation A/B: 10.651 µs → 8.7265 µs with the same fused validation and single-lookup duplicate-key insertion. Earlier map-backed duplicate check: 13.320 µs → 10.944 µs. |
 | `core_value_clone/property_map_from_pairs_1` | 8.509 ns (quick) | Build a one-property standard `PropertyMap`. PR-local singleton fast path A/B: 20.617 ns → 8.509 ns by returning len 0/1 maps before sort/dedup work. |
 | `core_value_clone/property_map_compact_1` | 22.327 ns (quick) | Build a one-key compact `PropertyMap`. PR-local singleton fast path A/B: 50.580 ns → 22.327 ns by collecting keys/values inline and returning len 0/1 maps before sort/dedup work. |
-| `core_value_clone/property_map_compact_postcard_encode_1` | 35.470 ns (quick) | Encode a canonical one-key compact `PropertyMap` with postcard. PR-local canonical fast path A/B: 60.158 ns → 35.470 ns by reusing length-aligned sorted compact key/value storage instead of rebuilding sorted pairs. |
-| `core_value_clone/property_map_from_pairs_256_reverse` | 2.68 µs (quick) | Build a 256-property map from reverse-sorted pairs. Quick local A/B after `DbString` moved to shared storage: 3.45 µs → 2.68 µs. Singleton fast-path sanity after the change: 2.6669 µs. |
+| `core_value_clone/property_map_compact_postcard_encode_1` | 22.413 ns (quick) | Encode a canonical one-key compact `PropertyMap` with postcard. Latest PR-local borrowed-serde A/B: 35.921 ns → 22.413 ns by serializing canonical key/value storage by reference instead of cloning it before encode. Earlier canonical fast path: 60.158 ns → 35.470 ns by reusing length-aligned sorted compact storage. |
+| `core_value_clone/property_map_from_pairs_256_reverse` | 2.6387 µs (quick) | Build a 256-property map from reverse-sorted pairs. Quick local A/B after `DbString` moved to shared storage: 3.45 µs → 2.68 µs. Canonical-scan guard after the sorted-input fast path: 2.6488 µs → 2.6387 µs. |
+| `core_value_clone/property_map_from_pairs_256_sorted` | 1.6249 µs (quick) | Build a 256-property map from already-canonical pairs. PR-local canonical fast path A/B: 2.5746 µs → 1.6249 µs by reusing the collected sorted entries directly. |
+| `core_value_clone/property_map_standard_postcard_encode_256` | 2.2996 µs (quick) | Encode a canonical 256-entry standard `PropertyMap` with postcard. PR-local borrowed-serde A/B: 3.5841 µs → 2.2996 µs by avoiding clone/sort on already-canonical entries while preserving the non-canonical public-construction fallback. |
+| `core_value_clone/property_map_compact_256_reverse` | 4.7462 µs (quick) | Build a 256-key compact map from reverse-sorted schema keys. PR-local canonical-key guard: 4.7589 µs → 4.7462 µs, preserving the existing sort/dedup path for non-canonical input. |
+| `core_value_clone/property_map_compact_256_sorted` | 1.7334 µs (quick) | Build a 256-key compact map from already-canonical schema keys. PR-local canonical-key fast path A/B: 4.6719 µs → 1.7334 µs by reusing aligned keys/values directly. |
+| `core_value_clone/property_map_compact_postcard_encode_256` | 2.5201 µs (quick) | Encode a canonical 256-key compact `PropertyMap` with postcard. PR-local borrowed-serde A/B: 3.5046 µs → 2.5201 µs by borrowing aligned compact key/value slices instead of cloning them before encode. |
 | `core_change_diff/property_diff_set_1` | 9.0227 ns (quick) | Build a `PropertyDiff` with one set property and no removals. PR-local A/B: 23.291 ns → 9.0227 ns (-61.3%) by collecting directly into inline `SmallVec` storage and skipping sort/dedup for len 0/1 set inputs. |
+| `core_change_diff/property_diff_set_256_reverse` | 2.6632 µs (quick) | Build a 256-property `PropertyDiff` from reverse-sorted set entries. PR-local canonical-set guard: 2.6779 µs → 2.6632 µs, preserving the existing stable sort/dedup path for non-canonical input. |
+| `core_change_diff/property_diff_set_256_sorted` | 1.6691 µs (quick) | Build a 256-property `PropertyDiff` from already-canonical set entries. PR-local canonical-set fast path A/B: 2.5985 µs → 1.6691 µs by skipping redundant sort/dedup work. |
+| `core_change_diff/property_diff_removed_256_sorted` | 719.80 ns (quick) | Build a removal-only `PropertyDiff` with 256 already-canonical removed keys; grounds removed-side constructor and overlap-check cost separately from set-side rows. |
+| `core_change_diff/property_diff_set_removed_128_each_sorted` | 1.3453 µs (quick) | Build a disjoint `PropertyDiff` with 128 canonical set entries and 128 canonical removed keys. PR-local merge-scan overlap A/B: 2.7893 µs → 1.3453 µs (-51.9%) by walking the two sorted key lists once instead of binary-searching every set key. |
+| `core_change_diff/property_diff_postcard_encode_256_sorted` | 2.0383 µs (quick) | Encode a canonical 256-property `PropertyDiff` with postcard. PR-local borrowed-serde A/B: 3.4432 µs → 2.0383 µs by serializing canonical set/removal slices by reference while preserving the public-field sort fallback. |
+| `core_change_diff/label_diff_added_100_reverse` | 636.81 ns (quick) | Build a 100-label `LabelDiff` from reverse-sorted added labels. PR-local canonical-label guard: 636.46 ns → 636.81 ns, preserving the existing sort/dedup path for non-canonical input. |
+| `core_change_diff/label_diff_added_100_sorted` | 411.80 ns (quick) | Build a 100-label `LabelDiff` from already-canonical added labels. PR-local canonical-label fast path A/B: 625.95 ns → 411.80 ns by skipping redundant sort/dedup work. |
+| `core_change_diff/label_diff_removed_100_sorted` | 281.86 ns (quick) | Build a removal-only `LabelDiff` with 100 already-canonical removed labels; complements the existing add-only rows. |
+| `core_change_diff/label_diff_added_removed_50_each_sorted` | 351.75 ns (quick) | Build a disjoint `LabelDiff` with 50 canonical added labels and 50 canonical removed labels. PR-local merge-scan overlap A/B: 815.27 ns → 351.75 ns (-56.9%) by walking the two sorted label lists once instead of binary-searching every added label. |
+| `core_change_diff/label_diff_postcard_encode_100_sorted` | 716.51 ns (quick) | Encode a canonical 100-label `LabelDiff` with postcard. PR-local borrowed-serde A/B: 877.40 ns → 716.51 ns by borrowing canonical added/removed slices instead of cloning before encode. |
+| `core_label_set/from_iter_100_reverse` | 595.93 ns (quick) | Build a 100-label `LabelSet` from reverse-sorted labels. PR-local collect/sort A/B: 3.8124 µs → 605.67 ns by avoiding repeated front insertion shifts. PR-local unstable-sort A/B: 623.36 ns → 595.93 ns (-4.2099%, p=0.00). |
+| `core_label_set/from_iter_100_sorted` | 395.12 ns (quick) | Build a 100-label `LabelSet` from already-canonical labels. PR-local canonical fast path A/B: 2.6632 µs → 395.12 ns by reusing the collected sorted labels directly. |
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
 | `core_vector_value/clone_arc/128/768/1536` | 3.12 ns / 3.12 ns / 3.13 ns (quick) | Clone `VectorValue` shared component storage; intentionally dimension-independent. |
 | `core_vector_value/postcard_roundtrip/128/768/1536` | 240 ns / 1.04 µs / 2.07 µs (quick) | Serialize and deserialize `Value::Vector`, including deserialize-time invariant checks. |
@@ -184,9 +216,48 @@ production accelerator API.
 | `core_vector_distance/negative_inner_product/128/768/1536` | 15.6 ns / 90.0 ns / 179.7 ns (full B9) | Max-inner-product adapter (`-dot`) with lower-is-better ordering; B9 uses four independent dot accumulators for wider vectors. |
 | `core_vector_exact_top_k/squared_euclidean_2048x128_k10` | 39.7 µs (full B9) | Exhaustive exact-search oracle over 2,048 candidates using a bounded max-heap (`O(n log k)`); B9 is noise-flat at this 128-dim width. |
 | `core_vector_exact_top_k/cosine_2048x128_k10` | 51.958 µs (quick) | Bound-query cosine exact top-k over 2,048 candidates; retained-heap replacement now uses `BinaryHeap::peek_mut`, avoiding a pop+push pair when a candidate beats the current worst retained hit. |
+| `core_vector_exact_top_k/squared_euclidean_2048x128_k1` | 38.858 µs (full) | Top-1 companion row for the L2 exact-search oracle over the same 2,048 candidates; keeps single-hit rerank behavior visible separately from the k10 heap envelope. |
+| `core_vector_exact_top_k/cosine_2048x128_k1` | 50.750 µs (full) | Top-1 companion row for bound-query cosine exact search; grounds future single-hit rerank changes without inferring from the k10 row. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x1024_k10` | 12.2 µs / 47.6 µs / 188.3 µs / 750.7 µs (quick) | Product-shaped cosine rerank envelope for the 1024-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x2560_k10` | 29.6 µs / 116.6 µs / 465.1 µs / 1.856 ms (quick) | Product-shaped cosine rerank envelope for the 2560-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x4096_k10` | 47.0 µs / 185.5 µs / 739.3 µs / 2.959 ms (quick) | Product-shaped cosine rerank envelope for the 4096-dim local embedding model. |
+
+PR-local JSON whole-render A/B:
+
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench value_clone --filter json_canonical --save-baseline json-whole-render-before`,
+then the same command with `--baseline json-whole-render-before` after
+delegating `JsonValue::to_canonical_string` to serde_json's compact whole-value
+renderer.
+
+| Bench | Before | After | Delta |
+|---|---:|---:|---:|
+| `core_value_clone/json_canonical_string_metadata` | 336.64 ns | 184.98 ns | -45.382% (`p=0.00`) |
+| `core_value_clone/json_canonical_string_object64` | 5.0618 µs | 3.0605 µs | -39.717% (`p=0.00`) |
+
+PR-local JSON parse duplicate-check A/B:
+
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench value_clone --filter json_parse --save-baseline json-parse-dup-before`,
+then the same command with `--baseline json-parse-dup-before` after replacing
+the side `BTreeSet` duplicate-key tracker with a serde_json object-map lookup.
+
+| Bench | Before | After | Delta |
+|---|---:|---:|---:|
+| `core_value_clone/json_parse_metadata` | 722.23 ns | 572.00 ns | -20.146% (`p=0.00`) |
+| `core_value_clone/json_parse_object64` | 13.320 µs | 10.944 µs | -17.938% (`p=0.00`) |
+
+PR-local JSON parse-validation A/B:
+
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench value_clone --filter json_parse --save-baseline json-parse-validate-fuse-pre`,
+then the same command with `--baseline json-parse-validate-fuse-pre` after
+moving JSON string/container cap checks into strict deserialization, skipping
+the post-parse validation traversal for parsed values, and using the serde_json
+object-map entry API so unique keys require one map lookup.
+
+| Bench | Before | After | Delta |
+|---|---:|---:|---:|
+| `core_value_clone/json_parse_metadata` | 633.88 ns | 616.50 ns | -3.8136% (`p=0.01`) |
+| `core_value_clone/json_parse_object64` | 10.651 µs | 8.7265 µs | -17.859% (`p=0.00`) |
+
 | `core_vector_gpu_baseline/cpu_cosine_rerank_q1x4096x1024_k10` | 750.67 µs (quick) | CPU/SIMD exact rerank over one 1024-dim query and 4,096 candidates; first GPU break-even row. |
 | `core_vector_gpu_baseline/host_pack_f32_q1x4096x1024_k10` | 336.43 µs (quick) | Lower-bound host packing copy for the same q1/c4096/d1024 input window, before real GPU transfer/setup. |
 | `core_vector_gpu_baseline/host_pack_queries_f32_q1x4096x1024_k10` | 39.70 ns (quick) | Query-only host packing lower bound when candidates are already resident in the accelerator. |
@@ -268,6 +339,9 @@ for both unindexed label rows and flat-index row sets; cancellation/deadline
 aware calls check once per chunk and keep the same parallel path. Large
 `graph_vector_candidate_set/*` reranks use the same chunked cancellation-aware
 Rayon primitive once a single set reaches the 4,096-candidate threshold.
+Exact batch cosine scans reuse one candidate squared norm across the query
+batch; candidate-set batch reranking intentionally keeps the fused per-query
+cosine kernel because a separate candidate-norm pass regressed q64/d1024 rows.
 Canonical candidate-set batch scoring uses query-level Rayon once the batch has
 at least 4,096 total candidates spread across multiple sets, keeping each
 per-query scan serial inside that branch so many-query batches do not nest
@@ -446,6 +520,73 @@ row, which has no saved pre-change baseline.
 | `graph_text_bm25_exact/topic_query/n10000_k10` | 3.0836 ms | 2.4305 ms | 2.4387 ms | Borrowed tokenizer removes per-token document allocations and the 10k fixture remains under the parallel threshold. |
 | `graph_text_bm25_exact/topic_query/n50000_k10` | 15.844 ms | 3.5758 ms | 3.3681 ms | Exact BM25 scan now uses the shared cancellation-aware Rayon chunk reducer; corpus document-frequency merge remains element-wise. |
 | `graph_text_bm25_exact/topic_query/n100000_k10` | 33.959 ms | 6.6143 ms | 6.5797 ms | Large exact BM25 scans keep the parallel path under a deadline checker instead of falling back to serial session behavior. |
+
+PR-local quick TextIndex term-interning A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_rebuild/create_registered_index`
+before and after interning BM25 terms as shared `Arc<str>` storage across
+postings keys and per-document maintenance term lists.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `graph_text_bm25_rebuild/create_registered_index/n1000` | 440.68 µs | 419.93 µs | Criterion reported −4.7623% (`p=0.00`); repeated term bytes are no longer duplicated into every document-term list. |
+
+Guard commands after the change:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed`
+and
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_mixed`.
+
+| Guard row | Post-change median |
+|---|---:|
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 27.815 µs |
+| `graph_text_bm25_indexed/registered_topic_query/n1000_k10` | 27.785 µs |
+| `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 447.44 µs |
+| `graph_text_bm25_mixed/registered_query_update_r60w40/n1000_k10` | 3.4034 ms |
+| `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.7031 ms |
+
+PR-local BM25 document-term count accumulator A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_rebuild/create_registered_index`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_mixed/write_registered_update_w40`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/transient_build_query`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `graph_text_bm25_rebuild/create_registered_index/n1000` | 422.11 µs | 348.86 µs | Criterion reported -17.423% (`p=0.00`); short BM25 documents now count terms in inline storage before spilling to a hash map for high-cardinality documents. |
+| `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.7121 ms | 1.6922 ms | Neutral (`p=0.26`); update maintenance keeps the same durable postings representation. |
+
+Post-change guard medians:
+
+| Guard row | Post-change median |
+|---|---:|
+| `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 387.61 µs |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 27.896 µs |
+
+PR-local BM25 differential document replacement A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench text_search_bm25 --filter graph_text_bm25_mixed/write_registered_update_w40 --save-baseline text_index_replace_s30_pre`
+and
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench text_search_bm25 --filter graph_text_bm25_mixed/write_registered_update_w40 --baseline text_index_replace_s30_pre`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.6767 ms | 1.6251 ms | Maintained `TextIndex` document replacement now keeps postings for terms that survive an update instead of removing and reinserting the full document term set. Criterion reported -2.9066% (`p=0.00`). |
+
+PR-local quick BM25 full-cover candidate A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query_candidates`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 34.770 µs | 30.221 µs | Full-cover sorted candidate lists now delegate to the regular indexed scorer after verifying that the candidates cover every indexed document; Criterion reported -13.185% (`p=0.00`). |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 38.948 µs | 31.249 µs | Full-cover unsorted lists dedupe to the indexed corpus and then use the same regular indexed scorer; Criterion reported -21.787% (`p=0.00`). |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.044 µs | 28.399 µs | Guard row for the delegated scorer; Criterion kept the change within the noise threshold. |
 
 PR-local quick vector candidate-set scoring Rayon A/B:
 
@@ -651,6 +792,16 @@ Commands:
 | `graph_text_bm25_vector_hybrid/graph_topic_bm25_current_scoped/...q8_c64` | 42.487 µs | 36.467 µs | -13.91% | Candidate-scoped BM25 now uses the same inline query-posting metadata and reserves its indexed-candidate dedup set from the input width; p=0.00. |
 | `graph_text_bm25_vector_hybrid/graph_topic_bm25_current_scoped_vector_rerank/...q8_c64` | 61.235 µs | 55.042 µs | -10.76% | The downstream vector rerank row keeps the BM25 candidate win while preserving the same selected-candidate shape; p=0.00. Sanity after the change: vector-BM25 current filter 210.98 µs, ANN-BM25 current filter 54.834 µs, and indexed prebuilt topic query 28.446 µs. |
 
+PR-local candidate-scoped BM25 canonical-input A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query_candidates`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 41.831 µs | 34.770 µs | -16.9% | Candidate-scoped indexed BM25 over already-canonical node ids now skips the `FxHashSet` dedup allocation and scores the ascending slice directly; p=0.00. Full-profile post-change sanity: 10k 547.46 µs, 50k 3.5299 ms, 100k 7.3916 ms. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 41.024 µs | 38.948 µs | -7.0% | Reverse candidate input stays on the existing hash-dedup path; the shared scoring loop trims a smaller but significant amount of overhead while preserving duplicate handling; p=0.00. Full-profile post-change sanity: 10k 638.60 µs, 50k 4.6077 ms, 100k 10.978 ms. |
+
 Rejected variants: sharing postings while leaving per-document term lists as
 plain `Vec<String>` kept transient build lower at 523.57 µs but lost the update
 win (`write_registered_update_w40/n1000` returned to 5.0114 ms). Wrapping
@@ -689,12 +840,104 @@ Commands:
 | `graph_text_bm25_rebuild/create_registered_index/n1000` | 447.00 µs | 437.54 µs | -2.12% | Bulk text-index builds now reserve document-length and document-term maps from the label-row cardinality, then shrink at finish so sparse labels do not keep over-reserved document-map capacity. |
 | `graph_text_bm25_rebuild/compact_registered_after_delete/n1000_del100` | 528.47 µs | 521.75 µs | -1.27% | The same builder path trims a small amount from compaction's text-index rebuild stage without changing postings order or scoring. Full-profile sanity after the change: create 10k 4.3152 ms, 50k 23.728 ms, 100k 48.806 ms; compact 10k 5.8408 ms, 50k 33.185 ms, 100k 69.183 ms. Indexed sanity: transient build/query 470.42 µs, prebuilt query 28.289 µs, registered query 28.183 µs. |
 
+PR-local text-index builder finalization A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_rebuild`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/transient_build_query`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_rebuild/create_registered_index/n1000` | 361.14 µs | 348.10 µs | -3.7945% | Bulk builds now intern new terms against the postings table and store final `Arc<[TextTerm]>` document-term lists during insertion, removing the temporary intern table and the finish-time document-term map rebuild. Criterion reports p=0.00. |
+| `graph_text_bm25_rebuild/compact_registered_after_delete/n1000_del100` | 440.78 µs | 427.36 µs | noise | Compaction's text-index rebuild consumer remains statistically flat (`p=0.31`) while sharing the same builder path. |
+| `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 387.59 µs | 378.70 µs | -2.1557% | The one-off transient build/query row also benefits from the builder-finalization shortcut; Criterion reports p=0.00. |
+
+PR-local BM25 top-k replacement A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10 --save-baseline text_topk_peek_mut_pre`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10 --baseline text_topk_peek_mut_pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.424 µs | 27.752 µs | -2.0122% | `TextTopK` now replaces the retained worst hit through `BinaryHeap::peek_mut()` instead of `pop()` plus `push()` when a candidate beats the current worst; Criterion reports p=0.00. |
+
+PR-local BM25 top-k heap preallocation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter topic_query --save-baseline bm25_query_terms_pre`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter topic_query --baseline bm25_query_terms_pre`;
+focused checked-row rerun:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter topic_query_checked_with_deadline --baseline bm25_query_terms_pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 132.28 µs | 130.13 µs | -1.6820% | `TextTopK` now reserves the known `k` slots up front with `BinaryHeap::with_capacity(k)`; Criterion reports p=0.00. |
+| `graph_text_bm25_exact/topic_query_checked_with_deadline/n1000_k10` | 131.48 µs | 130.35 µs | -2.7186% | Focused rerun after a noisy broad-run sample; same checked scan path, Criterion reports p=0.00. |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.887 µs | 28.687 µs | neutral | Maintained read path stayed statistically flat. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 30.646 µs | 30.465 µs | neutral | Full-cover sorted candidate guard stayed statistically flat. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 31.805 µs | 30.648 µs | -5.9149% | Reverse candidate input benefits from avoiding heap growth in the delegated scorer; Criterion reports p=0.05. |
+| `graph_text_bm25_indexed/registered_topic_query/n1000_k10` | 29.520 µs | 28.835 µs | neutral | Registered-index read path stayed statistically flat. |
+
+PR-local partial BM25 candidate cursor A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query_candidates_partial --save-baseline bm25-partial-candidates-pre`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query_candidates_partial --baseline bm25-partial-candidates-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_partial_sorted/n1000_k10` | 7.6817 µs | 5.7940 µs | -25.063% | Partial sorted candidates now advance monotonic cursors through each query-term postings list instead of binary-searching every postings list per candidate; Criterion reports p=0.00. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_partial_reverse/n1000_k10` | 9.7642 µs | 9.9943 µs | neutral | Reverse partial candidates stay on the hash-dedup path and were not the target; the clean rerun stayed within Criterion's noise threshold. |
+
+PR-local text-index update-maintenance candidate-key A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_mixed --save-baseline text_index_update_maint_pre`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_mixed --baseline text_index_update_maint_pre`;
+read-path sanity:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_mixed/registered_query_update_r60w40/n1000_k10` | 3.5261 ms | 3.3854 ms | -3.7434% | Text-index update maintenance now collects touched labels/properties in inline borrowed storage and mutates the matched entry directly instead of materializing a `BTreeSet` of owned candidate keys and re-looking up each key. Criterion reports p=0.00. |
+| `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.6797 ms | 1.6825 ms | noise | The write-only companion stayed statistically neutral (`p=0.66`), so the accepted win is the mixed read/write cycle's maintenance overhead reduction. Indexed-read sanity after the change: `prebuilt_topic_query/n1000_k10` 29.815 µs. |
+
+PR-local BM25 ASCII tokenizer A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query --save-baseline bm25-tokenizer-ascii-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query --save-baseline bm25-tokenizer-ascii-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query --baseline bm25-tokenizer-ascii-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query --baseline bm25-tokenizer-ascii-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 252.62 µs | 177.61 µs | -29.433% | All-ASCII documents now take a byte-scanning tokenizer path while preserving the original Unicode lowercase path for mixed input. Criterion reports p=0.00. |
+| `graph_text_bm25_exact/topic_query_checked_with_deadline/n1000_k10` | 252.06 µs | 178.23 µs | -29.765% | The cancellation-aware exact oracle keeps the same improvement because tokenization dominates the 1k ASCII fixture scan. Criterion reports p=0.00. |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.116 µs | 27.967 µs | noise | Guard row for the maintained read path; Criterion reported -0.5120%, inside the noise threshold. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 31.103 µs | 29.155 µs | -5.1952% | Candidate-scoped indexed BM25 reuses the same query tokenizer path, and the sorted full-cover row improves without changing scoring order. Criterion reports p=0.00. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 32.414 µs | 30.362 µs | -5.6244% | Reverse candidate input stays on the existing dedup path while benefiting from the cheaper ASCII query tokenization. Criterion reports p=0.00. |
+
+PR-local exact BM25 query-term matching A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query --save-baseline bm25-query-match-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query --baseline bm25-query-match-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 174.24 µs | 128.71 µs | -27.776% | Exact scan now matches each document token against the short deduplicated query-term list directly instead of binary-searching four terms per token, while longer query-term lists keep the binary-search path. Criterion reports p=0.00. |
+| `graph_text_bm25_exact/topic_query_checked_with_deadline/n1000_k10` | 180.55 µs | 131.33 µs | -26.222% | The checked exact oracle sees the same per-token matching win while preserving cancellation checks around the scan. Criterion reports p=0.00. |
+
 PR-local quick JSON baseline:
 
 | Bench | 1k | Notes |
 |---|---:|---|
 | `graph_json_contains_scan/nested_metadata_k10/1000` | 21.731 µs (quick) | Exact scan over 1,000 JSON metadata payloads with one-quarter matching nested current episodic facts, skipping non-JSON properties. This is the oracle for future maintained JSON/path indexes and JSON/vector/text candidate composition. |
 | `graph_json_path_exists_scan/nested_score_path_k10/1000` | 17.559 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory","score"]`, skipping non-JSON properties. This is the oracle for path-existence candidate production before maintained JSON/path indexes. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0303 µs (quick) | Candidate-scoped path-existence over 1,000 reverse-sorted node ids. Latest PR-local lazy hit-reserve A/B: 1.0426 µs → 1.0303 µs, within noise but not regressing the sort/dedup path. Earlier canonical-candidate guard: 1.1235 µs → 1.1287 µs. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 638.84 ns (quick) | Candidate-scoped path-existence over 1,000 already-canonical node ids. Latest PR-local lazy hit-reserve A/B: 649.16 ns → 638.84 ns by reserving result storage on the first actual hit. Earlier canonical-candidate fast path: 972.19 ns → 727.37 ns by skipping redundant sort/dedup work. |
 | `graph_json_path_contains_scan/nested_memory_path_k10/1000` | 19.263 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory"]`, applying recursive containment to the selected subvalue. This is the oracle for path-scoped JSON containment before maintained JSON/path indexes. |
 | `graph_json_path_value_scan/nested_score_path_k10/1000` | 22.855 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory","score"]`, returning node ids plus selected JSON values. This measures the candidate-plus-value path before maintained JSON/path indexes. |
 
@@ -722,6 +965,47 @@ Command: `scripts/run-benches.sh --profile full --bench single_graph --filter gr
 | `graph_json_path_value_scan/nested_score_path_k10/100000` | 2.2521 ms | 1.9638 ms | -12.5% | 100k unchecked row still improves, though less dramatically than 50k on this run. |
 | `graph_json_path_value_scan/nested_score_path_k10_checked_with_deadline/100000` | 2.5734 ms | 1.9746 ms | -29.3% | 100k deadline row drops back near the unchecked row once selected-value clones move behind top-k admission. |
 
+PR-local JSON top-k heap preallocation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json --save-baseline json_topk_prealloc_pre`;
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json --baseline json_topk_prealloc_pre`;
+focused path-exists rerun:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_k10/1000 --baseline json_topk_prealloc_pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_json_contains_scan/nested_metadata_k10/1000` | 21.434 µs | 21.136 µs | -3.2938% | JSON top-k helpers now reserve the known `k` slots up front with `BinaryHeap::with_capacity(k)`; Criterion reports p=0.00. |
+| `graph_json_contains_scan/nested_metadata_k10_checked_with_deadline/1000` | 23.200 µs | 22.541 µs | -3.2981% | Deadline-bearing containment row sees the same allocation shape; Criterion reports p=0.01. |
+| `graph_json_path_exists_scan/nested_score_path_k10/1000` | 18.090 µs | 17.557 µs | -4.7722% | Focused rerun after a noisy broad-run sample; Criterion reports p=0.00. |
+| `graph_json_path_exists_scan/nested_score_path_k10_checked_with_deadline/1000` | 18.799 µs | 18.245 µs | neutral | Checked path-exists row stayed statistically flat in the broad run. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 755.19 ns | 779.27 ns | neutral | Candidate-scoped sorted guard stayed statistically flat. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0706 µs | 1.1128 µs | neutral | Candidate-scoped reverse guard stayed statistically flat. |
+| `graph_json_path_contains_scan/nested_memory_path_k10/1000` | 19.960 µs | 20.605 µs | neutral | Path-containment row stayed statistically flat. |
+| `graph_json_path_value_scan/nested_score_path_k10/1000` | 17.859 µs | 18.801 µs | neutral | Path-value row stayed statistically flat. |
+
+PR-local JSON candidate borrowed-slice A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_candidates --save-baseline json-candidate-borrow-pre`;
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_candidates --baseline json-candidate-borrow-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 726.11 ns | 650.17 ns | -10.271% | Candidate-scoped JSON search now borrows already-canonical candidate slices instead of cloning them into a temporary `Vec`; Criterion reports p=0.00. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0641 µs | 1.0960 µs | neutral | Unsorted inputs still take the owned sort/dedup path and stayed within noise (`p=0.20`). |
+
+PR-local JSON candidate hit-reserve A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_candidates --save-baseline json-candidate-hit-prealloc-before`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_candidates --baseline json-candidate-hit-prealloc-before`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 649.16 ns | 638.84 ns | -1.7684% | Candidate-scoped JSON filtering now reserves bounded result storage on the first actual hit, avoiding eager allocation for zero-hit queries while removing repeated growth for common top-k hits. Criterion reports p=0.00. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0426 µs | 1.0303 µs | neutral | Reverse candidates still take the owned sort/dedup path; Criterion reports the median lower but within the noise threshold. |
+
 PR-local B24 batch exact-vector scan Rayon A/B:
 
 Commands:
@@ -743,12 +1027,43 @@ on the B24-par branch.
 | `graph_exact_vector_batch_scan/flat_index_squared_euclidean_q8_dim128_k10/100000` | 41.284 ms | 3.7879 ms | Broad flat-index batch scan improves about 10.9x on this branch run. |
 | `graph_exact_vector_batch_scan/flat_index_squared_euclidean_q8_dim128_k10_checked_with_deadline/100000` | 38.925 ms | 3.7937 ms | Deadline flat-index row remains on the parallel path. |
 
+PR-local quick exact batch cosine candidate-norm A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench single_graph --filter cosine_q8_dim128_k10 --vector-scales 10000,50000 --save-baseline vector-batch-cosine-norm-pre`,
+then the same command with `--baseline vector-batch-cosine-norm-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_exact_vector_batch_scan/unindexed_cosine_q8_dim128_k10/10000` | 2.1250 ms | 1.7721 ms | -16.36% | Reuses one candidate squared norm across the eight bound cosine queries. |
+| `graph_exact_vector_batch_scan/flat_index_cosine_q8_dim128_k10/10000` | 2.1286 ms | 1.7774 ms | -18.03% | Flat-index row-set scan keeps the same metric shortcut. |
+| `graph_exact_vector_batch_scan/unindexed_cosine_q8_dim128_k10/50000` | 2.3514 ms | 2.1747 ms | -6.72% | Above the parallel threshold, chunked row scans still benefit from the per-candidate norm reuse. |
+| `graph_exact_vector_batch_scan/flat_index_cosine_q8_dim128_k10/50000` | 2.3971 ms | 2.2063 ms | -8.39% | Broad flat-index q8 cosine scan stays statistically faster (`p=0.00`). |
+
+Rejected variant: applying the same separate candidate-norm pass to
+`graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64` regressed
+c64/c256/c1024 rows by +31.84%/+38.48%/+28.38% (`p=0.00`), with c4096 neutral,
+so the candidate-set scorer keeps the existing fused per-query cosine pass.
+
+PR-local vector candidate-set disjoint intersection A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set/set_intersection --save-baseline vector-disjoint-intersection-pre`;
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set/set_intersection --baseline vector-disjoint-intersection-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_vector_candidate_set/set_intersection_l256_r256_o0/0` | 135.45 ns | 1.3378 ns | -99.015% | Equal-width sorted ranges that cannot overlap now return an empty candidate set before allocation or merge scanning. |
+| `graph_vector_candidate_set/set_intersection_l256_r256_o128/128` | 160.05 ns | 145.66 ns | -9.2900% | Balanced overlap stayed faster in the accepted rerun, but the optimization targets the disjoint row. |
+| `graph_vector_candidate_set/set_intersection_l8_r1024_o8/8` | 29.285 ns | 28.730 ns | neutral | The tiny-vs-large probe path stays on the existing binary-search branch; Criterion reported no change (`p=0.58`). |
+
 PR-local quick vector baseline:
 
 | Bench | 1k | Notes |
 |---|---:|---|
 | `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 22.9 µs unindexed / 24.3 µs flat (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x4` L2-squared accumulation; flat 20k row: ~244 µs. |
 | `graph_exact_vector_scan/cosine_dim128_k10` | 33.5 µs unindexed / 33.6 µs flat (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x4` cosine accumulation; flat 20k row: ~276 µs. |
+| `graph_exact_vector_batch_scan/cosine_q8_dim128_k10` | 1.772 ms unindexed / 1.777 ms flat at 10k; 2.175 ms unindexed / 2.206 ms flat at 50k (quick) | Scores eight 128-dim cosine queries over the same exact row set and reuses each candidate squared norm across the batch. |
 | `graph_vector_candidate_set/neighbor_candidates_depends_on_k64` | 233.8 ns (quick) | Derives a sorted/deduplicated 64-node candidate set from one anchor's outgoing `DEPENDS_ON` adjacency. This measures the reusable Rust candidate-set boundary, not vector scoring. |
 | `graph_vector_candidate_set/adjacency_label_range_l8_k64` | 44.6 ns (quick) | Iterates the sorted label range for 64 matching edges mixed with 8x64 unrelated-label edges. |
 | `graph_vector_candidate_set/adjacency_label_scan_l8_k64` | 374.8 ns (quick) | Benchmark-local old path: scans the same mixed-label adjacency entry and filters by label, showing the range lookup is ~8.4x faster for high-degree mixed-label candidates. |
@@ -764,9 +1079,14 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_state/maintained_active_c512_total1024` | 343.9 ns (quick) | Materializes a provider-maintained 512-node current set from a 1,024-node fixture with stale nodes disqualified by `SUPERSEDED_BY`. |
 | `graph_vector_candidate_state/dynamic_active_scan_c512_total1024` | 12.79 µs (quick) | Benchmark-local query-time baseline: scans all 1,024 document nodes and checks outgoing `SUPERSEDED_BY`, showing maintained state is ~37x faster for this currentness slice. |
 | `graph_vector_candidate_set/set_intersection_l256_r256_o128` | 153.2 ns (quick) | Intersects two canonical 256-node sets with 128 overlapping ids using the merge path; this is the balanced graph/ANN/active-set composition primitive. |
+| `graph_vector_candidate_set/set_intersection_l256_r256_o0` | 1.3378 ns (quick) | Equal-width disjoint canonical ranges return an empty candidate set before allocation or merge scanning. PR-local A/B: 135.45 ns → 1.3378 ns. |
 | `graph_vector_candidate_set/set_intersection_l8_r1024_o8` | 31.10 ns (quick) | Intersects a tiny dependency-style set with a much larger maintained active set using the binary-search probe path. |
 | `graph_vector_candidate_set/set_union_l256_r256_o128` | 170.6 ns (quick) | Unions two canonical 256-node sets into a 384-node canonical candidate set. |
+| `graph_vector_candidate_set/set_union_l256_r256_o0` | 166.60 ns (quick) | Unions two disjoint canonical 256-node ranges into a 512-node candidate set; this keeps disjoint append opportunities visible beside the overlap row. |
 | `graph_vector_candidate_set/set_difference_l256_r256_o128` | 178.5 ns (quick) | Computes the graph-side exclusion path for two canonical 256-node sets with 128 overlapping ids. |
+| `graph_vector_candidate_set/set_difference_l256_r256_o0` | 149.79 ns (quick) | Computes graph-side exclusion when the right-hand canonical 256-node range is fully above the left-hand range. |
+| `graph_vector_candidate_set/from_nodes_reverse_l256_r256_o128` | 186.33 ns (quick) | Builds a canonical candidate set from 256 reverse-sorted node ids. PR-local canonical-input guard A/B: 199.68 ns → 186.33 ns by using an early-exit ascending check before the existing sort/dedup path. |
+| `graph_vector_candidate_set/from_nodes_sorted_l256_r256_o128` | 108.15 ns (quick) | Builds a canonical candidate set from 256 already-canonical node ids. PR-local canonical-input fast path A/B: 190.68 ns → 108.15 ns by skipping redundant sort/dedup work. |
 | `graph_vector_candidate_set/from_search_hits_l256_r256_o128` | 179.8 ns (quick) | Builds a canonical candidate set from 256 vector-search hits, covering ANN/search-output composition. |
 | `graph_vector_index_rebuild/hnsw_l2_dim128_default` | 118.9 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; compact level-0 links preserve the same link counts while reclaiming 150 stale HNSW entries. |
 | `graph_vector_index_rebuild/hnsw_l2_dim128_m24ef64` | 200.7 ms (quick) | Tuned `M=24, ef_construction=64` rebuild row; keeps the high-recall research config covered with compacted post-rebuild level-0 links. |
@@ -1472,6 +1792,21 @@ and
 | `graph_mixed_workload/candidate_state_metadata_edge_update_r60w40` | 10k / 50k / 100k | 2.976 / 4.333 / 9.922 ms | Same provider write cycle, but the 60 reads fetch generation-checked candidate-state metadata rather than materializing the full `current` set. The widening delta against the full-set row isolates set materialization cost. |
 | `graph_mixed_workload/point_read_update_r60w40_wal` | 10k / 50k / 100k | 139.11 / 130.07 / 134.45 ms | Same scalar 60/40 cycle backed by a real per-iteration WAL tempdir with committer batching off. Setup/teardown excluded; the near scale-flat cost shows per-commit durability barriers dominate this sequential 40-write shape. |
 
+PR-local candidate-state member-cache A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench graph_mixed_workload --filter candidate_state --save-baseline candidate_state_members_vec_full_pre`;
+`scripts/run-benches.sh --profile full --bench graph_mixed_workload --filter candidate_state --baseline candidate_state_members_vec_full_pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_mixed_workload/candidate_state_edge_update_r60w40/10000` | 2.1069 ms | 1.9920 ms | -5.4552% | Maintained candidate-state members keep the `BTreeSet` update path and add a lazy sorted `Vec<NodeId>` cache, so repeated full-set reads clone contiguous canonical members instead of collecting from the tree; Criterion reports p=0.00. |
+| `graph_mixed_workload/candidate_state_edge_update_r60w40/50000` | 5.1335 ms | 4.5895 ms | -10.596% | Larger maintained sets benefit more from amortizing full-set materialization across reads between writes; p=0.00. |
+| `graph_mixed_workload/candidate_state_edge_update_r60w40/100000` | 11.814 ms | 10.768 ms | -8.8567% | The 100k full-set row keeps the same membership semantics while avoiding repeated tree collection; p=0.00. |
+| `graph_mixed_workload/candidate_state_metadata_edge_update_r60w40/10000` | 1.9197 ms | 1.8751 ms | noise | Metadata reads do not materialize the full set and stayed statistically flat (`p=0.35`). |
+| `graph_mixed_workload/candidate_state_metadata_edge_update_r60w40/50000` | 4.0672 ms | 4.0636 ms | noise | Keeping `BTreeSet` as the authoritative update structure avoids the plain-`Vec` write-regression shape; p=0.91. |
+| `graph_mixed_workload/candidate_state_metadata_edge_update_r60w40/100000` | 9.8377 ms | 9.7083 ms | noise | Metadata/write-side guard remains flat at the largest full-profile scale (`p=0.27`). |
+
 ### §3b `graph_hub_delete` — high-degree hub deletion (GRAPH-05 ✓ shipped)
 
 Deleting a node cascades over every incident edge. GRAPH-05 made adjacency
@@ -1503,6 +1838,18 @@ and
 | `write_txn_lifecycle/delete_only/n50000/100` | 381.39 µs | 342.29 µs | Mid-scale delete-only rows are historically noisy; this branch is modestly faster, not regressed. |
 | `write_txn_lifecycle/delete_only/n100000/1000` | 3.5656 ms | 3.4152 ms | Large batch delete-only guard improves about 4.2% in this run. |
 
+PR-local incident-edge collector A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench graph_hub_delete --save-baseline hub-delete-btreeset-before`
+and
+`scripts/run-benches.sh --profile quick --bench graph_hub_delete --baseline hub-delete-btreeset-before`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_hub_delete/100` | 41.796 µs | 39.536 µs | Incident edge ids are collected into a contiguous `Vec`, sorted/deduped once, then cascaded in ascending id order; p=0.00. |
+| `graph_hub_delete/1000` | 307.60 µs | 283.05 µs | Avoids per-edge `BTreeSet` node allocation while preserving deterministic cascade order; p=0.00. |
+
 ### §3c `graph_delete_reclamation` — delete payload clearing and compaction
 
 `graph_delete_reclamation/*` isolates the storage side of deletes from vector
@@ -1516,7 +1863,7 @@ properties immediately while retaining dead rows for stable id mapping;
 | Bench | quick 1k | Notes |
 |---|---:|---|
 | `graph_delete_reclamation/vector_payload_delete/n1k_del100_dim768_payload300k` | 105.98 µs | Deletes 100 vector-bearing nodes and clears ~300 KiB of vector payload from the per-iteration graph; fixture clone/setup excluded. |
-| `graph_delete_reclamation/compact_after_vector_delete/n1k_del100_dim768_payload300k` | 146.40 µs | Compacts the post-delete graph and asserts 100 dead node rows are reclaimed; delete setup excluded from the timed body. |
+| `graph_delete_reclamation/compact_after_vector_delete/n1k_del100_dim768_payload300k` | 106.98 µs | Compacts the post-delete graph and asserts 100 dead node rows are reclaimed; delete setup excluded from the timed body. PR-local A/B replaced the temporary live-node endpoint-validation set hasher: 113.84 µs -> 106.98 µs (-6.45%, p=0.00). |
 
 ### §3d `graph_read_under_write` — lock-free reads under contention (D10)
 
@@ -1608,6 +1955,18 @@ the contiguous `Vec` + `write_all` path remains the baseline.
 | Bench | per-entry=100 | =1000 | =10000 | =50000 | Notes |
 |---|---:|---:|---:|---:|---|
 | `persist_wal_body_size_no_fsync` | 12.5 ms | 8.42 ms | 7.22 ms | 13.1 ms | Equal total work; U-shaped in packing; vectored write rejected. |
+
+PR-local quick WAL record-buffer reuse A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench wal --filter persist_wal_append_single_no_fsync`;
+`scripts/run-benches.sh --profile quick --bench wal --filter persist_wal_body_size_no_fsync`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `persist_wal_append_single_no_fsync/1000` | 3.1835 ms | 1.8447 ms | Writer-owned record buffer keeps the contiguous `write_all` record shape while avoiding per-append `Vec` allocation; median is ~42% below the local pre-change baseline. |
+| `persist_wal_body_size_no_fsync/100` | 2.9168 ms | 1.9143 ms | Same allocation reuse on the 100-change packing; the 4 MiB retention cap keeps ordinary hot buffers reusable without pinning pathological max-entry allocations. |
+| `persist_wal_body_size_no_fsync/1000` | 2.4978 ms | 1.4411 ms | Same allocation reuse on the 1000-change packing; median is ~42% below the local pre-change baseline while preserving the contiguous `write_all` path. |
 
 #### `persist_wal_payload_shape_*` — scalar / JSON / vector payloads
 
@@ -1716,6 +2075,21 @@ Flush-inclusive companion rows, with bytes-on-disk from the row IDs:
 | vector768 / b1 | 1,962,016 B | 3,154,016 B | 3,154,016 B | 14.98 ms | 9.03 ms | 8.56 ms | Current128 saves bytes but strongly hurts single large vectors. |
 | vector768 / b100 | 63,296 B | 63,296 B | 3,121,346 B | 6.41 ms | 6.94 ms | 7.36 ms | Compression gives a ~49x size win and remains competitive. |
 
+PR-local WAL zstd compressor-reuse A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench wal --filter 'compression_policy_no_fsync/vector768/b1_threshold128|compression_policy_no_fsync/json_metadata/b1_threshold128|compression_policy_no_fsync/vector128/b1_threshold128'`;
+`scripts/run-benches.sh --profile quick --bench wal --filter 'compression_policy_no_fsync/vector768/b100_default4096|compression_policy_no_fsync/json_metadata/b100_default4096|compression_policy_no_fsync/vector128/b100_default4096'`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `persist_wal_payload_compression_policy_no_fsync/json_metadata/b1_threshold128` | 6.1906 ms | 5.1691 ms | Writer-owned zstd context avoids per-entry compressor setup for repeated compressed records; Criterion reported -17.542%, p=0.00. |
+| `persist_wal_payload_compression_policy_no_fsync/vector128/b1_threshold128` | 7.2361 ms | 5.9544 ms | Same repeated-compression path; Criterion reported -17.593%, p=0.00. |
+| `persist_wal_payload_compression_policy_no_fsync/vector768/b1_threshold128` | 11.197 ms | 9.8407 ms | Same repeated-compression path; Criterion reported -13.444%, p=0.00. |
+| `persist_wal_payload_compression_policy_no_fsync/json_metadata/b100_default4096` | 845.34 us | 783.59 us | Production default threshold sanity row; no statistically significant change detected. |
+| `persist_wal_payload_compression_policy_no_fsync/vector128/b100_default4096` | 592.36 us | 567.23 us | Production default threshold sanity row; no statistically significant change detected. |
+| `persist_wal_payload_compression_policy_no_fsync/vector768/b100_default4096` | 1.0910 ms | 991.21 us | Production default threshold row; Criterion reported -8.6144%, p=0.02. |
+
 Decision signal: the follow-up production policy raises the default threshold
 from 128 bytes to 4096 bytes. Disabling compression entirely is still not a
 clear global win because larger JSON/vector batches save substantial bytes with
@@ -1740,13 +2114,54 @@ selene-db code, and balloon to tens of seconds at 100k — they are **capped at
 ### §4b Snapshot
 
 `persist_snapshot_*` measure the SLSN **container** (framing + per-section zstd +
-body hash) over synthetic byte payloads. `scale` drives section bytes.
+body hash) over synthetic byte payloads. The uncompressed companion rows isolate
+raw framing/body-hash cost with `SectionCompression::None`. `scale` drives section
+bytes.
+
+Write rows below were refreshed/added with
+`scripts/run-benches.sh --profile full --bench snapshot --filter 'persist_snapshot_(write|read|uncompressed_write|uncompressed_read)'`.
+Read rows were refreshed with
+`scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)'`.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `persist_snapshot_write` | 341.9 µs | 444.5 µs | 572.0 µs | Five independently-compressed sections. |
-| `persist_snapshot_read` | 278.9 µs | 425.5 µs | 605.0 µs | Snapshot read-and-apply. |
+| `persist_snapshot_write` | 379.1 µs | 524.4 µs | 717.5 µs | Five independently-compressed sections over highly-compressible synthetic bytes. |
+| `persist_snapshot_read` | 295.3 µs | 462.3 µs | 654.9 µs | Snapshot read-and-apply for compressed sections. |
+| `persist_snapshot_uncompressed_write` | 683.1 µs | 1.91 ms | 3.67 ms | Five uncompressed sections; exposes raw envelope write, body hash, and payload I/O cost. |
+| `persist_snapshot_uncompressed_read` | 412.4 µs | 1.72 ms | 3.41 ms | Snapshot read-and-apply for uncompressed sections. |
 | `persist_full_recovery` | 3.01 ms | 11.28 ms | 20.75 ms | Snapshot reconcile + WAL replay. |
+
+PR-local snapshot compression scheduling A/B:
+
+Commands:
+
+- `scripts/run-benches.sh --profile quick --bench snapshot --filter persist_snapshot_write --save-baseline snapshot-compression-scheduling-pre`
+- `scripts/run-benches.sh --profile quick --bench snapshot --filter persist_snapshot_write --baseline snapshot-compression-scheduling-pre`
+- `scripts/run-benches.sh --profile full --bench snapshot --filter persist_snapshot_write --sample-size 10 --measurement-time 1 --save-baseline snapshot-compression-scheduling-parallel-full`
+- `scripts/run-benches.sh --profile full --bench snapshot --filter persist_snapshot_write --sample-size 10 --measurement-time 1 --baseline snapshot-compression-scheduling-parallel-full`
+
+| Bench | Before | After | Change | Notes |
+|---|---:|---:|---:|---|
+| `persist_snapshot_write/1000` | 400.73 µs | 328.08 µs | -17.491%, p=0.00 | 64 KiB synthetic snapshot stays serial below the 1 MiB parallel-compression floor. |
+| `persist_snapshot_write/10000` | 402.28 µs | 358.67 µs | -10.946%, p=0.00 | 640 KiB synthetic snapshot also avoids Rayon setup. |
+| `persist_snapshot_write/50000` | 517.88 µs | 525.57 µs | no change, p=0.13 | 3.2 MiB synthetic snapshot keeps the existing parallel path. |
+| `persist_snapshot_write/100000` | 653.13 µs | 658.25 µs | within Criterion noise threshold | 6.4 MiB synthetic snapshot keeps the existing parallel path. |
+
+PR-local snapshot body-hash buffer A/B:
+
+Commands:
+
+- `scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)' --save-baseline snapshot-read-nozero-full-pre`
+- `scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)' --baseline snapshot-read-nozero-full-pre`
+
+| Bench | Before | After | Change | Notes |
+|---|---:|---:|---:|---|
+| `persist_snapshot_read/10000` | 291.80 µs | 295.27 µs | within Criterion noise threshold | Compressed sections are small after zstd, so the larger verification buffer does not materially move this row. |
+| `persist_snapshot_read/50000` | 473.47 µs | 462.28 µs | within Criterion noise threshold | Same compressed-read guard row. |
+| `persist_snapshot_read/100000` | 669.08 µs | 654.88 µs | within Criterion noise threshold | Same compressed-read guard row. |
+| `persist_snapshot_uncompressed_read/10000` | 574.66 µs | 412.43 µs | -27.114%, p=0.00 | Body-hash verification now streams payloads with a 64 KiB buffer instead of 8 KiB, reducing read calls over raw sections. |
+| `persist_snapshot_uncompressed_read/50000` | 2.4329 ms | 1.7219 ms | -28.537%, p=0.00 | Same large raw-section verification path. |
+| `persist_snapshot_uncompressed_read/100000` | 4.7570 ms | 3.4118 ms | -29.538%, p=0.00 | Same large raw-section verification path. |
 
 ### §4c `graph_snapshot_roundtrip` — real rkyv graph encode/decode (D14)
 
@@ -1759,9 +2174,67 @@ rebuild). Self-validating: asserts node/edge counts survive the roundtrip once
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `graph_snapshot_roundtrip/encode` | 5.03 ms | 31.2 ms | 69.2 ms | rkyv encode of all `CORE/*` sections. |
-| `graph_snapshot_roundtrip/decode` | 20.1 ms | 106.3 ms | 216.4 ms | Positional recovery + `finish_recovery` — dominates. |
-| `graph_snapshot_roundtrip/roundtrip` | 26.2 ms | 141.2 ms | 289.9 ms | End-to-end (≈ encode + decode). |
+| `graph_snapshot_roundtrip/encode` | 2.13 ms | 15.05 ms | 31.64 ms | rkyv encode of all `CORE/*` sections. |
+| `graph_snapshot_roundtrip/decode` | 14.55 ms | 86.57 ms | 173.76 ms | Positional recovery + `finish_recovery`; duplicate-id validation is fused with row conversion. |
+| `graph_snapshot_roundtrip/roundtrip` | 18.66 ms | 104.85 ms | 219.89 ms | End-to-end (≈ encode + decode). |
+
+Encode/roundtrip rows above were refreshed with
+`scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip`.
+Decode rows were refreshed with
+`scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
+
+PR-local fused duplicate-id validation A/B:
+
+Commands:
+
+- `scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --save-baseline d14-decode-fuse-full-pre`
+- `scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --baseline d14-decode-fuse-full-pre`
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/decode/10000` | 15.31 ms | 14.55 ms | -4.3014%, p=0.00 | `CORE/NODE` and `CORE/EDGE` now validate non-tombstone id uniqueness while converting archive rows into runtime rows, avoiding a separate full traversal. |
+| `graph_snapshot_roundtrip/decode/50000` | 88.63 ms | 86.57 ms | -2.3267%, p=0.00 | Same fused row-validation path. |
+| `graph_snapshot_roundtrip/decode/100000` | 181.54 ms | 173.76 ms | -4.2833%, p=0.00 | Same fused row-validation path. |
+
+PR-local snapshot row-position carrier A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/decode/1000` | 1.1709 ms | 1.0824 ms | -7.7946% | Recovery now carries the decoded snapshot row position beside each recovered node/edge row instead of maintaining separate `id -> position` BTreeMaps and looking them up during materialization. Criterion reports p=0.00. |
+
+PR-local recovery row scratch-map A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/decode/1000` | 1.0696 ms | 956.20 µs | -10.732% | Recovery stores decoded snapshot rows in hash maps and carries separate positional order vectors, avoiding per-row `BTreeMap` inserts while preserving compacted-snapshot row placement and WAL-created dense append order. Criterion reports p=0.00. |
+
+PR-local recovery bulk-liveness A/B:
+
+Commands:
+
+- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --save-baseline recovery-alive-bulk-pre`
+- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --baseline recovery-alive-bulk-pre`
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/decode/1000` | 982.93 µs | 952.37 µs | -3.1446% | Recovery now builds node/edge liveness bitmaps locally and installs each `Arc<RoaringBitmap>` once after materialization instead of calling `Arc::make_mut` per recovered row. Criterion reports p=0.00. |
+
+PR-local direct archive-row encode A/B:
+
+Commands:
+
+- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/encode --save-baseline snapshot-encode-direct-pre`
+- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/encode --baseline snapshot-encode-direct-pre`
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/encode/1000` | 336.17 µs | 270.58 µs | -19.184% | CORE/NODE and CORE/EDGE archive rows now encode borrowed row `PropertyMap`s directly instead of cloning them into temporary runtime rows before postcard serialization. Criterion reports p=0.00. |
 
 ## §5 selene-gql — parse / plan / execute
 
@@ -1777,9 +2250,10 @@ The first four are scale-independent (single-query CPU).
 | `gql_analyze_corpus/m5c` | 21.98 µs | Semantic analysis. |
 | `gql_plan_optimize_corpus/m5c` | 48.13 µs | Planner/optimizer end-to-end. |
 | `gql_plan_ir_clone/representative` | 164.0 ns | IR-clone hot path. |
-| `gql_expression_eval/*` (17 cases) | 180–245 ns, plus JSON rows below | Scalar eval: predicates, scalar fns, CASE, list access, binary ops, and runtime-parameter JSON scalar functions. |
+| `gql_expression_eval/*` (17 cases) | 180–245 ns, plus JSON rows below | Scalar eval: predicates, scalar fns, CASE, list trimming, binary ops, and runtime-parameter JSON scalar functions. |
 | `procedure_call_repeat/no_cache` | 2.958 ms | 100 short-lived sessions, parse/analyze/plan each. |
 | `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
+| `procedure_call_pipeline/match_call_repeat/1000` | 254.62 µs (quick) | Warm plan-cache `MATCH` over 1k input nodes feeding regular `CALL bench.repeat()`; covers direct procedure-call row growth beyond one-row source calls. |
 
 PR-local quick procedure-call row-extension A/B:
 
@@ -2005,14 +2479,16 @@ and the new benchmark-only RRF composition row.
 | `project_source_chunk_memory` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c6...basecurbp9687_curbp10000_hitbp10000` | 309.41 µs | Maintained current-state vector scoring restores full current precision. |
 | `project_source_chunk_memory` `shared_cache_query_root_current_state_text_vector_rrf_batch/...q16_k4_r2_c6...precbp10000_curbp10000_hitbp10000` | 487.45 µs | RRF again reaches full quality but is slower than using the best single maintained-state primitive for the needed quality target. No default fused policy is justified by these rows; keep RRF as a compositional A/B tool. Two outliers, including one high severe. |
 
-### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
+### §5a `gql_correlated_subquery` — correlated EXISTS / aggregate VALUE execution (GQLRT-05/B3)
 
 The only read-query **execution** bench in the suite (`expression_eval` is
 scalar-only; `write_e2e` is write-only). A correlated subquery is re-evaluated
 per outer row and its pattern schema is rebuilt per row (`schema_for_pattern`); a
-memoization win (GQLRT-05) would otherwise be invisible. In-memory graph (no WAL)
-so the timed body is read execution, not durability. Uses a **small scale
-envelope** (2.5k/5k/10k fixture rows, ~scale/3 `Person` rows) — correlated
+memoization win (GQLRT-05) would otherwise be invisible. The `count` arm uses a
+correlated `VALUE { ... RETURN count(*) }` aggregate because `COUNT { MATCH ... }`
+is intentionally rejected by the current parser. In-memory graph (no WAL) so the
+timed body is read execution, not durability. Uses a **small scale envelope**
+(2.5k/5k/10k fixture rows, ~scale/3 `Person` rows) — correlated
 re-evaluation is O(rows × subquery), so the cost grows super-linearly when the
 inner scan cannot reuse the already-bound outer entity.
 
@@ -2024,12 +2500,22 @@ reapplying liveness, labels, value constraints, binding equality, and residual
 predicates. Development baselines were: exists 58.951 ms / 237.45 ms / 932.70 ms
 and count 59.387 ms / 235.91 ms / 933.92 ms at 2.5k / 5k / 10k. The B3 medians
 below are ~90x / 190x / 339x faster for EXISTS and ~85x / 179x / 349x faster for
-COUNT._
+the aggregate count arm._
 
 | Bench | 2.5k | 5k | 10k | Notes |
 |---|---:|---:|---:|---|
 | `gql_correlated_subquery/exists` | 654 µs | 1.251 ms | 2.752 ms | `FILTER EXISTS { (p)-[:KNOWS]->(:Person) }`; B3 seeded inner scan. |
-| `gql_correlated_subquery/count` | 698 µs | 1.318 ms | 2.676 ms | `COUNT { (p)-[:KNOWS]->(:Person) }`; B3 seeded inner scan. |
+| `gql_correlated_subquery/count` | 698 µs | 1.318 ms | 2.676 ms | `VALUE { MATCH (p)-[:KNOWS]->(:Person) RETURN count(*) }`; B3 seeded inner scan. |
+
+PR-local aggregate value syntax repair:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench correlated_subquery`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `gql_correlated_subquery/exists/1000` | 190.27 µs | Existing correlated `EXISTS` guard still runs. |
+| `gql_correlated_subquery/count/1000` | 284.74 µs | The aggregate count guard now uses supported `VALUE { MATCH ... RETURN count(*) }` syntax instead of rejected `COUNT { MATCH ... }` syntax. |
 
 _Refreshed again 2026-06-11 for B5 (development post-#706 vs the feature
 branch on this M5, profile `full`, mimalloc). Moving the four immutable maps
@@ -2130,9 +2616,9 @@ PR-local quick mutation row-extension guard
 Read-execution coverage for the declared 60%-read workload: label scan +
 indexed range filter, two-leg hash join, ORDER BY top-K, high-cardinality
 GROUP BY, DISTINCT dedup, indexed `IN` bitmap union, inline `CALL {}`
-table-subquery row extension, post-RETURN bare `LIMIT 10`, pre-RETURN bare
-`LIMIT 10`, and maintained composite-index equality lookup. Warm-plan-cache
-rows run over
+table-subquery row extension, correlated `NEXT` row expansion, non-leading
+`OPTIONAL MATCH` null-extension, post-RETURN bare `LIMIT 10`, pre-RETURN bare
+`LIMIT 10`, and maintained composite-index equality lookup. Warm-plan-cache rows run over
 `BenchFixture` on an in-memory `SharedGraph` (no WAL), so the timed body is
 pure execution + index access — not parse/plan/optimize, not durability. Cold
 and shared-cache companions on the cheapest row rebuild a fresh session per
@@ -2164,6 +2650,29 @@ cold vs 81 µs warm) amortizes under the linear scan.
 | `read_pipeline/match_limit10` | 784 µs | 5.93 ms | 13.39 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
 | `read_pipeline/match_limit10/cold` | 815 µs | 5.95 ms | 13.54 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
 
+PR-local scan direct-binding output A/B
+(`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_filter_project --save-baseline gql_scan_direct_bindings_pre`;
+rerun with `--baseline gql_scan_direct_bindings_pre` after the implementation):
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_filter_project/1000` | 50.738 µs | 46.297 µs | Scan execution now returns `Binding` rows directly instead of collecting transient `(entity, binding)` pairs that `scan_pattern` immediately discarded. The quick indexed-range row improves 8.8043% (`p=0.00`). |
+
+PR-local scan output capacity reserve A/B
+(`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_filter_project --save-baseline gql_scan_output_reserve_pre`;
+rerun with `--baseline gql_scan_output_reserve_pre` after the implementation):
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_filter_project/1000` | 45.691 µs | 44.279 µs | Scan execution now reserves accepted `Binding` row capacity from the already-materialized candidate-row count. The quick indexed-range row improves 3.1557% (`p=0.00`). |
+
+PR-local non-leading `OPTIONAL MATCH` coverage row
+(`scripts/run-benches.sh --profile quick --bench read_pipeline --filter optional_match_null_extend`):
+
+| Bench | Quick | Notes |
+|---|---:|---|
+| `read_pipeline/optional_match_null_extend/1000` | 150.39 µs | `MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(missing:Nope) RETURN missing`; preserves every Person row with a null binding. A trial output `Vec` preallocation measured 150.45 µs (`p = 0.16`), so no runtime change was kept. |
+
 PR-local quick inline `CALL {}` row-extension guard
 (`scripts/run-benches.sh --profile quick --bench read_pipeline --filter call_subquery`):
 
@@ -2171,6 +2680,76 @@ PR-local quick inline `CALL {}` row-extension guard
 |---|---:|---:|---|
 | `read_pipeline/call_subquery_yield/1000` | 155.18 µs | 151.19 µs | −2.6% median; p < 0.05. |
 | `read_pipeline/optional_call_subquery_null_yield/1000` | 241.50 µs | 240.79 µs | No statistically significant change. |
+
+PR-local inline `CALL {}` seed-row A/B:
+
+Commands: `scripts/run-benches.sh --profile quick --bench read_pipeline --filter call_subquery`;
+then temporarily rerun the old seed-row path and rerun after the change with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter call_subquery`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/call_subquery_yield/1000` | 149.93 µs | 142.39 µs | Table-subquery seed rows now build directly in `Binding` inline storage instead of allocating a `Vec<Null>` per outer row; Criterion reports -7.6108%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/1000` | 246.78 µs | 229.23 µs | Optional null-yield row improves -3.6571%, p=0.01. |
+| `read_pipeline/call_subquery_yield/10000` | 1.4961 ms | 1.4547 ms | Full-profile yielded row improves -2.4932%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/10000` | 2.3365 ms | 2.2512 ms | Full-profile optional row improves -3.2234%, p=0.00. |
+| `read_pipeline/call_subquery_yield/50000` | 8.3335 ms | 8.2273 ms | Larger yielded row trends lower but stays within Criterion's noise threshold. |
+| `read_pipeline/optional_call_subquery_null_yield/50000` | 15.263 ms | 14.866 ms | Optional row improves -2.5990%, p=0.00. |
+| `read_pipeline/call_subquery_yield/100000` | 17.326 ms | 17.233 ms | Largest yielded row stays neutral (p=0.30). |
+| `read_pipeline/optional_call_subquery_null_yield/100000` | 35.482 ms | 34.021 ms | Largest optional row improves -4.1173%, p=0.00. |
+
+PR-local inline `CALL {}` target-schema hoist A/B:
+
+Commands: `scripts/run-benches.sh --profile quick --bench read_pipeline --filter call_subquery`;
+then temporarily rerun the old per-row target-schema path and rerun after the
+change with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter call_subquery`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/call_subquery_yield/1000` | 142.68 µs | 139.56 µs | `CALL {}` now computes its target seed schema once per operator and clones it per seed table, avoiding per-outer-row pattern/outer-binding schema reconstruction; Criterion reports -2.2856%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/1000` | 234.85 µs | 225.12 µs | Quick optional row improves -5.2429%, p=0.00. |
+| `read_pipeline/call_subquery_yield/10000` | 1.4458 ms | 1.4158 ms | Full-profile yielded row improves -2.4242%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/10000` | 2.2682 ms | 2.1683 ms | Full-profile optional row improves -4.3935%, p=0.00. |
+| `read_pipeline/call_subquery_yield/50000` | 8.1792 ms | 7.9357 ms | Full-profile yielded row improves -2.9773%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/50000` | 14.706 ms | 13.985 ms | Full-profile optional row improves -4.9020%, p=0.00. |
+| `read_pipeline/call_subquery_yield/100000` | 16.978 ms | 16.483 ms | Full-profile yielded row improves -2.9145%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/100000` | 34.631 ms | 33.133 ms | Full-profile optional row improves -4.3268%, p=0.00. |
+
+PR-local inline `CALL {}` output-reserve A/B:
+
+Commands: temporarily rerun the old empty output-vector path, then rerun after
+the change with
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter call_subquery`;
+repeat with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter call_subquery`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/call_subquery_yield/1000` | 140.37 µs | 138.17 µs | `CALL {}` now reserves output row capacity from the outer input row count; old-path quick rerun reported +1.6926% slower than the patched sample, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/1000` | 223.04 µs | 218.22 µs | Quick optional row stayed within Criterion's noise threshold (p=0.09). |
+| `read_pipeline/call_subquery_yield/10000` | 1.4203 ms | 1.4018 ms | Full-profile yielded row stayed within Criterion's noise threshold. |
+| `read_pipeline/optional_call_subquery_null_yield/10000` | 2.1750 ms | 2.1620 ms | Full-profile optional row stayed within Criterion's noise threshold. |
+| `read_pipeline/call_subquery_yield/50000` | 7.9749 ms | 7.8265 ms | Full-profile yielded row improves -1.8607%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/50000` | 14.773 ms | 14.342 ms | Full-profile optional row improves -2.9148%, p=0.00. |
+| `read_pipeline/call_subquery_yield/100000` | 16.947 ms | 16.639 ms | Full-profile yielded row improves -1.8188%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/100000` | 34.471 ms | 34.234 ms | Largest optional row stayed neutral (p=0.13). |
+
+PR-local correlated `NEXT` output-reserve A/B:
+
+Commands: add the `read_pipeline/correlated_next_expand` row, save the quick
+baseline with
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter 'read_pipeline/(correlated_next_expand|call_subquery_yield|optional_match_null_extend|for_expand_triple)' --save-baseline gql-correlated-next-pre`,
+then rerun with `--baseline gql-correlated-next-pre`; repeat the target row at
+full scale with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter correlated_next_expand`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/correlated_next_expand/1000` | 169.70 µs | 168.40 µs | `CorrelatedChain` now reserves output capacity from the outer input row count. Quick row trends lower but stays within Criterion's noise threshold. |
+| `read_pipeline/correlated_next_expand/10000` | 1.8139 ms | 1.7496 ms | Full-profile 10k row improves -2.3967%, p=0.00. |
+| `read_pipeline/correlated_next_expand/50000` | 10.647 ms | 10.471 ms | Full-profile 50k row trends lower but stays within Criterion's noise threshold. |
+| `read_pipeline/correlated_next_expand/100000` | 22.237 ms | 22.346 ms | Full-profile 100k row stayed neutral. |
 
 PR-local composite lookup guard:
 
@@ -2225,6 +2804,47 @@ Command:
 | `read_pipeline/edge_property_filter_no_index/1000` | 476.73 µs | Warm unanchored edge-property query over `CONNECTED_TO` edges with no edge-property index; scans expand adjacency and evaluates `e.from_port = 'port_17'` as a residual predicate. |
 | `read_pipeline/edge_property_filter_indexed/1000` | 115.87 µs | Same query with a built-in `CONNECTED_TO(from_port)` edge-property index; optimizer emits edge `TypedIndexRange` and expand drives from the selective indexed edge-row set. Median is −75.7% vs no-index. |
 
+PR-local edge-label borrow A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter edge_property_filter --save-baseline gql-edge-label-borrow-before`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter edge_property_filter --baseline gql-edge-label-borrow-before`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/edge_property_filter_no_index/1000` | 463.21 µs | 451.77 µs | Edge-label predicate matching now borrows the graph-owned `DbString` through recursive label-expression evaluation instead of cloning it at call sites and for compound predicates. Criterion reports -2.4228%, p=0.00. |
+| `read_pipeline/edge_property_filter_indexed/1000` | 89.251 µs | 89.179 µs | Indexed edge-property guard stayed neutral (p=0.56). |
+
+PR-local scan-key borrow A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter 'read_pipeline/(match_filter_project|match_name_in|match_composite_lookup|edge_property_filter)' --save-baseline gql-scan-label-borrow-before`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter 'read_pipeline/(match_filter_project|match_name_in|match_composite_lookup|edge_property_filter)' --baseline gql-scan-label-borrow-before`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_filter_project/1000` | 44.718 µs | 44.203 µs | Indexed scan setup now borrows single label/property keys when selecting label, typed-range, bitmap-union, and composite lookup candidate rows. Criterion reports -1.4356%, p=0.00. |
+| `read_pipeline/match_name_in/1000` | 6.0401 µs | 6.0229 µs | Bitmap-union row stayed within Criterion's noise threshold. |
+| `read_pipeline/match_composite_lookup/1000` | 446.32 ns | 437.56 ns | Composite lookup row improves -1.7612%, p=0.00. |
+| `read_pipeline/edge_property_filter_no_index/1000` | 450.63 µs | 447.86 µs | Edge-property no-index guard stayed within Criterion's noise threshold. |
+| `read_pipeline/edge_property_filter_indexed/1000` | 88.110 µs | 88.218 µs | Indexed edge-property guard stayed neutral (p=0.75). |
+
+PR-local label-index residual label skip A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter 'read_pipeline/(match_limit10|match_prereturn_limit10|distinct_dedup|group_by_highcard|order_by_topk)' --save-baseline gql-label-index-skip-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter 'read_pipeline/(match_limit10|match_prereturn_limit10|distinct_dedup|group_by_highcard|order_by_topk)' --baseline gql-label-index-skip-pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/order_by_topk/1000` | 104.18 µs | 98.397 µs | `LabelIndex` candidate rows already satisfy the single-label predicate, so scan collection now skips the redundant per-row label lookup. Criterion reports -5.4958%, p=0.00. |
+| `read_pipeline/group_by_highcard/1000` | 107.11 µs | 101.20 µs | Same label-scan source feeding hash aggregate; Criterion reports -5.6090%, p=0.00. |
+| `read_pipeline/distinct_dedup/1000` | 64.669 µs | 58.599 µs | DISTINCT over label-indexed Person rows improves -9.4288%, p=0.00. |
+| `read_pipeline/match_limit10/1000` | 22.883 µs | 17.063 µs | Warm cached post-RETURN LIMIT row improves -25.544%, p=0.00. |
+| `read_pipeline/match_prereturn_limit10/1000` | 22.883 µs | 17.091 µs | Pre-RETURN LIMIT row improves -25.397%, p=0.00. |
+| `read_pipeline/match_limit10/cold/1000` | 66.048 µs | 59.763 µs | Fresh uncached session companion improves -9.5230%, p=0.00. |
+| `read_pipeline/match_limit10/shared_cache/1000` | 22.980 µs | 17.096 µs | Fresh session over warmed shared source-plan cache improves -25.651%, p=0.00. |
+
 PR-local bitmap-union row-filter A/B:
 
 Commands:
@@ -2249,6 +2869,78 @@ and
 | `read_pipeline/distinct_dedup/1000` | 80.366 µs | 77.178 µs | DISTINCT now reserves its runtime equality-key set from the input row count. Median is -4.0%. |
 | `read_pipeline/group_by_highcard/1000` | 128.66 µs | 119.63 µs | GROUP BY now reserves its group vector and runtime equality-key index from the input row count capped by the configured group-key limit. Median is -7.0%; the initial A/B showed p=0.00, and the trimmed-patch rerun median is shown here. Full-profile sanity medians: 10k 889.49 µs, 50k 4.5333 ms, 100k 9.6804 ms. |
 
+PR-local GROUP BY finalization inline-row A/B:
+
+Commands: `scripts/run-benches.sh --profile quick --bench read_pipeline --filter group_by_highcard`;
+then temporarily rerun the old finalization path and rerun after the change with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter group_by_highcard`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/group_by_highcard/1000` | 122.33 µs | 117.85 µs | GROUP BY finalization now pushes aggregate results into `Binding` inline storage instead of allocating a representative-row `Vec` and one-value aggregate `Vec` per group. Criterion reports -3.8239%, p=0.00; a same-patch rerun measured 115.39 µs. |
+| `read_pipeline/group_by_highcard/10000` | 864.60 µs | 872.37 µs | Larger-scale guard stayed neutral (p=0.28), so the win is scoped to small-group/finalization-sensitive rows. |
+| `read_pipeline/group_by_highcard/50000` | 4.4961 ms | 4.5041 ms | Full-profile row stayed neutral (p=0.31). |
+| `read_pipeline/group_by_highcard/100000` | 9.7185 ms | 9.6600 ms | Full-profile row stayed neutral (p=0.33). |
+
+PR-local expansion inline-row A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match --save-baseline gql-expand-inline-row-fresh-pre`;
+same command with `--baseline gql-expand-inline-row-fresh-pre` after the
+change; then
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter match_expand_hashjoin --save-baseline gql-expand-inline-row-full-pre`
+and the same command with `--baseline gql-expand-inline-row-full-pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_expand_hashjoin/10000` | 12.187 ms | 11.786 ms | Expansion and hash-join merge rows now reuse `Binding` inline storage instead of round-tripping through a temporary heap `Vec`; Criterion reports -3.2915%, p=0.00. |
+| `read_pipeline/match_expand_hashjoin/50000` | 84.071 ms | 82.471 ms | Larger join row trends lower (-1.9034%, p=0.02) but remains within Criterion's noise threshold. |
+| `read_pipeline/match_expand_hashjoin/100000` | 173.35 ms | 169.23 ms | Largest full-profile row improves -2.3757%, p=0.00. Fresh quick guards over `match_filter_project`, `match_name_in`, `match_limit10`, `match_limit10/cold`, `match_limit10/shared_cache`, and `match_composite_lookup` reported no performance change. |
+
+PR-local projection inline-row A/B:
+
+Commands: temporarily rerun the old projection path, then rerun after the
+change with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter match_filter_project`.
+Quick short-query guard:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_limit10`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_filter_project/10000` | 572.55 µs | 553.02 µs | Projection now collects directly into `Binding` inline storage instead of allocating a temporary heap `Vec`; Criterion reports -3.8132%, p=0.00. |
+| `read_pipeline/match_filter_project/50000` | 3.3006 ms | 3.2575 ms | Larger row trends lower but remains within Criterion's noise threshold (p=0.73). |
+| `read_pipeline/match_filter_project/100000` | 7.7260 ms | 7.6296 ms | Largest row trends lower but remains within Criterion's noise threshold (p=0.10). Quick `match_limit10` guards stayed at the prior absolute envelope: ~30.24 µs warm, ~63.56 µs cold, ~30.07 µs shared-cache. |
+
+PR-local single-item `LET` inline-row A/B:
+
+Commands: add the `read_pipeline/let_single_extend` row, then compare the old
+executor path and the single-item fast path with
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter let_single_extend`;
+repeat with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter let_single_extend`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/let_single_extend/1000` | 94.344 µs | 87.460 µs | Single-binding `LET` now evaluates against the input row directly and emits inline `Binding` storage, avoiding the temporary prefix row and prefix schema vector; the old-path quick rerun reported +7.8612% slower than the patched sample, p=0.00. |
+| `read_pipeline/let_single_extend/10000` | 934.46 µs | 863.22 µs | Full-profile row improves -7.6837%, p=0.00. |
+| `read_pipeline/let_single_extend/50000` | 5.4078 ms | 5.1450 ms | Full-profile row improves -5.2620%, p=0.00. |
+| `read_pipeline/let_single_extend/100000` | 11.860 ms | 11.346 ms | Full-profile row improves -4.3361%, p=0.00. |
+
+PR-local `FOR` row-expansion inline-row A/B:
+
+Commands: add the `read_pipeline/for_expand_triple` row, then compare the old
+executor path and the inline-storage row-expansion path with
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter for_expand_triple`;
+repeat with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter for_expand_triple`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/for_expand_triple/1000` | 158.42 µs | 151.87 µs | `FOR` row expansion now clones into `Binding` inline storage and reserves the expanded-row output for each source list; the old-path quick rerun reported +4.3854% slower than the patched sample, p=0.00. |
+| `read_pipeline/for_expand_triple/10000` | 1.6296 ms | 1.5397 ms | Full-profile row improves -5.7265%, p=0.00. |
+| `read_pipeline/for_expand_triple/50000` | 9.5314 ms | 9.0549 ms | Full-profile row improves -4.9989%, p=0.00. |
+| `read_pipeline/for_expand_triple/100000` | 20.399 ms | 19.526 ms | Full-profile row improves -4.2810%, p=0.00. |
+
 PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 --bench read_pipeline`) against development post-#707:
 
@@ -2268,8 +2960,10 @@ PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:
 `BenchFixture::build(N)` (≈3N edges) for pagerank/betweenness/apsp and
 projection; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for
-triangle_count, WCC/SCC, label_propagation, and louvain; `dag_graph(N)` (≈3N
-edges) for topological_sort. `vector_graph_retrieval` is the
+triangle_count, WCC/SCC, articulation_points, label_propagation, and louvain;
+`dag_graph(N)` (≈3N edges) for pagerank_orientation, dijkstra, SSSP, and
+topological_sort.
+`vector_graph_retrieval` is the
 first native graph+vector agent-memory research fixture: it stores topic-summary
 vectors plus support, temporal-validity, and supersession edges to evidence
 nodes, then compares vector-only ANN against PageRank rerank, graph expansion,
@@ -2285,6 +2979,8 @@ topic precision as `precbp{basis points}`.
 | `algo/pagerank` | 10k | 89.01 µs | 88.99 µs | Auto now uses the sequential PageRank kernel after Rayon overhead lost at every measured scale. |
 | `algo/pagerank` | 50k | 499.88 µs | 499.36 µs | Explicit `Threads(n)` still opts into the parallel kernel for caller-forced experiments. |
 | `algo/pagerank` | 100k | 1.058 ms | 1.050 ms | Auto tracks the fastest measured policy on this sparse fixture. |
+| `algo/pagerank_orientation/reverse` | 1k | 67.23 µs | n/a | Sequential-only quick DAG control row for non-natural orientation setup. |
+| `algo/pagerank_orientation/undirected` | 1k | 48.03 µs | n/a | Sequential-only quick DAG row; undirected orientation setup now builds the out+in union from dense projection rows. |
 | `algo/betweenness` | 10k | 25.52 ms | 7.73 ms | **3.3× Auto** — endpoint-aware sampling. |
 | `algo/betweenness` | 50k | 135.3 ms | 44.95 ms | **3.0× Auto** — per-source SSSP parallelizes. |
 | `algo/betweenness` | 100k | 266.1 ms | 101.7 ms | **2.6× Auto** — headline rayon win. |
@@ -2303,9 +2999,12 @@ topic precision as `precbp{basis points}`.
 | `algo/scc_count` | 10k | 138.18 µs | n/a | Sequential-only; count-only path shares the dense Tarjan traversal state. |
 | `algo/scc_count` | 50k | 730.4 µs | n/a | |
 | `algo/scc_count` | 100k | 1.468 ms | n/a | |
+| `algo/articulation_points` | 1k | 43.99 µs | n/a | Sequential-only; shared lowlink pass now builds undirected neighbor caches from dense projection rows and indexes the cache by dense row. |
 | `algo/apsp` | 200 | 621.8 µs | 306.5 µs | All-pairs SSSP; scale = source count. |
 | `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
 | `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
+| `algo/dijkstra` | 1k | 6.923 µs | n/a | Sequential-only; DAG first-node to last-node shortest path now relaxes dense projection neighbor rows. |
+| `algo/sssp` | 1k | 6.710 µs | n/a | Sequential-only; direct single-source pathfinding row over the DAG fixture. Command: `scripts/run-benches.sh --profile quick --bench algo_bench --filter sssp`. |
 | `algo/topological_sort` | 10k | 89.09 µs | n/a | Sequential-only; in-degree accounting uses dense projection rows. |
 | `algo/topological_sort` | 50k | 455.4 µs | n/a | |
 | `algo/topological_sort` | 100k | 913.1 µs | n/a | |
@@ -2316,6 +3015,109 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
 
+PR-local PageRank undirected dense-orientation A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter pagerank_orientation --save-baseline pagerank-orientation-dense-before`;
+rerun with `--baseline pagerank-orientation-dense-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/pagerank_orientation/reverse/1k` | 74.453 µs | 67.231 µs | Control row: reverse keeps the existing public-neighbor path after the broader dense rewrite regressed this row, so this measured improvement is not attributed to the production change. |
+| `algo/pagerank_orientation/undirected/1k` | 54.732 µs | 48.034 µs | Undirected orientation setup now reads dense out/in CSR rows directly before sort/dedup. The quick DAG row improves 13.47% (`p=0.00`). |
+
+PR-local lowlink dense-indexed cache A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter articulation_points --save-baseline lowlink-cache-vector-before`;
+rerun with `--baseline lowlink-cache-vector-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/articulation_points/1k` | 56.921 µs | 43.990 µs | The shared articulation/bridges lowlink pass now stores per-DFS neighbor caches in a dense `Vec<Option<Vec<u32>>>` instead of an integer hash map. The quick planted-community row improves 22.79% (`p=0.00`). |
+
+PR-local lowlink dense-neighbor cache A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter articulation_points --save-baseline lowlink-dense-neighbors-before`;
+rerun with `--baseline lowlink-dense-neighbors-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/articulation_points/1k` | 77.922 µs | 59.865 µs | The shared articulation/bridges lowlink pass now builds sorted-with-multiplicity undirected neighbor caches from dense out/in CSR rows instead of resolving dense row through `NodeId`. The quick planted-community row improves 24.28% (`p=0.00`). |
+
+PR-local Dijkstra dense-neighbor relaxation A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter dijkstra --save-baseline dijkstra-dense-relax-before`;
+rerun with `--baseline dijkstra-dense-relax-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/dijkstra/1k` | 9.6963 µs | 6.9229 µs | Dijkstra now relaxes projection CSR out-neighbor slices by dense row and materializes the source `NodeId` only on invalid-weight error paths. The quick DAG first-to-last row improves 28.56% (`p=0.00`). |
+
+PR-local Louvain dense-neighbor scan A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter louvain --save-baseline louvain-dense-neighbors-before`;
+rerun with `--baseline louvain-dense-neighbors-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/louvain/1k` | 132.70 µs | 107.10 µs | Louvain now scans projection CSR out- and in-neighbor slices by dense row in total-weight, weighted-degree, and community-neighbor loops instead of resolving dense row through `NodeId`. The quick planted-community row improves 19.65% (`p=0.00`). |
+
+PR-local betweenness dense-adjacency build A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter 'betweenness/sequential' --save-baseline betweenness-dense-adjacency-before`;
+rerun with `--baseline betweenness-dense-adjacency-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/betweenness/sequential/1k` | 2.3808 ms | 2.3430 ms | Betweenness dense adjacency build now reads projection CSR out-neighbor slices by dense row instead of converting dense row to `NodeId` and resolving back to dense. The quick sparse row improves 3.04% (`p=0.00`). |
+
+PR-local SSSP dense-neighbor APSP A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter 'apsp/sequential' --save-baseline sssp-dense-neighbor-before`;
+rerun with `--baseline sssp-dense-neighbor-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/apsp/sequential/200` | 1.0434 ms | 553.24 µs | SSSP now relaxes projection CSR out-neighbor slices by dense row and materializes the source `NodeId` only on invalid-weight error paths. The quick sparse row improves 32.65% (`p=0.00`). |
+| `algo/apsp/sequential/500` | 8.1596 ms | 3.7973 ms | Same SSSP hot-loop change; improves 57.03% (`p=0.00`). |
+| `algo/apsp/sequential/1k` | 17.457 ms | 15.311 ms | Same SSSP hot-loop change; improves 8.88% (`p=0.00`). |
+
+PR-local label-propagation dense-neighbor A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter label_propagation --save-baseline label-propagation-dense-neighbors-before`;
+rerun with `--baseline label-propagation-dense-neighbors-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/label_propagation/1k` | 51.168 µs | 26.706 µs | Label propagation now stays in dense projection row space for both out- and in-neighbor scans, avoiding a dense-row-to-`NodeId` lookup followed by a `NodeId`-to-dense lookup in the hot loop. The quick planted-community row improves 42.06% (`p=0.00`). |
+
+PR-local sequential PageRank natural-CSR borrow A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter 'pagerank/sequential' --save-baseline pagerank-natural-borrow-before`;
+rerun with `--baseline pagerank-natural-borrow-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/pagerank/sequential/1k` | 10.293 µs | 2.8465 µs | Natural-orientation sequential PageRank now borrows projection CSR out-neighbor slices instead of cloning dense neighbor IDs into an owned adjacency. Reverse and undirected orientations keep the existing owned-adjacency path. The quick sparse row improves 73.19% (`p=0.00`). |
+
+PR-local SCC count-only materialization A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter scc_count --save-baseline scc-count-skip-components-before`;
+rerun with `--baseline scc-count-skip-components-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/scc_count/1k` | 13.908 µs | 12.956 µs | Count-only Tarjan now skips completed-component `Vec` materialization while keeping the same traversal and stack cleanup. The quick planted-community row improves 6.40% (`p=0.00`). |
+
 PR-local full topological-sort dense in-degree A/B:
 
 Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'topological_sort'`
@@ -2325,6 +3127,16 @@ Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'top
 | `algo/topological_sort/10k` | 285.59 µs | 89.09 µs | Replaces `HashMap<NodeId, u32>` in-degree accounting and per-edge projection membership checks with dense `Vec<u32>` rows. |
 | `algo/topological_sort/50k` | 1.5615 ms | 455.41 µs | The projection CSR already stores only projected neighbors and caches each neighbor's dense index. |
 | `algo/topological_sort/100k` | 3.5344 ms | 913.05 µs | Preserves ASC-by-NodeId tie-breaking via `RowIndex` dense order. |
+
+PR-local topological-sort ready-buffer reuse A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter topological_sort --save-baseline topo-reuse-ready-before`;
+rerun with `--baseline topo-reuse-ready-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/topological_sort/1k` | 9.8913 µs | 6.3636 µs | Kahn's algorithm now reuses the next-batch scratch vector across levels and swaps it with the drained ready buffer after sorting. The quick DAG row improves 37.73% (`p=0.00`) while preserving per-batch dense-order tie-breaks. |
 
 PR-local full label-propagation dense-count A/B:
 
@@ -2345,6 +3157,16 @@ Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'alg
 | `algo/louvain/10k` | 1.723 ms | 1.6519 ms | Replaces dense-key community-degree hash lookups with vector indexing. |
 | `algo/louvain/50k` | 9.294 ms | 9.0146 ms | Same deterministic single-level Louvain semantics. |
 | `algo/louvain/100k` | 19.31 ms | 18.569 ms | Modest improvement; Louvain remains sequential-only. |
+
+PR-local Louvain inline community-weight A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter louvain --save-baseline louvain-inline-weights-before`;
+rerun with `--baseline louvain-inline-weights-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/louvain/1k` | 153.99 µs | 106.78 µs | Neighbor community weights now aggregate in an inline `SmallVec` for low-cardinality neighborhoods and spill to the existing `FxHashMap` only past the inline cap. The planted-community quick row improves 30.49% (`p=0.00`). |
 
 PR-local full component dense-state A/B:
 
@@ -2388,6 +3210,16 @@ rerun with `--baseline b13_pre` after the implementation.
 | `algo/projection_build/10k` | 933.19 µs | 611.61 µs | Incoming CSR is derived by transposing the outgoing CSR, avoiding the second graph-adjacency scan and improving 32.9%. |
 | `algo/projection_build/50k` | 11.057 ms | 4.5021 ms | Larger projections benefit most from removing the second count/fill pass and per-edge membership probes; this row improves 59.1%. |
 | `algo/projection_build/100k` | 29.202 ms | 14.412 ms | 100k projection build improves 50.6% while preserving the out/in CSR transpose invariant. |
+
+PR-local projection sorted-bucket guard:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench projection --filter projection_build --save-baseline csr-skip-sorted-before`;
+rerun with `--baseline csr-skip-sorted-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/projection_build/1k` | 50.804 µs | 48.671 µs | CSR bucket ordering now checks whether each bucket is already sorted by neighbor `NodeId` and keeps the stable sort only for unsorted buckets. The common one-label projection row improves 4.16% (`p=0.00`). |
 
 ### §6c Graph-Augmented Vector Retrieval Research
 
@@ -3440,7 +4272,7 @@ confirm the win and guard the surrounding rows against regression.
 | B5 ✓ | Use `FxBuildHasher` for immutable maps keyed only by engine-assigned ids | `graph_node_fetch` + `gql_correlated_subquery/{exists,count}` + `bulk_mutation` guard | **graph_node_fetch −22.7% @1k quick; post-B3 correlated residual −11.8..15.3%**; update-batch writes remain noisy/no claimed win |
 | B18/B20 ✓ | Hoist runtime column resolution and borrow aggregate descriptors | `read_pipeline` + `gql_correlated_subquery/{exists,count}` + `write_e2e` guard | **read_pipeline −3.8..11.7% on significant rows; correlated residual −4.7..5.9%**; mixed write guards neutral, isolated WAL spike not reproduced |
 | D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
-| D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 69 ms / dec 216 ms @100k |
+| D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 32 ms / dec 183 ms @100k |
 
 ## Update protocol
 

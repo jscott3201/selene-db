@@ -31,10 +31,17 @@ mod builder;
 mod candidate;
 #[path = "text_index/maintenance.rs"]
 mod maintenance;
+#[path = "text_index/postings.rs"]
+mod postings;
 use builder::TextIndexBuilder;
+use postings::{remove_posting, upsert_posting};
 
 type QueryDocumentFrequencies = SmallVec<[u32; 4]>;
 type QueryPostings<'a> = SmallVec<[Option<&'a [TextPosting]>; 4]>;
+type InlineDocumentTermCounts = SmallVec<[(TextTerm, u32); 8]>;
+type TextTerm = Arc<str>;
+
+const INLINE_DOCUMENT_TERM_COUNT_CAPACITY: usize = 8;
 
 pub(crate) use maintenance::{
     apply_node_create, apply_node_delete, apply_node_update, rebuild_text_indexes,
@@ -47,8 +54,8 @@ pub struct TextIndex {
     property: DbString,
     rows: RoaringBitmap,
     document_lengths: FxHashMap<NodeId, u32>,
-    document_terms: FxHashMap<NodeId, Arc<[String]>>,
-    postings: FxHashMap<String, Arc<Vec<TextPosting>>>,
+    document_terms: FxHashMap<NodeId, Arc<[TextTerm]>>,
+    postings: FxHashMap<TextTerm, Arc<Vec<TextPosting>>>,
     total_document_len: u64,
     posting_count: usize,
 }
@@ -181,25 +188,22 @@ impl TextIndex {
         let mut document_term_bytes = self
             .document_terms
             .capacity()
-            .saturating_mul(size_of::<(NodeId, Arc<[String]>)>());
+            .saturating_mul(size_of::<(NodeId, Arc<[TextTerm]>)>());
         for terms in self.document_terms.values() {
-            document_term_bytes =
-                document_term_bytes.saturating_add(terms.len().saturating_mul(size_of::<String>()));
-            for term in terms.iter() {
-                document_term_bytes = document_term_bytes.saturating_add(term.capacity());
-            }
+            document_term_bytes = document_term_bytes
+                .saturating_add(terms.len().saturating_mul(size_of::<TextTerm>()));
         }
         let mut posting_bytes = 0usize;
         let mut term_bytes = 0usize;
         for (term, postings) in &self.postings {
-            term_bytes = term_bytes.saturating_add(term.capacity());
+            term_bytes = term_bytes.saturating_add(term.len());
             posting_bytes = posting_bytes
                 .saturating_add(postings.capacity().saturating_mul(size_of::<TextPosting>()));
         }
         let terms_table_bytes = self
             .postings
             .capacity()
-            .saturating_mul(size_of::<(String, Arc<Vec<TextPosting>>)>());
+            .saturating_mul(size_of::<(TextTerm, Arc<Vec<TextPosting>>)>());
         let estimated_index_bytes = size_of::<Self>()
             .saturating_add(row_bitmap_bytes)
             .saturating_add(document_length_bytes)
@@ -259,7 +263,7 @@ impl TextIndex {
         let mut postings_by_term = QueryPostings::with_capacity(query_terms.len());
         let mut candidate_capacity = 0usize;
         for term in &query_terms {
-            match self.postings.get(term) {
+            match self.postings.get(term.as_str()) {
                 Some(postings) => {
                     candidate_capacity = candidate_capacity.saturating_add(postings.len());
                     document_frequencies.push(u32::try_from(postings.len()).unwrap_or(u32::MAX));
@@ -331,26 +335,35 @@ impl TextIndex {
     }
 
     pub(crate) fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
-        self.remove_document(row, node_id);
-        let mut counts: FxHashMap<String, u32> = FxHashMap::default();
-        let mut len = 0_u32;
-        for token in tokenize_borrowed(text) {
-            len = len.saturating_add(1);
-            let count = counts.entry(token.into_owned()).or_insert(0);
-            *count = count.saturating_add(1);
-        }
+        let (counts, len) = count_document_terms(text, |token| {
+            intern_existing_posting_term(&self.postings, token)
+        });
         if len == 0 {
+            self.remove_document(row, node_id);
             return;
         }
+        if self.document_lengths.contains_key(&node_id) {
+            self.replace_counted_document(row, node_id, counts, len);
+        } else {
+            self.insert_counted_document(row, node_id, counts, len);
+        }
+    }
 
+    fn insert_counted_document(
+        &mut self,
+        row: u32,
+        node_id: NodeId,
+        counts: DocumentTermCounts,
+        len: u32,
+    ) {
         self.rows.insert(row);
         self.document_lengths.insert(node_id, len);
         self.total_document_len = self.total_document_len.saturating_add(u64::from(len));
         let mut terms = Vec::with_capacity(counts.len());
-        for (term, term_count) in counts {
+        counts.for_each(|term, term_count| {
             let postings = self
                 .postings
-                .entry(term.clone())
+                .entry(Arc::clone(&term))
                 .or_insert_with(|| Arc::new(Vec::new()));
             let postings = Arc::make_mut(postings);
             match postings.binary_search_by_key(&node_id, |posting| posting.node_id) {
@@ -369,6 +382,51 @@ impl TextIndex {
                 }
             }
             terms.push(term);
+        });
+        self.document_terms.insert(node_id, Arc::from(terms));
+    }
+
+    fn replace_counted_document(
+        &mut self,
+        row: u32,
+        node_id: NodeId,
+        counts: DocumentTermCounts,
+        len: u32,
+    ) {
+        let Some(old_terms) = self.document_terms.remove(&node_id) else {
+            self.remove_document(row, node_id);
+            self.insert_counted_document(row, node_id, counts, len);
+            return;
+        };
+
+        self.rows.insert(row);
+        let old_len = self.document_lengths.insert(node_id, len).unwrap_or(0);
+        self.total_document_len = self
+            .total_document_len
+            .saturating_sub(u64::from(old_len))
+            .saturating_add(u64::from(len));
+
+        let mut terms = Vec::with_capacity(counts.len());
+        counts.for_each(|term, term_count| {
+            upsert_posting(
+                &mut self.postings,
+                &mut self.posting_count,
+                &term,
+                node_id,
+                term_count,
+            );
+            terms.push(term);
+        });
+        for old_term in old_terms.iter() {
+            if terms.iter().any(|term| term.as_ref() == old_term.as_ref()) {
+                continue;
+            }
+            remove_posting(
+                &mut self.postings,
+                &mut self.posting_count,
+                old_term,
+                node_id,
+            );
         }
         self.document_terms.insert(node_id, Arc::from(terms));
     }
@@ -383,21 +441,7 @@ impl TextIndex {
             return;
         };
         for term in terms.iter() {
-            let remove_term = if let Some(postings) = self.postings.get_mut(term.as_str()) {
-                let postings = Arc::make_mut(postings);
-                if let Ok(index) =
-                    postings.binary_search_by_key(&node_id, |posting| posting.node_id)
-                {
-                    postings.remove(index);
-                    self.posting_count = self.posting_count.saturating_sub(1);
-                }
-                postings.is_empty()
-            } else {
-                false
-            };
-            if remove_term {
-                self.postings.remove(term.as_str());
-            }
+            remove_posting(&mut self.postings, &mut self.posting_count, term, node_id);
         }
     }
 
@@ -531,6 +575,92 @@ impl SharedGraph {
 struct TextPosting {
     node_id: NodeId,
     term_count: u32,
+}
+
+enum DocumentTermCounts {
+    Inline(InlineDocumentTermCounts),
+    Map(FxHashMap<TextTerm, u32>),
+}
+
+impl DocumentTermCounts {
+    fn new() -> Self {
+        Self::Inline(InlineDocumentTermCounts::new())
+    }
+
+    fn increment(&mut self, term: TextTerm) {
+        match self {
+            Self::Inline(counts) => {
+                if let Some((_, count)) = counts
+                    .iter_mut()
+                    .find(|(existing, _)| existing.as_ref() == term.as_ref())
+                {
+                    *count = count.saturating_add(1);
+                    return;
+                }
+                if counts.len() < INLINE_DOCUMENT_TERM_COUNT_CAPACITY {
+                    counts.push((term, 1));
+                    return;
+                }
+
+                let mut map =
+                    FxHashMap::with_capacity_and_hasher(counts.len() + 1, Default::default());
+                for (term, count) in counts.drain(..) {
+                    map.insert(term, count);
+                }
+                map.insert(term, 1);
+                *self = Self::Map(map);
+            }
+            Self::Map(counts) => {
+                let count = counts.entry(term).or_insert(0);
+                *count = count.saturating_add(1);
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Inline(counts) => counts.len(),
+            Self::Map(counts) => counts.len(),
+        }
+    }
+
+    fn for_each(self, mut visit: impl FnMut(TextTerm, u32)) {
+        match self {
+            Self::Inline(counts) => {
+                for (term, count) in counts {
+                    visit(term, count);
+                }
+            }
+            Self::Map(counts) => {
+                for (term, count) in counts {
+                    visit(term, count);
+                }
+            }
+        }
+    }
+}
+
+fn count_document_terms(
+    text: &str,
+    mut intern: impl FnMut(&str) -> TextTerm,
+) -> (DocumentTermCounts, u32) {
+    let mut counts = DocumentTermCounts::new();
+    let mut len = 0_u32;
+    for token in tokenize_borrowed(text) {
+        len = len.saturating_add(1);
+        counts.increment(intern(token.as_ref()));
+    }
+    (counts, len)
+}
+
+fn intern_existing_posting_term(
+    postings: &FxHashMap<TextTerm, Arc<Vec<TextPosting>>>,
+    token: &str,
+) -> TextTerm {
+    postings
+        .get_key_value(token)
+        .map(|(term, _)| Arc::clone(term))
+        .unwrap_or_else(|| Arc::from(token))
 }
 
 fn roaring_heap_bytes(rows: &RoaringBitmap) -> usize {

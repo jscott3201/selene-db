@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: IM_ALTER_EDGE_TYPE
+// expects: parse-ok
+ALTER EDGE TYPE :CONCERNS (FROM :Issue, :PullRequest TO :Document, confidence :: FLOAT)

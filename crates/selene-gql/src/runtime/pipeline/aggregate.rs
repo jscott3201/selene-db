@@ -78,9 +78,8 @@ impl<'plan> AggregateSlot<'plan> {
         self.state.observe(Some(value), self.aggregate.span)
     }
 
-    pub(super) fn finalize_values(self) -> Result<Vec<Value>, ExecutorError> {
-        let value = self.state.finalize(self.aggregate.span)?;
-        Ok(vec![value])
+    pub(super) fn finalize_value(self) -> Result<Value, ExecutorError> {
+        self.state.finalize(self.aggregate.span)
     }
 }
 

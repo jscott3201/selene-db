@@ -68,6 +68,17 @@ fn from_pairs_accepts_empty_and_singleton_maps() {
 }
 
 #[test]
+fn from_pairs_accepts_already_canonical_pairs() {
+    let a = key("pm.from_pairs.canonical.a");
+    let b = key("pm.from_pairs.canonical.b");
+    let map = PropertyMap::from_pairs([(a.clone(), int(1)), (b.clone(), int(2))]).unwrap();
+
+    assert_eq!(map.get(&a), Some(&int(1)));
+    assert_eq!(map.get(&b), Some(&int(2)));
+    assert!(map.sorted_invariant_holds());
+}
+
+#[test]
 fn compact_get_by_known_key() {
     let a = key("pm.compact.a");
     let b = key("pm.compact.b");
@@ -87,6 +98,17 @@ fn compact_accepts_empty_and_singleton_maps() {
     assert_eq!(singleton.len(), 1);
     assert_eq!(singleton.get(&score), Some(&int(42)));
     assert!(singleton.sorted_invariant_holds());
+}
+
+#[test]
+fn compact_accepts_already_canonical_keys() {
+    let a = key("pm.compact.canonical.a");
+    let b = key("pm.compact.canonical.b");
+    let map = PropertyMap::compact([a.clone(), b.clone()], [Some(int(1)), None]).unwrap();
+
+    assert_eq!(map.get(&a), Some(&int(1)));
+    assert_eq!(map.get(&b), None);
+    assert!(map.sorted_invariant_holds());
 }
 
 #[test]

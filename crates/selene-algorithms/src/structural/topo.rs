@@ -82,12 +82,13 @@ pub fn topological_sort_with_checker(
 
     let mut result: Vec<(NodeId, usize)> = Vec::with_capacity(total);
     let mut position: usize = 0;
+    let mut next_batch: Vec<u32> = Vec::new();
 
     while !ready.is_empty() {
         check_algorithm(checker)?;
         // Process the current batch in deterministic order; collect newly-zero
         // nodes for the next batch, then re-sort them.
-        let mut next_batch: Vec<u32> = Vec::new();
+        next_batch.clear();
         rows_since_check = 0;
         for dense in ready.drain(..) {
             check_algorithm_stride(checker, &mut rows_since_check)?;
@@ -102,7 +103,7 @@ pub fn topological_sort_with_checker(
             }
         }
         next_batch.sort_unstable();
-        ready = next_batch;
+        std::mem::swap(&mut ready, &mut next_batch);
     }
 
     if result.len() < total {

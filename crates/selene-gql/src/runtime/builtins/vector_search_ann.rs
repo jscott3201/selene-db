@@ -6,9 +6,12 @@
 //! and approximate recall is an explicit caller choice.
 
 use selene_core::Value;
-use selene_graph::{ApproximateVectorSearchOptions, SeleneGraph};
+use selene_graph::ApproximateVectorSearchOptions;
 
 use super::meta::{StaticOutputColumn, StaticParameter};
+use super::retrieval_filter::{
+    append_edge_filter_parameters, append_node_filter_parameters, optional_filter_rows,
+};
 use super::vector_common::{
     BatchMismatch, approximate_vector_search_error, cardinality_arg, invalid_arg, query_arg,
     string_arg,
@@ -52,24 +55,8 @@ pub(super) fn signature() -> Vec<ProcedureParameter> {
         .cloned()
         .map(StaticParameter::into_parameter)
         .collect();
-    params.push(
-        StaticParameter::new("filter_property", GqlType::String, true)
-            .with_description("Indexed scalar property used to admit matching nodes.")
-            .with_default_doc("NULL (no property filter)")
-            .with_default(ProcedureDefaultValue::Null)
-            .into_parameter(),
-    );
-    params.push(
-        StaticParameter::new(
-            "filter_values",
-            GqlType::List(Box::new(GqlType::AnyProperty)),
-            true,
-        )
-        .with_description("Indexed scalar values admitted by filter_property.")
-        .with_default_doc("NULL (no property filter)")
-        .with_default(ProcedureDefaultValue::Null)
-        .into_parameter(),
-    );
+    append_node_filter_parameters(&mut params);
+    append_edge_filter_parameters(&mut params);
     params
 }
 
@@ -85,9 +72,9 @@ pub(super) fn execute(
     ctx: &GraphContext<'_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
-    if !(4..=8).contains(&args.len()) || args.len() == 7 {
+    if !matches!(args.len(), 4..=6 | 8 | 12) {
         return Err(invalid_arg(format!(
-            "{PROC_NAME} expects 4 to 6 arguments, or 8 with a property filter"
+            "{PROC_NAME} expects 4 to 6 arguments, 8 with a property filter, or 12 with edge filter arguments"
         )));
     }
 
@@ -109,8 +96,20 @@ pub(super) fn execute(
         .unwrap_or_else(|| {
             default_search_width(ctx.snapshot(), &label, &property, query.dimension(), metric)
         });
-    let filter_rows = if args.len() == 8 {
-        optional_filter_rows(PROC_NAME, ctx.snapshot(), &label, &args[6], &args[7])?
+    let filter_rows = if args.len() >= 8 {
+        let edge_filter = if args.len() == 12 {
+            Some((&args[8], &args[9], &args[10], &args[11]))
+        } else {
+            None
+        };
+        optional_filter_rows(
+            PROC_NAME,
+            ctx.snapshot(),
+            &label,
+            &args[6],
+            &args[7],
+            edge_filter,
+        )?
     } else {
         None
     };
@@ -149,33 +148,4 @@ pub(super) fn execute(
             .map(|hit| vec![Value::NodeRef(hit.node_id), Value::Float(hit.distance)])
             .collect(),
     })
-}
-
-fn optional_filter_rows(
-    proc_name: &'static str,
-    snapshot: &SeleneGraph,
-    label: &selene_core::DbString,
-    property: &Value,
-    values: &Value,
-) -> Result<Option<roaring::RoaringBitmap>, ProcedureError> {
-    match (property, values) {
-        (Value::Null, Value::Null) => Ok(None),
-        (Value::Null, _) | (_, Value::Null) => Err(invalid_arg(format!(
-            "{proc_name} filter_property and filter_values must both be NULL or both be supplied"
-        ))),
-        (_, Value::List(values)) => {
-            let property = string_arg(proc_name, property, "filter_property")?;
-            snapshot
-                .nodes_with_property_any(label, &property, values)
-                .map(Some)
-                .ok_or_else(|| {
-                    invalid_arg(format!(
-                        "{proc_name} filter_property must name an indexed scalar node property and filter_values must match that index kind"
-                    ))
-                })
-        }
-        (_, _) => Err(invalid_arg(format!(
-            "{proc_name} filter_values must be a LIST<VALUE> or NULL"
-        ))),
-    }
 }

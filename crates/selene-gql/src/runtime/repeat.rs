@@ -190,7 +190,7 @@ fn maybe_emit_path(
         return Ok(());
     }
 
-    let mut values = row.values().to_vec();
+    let mut values = row.cloned_values();
     values.resize(state.schema.columns.len(), Value::Null);
     if !state
         .final_slot
@@ -212,7 +212,7 @@ fn maybe_emit_path(
         return Ok(());
     }
 
-    let candidate = Binding::new(values);
+    let candidate = Binding::from_parts(values, row.cloned_insert_sites());
     if !predicates_pass(
         &state.edge.final_property_predicates,
         &candidate,
@@ -270,7 +270,7 @@ fn current_step_row(
     edge_id: EdgeId,
     state: &RepeatState<'_, '_, '_, '_, '_>,
 ) -> Result<Option<Binding>, ExecutorError> {
-    let mut values = row.values().to_vec();
+    let mut values = row.cloned_values();
     values.resize(state.schema.columns.len(), Value::Null);
     let edge_list = path_edges
         .iter()
@@ -281,7 +281,7 @@ fn current_step_row(
     if !state.group_slot.set(&mut values, Value::List(edge_list)) {
         return Ok(None);
     }
-    Ok(Some(Binding::new(values)))
+    Ok(Some(Binding::from_parts(values, row.cloned_insert_sites())))
 }
 
 fn edge_list_value(path_edges: &[EdgeId]) -> Value {
@@ -360,7 +360,7 @@ fn edge_label_matches(
     ctx.tx
         .snapshot()
         .edge_label(edge_id)
-        .is_some_and(|label| scan::label_matches_edge(label_expr, label.clone()))
+        .is_some_and(|label| scan::label_matches_edge(label_expr, label))
 }
 
 fn final_node_label_matches(

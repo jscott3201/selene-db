@@ -31,7 +31,42 @@ pub(super) struct CandidateState {
     pub(super) edges: BTreeMap<EdgeId, TrackedEdge>,
     outgoing_counts: BTreeMap<(NodeId, DbString), usize>,
     incoming_counts: BTreeMap<(NodeId, DbString), usize>,
-    pub(super) members: BTreeMap<DbString, BTreeSet<NodeId>>,
+    pub(super) members: BTreeMap<DbString, CandidateMembers>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct CandidateMembers {
+    set: BTreeSet<NodeId>,
+    cached: Vec<NodeId>,
+    dirty: bool,
+}
+
+impl CandidateMembers {
+    pub(super) fn candidate_nodes(&mut self) -> Vec<NodeId> {
+        if self.dirty {
+            self.cached.clear();
+            self.cached.extend(self.set.iter().copied());
+            self.dirty = false;
+        }
+        self.cached.clone()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    pub(super) fn contains(&self, node: NodeId) -> bool {
+        self.set.contains(&node)
+    }
+
+    fn set_membership(&mut self, node: NodeId, include: bool) {
+        let changed = if include {
+            self.set.insert(node)
+        } else {
+            self.set.remove(&node)
+        };
+        self.dirty |= changed;
+    }
 }
 
 impl CandidateState {
@@ -194,9 +229,8 @@ impl CandidateState {
     }
 
     fn recompute_node(&mut self, specs: &[CandidateStateSpec], node: NodeId) {
-        let labels = self.node_labels.get(&node).cloned();
         for spec in specs {
-            let include = labels.as_ref().is_some_and(|labels| {
+            let include = self.node_labels.get(&node).is_some_and(|labels| {
                 spec.required_label
                     .as_ref()
                     .is_none_or(|required| labels.contains(required))
@@ -218,11 +252,7 @@ impl CandidateState {
                         .all(|label| !has_count(&self.incoming_counts, node, label))
             });
             let members = self.members.entry(spec.name.clone()).or_default();
-            if include {
-                members.insert(node);
-            } else {
-                members.remove(&node);
-            }
+            members.set_membership(node, include);
         }
     }
 }
@@ -240,10 +270,10 @@ pub(super) fn validate_unique_specs(specs: &[CandidateStateSpec]) -> Result<(), 
     Ok(())
 }
 
-fn empty_members(specs: &[CandidateStateSpec]) -> BTreeMap<DbString, BTreeSet<NodeId>> {
+fn empty_members(specs: &[CandidateStateSpec]) -> BTreeMap<DbString, CandidateMembers> {
     specs
         .iter()
-        .map(|spec| (spec.name.clone(), BTreeSet::new()))
+        .map(|spec| (spec.name.clone(), CandidateMembers::default()))
         .collect()
 }
 

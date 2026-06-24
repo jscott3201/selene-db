@@ -380,7 +380,7 @@ Flagger must still admit it; do not pretend it is standard.
 selene-db is a single native engine: there is no procedure-pack model.
 All `CALL`-able procedures are registered natively in the one frozen
 `selene_gql::runtime::builtin_registry::BuiltinProcedureRegistry` (D16) —
-the 46 `selene.*` platform built-ins plus the 19 `algo.*` procedures.
+the 49 `selene.*` platform built-ins plus the 19 `algo.*` procedures.
 
 The high-level flow is:
 

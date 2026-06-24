@@ -9,8 +9,12 @@ use selene_core::{
 use selene_graph::{
     AdjacencyEdge, AdjacencyEntry, CandidateStateSpec, IndexProvider,
     MaintainedCandidateStateProvider, SeleneGraph, SharedGraph, VectorCandidateSet,
-    VectorNeighborDirection, VectorNeighborSearchOptions, VectorNodeSearchHit,
+    VectorNeighborDirection, VectorNeighborSearchOptions,
 };
+
+mod single_graph_candidate_set_algebra_fixture;
+
+use single_graph_candidate_set_algebra_fixture::VectorCandidateAlgebraFixture;
 
 const VECTOR_CANDIDATE_NEIGHBORS: usize = 64;
 const VECTOR_CANDIDATE_SCORE_DIMENSION: usize = 1024;
@@ -285,6 +289,23 @@ fn bench_candidate_set_algebra(
             });
         },
     );
+    let disjoint_fixture =
+        VectorCandidateAlgebraFixture::build_disjoint(VECTOR_CANDIDATE_ALGEBRA_SET);
+    group.throughput(Throughput::Elements(disjoint_fixture.set_width() as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            disjoint_fixture.bench_id("set_intersection"),
+            disjoint_fixture.overlap_width(),
+        ),
+        |b| {
+            b.iter(|| {
+                let candidates = disjoint_fixture
+                    .left()
+                    .intersection(disjoint_fixture.right());
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
     let asymmetric_fixture = VectorCandidateAlgebraFixture::build_asymmetric(
         VECTOR_CANDIDATE_ASYM_SMALL_SET,
         VECTOR_CANDIDATE_ASYM_LARGE_SET,
@@ -314,11 +335,58 @@ fn bench_candidate_set_algebra(
             });
         },
     );
+    group.throughput(Throughput::Elements(disjoint_fixture.set_width() as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            disjoint_fixture.bench_id("set_union"),
+            disjoint_fixture.overlap_width(),
+        ),
+        |b| {
+            b.iter(|| {
+                let candidates = disjoint_fixture.left().union(disjoint_fixture.right());
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
+    group.throughput(Throughput::Elements(fixture.set_width() as u64));
     group.bench_function(
         BenchmarkId::new(fixture.bench_id("set_difference"), fixture.overlap_width()),
         |b| {
             b.iter(|| {
                 let candidates = fixture.left().difference(fixture.right());
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
+    group.throughput(Throughput::Elements(disjoint_fixture.set_width() as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            disjoint_fixture.bench_id("set_difference"),
+            disjoint_fixture.overlap_width(),
+        ),
+        |b| {
+            b.iter(|| {
+                let candidates = disjoint_fixture.left().difference(disjoint_fixture.right());
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
+    group.bench_function(
+        BenchmarkId::new(fixture.bench_id("from_nodes_reverse"), fixture.set_width()),
+        |b| {
+            b.iter(|| {
+                let candidates =
+                    VectorCandidateSet::from_nodes(fixture.left().as_nodes().iter().rev().copied());
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
+    group.bench_function(
+        BenchmarkId::new(fixture.bench_id("from_nodes_sorted"), fixture.set_width()),
+        |b| {
+            b.iter(|| {
+                let candidates =
+                    VectorCandidateSet::from_nodes(fixture.left().as_nodes().iter().copied());
                 std::hint::black_box(candidates.len());
             });
         },
@@ -493,94 +561,6 @@ impl MaintainedCandidateStateFixture {
 
     const fn total_nodes(&self) -> usize {
         self.active_count + self.stale_count
-    }
-}
-
-#[derive(Clone, Debug)]
-struct VectorCandidateAlgebraFixture {
-    left: VectorCandidateSet,
-    right: VectorCandidateSet,
-    hits: Vec<VectorNodeSearchHit>,
-    left_width: usize,
-    right_width: usize,
-    overlap_width: usize,
-}
-
-impl VectorCandidateAlgebraFixture {
-    fn build(set_width: usize, overlap_width: usize) -> Self {
-        let overlap_width = overlap_width.min(set_width);
-        let right_start = set_width - overlap_width + 1;
-        let left_nodes = (1..=set_width)
-            .map(|id| NodeId::new(id as u64))
-            .collect::<Vec<_>>();
-        let right_nodes = (right_start..right_start + set_width)
-            .map(|id| NodeId::new(id as u64))
-            .collect::<Vec<_>>();
-        let hits = right_nodes
-            .iter()
-            .enumerate()
-            .map(|(offset, node_id)| VectorNodeSearchHit {
-                node_id: *node_id,
-                distance: offset as f64,
-            })
-            .collect::<Vec<_>>();
-        Self {
-            left: VectorCandidateSet::from_nodes(left_nodes),
-            right: VectorCandidateSet::from_nodes(right_nodes),
-            hits,
-            left_width: set_width,
-            right_width: set_width,
-            overlap_width,
-        }
-    }
-
-    fn build_asymmetric(left_width: usize, right_width: usize) -> Self {
-        let overlap_width = left_width.min(right_width);
-        let left_nodes = (1..=left_width)
-            .map(|id| NodeId::new(id as u64 * 64))
-            .collect::<Vec<_>>();
-        let right_nodes = (1..=right_width)
-            .map(|id| NodeId::new(id as u64))
-            .collect::<Vec<_>>();
-        Self {
-            left: VectorCandidateSet::from_nodes(left_nodes),
-            right: VectorCandidateSet::from_nodes(right_nodes),
-            hits: Vec::new(),
-            left_width,
-            right_width,
-            overlap_width,
-        }
-    }
-
-    fn bench_id(&self, prefix: &str) -> String {
-        format!(
-            "{prefix}_l{}_r{}_o{}",
-            self.left_width, self.right_width, self.overlap_width
-        )
-    }
-
-    const fn left(&self) -> &VectorCandidateSet {
-        &self.left
-    }
-
-    const fn right(&self) -> &VectorCandidateSet {
-        &self.right
-    }
-
-    fn hits(&self) -> &[VectorNodeSearchHit] {
-        &self.hits
-    }
-
-    const fn set_width(&self) -> usize {
-        self.left_width
-    }
-
-    const fn left_width(&self) -> usize {
-        self.left_width
-    }
-
-    const fn overlap_width(&self) -> usize {
-        self.overlap_width
     }
 }
 

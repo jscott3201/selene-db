@@ -437,9 +437,19 @@ fn document_stats(
 ) -> Option<DocumentStats> {
     let mut term_counts = TermCounts::from_elem(0, query_terms.len());
     let mut len = 0_u32;
+    let short_query = query_terms.len() <= 4;
     for token in tokenize_borrowed(text) {
         len = len.saturating_add(1);
-        if let Ok(index) = query_terms.binary_search_by(|term| term.as_str().cmp(token.as_ref())) {
+        if short_query {
+            for (index, term) in query_terms.iter().enumerate() {
+                if term.as_str() == token.as_ref() {
+                    term_counts[index] = term_counts[index].saturating_add(1);
+                    break;
+                }
+            }
+        } else if let Ok(index) =
+            query_terms.binary_search_by(|term| term.as_str().cmp(token.as_ref()))
+        {
             term_counts[index] = term_counts[index].saturating_add(1);
         }
     }
@@ -453,19 +463,65 @@ fn document_stats(
 
 /// Iterate lowercase alphanumeric tokens, borrowing when lowercase is unchanged.
 pub(crate) fn tokenize_borrowed(text: &str) -> Tokenizer<'_> {
-    Tokenizer { text, offset: 0 }
+    Tokenizer {
+        text,
+        offset: 0,
+        ascii: text.is_ascii(),
+    }
 }
 
 /// Borrowing tokenizer for BM25 query/document processing.
 pub(crate) struct Tokenizer<'a> {
     text: &'a str,
     offset: usize,
+    ascii: bool,
 }
 
-impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Cow<'a, str>;
+impl<'a> Tokenizer<'a> {
+    fn next_ascii(&mut self) -> Option<Cow<'a, str>> {
+        let mut start = None;
+        let mut end = self.text.len();
+        let mut owned = None::<String>;
 
-    fn next(&mut self) -> Option<Self::Item> {
+        let bytes = self.text.as_bytes();
+        let mut index = self.offset;
+        while index < bytes.len() {
+            let byte = bytes[index];
+            if !byte.is_ascii_alphanumeric() {
+                if start.is_some() {
+                    end = index;
+                    self.offset = index + 1;
+                    break;
+                }
+                self.offset = index + 1;
+                index += 1;
+                continue;
+            }
+
+            let start_index = *start.get_or_insert(index);
+            let lowered = byte.to_ascii_lowercase();
+            if let Some(buffer) = owned.as_mut() {
+                buffer.push(char::from(lowered));
+            } else if lowered != byte {
+                let mut buffer = self.text[start_index..index].to_owned();
+                buffer.push(char::from(lowered));
+                owned = Some(buffer);
+            }
+            index += 1;
+        }
+
+        let start = start?;
+        if self.offset <= start {
+            self.offset = self.text.len();
+        }
+
+        Some(match owned {
+            Some(token) => Cow::Owned(token),
+            None => Cow::Borrowed(&self.text[start..end]),
+        })
+    }
+
+    fn next_unicode(&mut self) -> Option<Cow<'a, str>> {
         let mut start = None;
         let mut end = self.text.len();
         let mut owned = None::<String>;
@@ -523,6 +579,18 @@ impl<'a> Iterator for Tokenizer<'a> {
     }
 }
 
+impl<'a> Iterator for Tokenizer<'a> {
+    type Item = Cow<'a, str>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ascii {
+            self.next_ascii()
+        } else {
+            self.next_unicode()
+        }
+    }
+}
+
 pub(crate) fn bm25_score(
     doc: &DocumentStats,
     document_frequencies: &[u32],
@@ -556,7 +624,7 @@ impl TextTopK {
     pub(crate) fn new(k: usize) -> Self {
         Self {
             k,
-            heap: BinaryHeap::new(),
+            heap: BinaryHeap::with_capacity(k),
         }
     }
 
@@ -570,12 +638,11 @@ impl TextTopK {
             self.heap.push(entry);
             return;
         }
-        let Some(worst) = self.heap.peek() else {
+        let Some(mut worst) = self.heap.peek_mut() else {
             return;
         };
-        if entry.cmp(worst).is_lt() {
-            self.heap.pop();
-            self.heap.push(entry);
+        if entry.cmp(&*worst).is_lt() {
+            *worst = entry;
         }
     }
 

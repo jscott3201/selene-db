@@ -25,9 +25,12 @@
 // Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
 use rustc_hash::FxHashMap as HashMap;
 use selene_core::{CancellationChecker, NodeId};
+use smallvec::SmallVec;
 
 use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
+
+const INLINE_COMMUNITY_WEIGHT_CAP: usize = 16;
 
 /// Compute community assignments via single-pass Louvain modularity.
 ///
@@ -65,8 +68,7 @@ pub fn louvain_with_checker(
     let mut rows_since_check = 0usize;
     for d in 0..n as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
-        let node = idx.node_id_of(d);
-        for nb in proj.out_neighbors(node) {
+        for nb in proj.out_neighbors_dense(d) {
             total_weight += nb.weight;
         }
     }
@@ -90,12 +92,11 @@ pub fn louvain_with_checker(
     rows_since_check = 0;
     for d in 0..n as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
-        let node = idx.node_id_of(d);
         let mut deg = 0.0;
-        for nb in proj.out_neighbors(node) {
+        for nb in proj.out_neighbors_dense(d) {
             deg += nb.weight;
         }
-        for nb in proj.in_neighbors(node) {
+        for nb in proj.in_neighbors_dense(d) {
             deg += nb.weight;
         }
         weighted_degree[d as usize] = deg;
@@ -112,7 +113,7 @@ pub fn louvain_with_checker(
     }
 
     // Reused per-node scratch.
-    let mut comm_weights: HashMap<u32, f64> = HashMap::default();
+    let mut comm_weights = CommunityWeightScratch::default();
     // Sorted-candidate buffer for §E30 determinism. Built fresh per node.
     let mut sorted_candidates: Vec<(u32, f64)> = Vec::new();
 
@@ -126,29 +127,26 @@ pub fn louvain_with_checker(
         rows_since_check = 0;
         for d in 0..n as u32 {
             check_algorithm_stride(checker, &mut rows_since_check)?;
-            let node = idx.node_id_of(d);
             let idx_d = d as usize;
             let current_comm = community[idx_d];
             let ki = weighted_degree[idx_d];
 
             comm_weights.clear();
-            for nb in proj.out_neighbors(node) {
+            for nb in proj.out_neighbors_dense(d) {
                 let nb_comm = community[nb.dense as usize];
-                *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
+                comm_weights.add(nb_comm, nb.weight);
             }
-            for nb in proj.in_neighbors(node) {
+            for nb in proj.in_neighbors_dense(d) {
                 let nb_comm = community[nb.dense as usize];
-                *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
+                comm_weights.add(nb_comm, nb.weight);
             }
 
-            let ki_in_current = comm_weights.get(&current_comm).copied().unwrap_or(0.0);
+            let ki_in_current = comm_weights.get(current_comm).unwrap_or(0.0);
             let sigma_current = comm_degree_sum[current_comm as usize] - ki;
 
             // §E30 determinism: iterate candidate communities in sorted order
             // by community ID, not raw HashMap order.
-            sorted_candidates.clear();
-            sorted_candidates.extend(comm_weights.iter().map(|(&c, &w)| (c, w)));
-            sorted_candidates.sort_by_key(|&(c, _)| c);
+            comm_weights.sorted_candidates(&mut sorted_candidates);
 
             let mut best_comm = current_comm;
             let mut best_delta = 0.0f64;
@@ -200,6 +198,82 @@ pub fn louvain_with_checker(
     Ok(result)
 }
 
+struct CommunityWeightScratch {
+    inline: SmallVec<[(u32, f64); INLINE_COMMUNITY_WEIGHT_CAP]>,
+    spill: HashMap<u32, f64>,
+    spilled: bool,
+}
+
+impl Default for CommunityWeightScratch {
+    fn default() -> Self {
+        Self {
+            inline: SmallVec::new(),
+            spill: HashMap::default(),
+            spilled: false,
+        }
+    }
+}
+
+impl CommunityWeightScratch {
+    fn clear(&mut self) {
+        self.inline.clear();
+        if self.spilled {
+            self.spill.clear();
+            self.spilled = false;
+        }
+    }
+
+    fn add(&mut self, community: u32, weight: f64) {
+        if self.spilled {
+            *self.spill.entry(community).or_insert(0.0) += weight;
+            return;
+        }
+
+        if let Some((_, total)) = self
+            .inline
+            .iter_mut()
+            .find(|(candidate, _)| *candidate == community)
+        {
+            *total += weight;
+            return;
+        }
+
+        if self.inline.len() < INLINE_COMMUNITY_WEIGHT_CAP {
+            self.inline.push((community, weight));
+            return;
+        }
+
+        self.spill.clear();
+        self.spill.extend(self.inline.drain(..));
+        self.spilled = true;
+        *self.spill.entry(community).or_insert(0.0) += weight;
+    }
+
+    fn get(&self, community: u32) -> Option<f64> {
+        if self.spilled {
+            self.spill.get(&community).copied()
+        } else {
+            self.inline
+                .iter()
+                .find_map(|(candidate, weight)| (*candidate == community).then_some(*weight))
+        }
+    }
+
+    fn sorted_candidates(&self, out: &mut Vec<(u32, f64)>) {
+        out.clear();
+        if self.spilled {
+            out.extend(
+                self.spill
+                    .iter()
+                    .map(|(&community, &weight)| (community, weight)),
+            );
+        } else {
+            out.extend(self.inline.iter().copied());
+        }
+        out.sort_by_key(|&(community, _)| community);
+    }
+}
+
 /// Compute the scalar Louvain gain term for moving a node into one community.
 ///
 /// This pins the formula used by the movement loop:
@@ -224,5 +298,30 @@ mod tests {
             (delta - 0.04).abs() <= 1.0e-12,
             "expected 0.04, observed {delta}"
         );
+    }
+
+    #[test]
+    fn community_weight_scratch_spills_and_sorts_candidates() {
+        let mut weights = CommunityWeightScratch::default();
+
+        for community in (0..INLINE_COMMUNITY_WEIGHT_CAP as u32 + 2).rev() {
+            weights.add(community, 1.0);
+        }
+        weights.add(3, 2.5);
+
+        let mut candidates = Vec::new();
+        weights.sorted_candidates(&mut candidates);
+
+        assert_eq!(weights.get(3), Some(3.5));
+        assert_eq!(candidates.len(), INLINE_COMMUNITY_WEIGHT_CAP + 2);
+        assert!(candidates.windows(2).all(|pair| pair[0].0 < pair[1].0));
+
+        weights.clear();
+        weights.add(2, 1.25);
+        weights.add(2, 0.75);
+        weights.sorted_candidates(&mut candidates);
+
+        assert_eq!(weights.get(2), Some(2.0));
+        assert_eq!(candidates, vec![(2, 2.0)]);
     }
 }
