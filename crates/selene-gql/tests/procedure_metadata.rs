@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_67_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_68_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 67);
+    assert_eq!(procedures.len(), 68);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 67);
+    assert_eq!(table.row_count(), 68);
 
     let names = column_strings(&table, "name");
     let signatures = column_strings(&table, "signature");
@@ -275,6 +275,7 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
             .iter()
             .any(|name| name == "selene.vector_candidate_states")
     );
+    assert!(names.iter().any(|name| name == "selene.reachable_nodes"));
     let candidate_states = names
         .iter()
         .position(|name| name == "selene.vector_candidate_states")
@@ -310,6 +311,38 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
         column_strings(&table, "mutability")[rebuild_recommended],
         "maintenance_write"
     );
+}
+
+#[test]
+fn reachable_nodes_metadata_has_traversal_args() {
+    let registry = full_registry();
+    let name = [db_string("selene"), db_string("reachable_nodes")];
+    let metadata = registry.lookup(&name).expect("reachable_nodes resolves");
+
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 3);
+    assert_eq!(arity.maximum, 5);
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters[0].name.as_str(), "roots");
+    assert_eq!(parameters[0].ty, GqlType::List(Box::new(GqlType::NodeRef)));
+    assert_eq!(parameters[1].name.as_str(), "edge_label");
+    assert_eq!(parameters[1].ty, GqlType::String);
+    assert_eq!(parameters[2].name.as_str(), "k");
+    assert_eq!(parameters[2].ty, GqlType::Integer);
+    assert_eq!(parameters[3].name.as_str(), "max_depth");
+    assert!(parameters[3].nullable);
+    assert_eq!(parameters[3].ty, GqlType::Integer);
+    assert_eq!(parameters[3].default_doc, Some("NULL (unbounded)"));
+    assert_eq!(parameters[4].name.as_str(), "direction");
+    assert_eq!(parameters[4].ty, GqlType::String);
+    assert_eq!(parameters[4].default_doc, Some("outgoing"));
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0].name.as_str(), "node_id");
+    assert_eq!(columns[0].ty, GqlType::NodeRef);
+    assert_eq!(columns[1].name.as_str(), "depth");
+    assert_eq!(columns[1].ty, GqlType::Uint64);
 }
 
 #[test]

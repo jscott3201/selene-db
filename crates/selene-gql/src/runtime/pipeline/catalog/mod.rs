@@ -1,5 +1,6 @@
 //! Catalog DDL pipeline operator.
 
+mod alter_edge_type;
 mod compose;
 mod drop_cascade;
 mod drop_graph;
@@ -169,6 +170,19 @@ pub(super) fn execute(
                 .map_err(|source| catalog_graph_error(source, *span))?;
             Ok(table)
         }
+        CatalogOp::AlterEdgeType {
+            label,
+            endpoints,
+            properties,
+            span,
+        } => alter_edge_type::execute(
+            label.clone(),
+            endpoints.as_ref(),
+            properties,
+            *span,
+            table,
+            ctx,
+        ),
         CatalogOp::DropNodeType {
             label,
             if_exists,
@@ -351,7 +365,7 @@ fn edge_type_exists(graph_type: Option<&GraphTypeDef>, label: DbString) -> bool 
         .unwrap_or(false)
 }
 
-fn closed_graph_type(
+pub(super) fn closed_graph_type(
     graph: &selene_graph::SeleneGraph,
     span: SourceSpan,
 ) -> Result<GraphTypeDef, ExecutorError> {
@@ -645,7 +659,7 @@ fn render_properties(properties: &[PropertyTypeDef]) -> Result<String, ExecutorE
     Ok(rendered.join(", "))
 }
 
-fn catalog_graph_error(source: GraphError, span: SourceSpan) -> ExecutorError {
+pub(super) fn catalog_graph_error(source: GraphError, span: SourceSpan) -> ExecutorError {
     match source {
         GraphError::Inconsistent { reason } => ExecutorError::GraphTypeViolation {
             message: reason,

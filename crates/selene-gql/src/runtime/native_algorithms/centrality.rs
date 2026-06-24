@@ -5,6 +5,7 @@
 //! directly through [`super::state::with_projection`].
 
 mod pagerank;
+mod pagerank_filter;
 
 pub(super) use pagerank::{pagerank, pagerank_signature};
 

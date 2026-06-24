@@ -326,6 +326,13 @@ ORDER BY score DESC
 LIMIT 20
 ```
 
+The GQL procedure also accepts trailing optional arguments for orientation,
+personalization, result-label/result-node filtering, and indexed edge-property
+result filters. The edge filter group is
+`edge_filter_label, edge_filter_property, edge_filter_values,
+edge_filter_endpoint`; endpoint values admit the matching edge `source`,
+`target`, or `both` endpoints as PageRank result candidates.
+
 Contract:
 
 - `damping` must be finite and in `[0.0, 1.0)`. The exclusive upper bound preserves the teleport floor that gives the power iteration a convergence guarantee.
@@ -462,13 +469,13 @@ Complexity: `O(V · d²)` worst case where `d` is the max undirected degree. Sui
 | `algo.dijkstra`            | `(projection_name: STRING, from: NODE, to: NODE)`                                                        | `cost, path, length` (single row, or zero rows)      |
 | `algo.sssp`                | `(projection_name: STRING, source: NODE)`                                                                | `target_node, cost`                                  |
 | `algo.apsp`                | `(projection_name: STRING, max_nodes: INTEGER, parallelism: INTEGER?)`                                   | `source_node, target_node, cost`                     |
-| `algo.pagerank`            | `(projection_name: STRING, damping: FLOAT?, max_iterations: INTEGER?, tolerance: FLOAT?, parallelism: INTEGER?)` | `node_id, score`                              |
+| `algo.pagerank`            | `(projection_name: STRING, damping: FLOAT?, max_iterations: INTEGER?, tolerance: FLOAT?, parallelism: INTEGER?, orientation: STRING?, personalization: LIST<RECORD>?, result_label: STRING?, limit: INTEGER?, result_nodes: LIST<NODE>?, edge_filter_label: STRING?, edge_filter_property: STRING?, edge_filter_values: LIST<VALUE>?, edge_filter_endpoint: STRING?)` | `node_id, score`                              |
 | `algo.betweenness`         | `(projection_name: STRING, sample_size: INTEGER?, parallelism: INTEGER?)`                                | `node_id, score`                                     |
 | `algo.label_propagation`   | `(projection_name: STRING, max_iter: INTEGER?)`                                                          | `node_id, community`                                 |
 | `algo.louvain`             | `(projection_name: STRING, max_iter: INTEGER?)`                                                          | `node_id, community, level`                          |
 | `algo.triangle_count`      | `(projection_name: STRING, parallelism: INTEGER?)`                                                       | `node_id, triangle_count`                            |
 
-The table above is the canonical list of all 19 `algo.*` names; the live registry enumerates them (alongside the 46 `selene.*` platform built-ins, 65 total) through `BuiltinProcedureRegistry::iter_handles`, which backs `SHOW PROCEDURES`.
+The table above is the canonical list of all 19 `algo.*` names; the live registry enumerates them (alongside the 49 `selene.*` platform built-ins, 68 total) through `BuiltinProcedureRegistry::iter_handles`, which backs `SHOW PROCEDURES`.
 
 ### 7.1 Nullable arguments and defaults
 
@@ -479,6 +486,8 @@ Arguments marked `?` accept `NULL` and resolve to documented defaults:
 | `algo.pagerank`   | `damping`         | `0.85` (`native_algorithms::centrality::DEFAULT_DAMPING`)          |
 | `algo.pagerank`   | `max_iterations`  | `100` (`native_algorithms::centrality::DEFAULT_MAX_ITERATIONS`)    |
 | `algo.pagerank`   | `tolerance`       | `1e-6` (`native_algorithms::centrality::DEFAULT_TOLERANCE`)        |
+| `algo.pagerank`   | `orientation`     | `natural`                                                          |
+| `algo.pagerank`   | result filters    | `NULL` (all matching nodes)                                        |
 | `algo.label_propagation` | `max_iter` | `50`                                                               |
 | `algo.louvain`    | `max_iter`        | `50`                                                               |
 | `algo.betweenness`| `sample_size`     | `None` (exact computation; every node is a source)                 |

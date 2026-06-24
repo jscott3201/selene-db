@@ -27,7 +27,7 @@ explain_kw = @{ ^"EXPLAIN" ~ !(LETTER | NUMBER | "_") }
 // -- DDL statements -----------------------------------------------
 
 ddl_statement = { create_node_type | drop_node_type | truncate_node_type | show_node_types
-              | create_edge_type | drop_edge_type | truncate_edge_type | show_edge_types
+              | create_edge_type | alter_edge_type | drop_edge_type | truncate_edge_type | show_edge_types
               | show_indexes | show_procedures
               | create_graph | drop_graph | create_index | drop_index }
 
@@ -46,6 +46,10 @@ create_edge_type = {
     edge_type_descriptor ~ (ddl_extends_kw ~ ":" ~ ident)? ~
     "(" ~ edge_endpoint_clause? ~ ","? ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
+}
+alter_edge_type = {
+    ddl_alter_kw ~ ddl_edge_kw ~ ddl_type_kw ~ ":" ~ ident ~
+    "(" ~ edge_endpoint_clause? ~ ","? ~ type_prop_def_list? ~ ")"
 }
 // ISO/IEC 39075:2024 §18.2/18.3: the element-type descriptor is either the bare
 // `<node/edge type name>` (`:Name` — Feature GG20, key label set *implied* from
@@ -108,6 +112,7 @@ create_index = { ddl_create_kw ~ ddl_index_kw ~ if_not_exists? ~ ident ~ ddl_on_
 drop_index   = { ddl_drop_kw ~ ddl_index_kw ~ if_exists? ~ ident }
 
 ddl_create_kw = @{ ^"CREATE" ~ !(LETTER | NUMBER | "_") }
+ddl_alter_kw = @{ ^"ALTER" ~ !(LETTER | NUMBER | "_") }
 ddl_drop_kw = @{ ^"DROP" ~ !(LETTER | NUMBER | "_") }
 ddl_truncate_kw = @{ ^"TRUNCATE" ~ !(LETTER | NUMBER | "_") }
 ddl_show_kw = @{ ^"SHOW" ~ !(LETTER | NUMBER | "_") }

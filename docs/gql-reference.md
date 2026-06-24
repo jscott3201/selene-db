@@ -49,7 +49,7 @@ spec docs by the build. The table below summarizes the major clause groups.
 | Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
 | Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
-| DDL (`DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` is the implementation-defined factory-reset surface. `CREATE GRAPH` remains unclaimed (`GC04`). Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
+| DDL (`DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` is the implementation-defined factory-reset surface. `CREATE GRAPH` remains unclaimed (`GC04`). Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries claim `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not claimed. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are claimed (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
@@ -623,6 +623,21 @@ state, and materialized when an inserted node or edge omits the property.
 `OR REPLACE` and `IF NOT EXISTS` modifiers are accepted on `CREATE NODE
 TYPE` and `CREATE EDGE TYPE` (feature `GC03`).
 
+### `ALTER EDGE TYPE`
+
+```gql
+ALTER EDGE TYPE :CONCERNS (
+    FROM :Issue, :PullRequest, :Commit TO :Document,
+    commit_sha :: STRING
+)
+```
+
+`ALTER EDGE TYPE` is additive only. It may widen the source and/or target
+endpoint set and may add nullable properties. Existing endpoint members must
+remain present; endpoint narrowing, property redefinition, and new `NOT NULL`
+properties reject during catalog execution. The migration is durable catalog
+state and replays through WAL recovery as the updated edge type definition.
+
 ### `DROP NODE TYPE` / `DROP EDGE TYPE`
 
 ```gql
@@ -694,21 +709,29 @@ procedure output.
 | `selene.compaction_stats` | Graph | Graph row compaction pressure counters. |
 | `selene.create_index`, `selene.drop_index` | Mutation | Create or drop scalar property indexes through the mutation funnel. |
 | `selene.create_vector_index`, `selene.drop_vector_index` | Mutation | Register or drop vector indexes over `(label, property)`. |
-| `selene.vector_search_*`, `selene.vector_score_*` | Graph | Exact, ANN, candidate-scoped, neighbor, expanded-candidate, and batched vector retrieval. |
+| `selene.vector_search_*`, `selene.vector_score_*` | Graph | Exact, ANN, node/edge-filtered, candidate-scoped, neighbor, expanded-candidate, and batched vector retrieval. |
 | `selene.vector_candidate_states` | Graph | Discover maintained graph-derived candidate states. |
+| `selene.reachable_nodes` | Graph | Bounded transitive graph reachability candidate production from explicit root nodes. |
 | `selene.vector_index_stats` | Graph | Vector index memory and cardinality statistics. |
 | `selene.rebuild_vector_indexes`, `selene.rebuild_recommended_vector_indexes` | Maintenance | Rebuild derived in-memory vector index state from primary graph values. |
 | `selene.create_text_index`, `selene.drop_text_index` | Mutation | Register or drop maintained BM25 text indexes. |
 | `selene.text_index_stats` | Graph | Text index memory and cardinality statistics. |
-| `selene.text_search_nodes`, `selene.text_score_nodes`, `selene.text_score_nodes_batch`, `selene.text_score_candidate_state_expanded_batch` | Graph | Exact BM25 search and candidate-scoped text scoring. |
+| `selene.text_search_nodes`, `selene.text_score_nodes`, `selene.text_score_nodes_batch`, `selene.text_score_candidate_state_expanded_batch` | Graph | Exact BM25 search plus node/edge-filtered and candidate-scoped text scoring. |
 | `selene.reciprocal_rank_fusion` | Graph | Fuse ranked node lists with Reciprocal Rank Fusion. |
 | `selene.json_contains_nodes`, `selene.json_path_*_nodes` | Graph | Exact JSON containment, path-existence, path-containment, and path-value search over node properties. |
 | `selene.json_contains_candidate_nodes`, `selene.json_path_*_candidate_nodes` | Graph | Candidate-scoped JSON filters over explicit `LIST<NODE>` inputs. |
 | `selene.compact` | Maintenance | Compact dead graph rows out of the live store. |
 
-The 46 platform built-ins are registered by the native
+The 49 platform built-ins are registered by the native
 `selene-gql` `BuiltinProcedureRegistry` (the sole frozen production
 `ProcedureRegistry` impl) and documented in its rustdoc.
+
+Global text search and ANN vector search accept optional indexed node-property
+filters and indexed edge-property filters. Edge filters use
+`edge_filter_label`, `edge_filter_property`, `edge_filter_values`, and
+`edge_filter_endpoint`; endpoint values admit the matching edge `source`,
+`target`, or `both` endpoints as candidate nodes. Pass `NULL, NULL` for
+`filter_property` and `filter_values` when using an edge-only filter.
 
 ### Algorithm procedures (`algo.*`)
 
@@ -724,13 +747,16 @@ algo.dijkstra, algo.sssp, algo.apsp
 ```
 
 See [`graph-algorithms.md`](graph-algorithms.md) for argument shapes and
-result columns.
+result columns. `algo.pagerank` can also filter result candidates through the
+same indexed edge-property filter group used by global retrieval procedures:
+`edge_filter_label`, `edge_filter_property`, `edge_filter_values`, and
+`edge_filter_endpoint`.
 
 ### Registry construction
 
 `EmptyProcedureRegistry` is the no-op registry used by the README example.
 A real embedder constructs the native `BuiltinProcedureRegistry`, which is
-frozen at construction (D16): it allocates a fixed set of handles for the 46
+frozen at construction (D16): it allocates a fixed set of handles for the 49
 platform built-ins plus 19 `algo.*` procedures and never changes thereafter
 (`registry_version()` is a constant `0`). It can be shared across threads
 via `Arc`. There are no loadable third-party packs to register.

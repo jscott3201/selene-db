@@ -2,6 +2,7 @@
 
 mod assignment;
 mod catalog;
+mod catalog_alter;
 mod composite_property_index;
 mod delete;
 mod delete_set;

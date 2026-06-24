@@ -74,6 +74,13 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             }
             property_defs(properties, uses);
         }
+        DdlStatement::AlterEdgeType {
+            properties, span, ..
+        } => {
+            record_feature(uses, FeatureId::IM_ALTER_EDGE_TYPE, *span);
+            type_ddl(*span, false, uses);
+            property_defs(properties, uses);
+        }
         DdlStatement::DropNodeType {
             if_exists,
             behavior,

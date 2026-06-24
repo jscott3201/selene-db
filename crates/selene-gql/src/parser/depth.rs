@@ -370,7 +370,8 @@ fn push_call<'a>(call: &'a ProcedureCall, work: &mut Vec<Node<'a>>) {
 fn push_ddl<'a>(statement: &'a DdlStatement, work: &mut Vec<Node<'a>>) {
     let properties = match statement {
         DdlStatement::CreateNodeType { properties, .. }
-        | DdlStatement::CreateEdgeType { properties, .. } => properties,
+        | DdlStatement::CreateEdgeType { properties, .. }
+        | DdlStatement::AlterEdgeType { properties, .. } => properties,
         DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }
         | DdlStatement::DropNodeType { .. }

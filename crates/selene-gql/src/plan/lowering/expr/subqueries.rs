@@ -338,7 +338,8 @@ fn collect_subqueries_in_catalog(
 ) -> Result<(), PlannerError> {
     match op {
         CatalogOp::CreateNodeType { properties, .. }
-        | CatalogOp::CreateEdgeType { properties, .. } => {
+        | CatalogOp::CreateEdgeType { properties, .. }
+        | CatalogOp::AlterEdgeType { properties, .. } => {
             for property in properties {
                 for constraint in &property.constraints {
                     if let PlannedTypePropertyConstraint::Default(project, _) = constraint {

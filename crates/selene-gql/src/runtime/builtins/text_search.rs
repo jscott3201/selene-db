@@ -10,9 +10,13 @@
 //! values.
 
 use selene_core::{DbString, Value};
-use selene_graph::{GraphError, RowIndex, SeleneGraph, TextSearchError};
+use selene_graph::{GraphError, TextSearchError};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
+use super::retrieval_filter::{
+    append_edge_filter_parameters, append_node_filter_parameters, node_ids_for_rows,
+    optional_filter_rows,
+};
 use super::vector_candidate_state_common::{
     CandidateStateOperation, candidate_state_error, operation_arg,
 };
@@ -59,24 +63,8 @@ pub(super) fn signature() -> Vec<ProcedureParameter> {
         .cloned()
         .map(StaticParameter::into_parameter)
         .collect();
-    params.push(
-        StaticParameter::new("filter_property", GqlType::String, true)
-            .with_description("Indexed scalar property used to admit matching nodes.")
-            .with_default_doc("NULL (no property filter)")
-            .with_default(crate::ProcedureDefaultValue::Null)
-            .into_parameter(),
-    );
-    params.push(
-        StaticParameter::new(
-            "filter_values",
-            GqlType::List(Box::new(GqlType::AnyProperty)),
-            true,
-        )
-        .with_description("Indexed scalar values admitted by filter_property.")
-        .with_default_doc("NULL (no property filter)")
-        .with_default(crate::ProcedureDefaultValue::Null)
-        .into_parameter(),
-    );
+    append_node_filter_parameters(&mut params);
+    append_edge_filter_parameters(&mut params);
     params
 }
 
@@ -206,8 +194,10 @@ pub(super) fn execute(
     ctx: &GraphContext<'_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
-    if args.len() != 4 && args.len() != 6 {
-        return Err(invalid_arg(format!("{PROC_NAME} expects 4 or 6 arguments")));
+    if !matches!(args.len(), 4 | 6 | 10) {
+        return Err(invalid_arg(format!(
+            "{PROC_NAME} expects 4, 6, or 10 arguments"
+        )));
     }
 
     let label = string_arg(PROC_NAME, &args[0], "label")?;
@@ -216,8 +206,13 @@ pub(super) fn execute(
     let k = cardinality_arg(PROC_NAME, &args[3], "k")?;
 
     let snapshot = ctx.snapshot();
-    let filter_rows = if args.len() == 6 {
-        optional_filter_rows(PROC_NAME, snapshot, &label, &args[4], &args[5])?
+    let filter_rows = if args.len() >= 6 {
+        let edge_filter = if args.len() == 10 {
+            Some((&args[6], &args[7], &args[8], &args[9]))
+        } else {
+            None
+        };
+        optional_filter_rows(PROC_NAME, snapshot, &label, &args[4], &args[5], edge_filter)?
     } else {
         None
     };
@@ -551,53 +546,6 @@ fn query_arg<'a>(proc_name: &'static str, value: &'a Value) -> Result<&'a str, P
         return Err(invalid_arg(format!("{proc_name} query must be a STRING")));
     };
     Ok(value.as_str())
-}
-
-fn optional_filter_rows(
-    proc_name: &'static str,
-    snapshot: &SeleneGraph,
-    label: &DbString,
-    property: &Value,
-    values: &Value,
-) -> Result<Option<roaring::RoaringBitmap>, ProcedureError> {
-    match (property, values) {
-        (Value::Null, Value::Null) => Ok(None),
-        (Value::Null, _) | (_, Value::Null) => Err(invalid_arg(format!(
-            "{proc_name} filter_property and filter_values must both be NULL or both be supplied"
-        ))),
-        (_, Value::List(values)) => {
-            let property = string_arg(proc_name, property, "filter_property")?;
-            snapshot
-                .nodes_with_property_any(label, &property, values)
-                .map(Some)
-                .ok_or_else(|| {
-                    invalid_arg(format!(
-                        "{proc_name} filter_property must name an indexed scalar node property and filter_values must match that index kind"
-                    ))
-                })
-        }
-        (_, _) => Err(invalid_arg(format!(
-            "{proc_name} filter_values must be a LIST<VALUE> or NULL"
-        ))),
-    }
-}
-
-fn node_ids_for_rows(
-    proc_name: &'static str,
-    snapshot: &SeleneGraph,
-    rows: &roaring::RoaringBitmap,
-) -> Result<Vec<selene_core::NodeId>, ProcedureError> {
-    let mut nodes = Vec::with_capacity(usize::try_from(rows.len()).unwrap_or(usize::MAX));
-    for raw_row in rows.iter() {
-        let row = RowIndex::new(raw_row);
-        let node_id = snapshot
-            .node_id_for_row(row)
-            .ok_or_else(|| ProcedureError::Internal {
-                detail: format!("{proc_name} indexed filter row {raw_row} has no node id"),
-            })?;
-        nodes.push(node_id);
-    }
-    Ok(nodes)
 }
 
 fn query_list_arg(proc_name: &'static str, value: &Value) -> Result<Vec<DbString>, ProcedureError> {

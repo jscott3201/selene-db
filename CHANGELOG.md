@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Global BM25 text search, ANN vector search, and PageRank result candidate
+  production can now admit candidates through indexed edge-property filters,
+  including source, target, or both endpoints, while preserving the existing
+  indexed node-property and explicit-result-node filter surfaces.
+- `ALTER EDGE TYPE` can now widen an existing edge type's source and/or target
+  endpoint set and add optional properties as a forward-only schema migration.
+  Narrowing endpoints, redefining properties, and adding required properties
+  are rejected.
+- `selene.reachable_nodes(roots, edge_label, k, max_depth?, direction?)` now
+  produces bounded transitive graph candidates with hop depths, so callers can
+  feed HEAD/tip reachability windows into the existing vector, text, JSON, or
+  fusion procedures without hard-coding a memory policy into candidate states.
+
 ## [1.3.0] - 2026-06-16
 
 ### Added

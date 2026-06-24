@@ -56,6 +56,7 @@ const fn classify_ddl(statement: &DdlStatement) -> StatementCategory {
         | DdlStatement::DropGraph { .. }
         | DdlStatement::CreateNodeType { .. }
         | DdlStatement::CreateEdgeType { .. }
+        | DdlStatement::AlterEdgeType { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
         | DdlStatement::CreateIndex { .. }

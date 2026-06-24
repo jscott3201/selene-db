@@ -18,6 +18,10 @@ use crate::runtime::native_algorithms::parallel::parse_parallelism;
 use crate::runtime::native_algorithms::state::{AlgorithmCatalogs, with_projection};
 use crate::{GqlType, ProcedureDefaultValue, ProcedureParameter, ProcedureResult, RecordType};
 
+use super::pagerank_filter::{
+    PageRankEdgeFilter, intersect_result_nodes, nullable_edge_filter, resolve_edge_result_nodes,
+};
+
 /// Default damping factor used when the GQL argument is NULL.
 pub(super) const DEFAULT_DAMPING: f64 = 0.85;
 /// Default maximum iteration count used when the GQL argument is NULL.
@@ -58,6 +62,22 @@ pub(in crate::runtime::native_algorithms) fn pagerank_signature() -> Vec<Procedu
         )
         .with_default_doc("NULL (all matching nodes)")
         .with_default(ProcedureDefaultValue::Null),
+        parameter("edge_filter_label", GqlType::String, true)
+            .with_default_doc("NULL (no edge filter)")
+            .with_default(ProcedureDefaultValue::Null),
+        parameter("edge_filter_property", GqlType::String, true)
+            .with_default_doc("NULL (no edge filter)")
+            .with_default(ProcedureDefaultValue::Null),
+        parameter(
+            "edge_filter_values",
+            GqlType::List(Box::new(GqlType::AnyProperty)),
+            true,
+        )
+        .with_default_doc("NULL (no edge filter)")
+        .with_default(ProcedureDefaultValue::Null),
+        parameter("edge_filter_endpoint", GqlType::String, true)
+            .with_default_doc("NULL (no edge filter)")
+            .with_default(ProcedureDefaultValue::Null),
     ]
 }
 
@@ -70,8 +90,14 @@ pub(in crate::runtime::native_algorithms) fn pagerank(
     let ParsedPageRankArgs {
         projection_name,
         config,
-        result_options,
+        mut result_options,
+        edge_filter,
     } = parse_pagerank_args(args)?;
+    if let Some(filter) = &edge_filter {
+        let edge_nodes = resolve_edge_result_nodes(snapshot, filter)?;
+        result_options.result_nodes =
+            intersect_result_nodes(result_options.result_nodes.take(), edge_nodes);
+    }
     with_projection(catalogs, snapshot, &projection_name, |projection| {
         validate_personalization_nodes(projection, config.personalization.as_deref())?;
         let scores =
@@ -86,6 +112,7 @@ struct ParsedPageRankArgs {
     projection_name: String,
     config: PageRankConfig,
     result_options: PageRankResultOptions,
+    edge_filter: Option<PageRankEdgeFilter>,
 }
 
 #[derive(Debug, Default)]
@@ -96,9 +123,9 @@ struct PageRankResultOptions {
 }
 
 fn parse_pagerank_args(args: &[Value]) -> Result<ParsedPageRankArgs, ProcedureError> {
-    if !(5..=10).contains(&args.len()) {
+    if !(5..=10).contains(&args.len()) && args.len() != 14 {
         return Err(invalid_argument(format!(
-            "{PAGERANK_PROC} expected 5 to 10 arguments, got {}",
+            "{PAGERANK_PROC} expected 5 to 10 arguments, or 14 with edge filter arguments, got {}",
             args.len()
         )));
     }
@@ -138,6 +165,7 @@ fn parse_pagerank_args(args: &[Value]) -> Result<ParsedPageRankArgs, ProcedureEr
     } else {
         None
     };
+    let edge_filter = nullable_edge_filter(args)?;
     validate_config(damping, tolerance)?;
     Ok(ParsedPageRankArgs {
         projection_name,
@@ -154,6 +182,7 @@ fn parse_pagerank_args(args: &[Value]) -> Result<ParsedPageRankArgs, ProcedureEr
             limit,
             result_nodes,
         },
+        edge_filter,
     })
 }
 
