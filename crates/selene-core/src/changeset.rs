@@ -15,7 +15,8 @@ use smallvec::SmallVec;
 
 use crate::{
     DbString, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, HnswIndexConfig,
-    IvfIndexConfig, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyMap, RecordTypeDef,
+    IvfIndexConfig, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyDef, PropertyMap,
+    RecordTypeDef,
 };
 
 mod diff;
@@ -380,6 +381,19 @@ pub enum SchemaChange {
         label: DbString,
         /// Indexed edge property key.
         property: DbString,
+    },
+    /// In-place node type alteration carrying newly added properties.
+    ///
+    /// Declared after every existing variant so the `postcard` discriminants of
+    /// all earlier variants remain stable. Recovery validates that the payload
+    /// is additive before extending the named node-type slot in place.
+    NodeTypeAlteredV2 {
+        /// Owning graph type.
+        graph_type: GraphTypeId,
+        /// Altered node type label.
+        label: DbString,
+        /// Newly added property descriptors in declaration order.
+        properties: SmallVec<[PropertyDef; 8]>,
     },
 }
 

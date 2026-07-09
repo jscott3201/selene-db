@@ -386,12 +386,12 @@ fn empty_diffs_are_valid() {
 fn schema_change_variants_construct() {
     let variants: Vec<_> = SchemaChange::ALL.iter().map(|factory| factory()).collect();
     assert_eq!(variants.len(), SchemaChange::VARIANT_COUNT);
-    assert_eq!(SchemaChange::VARIANT_COUNT, 22);
+    assert_eq!(SchemaChange::VARIANT_COUNT, 23);
 }
 
 #[test]
 fn schema_change_all_covers_every_variant() {
-    assert_eq!(SchemaChange::VARIANT_COUNT, 22);
+    assert_eq!(SchemaChange::VARIANT_COUNT, 23);
     let mut discriminants = std::collections::HashSet::new();
     let mut names = std::collections::HashSet::new();
     for factory in SchemaChange::ALL {

@@ -7,6 +7,7 @@ use selene_core::{
     byte_string_fits_type, character_string_fits_type, decimal_fits_type,
 };
 
+use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::graph_types::{EdgeEndpointDef, GraphTypeDef, PropertyTypeDef, ValidationMode};
 
@@ -498,6 +499,35 @@ fn validate_properties(
         }
     }
     Ok(warnings)
+}
+
+pub(crate) fn validate_property_default(declaration: &PropertyTypeDef) -> GraphResult<()> {
+    let Some(default) = declaration.default.as_ref() else {
+        return Ok(());
+    };
+    let value = default.to_value()?;
+    if matches!(value, Value::Null) {
+        if declaration.required {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "required property {} cannot use NULL as its default",
+                    declaration.name
+                ),
+            });
+        }
+        return Ok(());
+    }
+    if property_value_matches(declaration, &value) {
+        return Ok(());
+    }
+    Err(GraphError::Inconsistent {
+        reason: format!(
+            "property {} default type {} does not match declared {} descriptor",
+            declaration.name,
+            PropertyValueType::observed_name(&value),
+            declaration.value_type
+        ),
+    })
 }
 
 fn property_value_matches(declaration: &PropertyTypeDef, value: &Value) -> bool {

@@ -22,13 +22,19 @@ use crate::graph::{
     CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph, TextIndexEntry,
     VectorIndexEntry,
 };
-use crate::graph_types::GraphTypeDef;
+use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
 use crate::typed_index::TypedIndex;
 
 mod change_replay;
 mod index_replay;
 mod materialize;
 mod schema_replay;
+
+pub(super) fn decode_schema_property(
+    property: &selene_core::PropertyDef,
+) -> Result<PropertyTypeDef, crate::ProviderError> {
+    schema_replay::runtime_property(property)
+}
 
 use index_replay::{
     PendingCompositeIndex, PendingIndex, PendingTextIndex, PendingVectorIndex,

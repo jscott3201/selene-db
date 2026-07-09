@@ -1,6 +1,7 @@
 //! Catalog DDL pipeline operator.
 
 mod alter_edge_type;
+mod alter_node_type;
 mod compose;
 mod drop_cascade;
 mod drop_graph;
@@ -170,6 +171,11 @@ pub(super) fn execute(
                 .map_err(|source| catalog_graph_error(source, *span))?;
             Ok(table)
         }
+        CatalogOp::AlterNodeType {
+            label,
+            properties,
+            span,
+        } => alter_node_type::execute(label.clone(), properties, *span, table, ctx),
         CatalogOp::AlterEdgeType {
             label,
             endpoints,

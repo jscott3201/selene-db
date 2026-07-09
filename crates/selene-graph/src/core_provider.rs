@@ -25,6 +25,12 @@ use crate::error::GraphResult;
 use crate::graph::SeleneGraph;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
+pub(crate) fn decode_schema_property(
+    property: &selene_core::PropertyDef,
+) -> Result<crate::PropertyTypeDef, ProviderError> {
+    recovery_state::decode_schema_property(property)
+}
+
 /// Core graph provider tag used in snapshot section tables.
 pub const CORE_PROVIDER_TAG: [u8; 4] = *b"CORE";
 /// Core metadata subsection tag under [`CORE_PROVIDER_TAG`].

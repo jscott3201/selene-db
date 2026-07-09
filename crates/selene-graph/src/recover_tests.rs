@@ -23,6 +23,9 @@ mod variant_tests;
 #[path = "recover_tests/catalog_ddl.rs"]
 mod catalog_ddl;
 
+#[path = "recover_tests/alter_node_type.rs"]
+mod alter_node_type;
+
 #[path = "recover_tests/oneof.rs"]
 mod oneof;
 

@@ -475,7 +475,10 @@ fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
                 rebase_property_def(property, offset);
             }
         }
-        DdlStatement::AlterEdgeType {
+        DdlStatement::AlterNodeType {
+            properties, span, ..
+        }
+        | DdlStatement::AlterEdgeType {
             properties, span, ..
         } => {
             rebase_span(span, offset);

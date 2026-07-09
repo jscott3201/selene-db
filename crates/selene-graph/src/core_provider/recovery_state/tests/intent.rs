@@ -49,6 +49,7 @@ const SCHEMA_CHANGE_INTENT: &[SchemaChangeIntent] = &[
     schema_intent!(apply intent_vector_index_dropped),
     schema_intent!(apply intent_text_index_created),
     schema_intent!(apply intent_text_index_dropped),
+    schema_intent!(apply intent_node_type_altered_v2),
 ];
 
 fn intent_graph_created() -> SchemaChange {
@@ -185,6 +186,14 @@ fn intent_edge_type_added_v2() -> SchemaChange {
         graph_type: test_graph_type_id(),
         label: label.clone(),
         def: EdgeTypeDef::new(label, NodeTypeRef(endpoint.clone()), NodeTypeRef(endpoint)),
+    }
+}
+
+fn intent_node_type_altered_v2() -> SchemaChange {
+    SchemaChange::NodeTypeAlteredV2 {
+        graph_type: test_graph_type_id(),
+        label: db_string("IntentNode").unwrap(),
+        properties: smallvec![],
     }
 }
 

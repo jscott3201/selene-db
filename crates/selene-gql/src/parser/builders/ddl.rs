@@ -24,6 +24,7 @@ pub(super) fn build_ddl_statement(pair: Pair<'_, Rule>) -> Result<DdlStatement, 
         Rule::create_graph => build_create_graph(inner),
         Rule::drop_graph => build_drop_graph(inner),
         Rule::create_node_type => build_create_node_type(inner),
+        Rule::alter_node_type => build_alter_node_type(inner),
         Rule::create_edge_type => build_create_edge_type(inner),
         Rule::alter_edge_type => build_alter_edge_type(inner),
         Rule::drop_node_type => build_drop_node_type(inner),
@@ -246,6 +247,35 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
         endpoints,
         properties,
         validation_mode,
+        span: source_span,
+    })
+}
+
+fn build_alter_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
+    let source_span = span(&pair);
+    let mut label = None;
+    let mut properties = Vec::new();
+
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::ident => label = Some(db_string_pair(child)?),
+            Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
+            rule if is_ddl_keyword_token(rule) => {}
+            _ => return Err(unexpected_pair(child, "unexpected ALTER NODE TYPE child")),
+        }
+    }
+    if properties.is_empty() {
+        return Err(ParserError::syntax(
+            "ALTER NODE TYPE must declare at least one property",
+            source_span,
+            None,
+        ));
+    }
+    Ok(DdlStatement::AlterNodeType {
+        label: label.ok_or_else(|| {
+            ParserError::syntax("ALTER NODE TYPE is missing label", source_span, None)
+        })?,
+        properties,
         span: source_span,
     })
 }

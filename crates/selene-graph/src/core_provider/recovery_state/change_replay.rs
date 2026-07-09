@@ -174,6 +174,7 @@ impl RecoveryState {
                 SchemaChange::NodeTypeAdded { .. }
                 | SchemaChange::EdgeTypeAdded { .. }
                 | SchemaChange::NodeTypeAddedV2 { .. }
+                | SchemaChange::NodeTypeAlteredV2 { .. }
                 | SchemaChange::EdgeTypeAddedV2 { .. }
                 | SchemaChange::NodeTypeDropped { .. }
                 | SchemaChange::EdgeTypeDropped { .. } => {

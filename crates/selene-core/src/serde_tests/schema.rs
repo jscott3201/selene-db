@@ -181,10 +181,35 @@ fn schema_change_postcard_round_trip() {
                 NodeTypeRef(node_label),
             ),
         },
+        SchemaChange::NodeTypeAlteredV2 {
+            graph_type: graph_type_id,
+            label: dbs("serde.schema.node.altered.v2"),
+            properties: smallvec![{
+                let mut property = property_def("serde.schema.node.altered.property");
+                property.nullable = true;
+                property
+            }],
+        },
     ];
     for change in changes {
         rt(&change);
     }
+}
+
+#[test]
+fn node_type_altered_v2_appends_schema_change_postcard_tag() {
+    let prior = SchemaChange::EdgePropertyIndexDropped {
+        label: dbs("serde.schema.edge"),
+        property: dbs("serde.schema.edge.property"),
+    };
+    let appended = SchemaChange::NodeTypeAlteredV2 {
+        graph_type: graph_type_id(),
+        label: dbs("serde.schema.node.altered.v2"),
+        properties: smallvec![],
+    };
+
+    assert_eq!(postcard::to_allocvec(&prior).unwrap()[0], 21);
+    assert_eq!(postcard::to_allocvec(&appended).unwrap()[0], 22);
 }
 
 #[test]
