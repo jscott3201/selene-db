@@ -175,7 +175,7 @@ The header is followed by a fixed-row section table (24 bytes per row,
 provider tag + sub-tag + payload offset + payload length) and the
 concatenated section payloads.
 
-Construction lives in
+Low-level and offline snapshot construction lives in
 [`SnapshotBuilder`](../crates/selene-persist/src/snapshot_writer.rs):
 
 ```rust
@@ -193,13 +193,14 @@ builder.add_section(*b"CORE", *b"EDGE", core_edge_bytes)?;
 let outcome = builder.finalize()?;
 ```
 
-`finalize()` writes `snapshot.{sequence}.snap.tmp`, fsyncs it when
-`fsync: true`, then atomically **hard-links** it to
-`snapshot.{sequence}.snap` and removes the tmp. The hard-link is the
-race-safe alternative to `rename` (which silently overwrites on POSIX); a
-sequence collision fails fast with `Io(AlreadyExists)`. The returned
-`SnapshotFinalizeOutcome` carries `snapshot_seq`, `body_hash`, and
-`section_count`.
+`finalize()` writes a unique
+`snapshot.{sequence}.snap.tmp.{pid}.{attempt}`, fsyncs it when `fsync: true`,
+then atomically **hard-links** it to `snapshot.{sequence}.snap` and removes the
+temporary. Unique attempts prevent a stale crash temporary from stranding a
+retry. The hard-link is the race-safe alternative to `rename` (which silently
+overwrites on POSIX); a final-path sequence collision fails fast with
+`Io(AlreadyExists)`. The returned `SnapshotFinalizeOutcome` carries
+`snapshot_seq`, `body_hash`, and `section_count`.
 
 Each section's `(provider, sub)` tag pair identifies its producer. Common
 tags shipped by the workspace:
@@ -218,14 +219,88 @@ the single native engine the only registered producer is `selene-graph`'s
 `CoreProvider`; the tag-keyed shape is the section-routing mechanism, not an
 extension surface.
 
-### When to snapshot
+### Coordinated checkpoints for live graphs
 
-The engine does not take snapshots automatically; embedders drive cadence
-based on workload and recovery-time budget. A reasonable starting policy:
+For a WAL-backed `SharedGraph`, use `SharedGraph::checkpoint` instead of
+assembling and rotating a snapshot directly:
 
-- Take a snapshot after every `N` WAL entries (e.g., `N = 1_000_000`).
-- Take a snapshot after every `T` minutes of wall-clock (e.g., hourly).
-- Take a snapshot before a planned shutdown.
+```rust
+use selene_graph::{CheckpointConfig, SectionCompression, SharedGraph};
+
+fn checkpoint(graph: &SharedGraph) -> selene_graph::GraphResult<()> {
+    let outcome = graph.checkpoint(CheckpointConfig {
+        compression: SectionCompression::PerSection { level: 1 },
+    })?;
+    println!(
+        "checkpoint {}: {}",
+        outcome.snapshot_sequence,
+        outcome.snapshot_path.display()
+    );
+    Ok(())
+}
+```
+
+The graph facade derives the directory and sequence from its owned
+`data_dir/wal.log`; callers cannot supply a different watermark or disable the
+required durability barriers. The checkpoint enters the same ordered committer
+queue as commits and snapshot-maintenance work. Earlier commits are flushed and
+published, and earlier maintenance is published, before provider sections are
+encoded at that exact generation; later writes wait behind the boundary.
+Lock-free readers continue to use the previously published graph while the
+checkpoint runs.
+
+A successful checkpoint flushes any pending group commit, writes and fsyncs all
+provider sections, archives the covered WAL, commits the new MANIFEST epoch,
+and resets the active WAL through `WalWriter::rotate_with_manifest`. The
+returned `CheckpointOutcome` identifies the published snapshot through
+`snapshot_sequence` and `snapshot_path`, and exposes the lower-level
+`WalRotationOutcome` as `rotation`.
+
+`SharedGraph::write_snapshot` is deliberately different: it is a standalone,
+uncoordinated snapshot writer for offline tooling, tests, or a host that has
+already quiesced writes. It trusts the caller-provided directory, sequence, and
+fsync policy, does not rotate the WAL, and cannot by itself guarantee that
+separately encoded provider sections represent one generation. Likewise,
+`WalWriter::rotate_with_manifest` remains the lower-level persistence primitive;
+live graph hosts should not collect a `SnapshotBuilder` and try to reproduce the
+graph committer's ordering protocol. Direct callers are still constrained to a
+nonzero sequence, the conventional `wal.log` filename, and a builder directory
+that resolves to the WAL directory. An incomplete post-MANIFEST rotation
+poisons that writer until it is reopened.
+
+The coordinated facade requires an owned WAL at the standard `wal.log` path and
+a nonzero WAL high-water sequence, supplied by either a prior snapshot epoch or
+a committed change. A graph without a WAL, a fresh sequence-zero WAL, or a
+custom WAL filename is rejected without poisoning the committer. Provider
+serialization errors or panics also leave the graph usable for a later retry
+because rotation has not begun. Once `rotate_with_manifest` starts, any returned
+error or panic poisons the committer: the lower-level API can no longer prove
+whether the writer stopped before or after the MANIFEST commit point. Close and
+recover the graph before accepting more writes.
+
+The first rotation durably bootstraps a baseline MANIFEST for the WAL's current
+epoch before publishing the new snapshot, so a pre-commit crash cannot make
+legacy recovery select an orphan snapshot. Phase 4 replaces `wal.log` with a
+fully written, synced, exclusively locked header through an atomic
+same-directory rename; recovery therefore sees either the intact old WAL or
+the valid new WAL, never a truncate-in-progress file. Relative WAL paths are
+resolved when the writer opens, preventing later working-directory changes
+from redirecting these artifacts.
+
+### When to checkpoint
+
+The engine does not checkpoint automatically; embedders drive cadence based on
+workload and recovery-time budget. A reasonable starting policy:
+
+- Checkpoint after every `N` WAL entries (e.g., `N = 1_000_000`).
+- Checkpoint after every `T` minutes of wall-clock (e.g., hourly).
+- Checkpoint before a planned shutdown.
+
+Use whichever count or time threshold arrives first. Snapshot encoding is
+linear in live graph state and forms a write-publication barrier, so measure its
+duration and schedule it in a lower-write window when tail latency matters.
+With grouped durability, the checkpoint is also an explicit flush boundary;
+all commits on its earlier side are durable when it returns.
 
 ### Scheduling row compaction
 
@@ -233,7 +308,7 @@ Snapshots bound recovery time; row compaction reclaims in-memory node and edge
 slots left behind by deletes. The engine exposes the maintenance operation but
 deliberately does not own a timer or background runtime. Run it from the
 embedder's existing maintenance cadence, preferably in a low-write window and
-optionally immediately before an already-coordinated snapshot rotation.
+optionally immediately before a coordinated `SharedGraph::checkpoint`.
 
 The default recommendation requires both at least 1,024 reclaimable rows and a
 reclaimable-row ratio of at least 25% of allocated rows. Reading the counters is
@@ -275,18 +350,12 @@ GQL-driven hosts can use the equivalent native procedures: inspect
 a standalone maintenance statement and is not valid inside an explicit
 transaction. The same scheduling and snapshot-durability rules apply.
 
-For a scheduled snapshot rotation, use the MANIFEST-backed in-process protocol:
-
-1. Quiesce or otherwise coordinate writes while collecting every provider
-   section for one committed graph state. A single `ArcSwap` load is lock-free,
-   but providers encode separate sections, so concurrent writes can otherwise
-   mix generations.
-2. Create an unfinalized `SnapshotBuilder` at
-   `sequence = wal.last_sequence()` and add all provider sections.
-3. Pass the builder to `wal.rotate_with_manifest(builder)`. The rotation flushes
-   the WAL, finalizes and fsyncs the snapshot, archives the previous WAL,
-   commits the MANIFEST as the epoch's linearization point, then resets the
-   active `wal.log`.
+For a scheduled live rotation, call `SharedGraph::checkpoint`. Because both
+compaction and checkpointing use the ordered committer queue, a completed
+`compact()` followed by `checkpoint()` durably captures the compacted layout
+without manually quiescing writers. Direct `SnapshotBuilder` plus
+`WalWriter::rotate_with_manifest` orchestration is reserved for lower-level
+persistence tooling that does not own a live `SharedGraph`.
 
 ## Two-step recovery
 
@@ -437,24 +506,25 @@ A consistent backup is **one** snapshot plus the WAL it extends, that is:
 
 The recipe:
 
-1. Quiesce writes (close all `WalWriter` instances) or take the backup
-   between scheduled snapshots while writes continue — the snapshot file is
-   atomically published, so a half-written `snapshot.{seq}.snap.tmp` is
-   never visible.
-2. Take a snapshot. `SnapshotBuilder::finalize()` is atomic; the final path
-   appears in one filesystem operation.
-3. Copy `snapshot.{seq}.snap` and the current `wal.log` to the backup
-   destination.
+1. Call `SharedGraph::checkpoint` and retain its `CheckpointOutcome`. This
+   publishes one complete snapshot/WAL epoch; do not start another checkpoint
+   while copying that epoch.
+2. Copy `outcome.snapshot_path` and the current `wal.log` to the backup
+   destination. Ordinary commits may continue while `wal.log` is copied; a
+   partial final entry is a recoverable torn tail.
+3. Copy the matching `MANIFEST` when preserving the complete epoch directory.
+   A deliberately manifest-free two-file backup remains recoverable through
+   the legacy snapshot/WAL cross-check, provided the destination has no stale
+   MANIFEST.
 
 To restore: drop the two files into the configured data directory and start
 up. `recover` will apply the snapshot, replay the WAL forward, and the
 engine will reach the same logical state.
 
-For point-in-time restore you can keep a chain of WAL files (one per
-snapshot rotation) plus all snapshots, and replay forward from any snapshot.
-The format is forward-compatible across snapshots that share a sequence
-chain, but the engine itself does not ship WAL archival or pruning tooling;
-the embedder owns rotation.
+For point-in-time restore you can keep archived WALs plus their snapshots and
+replay forward from any retained epoch. `rotate_with_manifest` creates the WAL
+archives, and `RetentionPolicy` prunes superseded snapshots and archives; the
+embedder still owns checkpoint and retention cadence.
 
 ## What can go wrong
 
@@ -472,6 +542,9 @@ recoverable or loud, never silent. The expected failure modes:
 | Snapshot section for unknown provider  | Recovery routes by tag.                    | `PersistError::UnknownProvider`. The embedder forgot to register a provider. |
 | WAL/snapshot epoch mismatch            | WAL header `snapshot_seq` vs applied snapshot. | `PersistError::WalSnapshotMismatch`. The pair on disk is inconsistent. |
 | Non-monotonic WAL sequence             | Per-entry header check during scan.        | `PersistError::NonMonotonicSequence`. Indicates the WAL was edited or merged incorrectly. |
+| Checkpoint has no eligible owned WAL   | Graph facade validates the WAL path and nonzero sequence at the ordered boundary. | The call fails without poisoning; configure the standard `wal.log` or commit first. |
+| Checkpoint provider preparation fails | Ordered checkpoint returns the provider error before rotation begins. | The committer remains usable; fix the provider and retry. |
+| Checkpoint rotation errors or panics   | The lower-level error cannot always prove which side of the MANIFEST commit point was reached. | The committer is poisoned; close and recover before accepting more writes. |
 | Schema drift (closed graph)            | `CoreProvider` validates declared `GraphType` against the snapshot's bound type. | `GraphError::Provider` at recovery time. |
 
 The persistence layer's posture is: a recoverable failure (torn tail)
@@ -495,7 +568,7 @@ let wal_config = WalConfig {
     sync_policy: SyncPolicy::EveryN(64), // group-commit every 64 entries
     snapshot_seq: 0,
 };
-// Take a snapshot at end of session, or every 5 minutes of wall-clock.
+// Checkpoint at end of session, or every 5 minutes of wall-clock.
 ```
 
 ### Embedded edge
@@ -512,7 +585,7 @@ let wal_config = WalConfig {
 };
 // Skip snapshots entirely. WAL replay rebuilds the graph on every restart.
 // Caution: replay time grows linearly in WAL length. If that becomes too slow,
-// adopt coordinated snapshots and WalWriter::rotate_with_manifest rotations;
+// adopt SharedGraph::checkpoint;
 // prune superseded snapshots and WAL archives separately with RetentionPolicy.
 ```
 
@@ -527,13 +600,12 @@ let wal_config = WalConfig {
     sync_policy: SyncPolicy::EveryN(1),
     snapshot_seq: 0, // overwritten on open from the snapshot's epoch
 };
-// Take a snapshot hourly and after every 1M WAL entries.
+// Call SharedGraph::checkpoint hourly or after every 1M WAL entries.
 // Retain the last N snapshots plus their WAL files.
-// Rotate each populated SnapshotBuilder with wal.rotate_with_manifest(builder).
 ```
 
 The hot path for all three is identical — `WalWriter::append` — and differs
-only in how often `fsync` runs and how often a snapshot is taken. See
+only in how often `fsync` runs and how often a checkpoint is taken. See
 [performance.md](performance.md) for the measured impact of each choice.
 
 ## Reference
@@ -545,6 +617,7 @@ only in how often `fsync` runs and how often a snapshot is taken. See
 - Recovery orchestrator: [`crates/selene-persist/src/recovery.rs`](../crates/selene-persist/src/recovery.rs)
 - Recovery provider trait: [`crates/selene-persist/src/provider.rs`](../crates/selene-persist/src/provider.rs)
 - `Change` enum: [`crates/selene-core/src/changeset.rs`](../crates/selene-core/src/changeset.rs)
+- Coordinated graph checkpoint facade: [`crates/selene-graph/src/checkpoint.rs`](../crates/selene-graph/src/checkpoint.rs)
 - Graph-side recovery wrapper: [`crates/selene-graph/src/recover.rs`](../crates/selene-graph/src/recover.rs)
 - Graph compaction policy and transform: [`crates/selene-graph/src/compaction.rs`](../crates/selene-graph/src/compaction.rs)
 - Ordered live compaction publication: [`crates/selene-graph/src/shared.rs`](../crates/selene-graph/src/shared.rs)

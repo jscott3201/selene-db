@@ -55,10 +55,10 @@
 //! N when [`CommitBatching::On`], so **OFF is the degenerate `N=1` case of the
 //! identical batched code** — one append + one fsync + one publish + one ack,
 //! the same syscalls in the same order as BRIEF 1's `EveryN(1)`. A
-//! Snapshot-maintenance work is a hard flush boundary: it is never co-batched
-//! (F2 — its replacement snapshot already contains every lower-`seal_seq`
-//! commit's mutation, so the pending commit run must be flushed + published
-//! first to keep durable-before-visible).
+//! Snapshot-maintenance and coordinated-checkpoint work are hard flush
+//! boundaries: neither is co-batched. A replacement snapshot already contains
+//! every lower-`seal_seq` mutation, while a checkpoint must serialize only
+//! after every lower commit is durable, visible, and applied to providers.
 //!
 //! [`SyncPolicy::OnFlushOnly`]: crate::SyncPolicy::OnFlushOnly
 
@@ -92,7 +92,8 @@ const WORK_CHANNEL_CAPACITY: usize = 1024;
 /// `Commit` carries a fully-built, frozen [`SealedCommit`] (no lock, no graph
 /// reference): the committer never re-validates, re-allocates ids, or re-applies
 /// a change list. Snapshot-maintenance variants carry a *pre-built* replacement
-/// snapshot (built on the caller thread under the lock, like a commit) — the
+/// snapshot (built on the caller thread under the lock, like a commit), while a
+/// checkpoint carries the generation captured at its ordered boundary. The
 /// committer never touches the write lock.
 ///
 /// Index DDL is **not** a distinct variant: `create_property_index_named` /
@@ -124,6 +125,14 @@ pub(crate) enum Work {
         report: crate::VectorIndexRebuildReport,
         reply: SyncSender<GraphResult<crate::VectorIndexRebuildReport>>,
     },
+    /// Serialize the published graph/provider generation at this ordered
+    /// boundary and rotate the owned WAL through the MANIFEST protocol.
+    Checkpoint {
+        seal_seq: u64,
+        generation: u64,
+        config: crate::CheckpointConfig,
+        reply: SyncSender<GraphResult<crate::CheckpointOutcome>>,
+    },
 }
 
 impl Work {
@@ -133,12 +142,16 @@ impl Work {
             Work::Commit { sealed, .. } => sealed.seal_seq,
             Work::Compact { seal_seq, .. } => *seal_seq,
             Work::VectorIndexRebuild { seal_seq, .. } => *seal_seq,
+            Work::Checkpoint { seal_seq, .. } => *seal_seq,
         }
     }
 
-    /// Return true for WAL-free snapshot replacement work.
-    pub(crate) fn is_snapshot_maintenance(&self) -> bool {
-        matches!(self, Work::Compact { .. } | Work::VectorIndexRebuild { .. })
+    /// Return true for work that must run alone at an ordered hard boundary.
+    pub(crate) fn is_solo(&self) -> bool {
+        matches!(
+            self,
+            Work::Compact { .. } | Work::VectorIndexRebuild { .. } | Work::Checkpoint { .. }
+        )
     }
 }
 
@@ -156,6 +169,9 @@ pub(crate) struct CommitterHandles {
     /// Fan-out (no-op in production) providers. Shares the construction-time
     /// frozen registry allocation with [`crate::SharedGraph`].
     pub(crate) providers: Arc<[Arc<dyn IndexProvider>]>,
+    /// Typed CORE provider that owns the live WAL writer used by coordinated
+    /// checkpoints.
+    pub(crate) core: Arc<crate::CoreProvider>,
     /// Commit-critical durable providers (WAL). The committer is their sole
     /// `write_commit`/`flush` caller, which is what makes the BRIEF 2
     /// `OnFlushOnly` toggle committer-exclusive.
@@ -352,6 +368,29 @@ impl Committer {
             .map_err(|_| committer_dead())?;
         reply_rx.recv().map_err(|_| committer_dead())?
     }
+
+    /// Submit a coordinated checkpoint at an already-allocated ordered
+    /// boundary and wait for its MANIFEST-backed WAL rotation.
+    pub(crate) fn submit_checkpoint(
+        &self,
+        seal_seq: u64,
+        generation: u64,
+        config: crate::CheckpointConfig,
+    ) -> GraphResult<crate::CheckpointOutcome> {
+        if self.poisoned.load(Ordering::Acquire) {
+            return Err(committer_dead());
+        }
+        let (reply_tx, reply_rx) = sync_channel::<GraphResult<crate::CheckpointOutcome>>(1);
+        self.sender
+            .send(Work::Checkpoint {
+                seal_seq,
+                generation,
+                config,
+                reply: reply_tx,
+            })
+            .map_err(|_| committer_dead())?;
+        reply_rx.recv().map_err(|_| committer_dead())?
+    }
 }
 
 /// Error returned to every waiter when the committer thread is gone (panicked
@@ -373,9 +412,9 @@ pub(crate) fn committer_dead() -> GraphError {
 /// channel arrival order — the P0 publish-ordering invariant.
 ///
 /// Each contiguous-run pass:
-/// 1. If the head is snapshot-maintenance work, publish it **solo** (store the
-///    replacement Arc, no append/flush/schema-bump/fan-out) — a hard flush
-///    boundary (F2).
+/// 1. If the head is snapshot-maintenance or checkpoint work, run it **solo**
+///    as a hard flush boundary. Maintenance stores its replacement Arc;
+///    checkpointing serializes providers and rotates the WAL.
 /// 2. Otherwise form the contiguous commit run
 ///    ([`drain_contiguous_batch`] — append, fsync deferred), then
 ///    [`flush_and_publish_batch`] (ONE group flush == the R1 barrier, then
@@ -411,17 +450,14 @@ fn run_committer(
 
         // Drain every contiguous run now available, in seal_seq order.
         while reorder.contains_key(&next_publish_seq) {
-            // F2: snapshot maintenance at head publishes solo (empty batch by
-            // construction — all lower seqs are already durable + visible, so
-            // this needs zero flush calls). It is never co-batched with commits.
-            if reorder
-                .get(&next_publish_seq)
-                .is_some_and(Work::is_snapshot_maintenance)
-            {
+            // Snapshot replacement and checkpoint work publish solo. All lower
+            // seqs are already durable + visible, and no higher commit can be
+            // appended across this hard boundary.
+            if reorder.get(&next_publish_seq).is_some_and(Work::is_solo) {
                 let Some(work) = reorder.remove(&next_publish_seq) else {
-                    unreachable!("checked maintenance work at next_publish_seq above");
+                    unreachable!("checked solo work at next_publish_seq above");
                 };
-                publish_snapshot_maintenance(work, poisoned, &handles);
+                publish_solo(work, poisoned, &handles);
                 next_publish_seq += 1;
                 if poisoned.load(Ordering::Acquire) {
                     drain_buffer_with_error(&mut reorder);
@@ -461,12 +497,12 @@ fn run_committer(
     }
 }
 
-/// Publish WAL-free snapshot maintenance (F2 hard flush boundary): store the
-/// replacement Arc only — no append, no flush, no schema-bump, no fan-out.
-/// Wrapped in `catch_unwind`; a `store` panic poisons (see
-/// [`unwrap_protected`]). All lower `seal_seq` commits are already durable +
-/// visible by the time maintenance reaches head, so it needs zero flush calls.
-fn publish_snapshot_maintenance(
+/// Execute one solo hard-boundary work item.
+///
+/// Snapshot maintenance stores only the replacement Arc. Checkpoints serialize
+/// the exact provider generation and run the MANIFEST-backed WAL rotation. All
+/// lower `seal_seq` commits are already durable and visible when this runs.
+fn publish_solo(
     work: Work,
     poisoned: &Arc<std::sync::atomic::AtomicBool>,
     handles: &CommitterHandles,
@@ -494,8 +530,21 @@ fn publish_snapshot_maintenance(
             let result = unwrap_protected(result, poisoned);
             let _ = reply.send(result);
         }
+        Work::Checkpoint {
+            seal_seq: _,
+            generation,
+            config,
+            reply,
+        } => {
+            let execution =
+                crate::checkpoint::execute(&handles.core, &handles.providers, generation, config);
+            if execution.poison_committer {
+                poisoned.store(true, Ordering::Release);
+            }
+            let _ = reply.send(execution.result);
+        }
         Work::Commit { .. } => {
-            unreachable!("publish_snapshot_maintenance is never called with Work::Commit");
+            unreachable!("publish_solo is never called with Work::Commit");
         }
     }
 }
@@ -532,6 +581,9 @@ pub(crate) fn drain_buffer_with_error(reorder: &mut BTreeMap<u64, Work>) {
                 let _ = reply.send(Err(committer_dead()));
             }
             Work::VectorIndexRebuild { reply, .. } => {
+                let _ = reply.send(Err(committer_dead()));
+            }
+            Work::Checkpoint { reply, .. } => {
                 let _ = reply.send(Err(committer_dead()));
             }
         }

@@ -285,6 +285,41 @@ impl MaintainedCandidateStateProvider {
             .get(name)
             .is_some_and(|members| members.contains(node))
     }
+
+    fn encode_section(
+        &self,
+        sub_tag: SubTag,
+        expected_generation: Option<u64>,
+    ) -> Result<Vec<u8>, ProviderError> {
+        ensure_state_subtag(sub_tag)?;
+        let state = self.state.lock();
+        if let Some(generation) = expected_generation
+            && state.generation != generation
+        {
+            return Err(inconsistent(format!(
+                "candidate-state generation {} does not match checkpoint generation {generation}",
+                state.generation
+            )));
+        }
+        let snapshot = CandidateStateSnapshot {
+            version: SNAPSHOT_VERSION,
+            generation: state.generation,
+            specs: self.specs.clone(),
+            node_labels: state
+                .node_labels
+                .iter()
+                .map(|(id, labels)| (*id, labels.clone()))
+                .collect(),
+            edges: state
+                .edges
+                .iter()
+                .map(|(id, edge)| (*id, edge.clone()))
+                .collect(),
+        };
+        postcard::to_stdvec(&snapshot).map_err(|error| ProviderError::SerializationFailed {
+            reason: format!("CSET/STAT postcard encode failed: {error}"),
+        })
+    }
 }
 
 impl IndexProvider for MaintainedCandidateStateProvider {
@@ -343,26 +378,15 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     }
 
     fn write_section(&self, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
-        ensure_state_subtag(sub_tag)?;
-        let state = self.state.lock();
-        let snapshot = CandidateStateSnapshot {
-            version: SNAPSHOT_VERSION,
-            generation: state.generation,
-            specs: self.specs.clone(),
-            node_labels: state
-                .node_labels
-                .iter()
-                .map(|(id, labels)| (*id, labels.clone()))
-                .collect(),
-            edges: state
-                .edges
-                .iter()
-                .map(|(id, edge)| (*id, edge.clone()))
-                .collect(),
-        };
-        postcard::to_stdvec(&snapshot).map_err(|error| ProviderError::SerializationFailed {
-            reason: format!("CSET/STAT postcard encode failed: {error}"),
-        })
+        self.encode_section(sub_tag, None)
+    }
+
+    fn write_section_at_generation(
+        &self,
+        sub_tag: SubTag,
+        generation: u64,
+    ) -> Result<Vec<u8>, ProviderError> {
+        self.encode_section(sub_tag, Some(generation))
     }
 
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {

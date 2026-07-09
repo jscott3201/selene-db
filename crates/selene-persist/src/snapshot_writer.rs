@@ -1,9 +1,9 @@
 //! Atomic snapshot envelope writer.
 
 use std::collections::HashSet;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use rayon::prelude::*;
@@ -120,6 +120,12 @@ impl SnapshotBuilder {
         self.config.sequence
     }
 
+    /// Return the directory where this builder will publish its snapshot.
+    #[must_use]
+    pub fn dir(&self) -> &Path {
+        &self.config.dir
+    }
+
     /// Add one opaque section payload.
     ///
     /// # Errors
@@ -152,9 +158,11 @@ impl SnapshotBuilder {
 
     /// Atomically write the snapshot and return the finalized metadata.
     ///
-    /// The writer creates `snapshot.{sequence}.snap.tmp`, writes and optionally
-    /// fsyncs it, then **hard-links** it to `snapshot.{sequence}.snap` and
-    /// removes the tmp. `hard_link` fails atomically with `AlreadyExists` when
+    /// The writer creates a unique `snapshot.{sequence}.snap.tmp.{pid}.{n}`,
+    /// writes and optionally fsyncs it, then **hard-links** it to
+    /// `snapshot.{sequence}.snap` and removes the tmp. Unique attempts keep a
+    /// stale temporary left by a crashed writer from stranding later snapshots.
+    /// `hard_link` fails atomically with `AlreadyExists` when
     /// the final path already has a snapshot for this sequence; this is the
     /// race-safe alternative to `rename` (which silently overwrites on POSIX)
     /// without requiring `unsafe` for `renameat2(RENAME_NOREPLACE)`. On a
@@ -176,7 +184,6 @@ impl SnapshotBuilder {
     pub fn finalize(self) -> PersistResult<SnapshotFinalizeOutcome> {
         let started = Instant::now();
         let final_path = snapshot_path(&self.config.dir, self.config.sequence);
-        let tmp_path = snapshot_tmp_path(&self.config.dir, self.config.sequence);
         let prepared = prepare_sections(self.sections, self.config.compression)?;
         let entries: Vec<_> = prepared.iter().map(|section| section.entry).collect();
         let table = section_table_bytes(&entries)?;
@@ -189,48 +196,65 @@ impl SnapshotBuilder {
             SectionCompression::PerSection { .. } => FLAG_SECTION_COMPRESSED,
         };
         let header = SnapshotFileHeader::new(flags, entries.len(), hash)?;
-        let mut writer = BufWriter::new(
-            OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&tmp_path)?,
-        );
-        header.write_to(&mut writer)?;
-        writer.write_all(&table)?;
-        for section in prepared {
-            writer.write_all(&section.payload)?;
-        }
-        writer.flush()?;
-        if self.config.fsync {
-            writer.get_ref().sync_data()?;
-        }
-        drop(writer);
-        match std::fs::hard_link(&tmp_path, &final_path) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(&tmp_path);
-                // Make the new directory entry durable AFTER the publish (the
-                // file's own sync_data above precedes it). Gated on config.fsync
-                // so the no-fsync benchmark/offline path stays barrier-free.
-                if self.config.fsync {
-                    sync_dir(&self.config.dir)?;
-                }
-                metrics::counter_inc(metrics::SNAPSHOTS_TOTAL);
-                metrics::histogram_record(
-                    metrics::SNAPSHOT_DURATION_SECONDS,
-                    started.elapsed().as_secs_f64(),
-                );
-                Ok(SnapshotFinalizeOutcome {
-                    snapshot_seq: self.config.sequence,
-                    body_hash: hash,
-                    section_count: entries.len() as u32,
-                })
+        let (tmp_path, file) = create_snapshot_tmp(&self.config.dir, self.config.sequence)?;
+        let result = (|| -> PersistResult<SnapshotFinalizeOutcome> {
+            let mut writer = BufWriter::new(file);
+            header.write_to(&mut writer)?;
+            writer.write_all(&table)?;
+            for section in prepared {
+                writer.write_all(&section.payload)?;
             }
-            Err(error) => {
-                let _ = std::fs::remove_file(&tmp_path);
-                Err(PersistError::Io(error))
+            writer.flush()?;
+            if self.config.fsync {
+                writer.get_ref().sync_data()?;
             }
+            drop(writer);
+            std::fs::hard_link(&tmp_path, &final_path)?;
+            let _ = std::fs::remove_file(&tmp_path);
+            // Make the new directory entry durable AFTER the publish (the
+            // file's own sync_data above precedes it). Gated on config.fsync
+            // so the no-fsync benchmark/offline path stays barrier-free.
+            if self.config.fsync {
+                sync_dir(&self.config.dir)?;
+            }
+            metrics::counter_inc(metrics::SNAPSHOTS_TOTAL);
+            metrics::histogram_record(
+                metrics::SNAPSHOT_DURATION_SECONDS,
+                started.elapsed().as_secs_f64(),
+            );
+            Ok(SnapshotFinalizeOutcome {
+                snapshot_seq: self.config.sequence,
+                body_hash: hash,
+                section_count: entries.len() as u32,
+            })
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+        result
+    }
+}
+
+fn create_snapshot_tmp(dir: &std::path::Path, sequence: u64) -> PersistResult<(PathBuf, File)> {
+    let base = snapshot_tmp_path(dir, sequence);
+    for attempt in 0..128_u8 {
+        let mut name = base
+            .file_name()
+            .expect("snapshot temporary path always has a file name")
+            .to_os_string();
+        name.push(format!(".{}.{attempt}", std::process::id()));
+        let path = base.with_file_name(name);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
         }
     }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "snapshot temporary path attempts exhausted",
+    )
+    .into())
 }
 
 fn prepare_sections(
@@ -465,15 +489,16 @@ mod tests {
     }
 
     #[test]
-    fn stale_tmp_prevents_write_and_leaves_no_final() {
+    fn stale_fixed_tmp_does_not_prevent_snapshot_retry() {
         let dir = temp_dir("stale-tmp");
         fs::write(snapshot_tmp_path(&dir, 5), b"partial").unwrap();
-        let err = SnapshotBuilder::new(config(dir.clone(), 5, SectionCompression::None))
+        let outcome = SnapshotBuilder::new(config(dir.clone(), 5, SectionCompression::None))
             .finalize()
-            .unwrap_err();
-        assert!(matches!(err, PersistError::Io(_)));
+            .unwrap();
+        assert_eq!(outcome.snapshot_seq, 5);
         assert!(snapshot_tmp_path(&dir, 5).exists());
-        assert!(!snapshot_path(&dir, 5).exists());
+        let mut reader = SnapshotReader::open(&snapshot_path(&dir, 5)).unwrap();
+        reader.verify_body_hash().unwrap();
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -498,10 +523,10 @@ mod tests {
     #[test]
     fn snapshot_finalize_same_sequence_is_race_safe() {
         // Two concurrent finalizes of the SAME sequence must resolve to exactly
-        // one durable snapshot: one Ok, the rest a typed AlreadyExists from either
-        // the tmp `create_new` or the final-path `hard_link` (the tmp path is not
-        // pid/thread-unique, so both collision points are exercised). Never two
-        // winners, never a panic, never a torn final file.
+        // one durable snapshot: one Ok, the rest a typed AlreadyExists from the
+        // final-path `hard_link`. Process-local attempt names are not
+        // thread-specific, so create_new contention may also advance attempts.
+        // Never two winners, never a panic, never a torn final file.
         use std::sync::{Arc as StdArc, Barrier};
 
         let dir = StdArc::new(temp_dir("same-seq-race"));
@@ -543,8 +568,14 @@ mod tests {
         assert!(path.exists());
         let mut reader = SnapshotReader::open(&path).unwrap();
         reader.verify_body_hash().unwrap();
-        // No tmp residue from the losing finalizes.
-        assert!(!snapshot_tmp_path(&dir, 20).exists());
+        // No unique-attempt residue from the losing finalizes.
+        assert!(fs::read_dir(dir.as_path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("snapshot.20.snap.tmp.")
+        }));
         let _ = fs::remove_dir_all(dir.as_path());
     }
 

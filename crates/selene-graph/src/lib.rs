@@ -13,6 +13,7 @@
 pub mod adjacency;
 pub mod candidate_state;
 mod candidate_state_shared;
+mod checkpoint;
 pub mod chunked_vec;
 pub(crate) mod committer;
 pub(crate) mod committer_batch;
@@ -56,6 +57,7 @@ pub use candidate_state::{
     CANDIDATE_STATE_PROVIDER_TAG, CANDIDATE_STATE_SUB, CandidateStateSpec,
     MaintainedCandidateStateProvider,
 };
+pub use checkpoint::{CheckpointConfig, CheckpointOutcome};
 pub use chunked_vec::ChunkedVec;
 pub use committer_batch::CommitBatching;
 pub use compaction::{CompactedCore, CompactionReport, CompactionStats, compact_core};
@@ -89,7 +91,9 @@ pub use mutator::Mutator;
 pub use reachability::{ReachabilityDirection, ReachabilityError, ReachableNode};
 pub use selene_core::JsonPathSelector;
 pub use selene_core::{HnswIndexConfig, IvfIndexConfig};
-pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};
+pub use selene_persist::{
+    DEFAULT_WAL_FILE_NAME, SectionCompression, SyncPolicy, WalConfig, WalRotationOutcome,
+};
 pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use text_index::{TextIndex, TextIndexMemoryUsage, TextIndexStats};

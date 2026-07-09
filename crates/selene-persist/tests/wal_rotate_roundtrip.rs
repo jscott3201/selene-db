@@ -174,3 +174,130 @@ fn wal_rotate_with_manifest_is_idempotent_on_pre_published_archive() {
     drop(writer);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn rotation_rejects_nondefault_wal_before_flush_or_artifacts() {
+    let dir = temp_dir("nondefault-name");
+    let wal_path = dir.join("custom.log");
+    let mut writer = WalWriter::open(
+        &wal_path,
+        WalConfig {
+            sync_policy: SyncPolicy::OnFlushOnly,
+            snapshot_seq: 0,
+        },
+    )
+    .unwrap();
+    assert_eq!(append(&mut writer, 1), 1);
+
+    let error = writer
+        .rotate_with_manifest(meta_builder(&dir, 1, b"snapshot"))
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        PersistError::UnexpectedActiveWal { observed, expected }
+            if observed == "custom.log" && expected == DEFAULT_WAL_FILE_NAME
+    ));
+    assert_eq!(writer.entries_since_fsync(), 1);
+    assert!(Manifest::read(&dir).unwrap().is_none());
+    assert!(!snapshot_path(&dir, 1).exists());
+    assert!(!dir.join("wal.1.archive").exists());
+    drop(writer);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn rotation_rejects_nondefault_manifest_wal_before_flush_or_artifacts() {
+    let dir = temp_dir("nondefault-manifest-wal");
+    let wal_path = dir.join(DEFAULT_WAL_FILE_NAME);
+    let invalid_manifest = Manifest {
+        live_snapshot_seq: 0,
+        active_wal_header_seq: 0,
+        compaction_epoch: 0,
+        active_wal: "custom.log".to_owned(),
+        archived_wal_seqs: Vec::new(),
+    };
+    invalid_manifest
+        .write_atomic(&dir)
+        .expect("invalid manifest fixture writes");
+    let mut writer = WalWriter::open(
+        &wal_path,
+        WalConfig {
+            sync_policy: SyncPolicy::OnFlushOnly,
+            snapshot_seq: 0,
+        },
+    )
+    .expect("wal opens");
+    assert_eq!(append(&mut writer, 1), 1);
+
+    let error = writer
+        .rotate_with_manifest(meta_builder(&dir, 1, b"snapshot"))
+        .expect_err("non-default manifest active WAL rejects");
+
+    assert!(matches!(
+        error,
+        PersistError::UnexpectedActiveWal { observed, expected }
+            if observed == "custom.log" && expected == DEFAULT_WAL_FILE_NAME
+    ));
+    assert_eq!(writer.entries_since_fsync(), 1);
+    assert_eq!(
+        Manifest::read(&dir).expect("manifest reads"),
+        Some(invalid_manifest)
+    );
+    assert!(!snapshot_path(&dir, 1).exists());
+    assert!(!dir.join("wal.1.archive").exists());
+    drop(writer);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn rotation_rejects_zero_sequence_before_artifacts() {
+    let dir = temp_dir("zero-sequence");
+    let wal_path = dir.join(DEFAULT_WAL_FILE_NAME);
+    let mut writer = WalWriter::open(&wal_path, WalConfig::default()).unwrap();
+
+    let error = writer
+        .rotate_with_manifest(meta_builder(&dir, 0, b"zero"))
+        .unwrap_err();
+
+    assert!(matches!(error, PersistError::WalRotationZeroSequence));
+    assert!(Manifest::read(&dir).unwrap().is_none());
+    assert!(!snapshot_path(&dir, 0).exists());
+    assert!(!dir.join("wal.0.archive").exists());
+    drop(writer);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn rotation_rejects_snapshot_directory_mismatch_before_flush() {
+    let dir = temp_dir("directory-mismatch");
+    let other = temp_dir("directory-mismatch-other");
+    let wal_path = dir.join(DEFAULT_WAL_FILE_NAME);
+    let mut writer = WalWriter::open(
+        &wal_path,
+        WalConfig {
+            sync_policy: SyncPolicy::OnFlushOnly,
+            snapshot_seq: 0,
+        },
+    )
+    .unwrap();
+    assert_eq!(append(&mut writer, 1), 1);
+
+    let error = writer
+        .rotate_with_manifest(meta_builder(&other, 1, b"wrong-dir"))
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        PersistError::WalRotationDirectoryMismatch {
+            snapshot_dir,
+            wal_dir,
+        } if snapshot_dir == other && wal_dir == dir
+    ));
+    assert_eq!(writer.entries_since_fsync(), 1);
+    assert!(Manifest::read(&dir).unwrap().is_none());
+    assert!(!snapshot_path(&other, 1).exists());
+    drop(writer);
+    let _ = fs::remove_dir_all(dir);
+    let _ = fs::remove_dir_all(other);
+}

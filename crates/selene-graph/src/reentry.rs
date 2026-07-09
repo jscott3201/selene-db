@@ -1,10 +1,10 @@
-//! Thread-local re-entrancy guard for the provider-fanout phase of commit.
+//! Thread-local re-entrancy guard for committer-thread provider callbacks.
 //!
-//! Re-entrant writes from inside an `IndexProvider::on_change` callback are
-//! misuse: a nested write would deadlock or recurse indefinitely. We detect the
-//! same-thread case here via a thread-local counter and let `begin_write` panic
-//! with a clear message; the `notify_providers` boundary catches that unwind so
-//! the commit still completes.
+//! Re-entrant writes from inside an `IndexProvider::on_change` or coordinated
+//! snapshot callback are misuse: a nested write would deadlock or recurse
+//! indefinitely. We detect the same-thread case here via a thread-local counter
+//! and let `begin_write` panic with a clear message. The commit-fanout and
+//! checkpoint-collection boundaries catch that unwind.
 //!
 //! ## v1.2 relocation — fanout now runs on the committer thread
 //!
@@ -12,10 +12,11 @@
 //! lock. Since v1.2 (BRIEF 1) the snapshot publish + provider fan-out run on the
 //! single per-graph **committer thread** (`committer.rs`); `WriteTxn::seal`
 //! releases the write lock on the session thread before handing the bundle off.
-//! This guard is therefore set on the committer thread during fan-out. It stays
-//! sound precisely because there is exactly **one** committer: a provider whose
-//! `on_change` re-enters `begin_write` does so on the committer thread, where
-//! `in_fanout()` is true, so it panics before locking. (The committer itself
+//! This guard is therefore set on the committer thread during fan-out and
+//! coordinated checkpoint serialization. It stays sound precisely because
+//! there is exactly **one** committer: a provider callback that re-enters
+//! `begin_write` does so on the committer thread, where `in_fanout()` is true,
+//! so it panics before locking. (The committer itself
 //! never holds the write lock — even compaction builds its dense graph on the
 //! caller thread and hands the committer a pre-built snapshot — so the panic is
 //! about preventing an unbounded re-entrant publish, not a self-deadlock on the
@@ -24,15 +25,15 @@
 //!
 //! ## Cross-thread misuse — out of scope
 //!
-//! A provider whose `on_change` spawns a worker thread, calls `begin_write()`
-//! on that worker, AND blocks waiting for the worker (e.g., `JoinHandle::join`,
-//! `mpsc::Receiver::recv`) will deadlock. The worker blocks on the held write
-//! lock; the outer `on_change` blocks waiting for the worker; the outer commit
-//! cannot release the lock until `on_change` returns. This is a circular
-//! wait the engine cannot detect without tracing causal thread ancestry.
+//! A provider callback that spawns a worker thread, calls `begin_write()` on
+//! that worker, AND blocks waiting for the worker (e.g., `JoinHandle::join`,
+//! `mpsc::Receiver::recv`) will deadlock. During commit fan-out the worker waits
+//! behind the publishing committer; during checkpoint serialization its sealed
+//! work waits behind the checkpoint callback that spawned it. This is a
+//! circular wait the engine cannot detect without tracing causal thread ancestry.
 //!
-//! v1.0 contract: `IndexProvider::on_change` MUST NOT initiate a write
-//! transaction, directly or indirectly via a spawned thread it then waits on.
+//! Provider callbacks MUST NOT initiate a write transaction, directly or
+//! indirectly via a spawned thread they then wait on.
 //! Cross-thread reentry is documented misuse, not a detectable footgun.
 //! Catching the same-thread case here is a courtesy that flags the obvious
 //! mistake; cross-thread waits are the provider author's responsibility.
@@ -44,13 +45,13 @@ thread_local! {
 }
 
 /// Returns true if this thread is currently inside an
-/// [`IndexProvider`](crate::IndexProvider) callback fanout.
+/// [`IndexProvider`](crate::IndexProvider) callback on the committer thread.
 pub(crate) fn in_fanout() -> bool {
     FANOUT_DEPTH.with(|cell| cell.get() > 0)
 }
 
 /// RAII guard that increments `FANOUT_DEPTH` for the duration of provider
-/// fanout. Drop semantics make the decrement panic-safe so that a panicking
+/// callbacks. Drop semantics make the decrement panic-safe so that a panicking
 /// provider cannot leave the counter wedged above zero.
 pub(crate) struct FanoutGuard {
     _private: (),

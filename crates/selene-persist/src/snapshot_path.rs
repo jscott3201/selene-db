@@ -7,7 +7,7 @@ use crate::PersistResult;
 
 /// Final snapshot file extension.
 pub const SNAPSHOT_FILE_EXTENSION: &str = "snap";
-/// Temporary snapshot file extension suffix.
+/// Base suffix for snapshot temporary-attempt files.
 pub const SNAPSHOT_TMP_EXTENSION: &str = "snap.tmp";
 
 /// Build the final snapshot path for `sequence`.
@@ -16,7 +16,11 @@ pub fn snapshot_path(dir: &Path, sequence: u64) -> PathBuf {
     dir.join(format!("snapshot.{sequence}.{SNAPSHOT_FILE_EXTENSION}"))
 }
 
-/// Build the temporary snapshot path for `sequence`.
+/// Build the base temporary snapshot path for `sequence`.
+///
+/// [`crate::SnapshotBuilder`] appends a process id and attempt counter to this
+/// base. The unsuffixed path remains useful for recognizing legacy crash
+/// temporaries and constructing test fixtures.
 #[must_use]
 pub fn snapshot_tmp_path(dir: &Path, sequence: u64) -> PathBuf {
     dir.join(format!("snapshot.{sequence}.{SNAPSHOT_TMP_EXTENSION}"))

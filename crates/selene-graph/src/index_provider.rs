@@ -47,10 +47,10 @@ impl fmt::Display for SubTag {
 
 /// Stateful hook for engine-owned derived-state participation.
 ///
-/// [`IndexProvider::read_section`] and [`IndexProvider::on_change`] take
-/// `&self`: `selene-graph` stores providers as `Arc<dyn IndexProvider>`, so
-/// providers use interior mutability for owned state. The engine guarantees
-/// serialized calls per graph.
+/// [`IndexProvider::read_section`], [`IndexProvider::write_section_at_generation`],
+/// and [`IndexProvider::on_change`] take `&self`: `selene-graph` stores providers
+/// as `Arc<dyn IndexProvider>`, so providers use interior mutability for owned
+/// state. The engine guarantees serialized calls per graph.
 ///
 /// ## Change-shape contract
 ///
@@ -67,20 +67,18 @@ impl fmt::Display for SubTag {
 ///
 /// ## Re-entrancy contract
 ///
-/// `on_change` MUST NOT initiate a write transaction on the same graph,
-/// directly or indirectly. The engine detects same-thread re-entry into
-/// `SharedGraph::begin_write` and panics with a clear message; the panic
-/// is caught by the outer `notify_providers` boundary so the outer commit
-/// still completes.
+/// `on_change` and `write_section_at_generation` MUST NOT initiate a write
+/// transaction on the same graph, directly or indirectly. The engine detects
+/// same-thread re-entry into `SharedGraph::begin_write` and panics with a clear
+/// message. Commit fan-out and ordered checkpoint collection catch that panic
+/// at their provider-callback boundaries.
 ///
-/// **Cross-thread re-entry is documented misuse.** A provider whose
-/// `on_change` spawns a worker thread, calls `begin_write` on that worker,
-/// and waits for the worker (e.g., `JoinHandle::join`, channel `recv`) is a
-/// circular wait the engine cannot detect: the worker blocks on the held
-/// write lock; the outer `on_change` blocks waiting for the worker; the
-/// outer commit cannot release the lock until `on_change` returns.
-/// Provider authors who spawn threads inside `on_change` must not block
-/// the callback on those threads' progress.
+/// **Cross-thread re-entry is documented misuse.** A provider callback that
+/// spawns a worker, submits a graph mutation or maintenance operation on that
+/// worker, and waits for it (for example via `JoinHandle::join` or channel
+/// `recv`) creates a cycle the engine cannot detect: the nested operation waits
+/// in the committer queue behind the callback, while the callback waits for the
+/// nested operation. Provider callbacks must not block on spawned graph work.
 pub trait IndexProvider: Send + Sync + 'static {
     /// Stable 4-byte ASCII tag uniquely identifying this provider.
     fn provider_tag(&self) -> ProviderTag;
@@ -100,6 +98,28 @@ pub trait IndexProvider: Send + Sync + 'static {
     /// Returns [`ProviderError`] when serialization cannot produce a stable
     /// section payload.
     fn write_section(&self, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError>;
+
+    /// Snapshot publish for one provider-owned section at an exact graph
+    /// generation.
+    ///
+    /// Ordered graph checkpoints call this hook only after every lower commit's
+    /// provider fan-out completed and before any higher commit is published.
+    /// Stateful providers should override it and reject state that cannot prove
+    /// it belongs to `generation`. The default delegates to
+    /// [`Self::write_section`] for stateless providers and legacy snapshot
+    /// encoders.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when serialization cannot produce a stable
+    /// section payload for `generation`.
+    fn write_section_at_generation(
+        &self,
+        sub_tag: SubTag,
+        _generation: u64,
+    ) -> Result<Vec<u8>, ProviderError> {
+        self.write_section(sub_tag)
+    }
 
     /// Observe one committed mutation.
     ///

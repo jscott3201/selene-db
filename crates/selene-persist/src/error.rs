@@ -249,13 +249,13 @@ pub enum PersistError {
         path: PathBuf,
     },
 
-    /// WAL rotation archived the old file but could not restore a usable active WAL.
+    /// WAL rotation committed the new epoch but could not finish replacing the active WAL.
     #[error("wal rotation incomplete: archived {archived_path}, active {new_path}")]
     #[diagnostic(code(SLENE_P_030))]
     WalRotationIncomplete {
         /// Path containing the archived pre-rotation WAL.
         archived_path: PathBuf,
-        /// Active WAL path that could not be restored.
+        /// Active WAL path whose replacement did not complete.
         new_path: PathBuf,
     },
 
@@ -272,18 +272,39 @@ pub enum PersistError {
         last_sequence: u64,
     },
 
-    /// A committed MANIFEST named an active WAL file other than the one this
-    /// build recovers from. The active-WAL name is a de-facto fixed contract
-    /// (always [`crate::DEFAULT_WAL_FILE_NAME`]); recovery opens that file by
-    /// name and rejects a divergent name rather than silently ignoring it.
-    #[error("manifest names unexpected active wal {observed:?}, expected {expected:?}")]
+    /// A MANIFEST or live writer named an active WAL file other than the one
+    /// this build recovers from. The active-WAL name is a de-facto fixed
+    /// contract (always [`crate::DEFAULT_WAL_FILE_NAME`]).
+    #[error("unexpected active wal {observed:?}, expected {expected:?}")]
     #[diagnostic(code(SLENE_P_032))]
     UnexpectedActiveWal {
-        /// Active WAL name read from the committed MANIFEST.
+        /// Active WAL name read from the MANIFEST or writer path.
         observed: String,
         /// Active WAL name this build recovers from.
         expected: &'static str,
     },
+
+    /// WAL rotation requires a positive durable high-water sequence.
+    #[error("wal rotation requires a nonzero snapshot sequence")]
+    #[diagnostic(code(SLENE_P_033))]
+    WalRotationZeroSequence,
+
+    /// Snapshot builder and active WAL target different directories.
+    #[error(
+        "wal rotation snapshot directory {snapshot_dir} does not match active wal directory {wal_dir}"
+    )]
+    #[diagnostic(code(SLENE_P_034))]
+    WalRotationDirectoryMismatch {
+        /// Directory configured on the snapshot builder.
+        snapshot_dir: PathBuf,
+        /// Stable parent directory of the active WAL.
+        wal_dir: PathBuf,
+    },
+
+    /// A prior incomplete rotation made this writer unsafe to reuse.
+    #[error("wal writer is poisoned after an incomplete rotation; reopen it before use")]
+    #[diagnostic(code(SLENE_P_035))]
+    WalWriterPoisoned,
 }
 
 impl PersistError {
@@ -321,7 +342,10 @@ impl PersistError {
             | Self::WalArchiveExists { .. }
             | Self::WalRotationIncomplete { .. }
             | Self::WalRotationSequenceMismatch { .. }
-            | Self::UnexpectedActiveWal { .. } => "5GQL0",
+            | Self::UnexpectedActiveWal { .. }
+            | Self::WalRotationZeroSequence
+            | Self::WalRotationDirectoryMismatch { .. }
+            | Self::WalWriterPoisoned => "5GQL0",
         }
     }
 }
@@ -373,6 +397,16 @@ mod tests {
         snapshot_seq: 1,
         last_sequence: 2,
     }, "5GQL0")]
+    #[case(PersistError::UnexpectedActiveWal {
+        observed: "custom.log".to_owned(),
+        expected: crate::DEFAULT_WAL_FILE_NAME,
+    }, "5GQL0")]
+    #[case(PersistError::WalRotationZeroSequence, "5GQL0")]
+    #[case(PersistError::WalRotationDirectoryMismatch {
+        snapshot_dir: "snapshots".into(),
+        wal_dir: "wal".into(),
+    }, "5GQL0")]
+    #[case(PersistError::WalWriterPoisoned, "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
         assert!(
