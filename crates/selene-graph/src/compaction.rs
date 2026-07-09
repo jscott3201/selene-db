@@ -1,14 +1,15 @@
 //! CORE graph compaction mechanism (BRIEF-Item-4b / 4c).
 //!
-//! [`compact_core`] is a pure transform: given a [`SeleneGraph`], it builds a
-//! fresh graph whose rows are dense (every dead / aborted-tx hole row dropped),
-//! preserving external `NodeId` / `EdgeId` and the monotonic allocator
-//! high-water marks, then rebuilds all derived state from the compacted columns
-//! via the existing recovery-path rebuilders. It performs NO publication and NO
-//! snapshot I/O — the snapshot writer wiring is BRIEF-Item-4c, the
-//! create-time row-allocation change (arith → append) and dropping the
-//! `rebuild_id_maps` identity bootstrap land when a compacted graph first goes
-//! live (also 4c). Database strings are plain owned values, so compaction has no
+//! [`compact_core`] is the low-level pure transform: given a [`SeleneGraph`], it
+//! builds a fresh graph whose rows are dense (every dead or otherwise
+//! unoccupied hole row dropped), preserving external `NodeId` / `EdgeId` and
+//! the monotonic allocator high-water marks, then rebuilds all derived state
+//! from the compacted columns via the existing recovery-path rebuilders. It
+//! performs no publication and no snapshot I/O. Live embedders normally call
+//! [`crate::SharedGraph::compact`], which serializes the transform with writers
+//! and atomically republishes the dense graph in the same total publication
+//! order as commits. Snapshot I/O remains a separate, caller-driven maintenance
+//! step. Database strings are plain owned values, so compaction has no
 //! string-pool reclamation work to perform.
 //!
 //! Because 4a left edges + adjacency keyed by stable external `NodeId`, a row
