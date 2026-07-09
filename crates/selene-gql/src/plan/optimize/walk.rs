@@ -386,6 +386,7 @@ fn walk_catalog_exprs(
     match catalog {
         CatalogOp::CreateNodeType { properties, .. }
         | CatalogOp::CreateEdgeType { properties, .. }
+        | CatalogOp::AlterNodeType { properties, .. }
         | CatalogOp::AlterEdgeType { properties, .. } => {
             properties.iter_mut().fold(false, |changed, property| {
                 property

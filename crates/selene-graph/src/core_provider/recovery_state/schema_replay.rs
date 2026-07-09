@@ -14,6 +14,8 @@ use crate::graph_types::{
     RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
 };
 
+mod node_type_alter;
+
 pub(super) fn replay_schema_changes(
     bound_type: &mut Option<Arc<GraphTypeDef>>,
     changes: &[SchemaChange],
@@ -73,6 +75,11 @@ fn apply_schema_change(
             graph_type
                 .node_types
                 .push(runtime_node_type_def(label.clone(), def)?);
+        }
+        SchemaChange::NodeTypeAlteredV2 {
+            label, properties, ..
+        } => {
+            node_type_alter::apply(graph_type, label, properties)?;
         }
         SchemaChange::EdgeTypeAdded { label, def, .. } => {
             let def = selene_core::EdgeTypeDef::from(def.clone());
@@ -189,61 +196,62 @@ fn resolve_node_type_ref(
 fn runtime_properties(
     properties: &[selene_core::PropertyDef],
 ) -> Result<Vec<PropertyTypeDef>, crate::ProviderError> {
-    properties
-        .iter()
-        .map(|property| {
-            // Why: a RECORD property's structure rides `PropertyDef.record_fields`
-            // (structural-inline), NOT `ValueType.record`. `record_fields` jointly encodes
-            // three states so recovery faithfully restores the committed catalog (D11-class
-            // live-vs-recovered consistency): `None` ⇒ not a record; `Some(Open)` ⇒ an
-            // open/bare `RECORD` (RecordTyped with no field constraints — without this
-            // marker its all-`None` `ValueType` would degrade to scalar `Null` on replay);
-            // `Some(Closed)` ⇒ a closed/typed `RECORD{..}`. The coarse `RecordTyped` tag is
-            // derived here (not stored on `ValueType`) so commit-time GG02 validation treats
-            // it correctly. Per ISO 39075:2024 §18.9/§18.10 (GV46/GV47/GV48).
-            let (
+    properties.iter().map(runtime_property).collect()
+}
+
+pub(super) fn runtime_property(
+    property: &selene_core::PropertyDef,
+) -> Result<PropertyTypeDef, crate::ProviderError> {
+    // Why: a RECORD property's structure rides `PropertyDef.record_fields`
+    // (structural-inline), NOT `ValueType.record`. `record_fields` jointly encodes
+    // three states so recovery faithfully restores the committed catalog (D11-class
+    // live-vs-recovered consistency): `None` ⇒ not a record; `Some(Open)` ⇒ an
+    // open/bare `RECORD` (RecordTyped with no field constraints — without this
+    // marker its all-`None` `ValueType` would degrade to scalar `Null` on replay);
+    // `Some(Closed)` ⇒ a closed/typed `RECORD{..}`. The coarse `RecordTyped` tag is
+    // derived here (not stored on `ValueType`) so commit-time GG02 validation treats
+    // it correctly. Per ISO 39075:2024 §18.9/§18.10 (GV46/GV47/GV48).
+    let (
+        value_type,
+        list_element_type,
+        record_field_types,
+        character_string_type,
+        byte_string_type,
+    ) = match property.record_fields.as_deref() {
+        Some(selene_core::RecordFieldStructure::Open) => {
+            (PropertyValueType::RecordTyped, None, None, None, None)
+        }
+        Some(selene_core::RecordFieldStructure::Closed(defs)) => (
+            PropertyValueType::RecordTyped,
+            None,
+            Some(runtime_record_field_types(defs, 1)?),
+            None,
+            None,
+        ),
+        None => {
+            let (value_type, list_element_type) = runtime_value_type(&property.value_type)?;
+            (
                 value_type,
                 list_element_type,
-                record_field_types,
-                character_string_type,
-                byte_string_type,
-            ) = match property.record_fields.as_deref() {
-                Some(selene_core::RecordFieldStructure::Open) => {
-                    (PropertyValueType::RecordTyped, None, None, None, None)
-                }
-                Some(selene_core::RecordFieldStructure::Closed(defs)) => (
-                    PropertyValueType::RecordTyped,
-                    None,
-                    Some(runtime_record_field_types(defs, 1)?),
-                    None,
-                    None,
-                ),
-                None => {
-                    let (value_type, list_element_type) = runtime_value_type(&property.value_type)?;
-                    (
-                        value_type,
-                        list_element_type,
-                        None,
-                        runtime_character_string_type(&property.value_type, value_type),
-                        runtime_byte_string_type(&property.value_type, value_type),
-                    )
-                }
-            };
-            Ok(PropertyTypeDef {
-                name: property.name.clone(),
-                value_type,
-                list_element_type,
-                required: !property.nullable || property.value_type.not_null,
-                default: runtime_default_value(property.default.as_ref())?,
-                immutable: property.immutable,
-                unique: property.unique,
-                decimal_type: runtime_decimal_type(&property.value_type, value_type),
-                character_string_type,
-                byte_string_type,
-                record_field_types,
-            })
-        })
-        .collect()
+                None,
+                runtime_character_string_type(&property.value_type, value_type),
+                runtime_byte_string_type(&property.value_type, value_type),
+            )
+        }
+    };
+    Ok(PropertyTypeDef {
+        name: property.name.clone(),
+        value_type,
+        list_element_type,
+        required: !property.nullable || property.value_type.not_null,
+        default: runtime_default_value(property.default.as_ref())?,
+        immutable: property.immutable,
+        unique: property.unique,
+        decimal_type: runtime_decimal_type(&property.value_type, value_type),
+        character_string_type,
+        byte_string_type,
+        record_field_types,
+    })
 }
 
 fn runtime_record_field_types(
@@ -582,6 +590,7 @@ pub(super) fn schema_change_variant(change: &SchemaChange) -> &'static str {
         SchemaChange::NodeTypeAdded { .. } => "NodeTypeAdded",
         SchemaChange::EdgeTypeAdded { .. } => "EdgeTypeAdded",
         SchemaChange::NodeTypeAddedV2 { .. } => "NodeTypeAddedV2",
+        SchemaChange::NodeTypeAlteredV2 { .. } => "NodeTypeAlteredV2",
         SchemaChange::EdgeTypeAddedV2 { .. } => "EdgeTypeAddedV2",
         SchemaChange::NodeTypeDropped { .. } => "NodeTypeDropped",
         SchemaChange::EdgeTypeDropped { .. } => "EdgeTypeDropped",

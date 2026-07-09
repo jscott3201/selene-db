@@ -78,6 +78,15 @@ pub enum CatalogOp {
         /// Source span.
         span: SourceSpan,
     },
+    /// Alter an existing node type through forward-only additive changes.
+    AlterNodeType {
+        /// Node type label.
+        label: DbString,
+        /// Property definitions to add.
+        properties: Vec<PlannedTypePropertyDef>,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// Alter an existing edge type through forward-only additive changes.
     AlterEdgeType {
         /// Edge type label.

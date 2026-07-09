@@ -339,6 +339,7 @@ fn collect_subqueries_in_catalog(
     match op {
         CatalogOp::CreateNodeType { properties, .. }
         | CatalogOp::CreateEdgeType { properties, .. }
+        | CatalogOp::AlterNodeType { properties, .. }
         | CatalogOp::AlterEdgeType { properties, .. } => {
             for property in properties {
                 for constraint in &property.constraints {

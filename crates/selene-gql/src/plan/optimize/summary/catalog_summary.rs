@@ -20,6 +20,13 @@ pub(super) fn catalog_summary(catalog: &CatalogOp) -> String {
             label.as_str(),
             properties.len()
         ),
+        CatalogOp::AlterNodeType {
+            label, properties, ..
+        } => format!(
+            "op=AlterNodeType(label={}, props={})",
+            label.as_str(),
+            properties.len()
+        ),
         CatalogOp::AlterEdgeType {
             label, properties, ..
         } => format!(

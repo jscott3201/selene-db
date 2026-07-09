@@ -81,6 +81,15 @@ pub(crate) fn lower_ddl(
             validation_mode: *validation_mode,
             span: *span,
         },
+        DdlStatement::AlterNodeType {
+            label,
+            properties,
+            span,
+        } => CatalogOp::AlterNodeType {
+            label: label.clone(),
+            properties: lower_property_defs(properties, analyzed)?,
+            span: *span,
+        },
         DdlStatement::AlterEdgeType {
             label,
             endpoints,

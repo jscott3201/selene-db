@@ -157,6 +157,29 @@ fn alter_edge_type_stamps_implementation_defined_feature() {
 }
 
 #[test]
+fn alter_node_type_stamps_only_its_implementation_defined_type_features() {
+    let statement = parse("ALTER NODE TYPE :Person (active :: BOOLEAN DEFAULT true)")
+        .expect("ALTER NODE TYPE parses");
+    let observed = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    assert!(
+        observed.contains(&FeatureId::IM_ALTER_NODE_TYPE),
+        "ALTER NODE TYPE must flag its implementation-defined extension; observed {observed:?}"
+    );
+    assert!(
+        observed.contains(&FeatureId::GG02) && observed.contains(&FeatureId::GG20),
+        "ALTER NODE TYPE remains closed-type DDL; observed {observed:?}"
+    );
+    assert!(
+        !observed.contains(&FeatureId::GG21),
+        "the bare ALTER type name does not write an explicit key label set; observed {observed:?}"
+    );
+}
+
+#[test]
 fn bare_type_ddl_flags_gg02_gg20_but_not_gg21() {
     // 813: type DDL flags GG02 (closed graph type) + GG20 (explicit element type
     // names — the `:Name` after NODE/EDGE TYPE is an explicit `<node/edge type

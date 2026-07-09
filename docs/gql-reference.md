@@ -49,7 +49,7 @@ spec docs by the build. The table below summarizes the major clause groups.
 | Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
 | Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
-| DDL (`DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` is the implementation-defined factory-reset surface. `CREATE GRAPH` remains unclaimed (`GC04`). Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
+| DDL (`DROP GRAPH`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` and both additive `ALTER` forms are implementation-defined surfaces. `CREATE GRAPH` remains unclaimed (`GC04`). Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries claim `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not claimed. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are claimed (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
@@ -623,6 +623,29 @@ state, and materialized when an inserted node or edge omits the property.
 `OR REPLACE` and `IF NOT EXISTS` modifiers are accepted on `CREATE NODE
 TYPE` and `CREATE EDGE TYPE` (feature `GC03`).
 
+### `ALTER NODE TYPE`
+
+```gql
+ALTER NODE TYPE :Person (
+    nickname :: STRING,
+    metadata :: JSON DEFAULT '{}'
+)
+```
+
+`ALTER NODE TYPE` is the implementation-defined `IM_ALTER_NODE_TYPE`
+extension; ISO/IEC 39075:2024 defines node-type specifications but no catalog
+`ALTER` statement. The operation is property-additive only. It can add nullable
+properties to an existing node type in a closed graph type, while existing
+nodes remain intact. A default applies to later inserts that omit the new
+property; the alteration does not backfill existing rows.
+
+New `NOT NULL` properties reject even when they declare a default. Existing
+property descriptors cannot be changed, and inline `INDEXED` is unsupported on
+this form; create an index separately after the alteration. Catalog commit
+revalidates the live closed graph, so this rare DDL operation is not a
+constant-time migration. WAL replay extends the named node type's properties in
+place so the positional node-type indexes used by edge endpoints remain stable.
+
 ### `ALTER EDGE TYPE`
 
 ```gql
@@ -879,6 +902,7 @@ explicitly absent. The canonical rationale is
 | Time-series query syntax | Out of scope. Future first-party extension allocation `TIMS`. |
 | RDF / SPARQL bridge syntax | Out of scope. Future first-party extension allocation `GRPR`. |
 | Recursive CTEs (`WITH RECURSIVE`) | Not in ISO GQL; not supported. |
+| Broader `ALTER NODE TYPE` migrations | Property rename/removal/retyping, validation-mode changes, key-label changes, and inline indexes are not supported. Add nullable properties only, then create indexes separately. |
 | Wire format | Out of scope (ISO GQL Clause 4.2.3). Embedders pick their own transport. |
 
 Where the AST has a node for a construct but the analyzer rejects it, the

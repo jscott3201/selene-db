@@ -16,6 +16,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   endpoint set and add optional properties as a forward-only schema migration.
   Narrowing endpoints, redefining properties, and adding required properties
   are rejected.
+- `ALTER NODE TYPE` can now add optional properties to an existing node type in
+  a closed graph type without dropping its instances. The
+  implementation-defined migration preserves node-type ordering during WAL
+  replay; required properties, descriptor changes, inline indexes, and
+  key-label changes remain rejected.
 - `selene.reachable_nodes(roots, edge_label, k, max_depth?, direction?)` now
   produces bounded transitive graph candidates with hop depths, so callers can
   feed HEAD/tip reachability windows into the existing vector, text, JSON, or

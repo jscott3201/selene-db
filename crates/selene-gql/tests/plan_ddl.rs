@@ -69,6 +69,25 @@ fn create_edge_type_preserves_endpoints() {
 }
 
 #[test]
+fn alter_node_type_lowers_property_defaults() {
+    let plan = plan_one("ALTER NODE TYPE :Person (active BOOLEAN DEFAULT true)");
+    let CatalogOp::AlterNodeType {
+        label, properties, ..
+    } = catalog_op(&plan)
+    else {
+        panic!("expected alter node type");
+    };
+    assert_eq!(label.as_str(), "Person");
+    assert_eq!(properties.len(), 1);
+    assert_eq!(properties[0].gql_type, GqlType::Boolean);
+    assert!(matches!(
+        properties[0].constraints.as_slice(),
+        [PlannedTypePropertyConstraint::Default(project, _)]
+            if project.ty == AnalyzedType::Resolved(GqlType::Boolean)
+    ));
+}
+
+#[test]
 fn drop_type_and_show_type_plans() {
     let plan = plan_one("DROP EDGE TYPE IF EXISTS :KNOWS");
     assert!(matches!(

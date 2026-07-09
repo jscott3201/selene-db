@@ -26,7 +26,7 @@ explain_kw = @{ ^"EXPLAIN" ~ !(LETTER | NUMBER | "_") }
 
 // -- DDL statements -----------------------------------------------
 
-ddl_statement = { create_node_type | drop_node_type | truncate_node_type | show_node_types
+ddl_statement = { create_node_type | alter_node_type | drop_node_type | truncate_node_type | show_node_types
               | create_edge_type | alter_edge_type | drop_edge_type | truncate_edge_type | show_edge_types
               | show_indexes | show_procedures
               | create_graph | drop_graph | create_index | drop_index }
@@ -40,6 +40,10 @@ create_node_type = {
     node_type_descriptor ~ (ddl_extends_kw ~ ":" ~ ident)? ~
     "(" ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
+}
+alter_node_type = {
+    ddl_alter_kw ~ ddl_node_kw ~ ddl_type_kw ~ ":" ~ ident ~
+    "(" ~ type_prop_def_list? ~ ")"
 }
 create_edge_type = {
     ddl_create_kw ~ or_replace? ~ ddl_edge_kw ~ ddl_type_kw ~ if_not_exists? ~

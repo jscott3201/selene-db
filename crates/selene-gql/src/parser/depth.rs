@@ -371,6 +371,7 @@ fn push_ddl<'a>(statement: &'a DdlStatement, work: &mut Vec<Node<'a>>) {
     let properties = match statement {
         DdlStatement::CreateNodeType { properties, .. }
         | DdlStatement::CreateEdgeType { properties, .. }
+        | DdlStatement::AlterNodeType { properties, .. }
         | DdlStatement::AlterEdgeType { properties, .. } => properties,
         DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }

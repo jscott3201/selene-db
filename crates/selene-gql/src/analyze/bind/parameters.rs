@@ -173,6 +173,7 @@ fn collect_ddl_parameter_declarations(
     match statement {
         DdlStatement::CreateNodeType { properties, .. }
         | DdlStatement::CreateEdgeType { properties, .. }
+        | DdlStatement::AlterNodeType { properties, .. }
         | DdlStatement::AlterEdgeType { properties, .. } => {
             for property in properties {
                 for constraint in &property.constraints {

@@ -385,63 +385,37 @@ fn core_edge_endpoint_def(
 }
 
 fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<[PropertyDef; 8]>> {
-    let mut out = SmallVec::new();
-    for property in properties {
-        out.push(PropertyDef {
-            name: property.name.clone(),
-            value_type: core_value_type(
-                property.value_type,
-                property.list_element_type.as_ref(),
-                property.decimal_type,
-                property.character_string_type,
-                property.byte_string_type,
-                property.required,
-            )?,
-            nullable: !property.required,
-            default: property
-                .default
-                .as_ref()
-                .map(|default| default.to_value())
-                .transpose()?,
-            immutable: property.immutable,
-            unique: property.unique,
-            record_fields: core_record_fields(
-                property.value_type,
-                property.record_field_types.as_ref(),
-            )?,
-        });
-    }
-    Ok(out)
+    properties.iter().map(core_property_def).collect()
 }
 
 fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<[PropertyDef; 4]>> {
-    let mut out = SmallVec::new();
-    for property in properties {
-        out.push(PropertyDef {
-            name: property.name.clone(),
-            value_type: core_value_type(
-                property.value_type,
-                property.list_element_type.as_ref(),
-                property.decimal_type,
-                property.character_string_type,
-                property.byte_string_type,
-                property.required,
-            )?,
-            nullable: !property.required,
-            default: property
-                .default
-                .as_ref()
-                .map(|default| default.to_value())
-                .transpose()?,
-            immutable: property.immutable,
-            unique: property.unique,
-            record_fields: core_record_fields(
-                property.value_type,
-                property.record_field_types.as_ref(),
-            )?,
-        });
-    }
-    Ok(out)
+    properties.iter().map(core_property_def).collect()
+}
+
+pub(super) fn core_property_def(property: &PropertyTypeDef) -> GraphResult<PropertyDef> {
+    Ok(PropertyDef {
+        name: property.name.clone(),
+        value_type: core_value_type(
+            property.value_type,
+            property.list_element_type.as_ref(),
+            property.decimal_type,
+            property.character_string_type,
+            property.byte_string_type,
+            property.required,
+        )?,
+        nullable: !property.required,
+        default: property
+            .default
+            .as_ref()
+            .map(|default| default.to_value())
+            .transpose()?,
+        immutable: property.immutable,
+        unique: property.unique,
+        record_fields: core_record_fields(
+            property.value_type,
+            property.record_field_types.as_ref(),
+        )?,
+    })
 }
 
 const fn core_validation_mode(mode: ValidationMode) -> selene_core::ValidationMode {
