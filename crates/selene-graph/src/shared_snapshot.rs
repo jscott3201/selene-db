@@ -14,8 +14,10 @@ impl SharedGraph {
     ///
     /// This lower-level envelope writer is not coordinated with the graph
     /// committer or owned WAL. Call only when the host already excludes writes
-    /// and owns the surrounding persistence protocol. WAL-backed callers that
-    /// need an ordered, recoverable epoch should use
+    /// and owns the surrounding persistence protocol. Never target the
+    /// persistence directory owned by a live WAL-backed `SharedGraph`; even a
+    /// quiesced standalone write can preclaim the sequence used by its ordered
+    /// checkpoint. WAL-backed callers that need a recoverable epoch should use
     /// [`SharedGraph::checkpoint`](crate::SharedGraph::checkpoint), which pins
     /// provider generation, snapshot sequence, durability, MANIFEST commit,
     /// and WAL rotation as one committer work item.

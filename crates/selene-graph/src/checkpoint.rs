@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use selene_persist::{
-    SectionCompression, SnapshotBuilder, SnapshotConfig, WalRotationOutcome, snapshot_path,
+    PersistError, SectionCompression, SnapshotBuilder, SnapshotConfig, WalRotationOutcome,
+    snapshot_path,
 };
 
 use crate::core_provider::CoreProvider;
@@ -34,11 +35,12 @@ impl Default for CheckpointConfig {
 /// Result of a successful coordinated graph checkpoint.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointOutcome {
-    /// Highest WAL sequence covered by the snapshot and archived WAL.
+    /// Checkpoint epoch covered by the durable snapshot.
     pub snapshot_sequence: u64,
     /// Final path of the durable snapshot.
     pub snapshot_path: PathBuf,
-    /// Paths and sequence reported by the MANIFEST-backed WAL rotation.
+    /// Whether the MANIFEST-backed WAL operation rotated or found this exact
+    /// snapshot epoch already current.
     pub rotation: WalRotationOutcome,
 }
 
@@ -51,9 +53,10 @@ pub(crate) struct CheckpointExecution {
 /// Encode every provider at `generation`, then rotate the owned WAL.
 ///
 /// Preparation failures happen before the MANIFEST protocol begins and are
-/// therefore safe to report without poisoning the committer. Any error or
-/// panic returned after rotation begins has an ambiguous writer/commit-point
-/// state, so the caller must require reopen before accepting more writes.
+/// therefore safe to report without poisoning the committer. Rotation errors
+/// normally have an ambiguous writer/commit-point state and require reopen;
+/// a typed pre-commit artifact collision leaves the active epoch unchanged and
+/// the ordered writer usable.
 pub(crate) fn execute(
     core: &CoreProvider,
     providers: &[Arc<dyn IndexProvider>],
@@ -89,10 +92,13 @@ pub(crate) fn execute(
             }),
             poison_committer: false,
         },
-        Ok(Err(error)) => CheckpointExecution {
-            result: Err(error),
-            poison_committer: true,
-        },
+        Ok(Err(error)) => {
+            let poison_committer = rotation_error_requires_reopen(&error);
+            CheckpointExecution {
+                result: Err(error),
+                poison_committer,
+            }
+        }
         Err(payload) => CheckpointExecution {
             result: Err(GraphError::Durable {
                 reason: format!(
@@ -103,6 +109,13 @@ pub(crate) fn execute(
             poison_committer: true,
         },
     }
+}
+
+fn rotation_error_requires_reopen(error: &GraphError) -> bool {
+    !matches!(
+        error,
+        GraphError::Persist(PersistError::ArtifactIdentityMismatch { .. })
+    )
 }
 
 fn prepare(

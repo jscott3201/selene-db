@@ -35,6 +35,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   feed HEAD/tip reachability windows into the existing vector, text, JSON, or
   fusion procedures without hard-coding a memory policy into candidate states.
 
+### Fixed
+
+- MANIFEST-backed rotation now accepts pre-existing same-sequence snapshots and
+  WAL archives only after exact regular-file byte comparison with the newly
+  written temporary. Completed same-sequence checkpoints return an explicit
+  already-current outcome instead of comparing or recreating the historical
+  archive from the header-only active WAL. Ahead-MANIFEST and invalid committed
+  artifact states poison stale writers until reopen, preventing sequence reuse
+  that recovery could otherwise filter.
+
 ### Security
 
 - Updated the transitive `crossbeam-epoch` dependency from 0.9.18 to 0.9.20,

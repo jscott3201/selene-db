@@ -291,10 +291,13 @@ impl SharedGraph {
     /// Returns an error when the graph has no owned WAL, the WAL high-water
     /// sequence is zero, it uses a non-default filename, a provider cannot
     /// encode the ordered generation, or snapshot/WAL rotation fails. Provider
-    /// and snapshot-preparation failures leave the committer usable. Any error
-    /// or panic after WAL rotation starts requires reopening the graph because
-    /// the persistence API can no longer prove which side of the MANIFEST
-    /// commit point was reached; later writes fail fast.
+    /// and snapshot-preparation failures leave the committer usable. A verified
+    /// artifact collision that leaves the active epoch unchanged is also
+    /// non-poisoning. Other errors or panics after WAL rotation starts require reopening the graph
+    /// because the persistence API can no longer prove which side of the
+    /// MANIFEST commit point was reached; later writes fail fast. This includes
+    /// a MANIFEST ahead of the owned writer: accepting another commit could
+    /// reuse a sequence already covered by that snapshot.
     pub fn checkpoint(
         &self,
         config: crate::CheckpointConfig,

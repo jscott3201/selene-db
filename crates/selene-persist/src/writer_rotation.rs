@@ -11,15 +11,63 @@ use crate::snapshot_path::snapshot_path;
 use crate::snapshot_writer::SnapshotBuilder;
 use crate::{DEFAULT_WAL_FILE_NAME, PersistError, PersistResult, SnapshotReader};
 
-/// Result of a successful WAL rotation.
+/// Result of a successful WAL checkpoint operation.
+///
+/// A same-sequence retry after the MANIFEST and active WAL already reached the
+/// requested epoch verifies the snapshot but does not synthesize a second WAL
+/// archive from the header-only active file.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WalRotationOutcome {
-    /// Archive path containing the pre-rotation WAL.
-    pub archived_path: PathBuf,
-    /// Active WAL path reopened for post-snapshot appends.
-    pub new_path: PathBuf,
-    /// Last sequence contained by the archived WAL.
-    pub archived_last_sequence: u64,
+pub enum WalRotationOutcome {
+    /// This call completed a new rotation (or finished its pending reset).
+    Rotated {
+        /// Archive path containing the pre-rotation WAL.
+        archived_path: PathBuf,
+        /// Active WAL path reopened for post-snapshot appends.
+        new_path: PathBuf,
+        /// Last sequence contained by the archived WAL.
+        archived_last_sequence: u64,
+    },
+    /// The requested snapshot epoch was already committed and active.
+    AlreadyCurrent {
+        /// Snapshot sequence already active in the WAL header and MANIFEST.
+        snapshot_sequence: u64,
+        /// Active WAL path that already extends `snapshot_sequence`.
+        active_path: PathBuf,
+    },
+}
+
+impl WalRotationOutcome {
+    /// Return the checkpoint sequence covered by this outcome.
+    #[must_use]
+    pub const fn snapshot_sequence(&self) -> u64 {
+        match self {
+            Self::Rotated {
+                archived_last_sequence,
+                ..
+            } => *archived_last_sequence,
+            Self::AlreadyCurrent {
+                snapshot_sequence, ..
+            } => *snapshot_sequence,
+        }
+    }
+
+    /// Return the active WAL path after the operation.
+    #[must_use]
+    pub fn active_path(&self) -> &Path {
+        match self {
+            Self::Rotated { new_path, .. } => new_path,
+            Self::AlreadyCurrent { active_path, .. } => active_path,
+        }
+    }
+
+    /// Return the archive path created or completed by this call, if any.
+    #[must_use]
+    pub fn archived_path(&self) -> Option<&Path> {
+        match self {
+            Self::Rotated { archived_path, .. } => Some(archived_path),
+            Self::AlreadyCurrent { .. } => None,
+        }
+    }
 }
 
 /// Filename prefix shared by every archived WAL segment (`wal.{seq}.archive`).
@@ -74,10 +122,11 @@ pub(crate) fn archive_current_wal(
         drop(archive);
         publish_archive_tmp(&tmp_path, archived_path)
     })();
-    file.seek(SeekFrom::Start(committed_offset))?;
+    let restored = file.seek(SeekFrom::Start(committed_offset));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp_path);
     }
+    restored?;
     result
 }
 
@@ -104,21 +153,27 @@ fn create_archive_tmp(archived_path: &Path) -> PersistResult<(PathBuf, File)> {
 }
 
 fn publish_archive_tmp(tmp_path: &Path, archived_path: &Path) -> PersistResult<()> {
-    let already_published = match std::fs::hard_link(tmp_path, archived_path) {
-        Ok(()) => false,
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => true,
+    let published = match std::fs::hard_link(tmp_path, archived_path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            crate::artifact_identity::require_identical_regular_files(tmp_path, archived_path)?;
+            false
+        }
         Err(error) => return Err(PersistError::Io(error)),
     };
-    let _ = std::fs::remove_file(tmp_path);
-    if already_published {
-        return Err(PersistError::WalArchiveExists {
-            path: archived_path.to_path_buf(),
-        });
+    // The existing inode may have been linked by an attempt that crashed before
+    // its directory barrier. Sync it again before accepting exact identity.
+    if !published {
+        OpenOptions::new()
+            .write(true)
+            .open(archived_path)?
+            .sync_all()?;
     }
+    let _ = std::fs::remove_file(tmp_path);
     // Parent-dir fsync AFTER the hard_link publish so the new archive directory
-    // entry is durable. Per the MANIFEST commit-point invariant the archive's
-    // own sync_data (archive_current_wal) precedes its publish, and this dir
-    // fsync follows it.
+    // entry is durable. It is repeated for an identical existing archive in
+    // case the earlier attempt crashed between link publication and this
+    // barrier.
     if let Some(parent) = archived_path.parent() {
         sync_dir(parent)?;
     }
@@ -235,10 +290,8 @@ pub(crate) struct RotationInputs<'a> {
     pub last_sequence: u64,
     /// Snapshot epoch recorded in the current active WAL header.
     pub snapshot_seq: u64,
-    /// Whether a committed MANIFEST was present before this rotation.
-    pub manifest_present: bool,
-    /// Already-archived sequences carried by the live MANIFEST (ascending).
-    pub prior_archived_seqs: Vec<u64>,
+    /// Committed MANIFEST observed before this rotation, if one exists.
+    pub prior_manifest: Option<Manifest>,
 }
 
 /// Run the crash-safe 4-phase rotate, committing at the MANIFEST rename.
@@ -278,19 +331,23 @@ pub(crate) struct RotationInputs<'a> {
 ///
 /// # Idempotent re-rotate
 ///
-/// Re-invoking after a mid-rotate crash converges: Phase 1/2 re-publish hit
-/// `create_new`/`hard_link` `AlreadyExists` (treated as already-done), Phase 3
-/// rewrites the MANIFEST to the same epoch, and Phase 4 reset is naturally
-/// idempotent.
+/// Re-invoking after a pre-commit crash converges only when the existing
+/// snapshot and archive exactly match the newly written temporary files. If
+/// the MANIFEST already committed `N` but the active WAL still carries the old
+/// epoch, the retry verifies those artifacts and finishes Phase 4. If both the
+/// MANIFEST and header already name `N`, it verifies the exact snapshot and
+/// returns [`WalRotationOutcome::AlreadyCurrent`] without synthesizing an
+/// archive from the header-only active WAL.
 ///
 /// # Errors
 ///
 /// Returns [`PersistError::WalRotationSequenceMismatch`] when `builder`'s
 /// sequence does not equal `inputs.last_sequence`, plus any I/O / format error
-/// from snapshot finalize, archive, MANIFEST commit, or WAL reset. A failure in
-/// Phases 1-3 leaves the previous epoch fully recoverable; a failure in Phase 4
-/// (after commit) surfaces [`PersistError::WalRotationIncomplete`] but the new
-/// epoch is already durable and recovery converges on re-open.
+/// from snapshot finalize, artifact identity checking, archive, MANIFEST
+/// commit, or WAL reset. A failure before the MANIFEST advances leaves the
+/// previous epoch fully recoverable; a failure in Phase 4 (after commit)
+/// surfaces [`PersistError::WalRotationIncomplete`] but the new epoch is
+/// already durable and recovery converges on re-open.
 pub(crate) fn rotate_with_manifest(
     inputs: RotationInputs<'_>,
     builder: SnapshotBuilder,
@@ -302,8 +359,7 @@ pub(crate) fn rotate_with_manifest(
         committed_offset,
         last_sequence,
         snapshot_seq: prior_snapshot_seq,
-        manifest_present,
-        prior_archived_seqs,
+        prior_manifest,
     } = inputs;
 
     let snapshot_seq = builder.sequence();
@@ -316,18 +372,35 @@ pub(crate) fn rotate_with_manifest(
             last_sequence,
         });
     }
+    if let Some(manifest) = &prior_manifest
+        && manifest.live_snapshot_seq > snapshot_seq
+    {
+        return Err(PersistError::WalRotationManifestAhead {
+            manifest_sequence: manifest.live_snapshot_seq,
+            snapshot_sequence: snapshot_seq,
+        });
+    }
+    let manifest_committed_target = prior_manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.live_snapshot_seq == snapshot_seq);
+    let baseline_already_current = prior_manifest.is_none()
+        && prior_snapshot_seq == snapshot_seq
+        && committed_offset == WAL_FILE_HEADER_LEN as u64;
+    let target_already_committed = manifest_committed_target || baseline_already_current;
+    let prior_archived_seqs = prior_manifest
+        .as_ref()
+        .map(|manifest| manifest.archived_wal_seqs.clone())
+        .unwrap_or_default();
 
     // A MANIFEST-less directory has no authoritative epoch while Phase 1 is
     // publishing the first new snapshot. Commit a durable baseline first so a
     // crash during Phase 1 cannot make legacy recovery select the orphan. A
     // non-zero WAL header is only a valid baseline when its snapshot exists and
     // verifies; never commit a MANIFEST that would name a missing/corrupt file.
-    if !manifest_present {
+    if prior_manifest.is_none() {
         if prior_snapshot_seq != 0 {
             let prior_snapshot = snapshot_path(dir, prior_snapshot_seq);
-            let mut reader = SnapshotReader::open(&prior_snapshot)?;
-            reader.verify_body_hash()?;
-            drop(reader);
+            verify_committed_snapshot(&prior_snapshot)?;
             // Make the baseline snapshot and its directory entry durable before
             // the baseline MANIFEST makes that epoch authoritative.
             OpenOptions::new()
@@ -346,13 +419,20 @@ pub(crate) fn rotate_with_manifest(
         .write_atomic(dir)?;
     }
 
-    // Phase 1 — publish the snapshot (idempotent: a re-rotate after a crash
-    // sees the already-published snapshot.N.snap and treats it as done).
+    // Phase 1 — publish the snapshot. A re-rotate accepts an existing final
+    // path only after comparing it byte-for-byte with the newly encoded temp.
+    // Once the MANIFEST already commits this target, absence is corruption and
+    // must never be repaired from caller-supplied bytes.
     let snapshot_file = snapshot_path(dir, snapshot_seq);
-    match builder.finalize() {
-        Ok(_) => {}
-        Err(PersistError::Io(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+    if target_already_committed {
+        verify_committed_snapshot(&snapshot_file)?;
+    }
+    match builder.finalize_for_rotation(target_already_committed) {
+        Err(PersistError::ArtifactIdentityMismatch { path }) if target_already_committed => {
+            return Err(PersistError::CommittedSnapshotIdentityMismatch { path });
+        }
         Err(error) => return Err(error),
+        Ok(_) => {}
     }
     // Durability barrier (audit Item 2 / Seam F): the rotate primitive itself
     // guarantees the published snapshot's bytes are durable BEFORE the Phase-3
@@ -362,47 +442,99 @@ pub(crate) fn rotate_with_manifest(
     // after the Phase-3 commit could leave the MANIFEST naming a snapshot whose
     // body never reached disk; recovery would then hard-fail on the body hash.
     // Re-opening the published file and `sync_all`ing flushes its inode
-    // regardless of which handle wrote it, and is idempotent on the AlreadyExists
-    // re-rotate branch. The directory-entry fsync follows the file fsync.
+    // regardless of which handle wrote it, and is idempotent on the verified
+    // existing-artifact branch. The directory-entry fsync follows the file fsync.
     OpenOptions::new()
         .write(true)
         .open(&snapshot_file)?
         .sync_all()?;
     sync_dir(dir)?;
 
-    // Phase 2 — archive the current WAL (idempotent via WalArchiveExists).
     let archived_path = wal_archive_path(wal_path, last_sequence);
+
+    // A completed same-sequence retry has no new WAL bytes to archive: the
+    // active file is a header-only continuation of this snapshot, while the
+    // historical archive (if retention kept it) legitimately contains the
+    // prior epoch's header and entries. Verify tracked history structurally and
+    // report an explicit no-op instead of comparing those unequal files.
+    if target_already_committed
+        && prior_snapshot_seq == snapshot_seq
+        && committed_offset == WAL_FILE_HEADER_LEN as u64
+    {
+        if prior_archived_seqs.contains(&snapshot_seq) {
+            verify_committed_archive(&archived_path, snapshot_seq)?;
+        }
+        return Ok((
+            WalRotationOutcome::AlreadyCurrent {
+                snapshot_sequence: snapshot_seq,
+                active_path: wal_path.to_path_buf(),
+            },
+            RotationCommitState {
+                last_sequence: snapshot_seq,
+                snapshot_seq,
+                committed_offset,
+            },
+        ));
+    }
+
+    // Phase 2 — archive the current WAL. A pre-commit or pre-reset collision is
+    // accepted only when the existing archive exactly matches the copied temp.
+    if manifest_committed_target && !prior_archived_seqs.contains(&snapshot_seq) {
+        if reset_active_wal_file(file, wal_path, snapshot_seq).is_err() {
+            return Err(PersistError::WalRotationIncomplete {
+                archived_path: None,
+                new_path: wal_path.to_path_buf(),
+            });
+        }
+        return Ok((
+            WalRotationOutcome::AlreadyCurrent {
+                snapshot_sequence: snapshot_seq,
+                active_path: wal_path.to_path_buf(),
+            },
+            RotationCommitState {
+                last_sequence: snapshot_seq,
+                snapshot_seq,
+                committed_offset: WAL_FILE_HEADER_LEN as u64,
+            },
+        ));
+    }
     match archive_current_wal(file, &archived_path, committed_offset) {
-        Ok(()) => {}
-        Err(PersistError::WalArchiveExists { .. }) => {}
+        Err(PersistError::ArtifactIdentityMismatch { .. }) if manifest_committed_target => {
+            return Err(PersistError::CommittedArchiveInvalid {
+                path: archived_path,
+            });
+        }
         Err(error) => return Err(error),
+        Ok(()) => {}
     }
 
     // Phase 3 — COMMIT. The atomic rename is the linearization point.
-    let mut archived_wal_seqs = prior_archived_seqs;
-    if !archived_wal_seqs.contains(&last_sequence) {
-        archived_wal_seqs.push(last_sequence);
+    if !manifest_committed_target {
+        let mut archived_wal_seqs = prior_archived_seqs;
+        if !archived_wal_seqs.contains(&last_sequence) {
+            archived_wal_seqs.push(last_sequence);
+        }
+        archived_wal_seqs.sort_unstable();
+        let manifest = Manifest {
+            live_snapshot_seq: snapshot_seq,
+            active_wal_header_seq: snapshot_seq,
+            compaction_epoch: 0,
+            active_wal: DEFAULT_WAL_FILE_NAME.to_owned(),
+            archived_wal_seqs,
+        };
+        manifest.write_atomic(dir)?;
     }
-    archived_wal_seqs.sort_unstable();
-    let manifest = Manifest {
-        live_snapshot_seq: snapshot_seq,
-        active_wal_header_seq: snapshot_seq,
-        compaction_epoch: 0,
-        active_wal: DEFAULT_WAL_FILE_NAME.to_owned(),
-        archived_wal_seqs,
-    };
-    manifest.write_atomic(dir)?;
 
     // Phase 4 — safe-after-commit atomic WAL replacement.
     if reset_active_wal_file(file, wal_path, snapshot_seq).is_err() {
         return Err(PersistError::WalRotationIncomplete {
-            archived_path,
+            archived_path: Some(archived_path),
             new_path: wal_path.to_path_buf(),
         });
     }
 
     Ok((
-        WalRotationOutcome {
+        WalRotationOutcome::Rotated {
             archived_path,
             new_path: wal_path.to_path_buf(),
             archived_last_sequence: last_sequence,
@@ -415,183 +547,56 @@ pub(crate) fn rotate_with_manifest(
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    use selene_core::{Change, HlcTimestamp, NodeId, Origin};
-
-    use super::*;
-    use crate::{
-        RetentionPolicy, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
-        WalConfig, WalReader, WalWriter,
-    };
-
-    fn temp_dir(name: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "selene-wal-reset-{name}-{}-{nanos}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir(&dir).unwrap();
-        dir
-    }
-
-    fn open_locked_wal(path: &Path, snapshot_seq: u64) -> File {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .read(true)
-            .write(true)
-            .open(path)
-            .unwrap();
-        file.try_lock().unwrap();
-        WalFileHeader::new(snapshot_seq)
-            .write_to(&mut file)
-            .unwrap();
-        file.sync_all().unwrap();
-        file.seek(SeekFrom::Start(WAL_FILE_HEADER_LEN as u64))
-            .unwrap();
-        file
-    }
-
-    fn handle_snapshot_seq(file: &mut File) -> u64 {
-        file.seek(SeekFrom::Start(0)).unwrap();
-        let sequence = WalFileHeader::read_from(&mut *file).unwrap().snapshot_seq;
-        file.seek(SeekFrom::Start(WAL_FILE_HEADER_LEN as u64))
-            .unwrap();
-        sequence
-    }
-
-    #[test]
-    fn active_wal_reset_atomically_replaces_handle_and_keeps_lock() {
-        let dir = temp_dir("success");
-        let path = dir.join(DEFAULT_WAL_FILE_NAME);
-        let mut file = open_locked_wal(&path, 3);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+fn verify_committed_archive(path: &Path, expected_last_sequence: u64) -> PersistResult<()> {
+    let valid = (|| -> PersistResult<()> {
+        crate::artifact_identity::require_regular_file(path)?;
+        let reader = crate::WalReader::open(path)?;
+        if reader.snapshot_seq() >= expected_last_sequence {
+            return Err(crate::artifact_identity::identity_mismatch(path));
         }
-
-        reset_active_wal_file(&mut file, &path, 9).unwrap();
-
-        assert_eq!(handle_snapshot_seq(&mut file), 9);
-        assert_eq!(WalReader::open(&path).unwrap().snapshot_seq(), 9);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
+        let mut expected_next = reader.snapshot_seq().checked_add(1);
+        let mut observed_last_sequence = None;
+        for entry in reader.iterate(|_| true)? {
+            let entry = entry?;
+            if expected_next != Some(entry.header.sequence) {
+                return Err(crate::artifact_identity::identity_mismatch(path));
+            }
+            entry.body()?;
+            observed_last_sequence = Some(entry.header.sequence);
+            expected_next = entry.header.sequence.checked_add(1);
         }
-        assert!(matches!(
-            WalWriter::open(&path, WalConfig::default()),
-            Err(PersistError::WriterLockHeld)
-        ));
-        drop(file);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn active_wal_reset_failure_before_rename_preserves_old_wal() {
-        let dir = temp_dir("before-rename");
-        let path = dir.join(DEFAULT_WAL_FILE_NAME);
-        let mut file = open_locked_wal(&path, 3);
-        RESET_FAULT_POINT.with(|point| point.set(1));
-
-        let error = reset_active_wal_file(&mut file, &path, 9).unwrap_err();
-
-        assert!(matches!(error, PersistError::Io(_)));
-        assert_eq!(handle_snapshot_seq(&mut file), 3);
-        assert_eq!(WalReader::open(&path).unwrap().snapshot_seq(), 3);
-        assert!(fs::read_dir(&dir).unwrap().all(|entry| {
-            !entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .contains(".reset.tmp.")
-        }));
-        drop(file);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn active_wal_reset_failure_after_rename_leaves_new_header_valid() {
-        let dir = temp_dir("after-rename");
-        let path = dir.join(DEFAULT_WAL_FILE_NAME);
-        let mut file = open_locked_wal(&path, 3);
-        RESET_FAULT_POINT.with(|point| point.set(2));
-
-        let error = reset_active_wal_file(&mut file, &path, 9).unwrap_err();
-
-        assert!(matches!(error, PersistError::Io(_)));
-        // The caller still owns the old unlinked handle, but the recovery path
-        // names the fully synced replacement header. Rotation treats this as
-        // incomplete and requires reopen rather than continuing on the handle.
-        assert_eq!(handle_snapshot_seq(&mut file), 3);
-        assert_eq!(WalReader::open(&path).unwrap().snapshot_seq(), 9);
-        drop(file);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn incomplete_rotation_poisons_all_mutating_writer_apis() {
-        let dir = temp_dir("poisoned-writer");
-        let path = dir.join(DEFAULT_WAL_FILE_NAME);
-        let mut writer = WalWriter::open(
-            &path,
-            WalConfig {
-                sync_policy: SyncPolicy::OnFlushOnly,
-                snapshot_seq: 0,
-            },
-        )
-        .unwrap();
-        let changes = [Change::NodeDeleted { id: NodeId::new(1) }];
-        writer
-            .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes)
-            .unwrap();
-        let builder = SnapshotBuilder::new(SnapshotConfig {
-            dir: dir.clone(),
-            sequence: 1,
-            compression: SectionCompression::None,
-            fsync: true,
+        if observed_last_sequence != Some(expected_last_sequence) {
+            return Err(crate::artifact_identity::identity_mismatch(path));
+        }
+        Ok(())
+    })();
+    if valid.is_err() {
+        return Err(PersistError::CommittedArchiveInvalid {
+            path: path.to_path_buf(),
         });
-        RESET_FAULT_POINT.with(|point| point.set(2));
-
-        assert!(matches!(
-            writer.rotate_with_manifest(builder),
-            Err(PersistError::WalRotationIncomplete { .. })
-        ));
-        assert!(matches!(
-            writer.append(HlcTimestamp::new(2, 0), Origin::Local, None, &changes),
-            Err(PersistError::WalWriterPoisoned)
-        ));
-        assert!(matches!(
-            writer.flush(),
-            Err(PersistError::WalWriterPoisoned)
-        ));
-        let retry = SnapshotBuilder::new(SnapshotConfig {
-            dir: dir.clone(),
-            sequence: 1,
-            compression: SectionCompression::None,
-            fsync: true,
-        });
-        assert!(matches!(
-            writer.rotate_with_manifest(retry),
-            Err(PersistError::WalWriterPoisoned)
-        ));
-        assert!(matches!(
-            writer.prune(&RetentionPolicy::default()),
-            Err(PersistError::WalWriterPoisoned)
-        ));
-
-        drop(writer);
-        fs::remove_dir_all(dir).unwrap();
     }
+    Ok(())
 }
+
+fn verify_committed_snapshot(path: &Path) -> PersistResult<()> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(PersistError::CommittedSnapshotUnavailable {
+                path: path.to_path_buf(),
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(PersistError::CommittedSnapshotUnavailable {
+            path: path.to_path_buf(),
+        });
+    }
+    let mut reader = SnapshotReader::open(path)?;
+    reader.verify_body_hash()
+}
+
+#[cfg(test)]
+#[path = "writer_rotation/tests.rs"]
+mod tests;

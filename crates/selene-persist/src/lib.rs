@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod artifact_identity;
 pub mod audit;
 mod compression;
 pub mod entry_header;

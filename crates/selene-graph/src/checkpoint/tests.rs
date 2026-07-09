@@ -72,6 +72,9 @@ fn snapshot_attempt_path(dir: &std::path::Path, sequence: u64, attempt: u8) -> P
     base.with_file_name(name)
 }
 
+#[path = "tests/identity.rs"]
+mod identity;
+
 #[test]
 fn checkpoint_rotates_at_ordered_boundary_and_recovery_replays_later_commit() {
     let dir = temp_dir("roundtrip");
@@ -87,7 +90,8 @@ fn checkpoint_rotates_at_ordered_boundary_and_recovery_replays_later_commit() {
         .expect("checkpoint succeeds");
     assert_eq!(first.snapshot_sequence, 1);
     assert!(first.snapshot_path.is_file());
-    assert_eq!(first.rotation.archived_last_sequence, 1);
+    assert_eq!(first.rotation.snapshot_sequence(), 1);
+    assert!(first.rotation.archived_path().is_some());
 
     let repeated = shared
         .checkpoint(CheckpointConfig {
@@ -96,6 +100,7 @@ fn checkpoint_rotates_at_ordered_boundary_and_recovery_replays_later_commit() {
         .expect("same-sequence checkpoint converges idempotently");
     assert_eq!(repeated.snapshot_sequence, first.snapshot_sequence);
     assert_eq!(repeated.snapshot_path, first.snapshot_path);
+    assert!(repeated.rotation.archived_path().is_none());
 
     shared
         .compact()
