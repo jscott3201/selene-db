@@ -26,6 +26,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   feed HEAD/tip reachability windows into the existing vector, text, JSON, or
   fusion procedures without hard-coding a memory policy into candidate states.
 
+### Security
+
+- Updated the transitive `crossbeam-epoch` dependency from 0.9.18 to 0.9.20,
+  closing RUSTSEC-2026-0204's invalid pointer dereference in pointer formatting.
+
 ## [1.3.0] - 2026-06-16
 
 ### Added

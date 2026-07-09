@@ -4819,7 +4819,7 @@ SOFTWARE.
 
 Used by:
 - crossbeam-deque v0.8.6 — https://github.com/crossbeam-rs/crossbeam
-- crossbeam-epoch v0.9.18 — https://github.com/crossbeam-rs/crossbeam
+- crossbeam-epoch v0.9.20 — https://github.com/crossbeam-rs/crossbeam
 - crossbeam-utils v0.8.21 — https://github.com/crossbeam-rs/crossbeam
 
 ```
