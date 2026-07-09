@@ -190,6 +190,17 @@ fn schema_change_postcard_round_trip() {
                 property
             }],
         },
+        SchemaChange::EdgeTypeAlteredV2 {
+            graph_type: graph_type_id,
+            name: dbs("serde.schema.edge.altered.v2"),
+            source_node_type: Some(EdgeEndpointDef::Any),
+            target_node_type: None,
+            properties: smallvec![{
+                let mut property = property_def("serde.schema.edge.altered.property");
+                property.nullable = true;
+                property
+            }],
+        },
     ];
     for change in changes {
         rt(&change);
@@ -210,6 +221,25 @@ fn node_type_altered_v2_appends_schema_change_postcard_tag() {
 
     assert_eq!(postcard::to_allocvec(&prior).unwrap()[0], 21);
     assert_eq!(postcard::to_allocvec(&appended).unwrap()[0], 22);
+}
+
+#[test]
+fn edge_type_altered_v2_appends_schema_change_postcard_tag() {
+    let prior = SchemaChange::NodeTypeAlteredV2 {
+        graph_type: graph_type_id(),
+        label: dbs("serde.schema.node.altered.v2"),
+        properties: smallvec![],
+    };
+    let appended = SchemaChange::EdgeTypeAlteredV2 {
+        graph_type: graph_type_id(),
+        name: dbs("serde.schema.edge.altered.v2"),
+        source_node_type: None,
+        target_node_type: None,
+        properties: smallvec![],
+    };
+
+    assert_eq!(postcard::to_allocvec(&prior).unwrap()[0], 22);
+    assert_eq!(postcard::to_allocvec(&appended).unwrap()[0], 23);
 }
 
 #[test]

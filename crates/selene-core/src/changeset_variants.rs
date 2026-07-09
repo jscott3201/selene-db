@@ -1,10 +1,10 @@
 use smallvec::SmallVec;
 
 use crate::{
-    Change, DbString, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId,
-    IvfIndexConfig, LabelDiff, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, NodeTypeRef,
-    PredefinedValueType, PropertyDef, PropertyDiff, PropertyMap, RecordTypeDef, RecordTypeId,
-    SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind, ValueType,
+    Change, DbString, EdgeEndpointDef, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType,
+    GraphTypeId, IvfIndexConfig, LabelDiff, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1,
+    NodeTypeRef, PredefinedValueType, PropertyDef, PropertyDiff, PropertyMap, RecordTypeDef,
+    RecordTypeId, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind, ValueType,
 };
 
 impl Change {
@@ -240,6 +240,13 @@ impl SchemaChange {
             label: changeset_variant_string("schema.all.node.altered.v2"),
             properties: SmallVec::from_vec(vec![changeset_property_def()]),
         },
+        || Self::EdgeTypeAlteredV2 {
+            graph_type: changeset_graph_type_id(),
+            name: changeset_variant_string("schema.all.edge.altered.v2"),
+            source_node_type: Some(EdgeEndpointDef::Any),
+            target_node_type: None,
+            properties: SmallVec::from_vec(vec![changeset_property_def()]),
+        },
     ];
 
     /// Number of known [`SchemaChange`] variants in this build.
@@ -272,6 +279,7 @@ impl SchemaChange {
             Self::EdgePropertyIndexCreated { .. } => "EdgePropertyIndexCreated",
             Self::EdgePropertyIndexDropped { .. } => "EdgePropertyIndexDropped",
             Self::NodeTypeAlteredV2 { .. } => "NodeTypeAlteredV2",
+            Self::EdgeTypeAlteredV2 { .. } => "EdgeTypeAlteredV2",
         }
     }
 }

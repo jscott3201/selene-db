@@ -14,6 +14,7 @@ use crate::graph_types::{
     RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
 };
 
+mod edge_type_alter;
 mod node_type_alter;
 
 pub(super) fn replay_schema_changes(
@@ -80,6 +81,21 @@ fn apply_schema_change(
             label, properties, ..
         } => {
             node_type_alter::apply(graph_type, label, properties)?;
+        }
+        SchemaChange::EdgeTypeAlteredV2 {
+            name,
+            source_node_type,
+            target_node_type,
+            properties,
+            ..
+        } => {
+            edge_type_alter::apply(
+                graph_type,
+                name,
+                source_node_type.as_ref(),
+                target_node_type.as_ref(),
+                properties,
+            )?;
         }
         SchemaChange::EdgeTypeAdded { label, def, .. } => {
             let def = selene_core::EdgeTypeDef::from(def.clone());
@@ -175,6 +191,14 @@ fn runtime_edge_endpoint_def(
             Ok(EdgeEndpointDef::one_of(indices))
         }
     }
+}
+
+pub(super) fn runtime_altered_edge_endpoint_def(
+    graph_type: &GraphTypeDef,
+    endpoint: &CoreEdgeEndpointDef,
+    role: &str,
+) -> Result<EdgeEndpointDef, crate::ProviderError> {
+    edge_type_alter::runtime_endpoint(graph_type, endpoint, role)
 }
 
 fn resolve_node_type_ref(
@@ -591,6 +615,7 @@ pub(super) fn schema_change_variant(change: &SchemaChange) -> &'static str {
         SchemaChange::EdgeTypeAdded { .. } => "EdgeTypeAdded",
         SchemaChange::NodeTypeAddedV2 { .. } => "NodeTypeAddedV2",
         SchemaChange::NodeTypeAlteredV2 { .. } => "NodeTypeAlteredV2",
+        SchemaChange::EdgeTypeAlteredV2 { .. } => "EdgeTypeAlteredV2",
         SchemaChange::EdgeTypeAddedV2 { .. } => "EdgeTypeAddedV2",
         SchemaChange::NodeTypeDropped { .. } => "NodeTypeDropped",
         SchemaChange::EdgeTypeDropped { .. } => "EdgeTypeDropped",

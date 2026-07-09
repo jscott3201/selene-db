@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    DbString, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, HnswIndexConfig,
-    IvfIndexConfig, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyDef, PropertyMap,
-    RecordTypeDef,
+    DbString, EdgeEndpointDef, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId,
+    HnswIndexConfig, IvfIndexConfig, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyDef,
+    PropertyMap, RecordTypeDef,
 };
 
 mod diff;
@@ -394,6 +394,24 @@ pub enum SchemaChange {
         label: DbString,
         /// Newly added property descriptors in declaration order.
         properties: SmallVec<[PropertyDef; 8]>,
+    },
+    /// In-place edge type alteration carrying only additive changes.
+    ///
+    /// Declared after every existing variant so the `postcard` discriminants of
+    /// all earlier variants remain stable. Endpoint references identify node
+    /// types by name. Recovery validates endpoint widening and property
+    /// additions before replacing the named edge-type slot in place.
+    EdgeTypeAlteredV2 {
+        /// Owning graph type.
+        graph_type: GraphTypeId,
+        /// Altered edge type name.
+        name: DbString,
+        /// Replacement source endpoint when it changed.
+        source_node_type: Option<EdgeEndpointDef>,
+        /// Replacement target endpoint when it changed.
+        target_node_type: Option<EdgeEndpointDef>,
+        /// Newly added property descriptors in declaration order.
+        properties: SmallVec<[PropertyDef; 4]>,
     },
 }
 

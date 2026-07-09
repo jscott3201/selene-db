@@ -73,6 +73,38 @@ fn assert_lossy_property_rejected(shared: &SharedGraph, property: PropertyTypeDe
     assert_eq!(shared.graph_type().as_deref(), Some(before.as_ref()));
 }
 
+fn assert_lossy_edge_property_rejected(
+    shared: &SharedGraph,
+    property: PropertyTypeDef,
+    expected: &str,
+) {
+    let before = shared.graph_type().unwrap();
+    let mut txn = shared.begin_write();
+    let error = {
+        let mut mutator = txn.mutator();
+        let error = mutator
+            .alter_edge_type(
+                db_string("B_TO_C").unwrap(),
+                Some(EdgeEndpointDef::Any),
+                None,
+                vec![property],
+            )
+            .unwrap_err();
+        assert_eq!(
+            mutator.read().meta.bound_type.as_deref(),
+            Some(before.as_ref())
+        );
+        error
+    };
+    assert!(
+        error.to_string().contains(expected),
+        "expected {expected:?}, observed {error}"
+    );
+    assert_eq!(txn.change_count(), 0);
+    drop(txn);
+    assert_eq!(shared.graph_type().as_deref(), Some(before.as_ref()));
+}
+
 #[test]
 fn alter_node_type_preserves_slot_and_emits_one_schema_change() {
     let shared = SharedGraph::builder(GraphId::new(1010))
@@ -300,4 +332,76 @@ fn alter_node_type_validation_failure_rolls_back_schema_and_version() {
             .is_empty()
     );
     assert_eq!(shared.schema_version(), 0);
+}
+
+#[test]
+fn alter_edge_type_emits_one_delta_and_exact_repeat_is_idempotent() {
+    let shared = SharedGraph::builder(GraphId::new(1016))
+        .bound_to(three_node_type_graph())
+        .unwrap()
+        .build()
+        .unwrap();
+    let name = db_string("B_TO_C").unwrap();
+    let source = EdgeEndpointDef::one_of([0, 1]);
+    let property = optional_string_property("since");
+
+    let first = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .alter_edge_type(
+                name.clone(),
+                Some(source.clone()),
+                None,
+                vec![property.clone(), property.clone()],
+            )
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    assert!(matches!(
+        first.changes.as_slice(),
+        [Change::SchemaChanged {
+            change: SchemaChange::EdgeTypeAlteredV2 {
+                name: changed,
+                source_node_type: Some(_),
+                target_node_type: None,
+                properties,
+                ..
+            },
+            ..
+        }] if *changed == name && properties.len() == 1 && properties[0].nullable
+    ));
+
+    let repeated = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .alter_edge_type(name, Some(source.clone()), None, vec![property.clone()])
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    assert!(repeated.changes.is_empty());
+    let edge_type = &shared.graph_type().unwrap().edge_types[0];
+    assert_eq!(edge_type.source_node_type, source);
+    assert_eq!(edge_type.properties, [property]);
+}
+
+#[test]
+fn alter_edge_type_rejects_lossy_delta_without_partial_state() {
+    let shared = SharedGraph::builder(GraphId::new(1017))
+        .bound_to(three_node_type_graph())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let mut native_record = optional_string_property("native_record");
+    native_record.value_type = PropertyValueType::Record;
+    assert_lossy_edge_property_rejected(&shared, native_record, "losslessly");
+
+    let mut untyped_list = optional_string_property("untyped_list");
+    untyped_list.value_type = PropertyValueType::List;
+    assert_lossy_edge_property_rejected(&shared, untyped_list, "missing element type");
+
+    let mut noncanonical_default = optional_string_property("signed_zero");
+    noncanonical_default.value_type = PropertyValueType::Float;
+    noncanonical_default.default = Some(crate::PropertyDefaultValue::Float((-0.0_f64).to_bits()));
+    assert_lossy_edge_property_rejected(&shared, noncanonical_default, "losslessly");
 }

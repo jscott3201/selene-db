@@ -22,7 +22,7 @@ use crate::graph::{
     CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph, TextIndexEntry,
     VectorIndexEntry,
 };
-use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
+use crate::graph_types::{EdgeEndpointDef, GraphTypeDef, PropertyTypeDef};
 use crate::typed_index::TypedIndex;
 
 mod change_replay;
@@ -34,6 +34,14 @@ pub(super) fn decode_schema_property(
     property: &selene_core::PropertyDef,
 ) -> Result<PropertyTypeDef, crate::ProviderError> {
     schema_replay::runtime_property(property)
+}
+
+pub(super) fn decode_schema_edge_endpoint(
+    graph_type: &GraphTypeDef,
+    endpoint: &selene_core::EdgeEndpointDef,
+    role: &str,
+) -> Result<EdgeEndpointDef, crate::ProviderError> {
+    schema_replay::runtime_altered_edge_endpoint_def(graph_type, endpoint, role)
 }
 
 use index_replay::{

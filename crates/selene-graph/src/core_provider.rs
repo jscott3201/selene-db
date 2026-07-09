@@ -31,6 +31,14 @@ pub(crate) fn decode_schema_property(
     recovery_state::decode_schema_property(property)
 }
 
+pub(crate) fn decode_schema_edge_endpoint(
+    graph_type: &crate::GraphTypeDef,
+    endpoint: &selene_core::EdgeEndpointDef,
+    role: &str,
+) -> Result<crate::EdgeEndpointDef, ProviderError> {
+    recovery_state::decode_schema_edge_endpoint(graph_type, endpoint, role)
+}
+
 /// Core graph provider tag used in snapshot section tables.
 pub const CORE_PROVIDER_TAG: [u8; 4] = *b"CORE";
 /// Core metadata subsection tag under [`CORE_PROVIDER_TAG`].
