@@ -241,20 +241,22 @@ pub enum PersistError {
         snapshot_seq: u64,
     },
 
-    /// WAL rotation refused to overwrite an existing archive path.
-    #[error("wal archive already exists: {path}")]
+    /// A same-sequence persistence artifact differs from the bytes this
+    /// rotation intended to publish.
+    #[error("existing persistence artifact does not match the intended bytes: {path}")]
     #[diagnostic(code(SLENE_P_029))]
-    WalArchiveExists {
-        /// Existing archive path.
+    ArtifactIdentityMismatch {
+        /// Existing snapshot or WAL archive path that failed identity checking.
         path: PathBuf,
     },
 
     /// WAL rotation committed the new epoch but could not finish replacing the active WAL.
-    #[error("wal rotation incomplete: archived {archived_path}, active {new_path}")]
+    #[error("wal rotation incomplete: archive {archived_path:?}, active {new_path}")]
     #[diagnostic(code(SLENE_P_030))]
     WalRotationIncomplete {
-        /// Path containing the archived pre-rotation WAL.
-        archived_path: PathBuf,
+        /// Path containing the archived pre-rotation WAL, or `None` when
+        /// retention had already removed that archive before reset retry.
+        archived_path: Option<PathBuf>,
         /// Active WAL path whose replacement did not complete.
         new_path: PathBuf,
     },
@@ -301,10 +303,49 @@ pub enum PersistError {
         wal_dir: PathBuf,
     },
 
-    /// A prior incomplete rotation made this writer unsafe to reuse.
-    #[error("wal writer is poisoned after an incomplete rotation; reopen it before use")]
+    /// Persistence-state divergence or a committed-but-incomplete rotation
+    /// made this writer unsafe to reuse.
+    #[error("wal writer is poisoned by persistence-state divergence; reopen it before use")]
     #[diagnostic(code(SLENE_P_035))]
     WalWriterPoisoned,
+
+    /// The committed MANIFEST is newer than the requested rotation sequence.
+    #[error(
+        "manifest snapshot sequence {manifest_sequence} is ahead of requested rotation {snapshot_sequence}"
+    )]
+    #[diagnostic(code(SLENE_P_036))]
+    WalRotationManifestAhead {
+        /// Snapshot sequence named by the committed MANIFEST.
+        manifest_sequence: u64,
+        /// Snapshot sequence requested by the caller.
+        snapshot_sequence: u64,
+    },
+
+    /// A MANIFEST-committed live snapshot is missing or not a regular file.
+    #[error("committed snapshot is unavailable as a regular file: {path}")]
+    #[diagnostic(code(SLENE_P_037))]
+    CommittedSnapshotUnavailable {
+        /// Snapshot path named by the committed epoch.
+        path: PathBuf,
+    },
+
+    /// A MANIFEST-committed snapshot differs from the state supplied for the
+    /// same checkpoint epoch.
+    #[error("committed snapshot does not match the requested checkpoint state: {path}")]
+    #[diagnostic(code(SLENE_P_038))]
+    CommittedSnapshotIdentityMismatch {
+        /// Committed snapshot path that differs from the requested bytes.
+        path: PathBuf,
+    },
+
+    /// A WAL archive retained by the committed MANIFEST is unavailable or
+    /// fails structural validation.
+    #[error("committed WAL archive is unavailable or invalid: {path}")]
+    #[diagnostic(code(SLENE_P_039))]
+    CommittedArchiveInvalid {
+        /// Retained archive path that could not be validated.
+        path: PathBuf,
+    },
 }
 
 impl PersistError {
@@ -339,13 +380,17 @@ impl PersistError {
             | Self::UnknownProvider { .. }
             | Self::ProviderFailed { .. }
             | Self::WalSnapshotMismatch { .. }
-            | Self::WalArchiveExists { .. }
+            | Self::ArtifactIdentityMismatch { .. }
             | Self::WalRotationIncomplete { .. }
             | Self::WalRotationSequenceMismatch { .. }
             | Self::UnexpectedActiveWal { .. }
             | Self::WalRotationZeroSequence
             | Self::WalRotationDirectoryMismatch { .. }
-            | Self::WalWriterPoisoned => "5GQL0",
+            | Self::WalWriterPoisoned
+            | Self::WalRotationManifestAhead { .. }
+            | Self::CommittedSnapshotUnavailable { .. }
+            | Self::CommittedSnapshotIdentityMismatch { .. }
+            | Self::CommittedArchiveInvalid { .. } => "5GQL0",
         }
     }
 }
@@ -388,9 +433,9 @@ mod tests {
         source: Box::new(std::io::Error::other("provider failed")),
     }, "5GQL0")]
     #[case(PersistError::WalSnapshotMismatch { wal_snapshot_seq: 2, snapshot_seq: 1 }, "5GQL0")]
-    #[case(PersistError::WalArchiveExists { path: "wal.1.archive".into() }, "5GQL0")]
+    #[case(PersistError::ArtifactIdentityMismatch { path: "wal.1.archive".into() }, "5GQL0")]
     #[case(PersistError::WalRotationIncomplete {
-        archived_path: "wal.1.archive".into(),
+        archived_path: Some("wal.1.archive".into()),
         new_path: "wal.log".into(),
     }, "5GQL0")]
     #[case(PersistError::WalRotationSequenceMismatch {
@@ -407,6 +452,19 @@ mod tests {
         wal_dir: "wal".into(),
     }, "5GQL0")]
     #[case(PersistError::WalWriterPoisoned, "5GQL0")]
+    #[case(PersistError::WalRotationManifestAhead {
+        manifest_sequence: 3,
+        snapshot_sequence: 2,
+    }, "5GQL0")]
+    #[case(PersistError::CommittedSnapshotUnavailable {
+        path: "snapshot.3.snap".into(),
+    }, "5GQL0")]
+    #[case(PersistError::CommittedSnapshotIdentityMismatch {
+        path: "snapshot.3.snap".into(),
+    }, "5GQL0")]
+    #[case(PersistError::CommittedArchiveInvalid {
+        path: "wal.3.archive".into(),
+    }, "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
         assert!(

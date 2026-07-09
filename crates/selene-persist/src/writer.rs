@@ -234,9 +234,10 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns [`PersistError::WalWriterPoisoned`] after an incomplete rotation,
-    /// or codec, cap, compression, or I/O errors. On any error, the in-memory
-    /// sequence counter is **not** advanced and the file is
+    /// Returns [`PersistError::WalWriterPoisoned`] after rotation detects
+    /// persistence-state divergence, or codec, cap, compression, or I/O
+    /// errors. On any error, the in-memory sequence counter is **not** advanced
+    /// and the file is
     /// truncated back to the last fully-committed entry, so the next
     /// append (or a reopen + retry) observes a consistent state.
     #[tracing::instrument(
@@ -317,8 +318,8 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns [`PersistError::WalWriterPoisoned`] after an incomplete rotation,
-    /// or I/O errors from fsync.
+    /// Returns [`PersistError::WalWriterPoisoned`] after rotation detects
+    /// persistence-state divergence, or I/O errors from fsync.
     #[tracing::instrument(name = "selene.persist.wal.fsync", skip(self))]
     pub fn flush(&mut self) -> PersistResult<()> {
         self.ensure_usable()?;
@@ -389,6 +390,11 @@ impl WalWriter {
     /// Rotation accepts only the conventional `wal.log` filename, a positive
     /// sequence, a builder directory resolving to the WAL's stable parent, and
     /// an existing MANIFEST that also names `wal.log` as its active WAL.
+    /// Same-sequence crash artifacts are accepted only after exact byte
+    /// comparison with the newly encoded snapshot and copied WAL temporary. A
+    /// fully committed same-sequence call returns
+    /// [`WalRotationOutcome::AlreadyCurrent`] instead of re-archiving the
+    /// header-only active WAL.
     ///
     /// A second mutable borrow cannot overlap the rotation:
     ///
@@ -404,49 +410,72 @@ impl WalWriter {
     /// # Errors
     ///
     /// Returns typed errors for a poisoned writer, a non-default WAL filename,
-    /// sequence zero, a builder/WAL directory mismatch, or a builder sequence
-    /// that does not match the writer high-water mark; I/O / format errors from
-    /// snapshot finalize, archive, MANIFEST commit, or WAL reset; or
+    /// sequence zero, a builder/WAL directory mismatch, a builder sequence that
+    /// does not match the writer high-water mark, or a MANIFEST ahead of the
+    /// request; identity, I/O, or format errors from snapshot finalize, archive,
+    /// MANIFEST commit, or WAL reset; or
     /// [`PersistError::WalRotationIncomplete`] if the MANIFEST committed but the
     /// active WAL could not be reset (recovery still converges on the new
-    /// epoch). After `WalRotationIncomplete`, this writer is poisoned and
-    /// rejects append, flush, rotation, and prune calls; reopen the active WAL
-    /// before mutating again. On error before the MANIFEST commit the previous
-    /// epoch is intact and the writer remains usable.
+    /// epoch). After `WalRotationIncomplete`, a MANIFEST-ahead rejection, or an
+    /// error validating an already-committed target, this writer is poisoned
+    /// and rejects append, flush, rotation, and prune calls; reopen and recover
+    /// the active epoch before mutating again. A same-sequence collision while
+    /// the MANIFEST still names the prior epoch leaves the writer usable.
     pub fn rotate_with_manifest(
         &mut self,
         builder: SnapshotBuilder,
     ) -> PersistResult<WalRotationOutcome> {
         self.ensure_usable()?;
         let dir = self.validate_rotation_inputs(&builder)?;
-        let prior_manifest = Manifest::read(&dir)?;
+        let prior_manifest = match Manifest::read(&dir) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                self.poisoned = true;
+                return Err(error);
+            }
+        };
         if let Some(manifest) = &prior_manifest
             && manifest.active_wal != DEFAULT_WAL_FILE_NAME
         {
+            self.poisoned = true;
             return Err(PersistError::UnexpectedActiveWal {
                 observed: manifest.active_wal.clone(),
                 expected: DEFAULT_WAL_FILE_NAME,
             });
         }
+        if let Some(manifest) = &prior_manifest
+            && manifest.live_snapshot_seq > builder.sequence()
+        {
+            self.poisoned = true;
+            return Err(PersistError::WalRotationManifestAhead {
+                manifest_sequence: manifest.live_snapshot_seq,
+                snapshot_sequence: builder.sequence(),
+            });
+        }
+        let target_already_committed = prior_manifest
+            .as_ref()
+            .is_some_and(|manifest| manifest.live_snapshot_seq == builder.sequence())
+            || (prior_manifest.is_none()
+                && self.snapshot_seq == builder.sequence()
+                && self.committed_offset == WAL_FILE_HEADER_LEN as u64);
         // Every input invariant above is checked before this durability write.
         // Invalid callers must not flush group-commit state or create artifacts.
         self.flush()?;
-        let manifest_present = prior_manifest.is_some();
-        let prior_archived_seqs = prior_manifest
-            .map(|manifest| manifest.archived_wal_seqs)
-            .unwrap_or_default();
         let inputs = RotationInputs {
             file: &mut self.file,
             wal_path: &self.path,
             committed_offset: self.committed_offset,
             last_sequence: self.last_sequence,
             snapshot_seq: self.snapshot_seq,
-            manifest_present,
-            prior_archived_seqs,
+            prior_manifest,
         };
         let (outcome, state) = match rotate_with_manifest(inputs, builder, &dir) {
             Ok(result) => result,
             Err(error @ PersistError::WalRotationIncomplete { .. }) => {
+                self.poisoned = true;
+                return Err(error);
+            }
+            Err(error) if target_already_committed => {
                 self.poisoned = true;
                 return Err(error);
             }
@@ -509,10 +538,10 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns [`PersistError::WalWriterPoisoned`] after an incomplete rotation,
-    /// flush errors, or any error from [`crate::retention::prune`] (directory
-    /// scan, MANIFEST decode/commit). Post-commit file deletion is best-effort
-    /// and never fails the prune.
+    /// Returns [`PersistError::WalWriterPoisoned`] after rotation detects
+    /// persistence-state divergence, flush errors, or any error from
+    /// [`crate::retention::prune`] (directory scan, MANIFEST decode/commit).
+    /// Post-commit file deletion is best-effort and never fails the prune.
     pub fn prune(&mut self, policy: &RetentionPolicy) -> PersistResult<PruneOutcome> {
         self.ensure_usable()?;
         self.flush()?;

@@ -240,7 +240,8 @@ fn first_rotation_rejects_nonzero_baseline_without_snapshot() {
         .expect_err("missing epoch-5 baseline snapshot rejects");
     assert!(matches!(
         error,
-        PersistError::Io(source) if source.kind() == std::io::ErrorKind::NotFound
+        PersistError::CommittedSnapshotUnavailable { ref path }
+            if path == &snapshot_path(&dir, 5)
     ));
     assert!(Manifest::read(&dir).unwrap().is_none());
     assert!(!snapshot_path(&dir, 6).exists());
@@ -451,8 +452,11 @@ fn rotate_with_manifest_commits_epoch_and_recovers() {
     let outcome = writer
         .rotate_with_manifest(meta_builder(&dir, writer.last_sequence(), b"snap2"))
         .expect("rotate commits");
-    assert_eq!(outcome.archived_last_sequence, 2);
-    assert_eq!(outcome.archived_path, dir.join("wal.2.archive"));
+    assert_eq!(outcome.snapshot_sequence(), 2);
+    assert_eq!(
+        outcome.archived_path(),
+        Some(dir.join("wal.2.archive").as_path())
+    );
     assert_eq!(writer.snapshot_seq(), 2);
     assert_eq!(writer.last_sequence(), 2);
 
@@ -513,7 +517,7 @@ fn rotate_with_manifest_accumulates_archive_history() {
 // ---------------------------------------------------------------------------
 // Idempotent re-rotate: simulate a crash after Phase 1+2 (snapshot N + archive
 // published) but before Phase 3, then re-invoke the orchestrator. It must
-// converge to epoch N without WalArchiveExists / AlreadyExists hard-fails.
+// converge to epoch N after exact snapshot/archive identity checks.
 // ---------------------------------------------------------------------------
 #[test]
 fn rotate_with_manifest_is_idempotent_after_partial_crash() {
@@ -526,17 +530,16 @@ fn rotate_with_manifest_is_idempotent_after_partial_crash() {
 
     // Simulate Phase 1 + Phase 2 having already run before the crash:
     // snapshot.2.snap published and wal.2.archive published. Re-invoking the
-    // orchestrator must tolerate both (AlreadyExists / WalArchiveExists).
+    // orchestrator must verify and accept both byte-identical artifacts.
     finalize_snapshot(&dir, 2, b"snap2");
     fs::copy(dir.join(DEFAULT_WAL_FILE_NAME), dir.join("wal.2.archive")).unwrap();
 
-    // Re-invoke the full rotate: Phase 1 snapshot already exists (AlreadyExists
-    // tolerated), Phase 2 archive already exists (WalArchiveExists tolerated),
-    // Phase 3 commits MANIFEST(2), Phase 4 resets.
+    // Re-invoke the full rotate: Phase 1 and Phase 2 compare the existing files
+    // with their new temporaries, Phase 3 commits MANIFEST(2), Phase 4 resets.
     let outcome = writer
         .rotate_with_manifest(meta_builder(&dir, 2, b"snap2"))
         .expect("re-rotate converges");
-    assert_eq!(outcome.archived_last_sequence, 2);
+    assert_eq!(outcome.snapshot_sequence(), 2);
     assert_eq!(writer.snapshot_seq(), 2);
 
     let manifest = Manifest::read(&dir).unwrap().unwrap();
@@ -590,7 +593,7 @@ fn recover_after_partial_rotate_then_append_does_not_regress() {
     let outcome = writer
         .rotate_with_manifest(meta_builder(&dir, 8, b"epoch8"))
         .expect("rotate after partial-recovery append");
-    assert_eq!(outcome.archived_last_sequence, 8);
+    assert_eq!(outcome.snapshot_sequence(), 8);
     let manifest = Manifest::read(&dir).unwrap().unwrap();
     assert_eq!(manifest.live_snapshot_seq, 8);
     // The archive history accumulates the earlier 7 + the new 8.
