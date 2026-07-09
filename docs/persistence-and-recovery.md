@@ -227,16 +227,66 @@ based on workload and recovery-time budget. A reasonable starting policy:
 - Take a snapshot after every `T` minutes of wall-clock (e.g., hourly).
 - Take a snapshot before a planned shutdown.
 
-After a snapshot is finalized, the old WAL can be archived or pruned. The
-in-process protocol is:
+### Scheduling row compaction
 
-1. Take a consistent read of the graph (`SharedGraph` clones the snapshot via
-   `ArcSwap`, so this is lock-free).
-2. Build the snapshot at `sequence = wal.last_sequence()`.
-3. Finalize the snapshot and call `wal.rotate(outcome.snapshot_seq)`. The
-   rotation fsyncs the current WAL, publishes a no-clobber
-   `wal.{last_sequence}.archive`, then rewrites the active `wal.log` header
-   in place with the snapshot sequence.
+Snapshots bound recovery time; row compaction reclaims in-memory node and edge
+slots left behind by deletes. The engine exposes the maintenance operation but
+deliberately does not own a timer or background runtime. Run it from the
+embedder's existing maintenance cadence, preferably in a low-write window and
+optionally immediately before an already-coordinated snapshot rotation.
+
+The default recommendation requires both at least 1,024 reclaimable rows and a
+reclaimable-row ratio of at least 25% of allocated rows. Reading the counters is
+lock-free and does not rebuild the graph. A host that needs different size
+thresholds can compare `reclaimable_rows()` and
+`reclaimable_row_basis_points()` directly; an age-based policy must track the
+last maintenance time in the host because graph rows do not carry deletion
+timestamps. The recommendation check is advisory and separate from compaction;
+serialize maintenance ticks per graph so two actors do not both perform the
+same full rebuild.
+
+```rust
+use selene_graph::{CompactionReport, GraphResult, SharedGraph};
+
+fn run_compaction_tick(
+    graph: &SharedGraph,
+) -> GraphResult<Option<CompactionReport>> {
+    if !graph.compaction_stats().compaction_recommended() {
+        return Ok(None);
+    }
+    graph.compact().map(Some)
+}
+```
+
+`SharedGraph::compact()` is the publication boundary. It rebuilds the full live
+graph while holding the writer lock, then publishes the dense snapshot in the
+same ordered handoff used by commits; lock-free readers continue to observe the
+previous snapshot until publication. Callers should not invoke the lower-level
+`compact_core()` transform and attempt to republish its result themselves.
+
+Compaction changes only physical row layout. It emits no `Change` and writes no
+WAL entry, so the dense layout becomes durable with the next graph snapshot. A
+crash before that snapshot is logically safe: recovery restores the same graph
+with its prior sparse layout, and a later maintenance tick can compact it again.
+
+GQL-driven hosts can use the equivalent native procedures: inspect
+`CALL selene.compaction_stats()` and invoke maintenance-tier
+`CALL selene.compact()` only when policy says to reclaim. `selene.compact()` is
+a standalone maintenance statement and is not valid inside an explicit
+transaction. The same scheduling and snapshot-durability rules apply.
+
+For a scheduled snapshot rotation, use the MANIFEST-backed in-process protocol:
+
+1. Quiesce or otherwise coordinate writes while collecting every provider
+   section for one committed graph state. A single `ArcSwap` load is lock-free,
+   but providers encode separate sections, so concurrent writes can otherwise
+   mix generations.
+2. Create an unfinalized `SnapshotBuilder` at
+   `sequence = wal.last_sequence()` and add all provider sections.
+3. Pass the builder to `wal.rotate_with_manifest(builder)`. The rotation flushes
+   the WAL, finalizes and fsyncs the snapshot, archives the previous WAL,
+   commits the MANIFEST as the epoch's linearization point, then resets the
+   active `wal.log`.
 
 ## Two-step recovery
 
@@ -461,8 +511,9 @@ let wal_config = WalConfig {
     snapshot_seq: 0,
 };
 // Skip snapshots entirely. WAL replay rebuilds the graph on every restart.
-// Caution: replay time grows linearly in WAL length; bound the WAL with a
-// retention policy by taking snapshots and calling WalWriter::rotate.
+// Caution: replay time grows linearly in WAL length. If that becomes too slow,
+// adopt coordinated snapshots and WalWriter::rotate_with_manifest rotations;
+// prune superseded snapshots and WAL archives separately with RetentionPolicy.
 ```
 
 ### Server workload
@@ -478,7 +529,7 @@ let wal_config = WalConfig {
 };
 // Take a snapshot hourly and after every 1M WAL entries.
 // Retain the last N snapshots plus their WAL files.
-// Rotate the WAL after each snapshot with wal.rotate(outcome.snapshot_seq).
+// Rotate each populated SnapshotBuilder with wal.rotate_with_manifest(builder).
 ```
 
 The hot path for all three is identical — `WalWriter::append` — and differs
@@ -495,3 +546,5 @@ only in how often `fsync` runs and how often a snapshot is taken. See
 - Recovery provider trait: [`crates/selene-persist/src/provider.rs`](../crates/selene-persist/src/provider.rs)
 - `Change` enum: [`crates/selene-core/src/changeset.rs`](../crates/selene-core/src/changeset.rs)
 - Graph-side recovery wrapper: [`crates/selene-graph/src/recover.rs`](../crates/selene-graph/src/recover.rs)
+- Graph compaction policy and transform: [`crates/selene-graph/src/compaction.rs`](../crates/selene-graph/src/compaction.rs)
+- Ordered live compaction publication: [`crates/selene-graph/src/shared.rs`](../crates/selene-graph/src/shared.rs)
