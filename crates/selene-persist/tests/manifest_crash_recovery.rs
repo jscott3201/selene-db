@@ -184,6 +184,73 @@ fn manifest_for(live: u64, header_seq: u64, archived: Vec<u64>) -> Manifest {
 // the orphan N. No data loss, no hard-fail.
 // ---------------------------------------------------------------------------
 #[test]
+fn first_rotation_phase2_failure_ignores_orphan_under_baseline_manifest() {
+    let dir = temp_dir("first-phase2-failure");
+    let mut writer = open_wal(&dir, 0);
+    assert_eq!(append(&mut writer, 1), 1);
+    assert_eq!(append(&mut writer, 2), 2);
+
+    // Exhaust the archive temporary paths so Phase 2 fails deterministically
+    // after Phase 1 publishes snapshot 2. The first rotation must already have
+    // bootstrapped MANIFEST(0), making the new snapshot an ignored orphan.
+    let archive = dir.join("wal.2.archive");
+    for attempt in 0..128_u8 {
+        let tmp = archive.with_extension(format!("archive.tmp.{}.{attempt}", std::process::id()));
+        fs::write(tmp, b"occupied").unwrap();
+    }
+    let error = writer
+        .rotate_with_manifest(meta_builder(&dir, 2, b"orphan2"))
+        .expect_err("Phase 2 fails deterministically");
+    assert!(matches!(
+        error,
+        PersistError::Io(source) if source.kind() == std::io::ErrorKind::AlreadyExists
+    ));
+    let baseline = Manifest::read(&dir).unwrap().unwrap();
+    assert_eq!(baseline.live_snapshot_seq, 0);
+    assert_eq!(baseline.active_wal_header_seq, 0);
+    assert!(baseline.archived_wal_seqs.is_empty());
+    assert!(snapshot_path(&dir, 2).exists());
+
+    // The failed rotation does not poison the writer, and recovery follows the
+    // baseline instead of applying the orphan through the legacy fallback.
+    assert_eq!(append(&mut writer, 3), 3);
+    writer.flush().unwrap();
+    drop(writer);
+    let core = Recorder::new(*b"CORE");
+    let recovered = recover(&dir, &registry(&core)).unwrap();
+    assert!(recovered.manifest_present);
+    assert_eq!(recovered.applied_snapshot_seq, 0);
+    assert_eq!(recovered.last_wal_seq, 3);
+    assert!(core.sections().is_empty());
+    assert_eq!(
+        core.changes(),
+        vec![node_change(1), node_change(2), node_change(3)]
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn first_rotation_rejects_nonzero_baseline_without_snapshot() {
+    let dir = temp_dir("missing-baseline-snapshot");
+    let mut writer = open_wal(&dir, 5);
+    assert_eq!(append(&mut writer, 6), 6);
+
+    let error = writer
+        .rotate_with_manifest(meta_builder(&dir, 6, b"epoch6"))
+        .expect_err("missing epoch-5 baseline snapshot rejects");
+    assert!(matches!(
+        error,
+        PersistError::Io(source) if source.kind() == std::io::ErrorKind::NotFound
+    ));
+    assert!(Manifest::read(&dir).unwrap().is_none());
+    assert!(!snapshot_path(&dir, 6).exists());
+    assert!(!dir.join("wal.6.archive").exists());
+    assert_eq!(append(&mut writer, 7), 7);
+    drop(writer);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn crash_after_phase1_before_commit_recovers_previous_epoch_and_ignores_orphan() {
     let dir = temp_dir("phase1-orphan");
     // Epoch N-1 = 5 is live: snapshot 5 + MANIFEST(5) + wal.log extending 5.

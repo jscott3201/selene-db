@@ -19,6 +19,8 @@ use crate::graph::PropertyIndexEntry;
 use crate::typed_index::TypedIndex;
 use crate::{DurableProvider, GraphError, SeleneGraph, SharedGraph, TypedIndexKind};
 
+#[path = "tests/checkpoint_support.rs"]
+mod checkpoint_support;
 #[path = "tests/codec_symmetry.rs"]
 mod codec_symmetry;
 #[path = "tests/composites.rs"]

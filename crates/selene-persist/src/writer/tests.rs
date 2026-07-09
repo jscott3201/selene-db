@@ -52,6 +52,157 @@ fn open_new_file_writes_header() {
 }
 
 #[test]
+fn writer_reports_its_active_path() {
+    let path = temp_path("active-path");
+    let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+    assert_eq!(writer.path(), path);
+    drop(writer);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn relative_writer_path_stays_bound_across_cwd_change() {
+    const CHILD_ENV: &str = "SELENE_TEST_RELATIVE_WAL_CWD_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "writer::tests::relative_writer_path_stays_bound_across_cwd_change",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "isolated CWD-change child succeeds");
+        return;
+    }
+
+    let original_dir = std::env::current_dir().unwrap();
+    let root = temp_path("relative-cwd-root");
+    let open_dir = root.join("opened");
+    let later_dir = root.join("later");
+    fs::create_dir_all(&open_dir).unwrap();
+    fs::create_dir_all(&later_dir).unwrap();
+    std::env::set_current_dir(&open_dir).unwrap();
+    let mut writer =
+        WalWriter::open(Path::new(DEFAULT_WAL_FILE_NAME), WalConfig::default()).unwrap();
+    assert_eq!(
+        writer.path().canonicalize().unwrap(),
+        open_dir.join(DEFAULT_WAL_FILE_NAME).canonicalize().unwrap()
+    );
+    assert_eq!(
+        writer
+            .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes())
+            .unwrap(),
+        1
+    );
+    writer.flush().unwrap();
+
+    std::env::set_current_dir(&later_dir).unwrap();
+    let mut builder = crate::SnapshotBuilder::new(crate::SnapshotConfig {
+        dir: writer.path().parent().unwrap().to_path_buf(),
+        sequence: 1,
+        compression: crate::SectionCompression::None,
+        fsync: true,
+    });
+    builder
+        .add_section(*b"TEST", *b"BODY", b"stable".to_vec())
+        .unwrap();
+    writer.rotate_with_manifest(builder).unwrap();
+    assert!(open_dir.join(crate::MANIFEST_FILE_NAME).is_file());
+    assert!(crate::snapshot_path(&open_dir, 1).is_file());
+    assert!(!later_dir.join(crate::MANIFEST_FILE_NAME).exists());
+    assert!(!crate::snapshot_path(&later_dir, 1).exists());
+
+    drop(writer);
+    std::env::set_current_dir(original_dir).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn relative_snapshot_directory_preflight_is_cwd_safe() {
+    const CHILD_ENV: &str = "SELENE_TEST_RELATIVE_SNAPSHOT_DIR_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "writer::tests::relative_snapshot_directory_preflight_is_cwd_safe",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "isolated relative-dir child succeeds");
+        return;
+    }
+
+    let original_dir = std::env::current_dir().unwrap();
+    let root = temp_path("relative-snapshot-dir-root");
+    let same_dir = root.join("same");
+    let open_dir = root.join("opened");
+    let later_dir = root.join("later");
+    fs::create_dir_all(&same_dir).unwrap();
+    fs::create_dir_all(&open_dir).unwrap();
+    fs::create_dir_all(&later_dir).unwrap();
+
+    // A direct relative API use (`wal.log` plus builder dir `.`) resolves to
+    // the same canonical directory and is accepted.
+    std::env::set_current_dir(&same_dir).unwrap();
+    let mut same_writer = WalWriter::open(
+        Path::new(DEFAULT_WAL_FILE_NAME),
+        WalConfig {
+            sync_policy: SyncPolicy::OnFlushOnly,
+            snapshot_seq: 0,
+        },
+    )
+    .unwrap();
+    same_writer
+        .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes())
+        .unwrap();
+    let same_builder = crate::SnapshotBuilder::new(crate::SnapshotConfig {
+        dir: PathBuf::from("."),
+        sequence: 1,
+        compression: crate::SectionCompression::None,
+        fsync: true,
+    });
+    same_writer.rotate_with_manifest(same_builder).unwrap();
+    drop(same_writer);
+
+    // Retaining a relative builder across a CWD change is rejected before the
+    // pending group-commit entry is flushed or either directory gains artifacts.
+    std::env::set_current_dir(&open_dir).unwrap();
+    let mut moved_writer = WalWriter::open(
+        Path::new(DEFAULT_WAL_FILE_NAME),
+        WalConfig {
+            sync_policy: SyncPolicy::OnFlushOnly,
+            snapshot_seq: 0,
+        },
+    )
+    .unwrap();
+    moved_writer
+        .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes())
+        .unwrap();
+    let moved_builder = crate::SnapshotBuilder::new(crate::SnapshotConfig {
+        dir: PathBuf::from("."),
+        sequence: 1,
+        compression: crate::SectionCompression::None,
+        fsync: true,
+    });
+    std::env::set_current_dir(&later_dir).unwrap();
+    assert!(matches!(
+        moved_writer.rotate_with_manifest(moved_builder),
+        Err(PersistError::WalRotationDirectoryMismatch { .. })
+    ));
+    assert_eq!(moved_writer.entries_since_fsync(), 1);
+    assert!(!open_dir.join(crate::MANIFEST_FILE_NAME).exists());
+    assert!(!later_dir.join(crate::MANIFEST_FILE_NAME).exists());
+    drop(moved_writer);
+
+    std::env::set_current_dir(original_dir).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn append_assigns_monotonic_sequences() {
     let path = temp_path("seq");
     let mut writer = WalWriter::open(&path, WalConfig::default()).unwrap();

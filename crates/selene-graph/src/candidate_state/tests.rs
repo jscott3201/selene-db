@@ -33,6 +33,23 @@ fn provider_with(spec: CandidateStateSpec) -> Arc<MaintainedCandidateStateProvid
     Arc::new(MaintainedCandidateStateProvider::new([spec]).unwrap())
 }
 
+#[test]
+fn checkpoint_snapshot_requires_matching_candidate_generation() {
+    let (spec, _, _, _, _) = current_spec();
+    let provider = provider_with(spec);
+    IndexProvider::write_section_at_generation(provider.as_ref(), SubTag(CANDIDATE_STATE_SUB), 0)
+        .expect("initial generation matches");
+    assert!(matches!(
+        IndexProvider::write_section_at_generation(
+            provider.as_ref(),
+            SubTag(CANDIDATE_STATE_SUB),
+            1,
+        ),
+        Err(ProviderError::Inconsistent { reason })
+            if reason.contains("generation 0") && reason.contains("generation 1")
+    ));
+}
+
 fn candidate_nodes(provider: &MaintainedCandidateStateProvider, name: &DbString) -> Vec<NodeId> {
     provider
         .candidate_set(name)

@@ -8,6 +8,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `SharedGraph::checkpoint` now provides an ordered, durable checkpoint facade
+  for WAL-backed graphs. It snapshots every provider at one committed
+  generation, flushes the group-commit boundary, and performs the MANIFEST/WAL
+  rotation while later writes wait in the committer queue and lock-free reads
+  continue. First rotation bootstraps the prior MANIFEST epoch, active-WAL reset
+  uses a synced atomic replacement, relative WAL paths stay anchored to their
+  open-time directory, and unique snapshot temporaries make crash retries
+  progress without reusing a stale fixed temp file.
 - Global BM25 text search, ANN vector search, and PageRank result candidate
   production can now admit candidates through indexed edge-property filters,
   including source, target, or both endpoints, while preserving the existing

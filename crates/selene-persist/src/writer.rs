@@ -127,6 +127,7 @@ pub struct WalWriter {
     compression: WalCompression,
     compressor: Option<ZstdCompressor>,
     entries_since_fsync: u32,
+    poisoned: bool,
     /// File offset of the last fully-committed entry's end. On any
     /// append-time error, the file is truncated and re-seeked to this
     /// offset so the writer's in-memory state and the on-disk state stay
@@ -168,12 +169,17 @@ impl WalWriter {
         compression: WalCompression,
     ) -> PersistResult<Self> {
         let sync_policy = config.sync_policy.normalized();
+        // Retain a CWD-independent path for every later snapshot/archive/
+        // MANIFEST operation. The file handle stays bound to the inode opened
+        // here; keeping a caller-relative path would let a later `set_current_dir`
+        // redirect rotation artifacts away from the active file this handle owns.
+        let stable_path = stable_wal_path(path)?;
         let mut file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
             .truncate(false)
-            .open(path)?;
+            .open(&stable_path)?;
         // Acquire an exclusive lock before doing anything else. A second
         // writer on the same path observes WriterLockHeld and returns
         // without touching the file.
@@ -211,7 +217,7 @@ impl WalWriter {
         let last_sequence = scan.last_sequence.max(header_snapshot_seq);
         Ok(Self {
             file,
-            path: path.to_path_buf(),
+            path: stable_path,
             record: Vec::new(),
             last_sequence,
             snapshot_seq: header_snapshot_seq,
@@ -219,6 +225,7 @@ impl WalWriter {
             compression,
             compressor: None,
             entries_since_fsync: 0,
+            poisoned: false,
             committed_offset: scan.truncate_to,
         })
     }
@@ -227,8 +234,9 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns codec, cap, compression, or I/O errors. On any error, the
-    /// in-memory sequence counter is **not** advanced and the file is
+    /// Returns [`PersistError::WalWriterPoisoned`] after an incomplete rotation,
+    /// or codec, cap, compression, or I/O errors. On any error, the in-memory
+    /// sequence counter is **not** advanced and the file is
     /// truncated back to the last fully-committed entry, so the next
     /// append (or a reopen + retry) observes a consistent state.
     #[tracing::instrument(
@@ -243,6 +251,7 @@ impl WalWriter {
         principal: Option<Arc<[u8]>>,
         changes: &[Change],
     ) -> PersistResult<u64> {
+        self.ensure_usable()?;
         validate_principal(principal.as_deref())?;
         let payload =
             encode_changes_with_compressor(changes, self.compression, Some(&mut self.compressor))?;
@@ -308,9 +317,11 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns I/O errors from fsync.
+    /// Returns [`PersistError::WalWriterPoisoned`] after an incomplete rotation,
+    /// or I/O errors from fsync.
     #[tracing::instrument(name = "selene.persist.wal.fsync", skip(self))]
     pub fn flush(&mut self) -> PersistResult<()> {
+        self.ensure_usable()?;
         self.file.sync_data()?;
         self.entries_since_fsync = 0;
         Ok(())
@@ -320,6 +331,18 @@ impl WalWriter {
     #[must_use]
     pub const fn last_sequence(&self) -> u64 {
         self.last_sequence
+    }
+
+    /// Return the path of the active WAL file owned by this writer.
+    ///
+    /// Relative caller paths are resolved against the working directory at
+    /// [`Self::open`] time, so this path remains stable if the process later
+    /// changes its working directory. It is exposed read-only so graph-layer
+    /// checkpoint orchestration can verify the conventional `wal.log` layout
+    /// before committing a MANIFEST rotation.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Return the durable file offset of the last fully committed WAL entry.
@@ -356,6 +379,17 @@ impl WalWriter {
     /// by any live MANIFEST in this writer's directory, so retention (Item-5)
     /// has the full archive history.
     ///
+    /// Before the first Phase 1 in a legacy MANIFEST-less directory, rotation
+    /// durably bootstraps a baseline MANIFEST naming the current WAL-header
+    /// snapshot epoch. A non-zero baseline must already have a valid snapshot;
+    /// otherwise rotation rejects it before publishing the requested snapshot.
+    /// Phase 4 uses a synced same-directory replacement + atomic rename, so a
+    /// reset failure leaves recovery with either the old valid WAL or the new
+    /// valid header rather than a truncated active file.
+    /// Rotation accepts only the conventional `wal.log` filename, a positive
+    /// sequence, a builder directory resolving to the WAL's stable parent, and
+    /// an existing MANIFEST that also names `wal.log` as its active WAL.
+    ///
     /// A second mutable borrow cannot overlap the rotation:
     ///
     /// ```compile_fail
@@ -369,28 +403,36 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns [`PersistError::WalRotationSequenceMismatch`] when the builder
-    /// sequence does not match the writer high-water mark, I/O / format errors
-    /// from snapshot finalize, archive, MANIFEST commit, or WAL reset, or
+    /// Returns typed errors for a poisoned writer, a non-default WAL filename,
+    /// sequence zero, a builder/WAL directory mismatch, or a builder sequence
+    /// that does not match the writer high-water mark; I/O / format errors from
+    /// snapshot finalize, archive, MANIFEST commit, or WAL reset; or
     /// [`PersistError::WalRotationIncomplete`] if the MANIFEST committed but the
     /// active WAL could not be reset (recovery still converges on the new
-    /// epoch). On error before the MANIFEST commit the previous epoch is intact.
+    /// epoch). After `WalRotationIncomplete`, this writer is poisoned and
+    /// rejects append, flush, rotation, and prune calls; reopen the active WAL
+    /// before mutating again. On error before the MANIFEST commit the previous
+    /// epoch is intact and the writer remains usable.
     pub fn rotate_with_manifest(
         &mut self,
         builder: SnapshotBuilder,
     ) -> PersistResult<WalRotationOutcome> {
-        if builder.sequence() != self.last_sequence {
-            return Err(PersistError::WalRotationSequenceMismatch {
-                snapshot_seq: builder.sequence(),
-                last_sequence: self.last_sequence,
+        self.ensure_usable()?;
+        let dir = self.validate_rotation_inputs(&builder)?;
+        let prior_manifest = Manifest::read(&dir)?;
+        if let Some(manifest) = &prior_manifest
+            && manifest.active_wal != DEFAULT_WAL_FILE_NAME
+        {
+            return Err(PersistError::UnexpectedActiveWal {
+                observed: manifest.active_wal.clone(),
+                expected: DEFAULT_WAL_FILE_NAME,
             });
         }
+        // Every input invariant above is checked before this durability write.
+        // Invalid callers must not flush group-commit state or create artifacts.
         self.flush()?;
-        let dir = self
-            .path
-            .parent()
-            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let prior_archived_seqs = Manifest::read(&dir)?
+        let manifest_present = prior_manifest.is_some();
+        let prior_archived_seqs = prior_manifest
             .map(|manifest| manifest.archived_wal_seqs)
             .unwrap_or_default();
         let inputs = RotationInputs {
@@ -398,14 +440,60 @@ impl WalWriter {
             wal_path: &self.path,
             committed_offset: self.committed_offset,
             last_sequence: self.last_sequence,
+            snapshot_seq: self.snapshot_seq,
+            manifest_present,
             prior_archived_seqs,
         };
-        let (outcome, state) = rotate_with_manifest(inputs, builder, &dir)?;
+        let (outcome, state) = match rotate_with_manifest(inputs, builder, &dir) {
+            Ok(result) => result,
+            Err(error @ PersistError::WalRotationIncomplete { .. }) => {
+                self.poisoned = true;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
         self.last_sequence = state.last_sequence;
         self.snapshot_seq = state.snapshot_seq;
         self.committed_offset = state.committed_offset;
         self.entries_since_fsync = 0;
         Ok(outcome)
+    }
+
+    fn validate_rotation_inputs(&self, builder: &SnapshotBuilder) -> PersistResult<PathBuf> {
+        let observed_name = self
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.path.display().to_string());
+        if observed_name != DEFAULT_WAL_FILE_NAME {
+            return Err(PersistError::UnexpectedActiveWal {
+                observed: observed_name,
+                expected: DEFAULT_WAL_FILE_NAME,
+            });
+        }
+        if builder.sequence() == 0 || self.last_sequence == 0 {
+            return Err(PersistError::WalRotationZeroSequence);
+        }
+        if builder.sequence() != self.last_sequence {
+            return Err(PersistError::WalRotationSequenceMismatch {
+                snapshot_seq: builder.sequence(),
+                last_sequence: self.last_sequence,
+            });
+        }
+        let wal_dir = self
+            .path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let snapshot_dir = stable_wal_path(builder.dir())?;
+        let canonical_snapshot_dir = std::fs::canonicalize(&snapshot_dir)?;
+        let canonical_wal_dir = std::fs::canonicalize(&wal_dir)?;
+        if canonical_snapshot_dir != canonical_wal_dir {
+            return Err(PersistError::WalRotationDirectoryMismatch {
+                snapshot_dir,
+                wal_dir,
+            });
+        }
+        Ok(wal_dir)
     }
 
     /// Prune superseded snapshots + WAL archives in this writer's directory per
@@ -421,16 +509,26 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns flush errors, or any error from [`crate::retention::prune`]
-    /// (directory scan, MANIFEST decode/commit). Post-commit file deletion is
-    /// best-effort and never fails the prune.
+    /// Returns [`PersistError::WalWriterPoisoned`] after an incomplete rotation,
+    /// flush errors, or any error from [`crate::retention::prune`] (directory
+    /// scan, MANIFEST decode/commit). Post-commit file deletion is best-effort
+    /// and never fails the prune.
     pub fn prune(&mut self, policy: &RetentionPolicy) -> PersistResult<PruneOutcome> {
+        self.ensure_usable()?;
         self.flush()?;
         let dir = self
             .path
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         crate::retention::prune(&dir, policy)
+    }
+
+    fn ensure_usable(&self) -> PersistResult<()> {
+        if self.poisoned {
+            Err(PersistError::WalWriterPoisoned)
+        } else {
+            Ok(())
+        }
     }
 
     /// Best-effort rollback to the last committed offset on append failure.
@@ -445,6 +543,14 @@ impl WalWriter {
         if let Err(error) = self.file.seek(SeekFrom::Start(self.committed_offset)) {
             tracing::error!(%error, "failed to seek WAL after append error");
         }
+    }
+}
+
+fn stable_wal_path(path: &Path) -> std::io::Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
     }
 }
 

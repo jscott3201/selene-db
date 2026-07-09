@@ -5,15 +5,20 @@ use selene_persist::{SnapshotBuilder, SnapshotConfig, SnapshotFinalizeOutcome};
 use crate::{GraphResult, SharedGraph};
 
 impl SharedGraph {
-    /// Write one snapshot containing every registered provider section.
+    /// Write one standalone snapshot containing every registered provider
+    /// section.
     ///
     /// This is the graph-layer facade over [`SnapshotBuilder`]. It walks the
     /// fixed provider registry, asks each provider to encode every declared
     /// subsection, and finalizes the snapshot envelope from `config`.
     ///
-    /// Call after the commit whose state should be checkpointed has returned.
-    /// Callers that need a deterministic checkpoint should avoid concurrent
-    /// writes while this method is collecting provider sections.
+    /// This lower-level envelope writer is not coordinated with the graph
+    /// committer or owned WAL. Call only when the host already excludes writes
+    /// and owns the surrounding persistence protocol. WAL-backed callers that
+    /// need an ordered, recoverable epoch should use
+    /// [`SharedGraph::checkpoint`](crate::SharedGraph::checkpoint), which pins
+    /// provider generation, snapshot sequence, durability, MANIFEST commit,
+    /// and WAL rotation as one committer work item.
     ///
     /// # Errors
     ///

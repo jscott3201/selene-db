@@ -173,14 +173,15 @@ impl SharedGraph {
             });
         let core = CoreProvider::new_for_live_with_wal(Arc::clone(&snapshot), durable);
         let mut all_providers = Vec::with_capacity(providers.len() + 1);
-        all_providers.push(core.clone() as Arc<dyn IndexProvider>);
+        all_providers.push(Arc::clone(&core) as Arc<dyn IndexProvider>);
         all_providers.extend(providers);
         if has_wal {
-            durable_providers.push(core as Arc<dyn DurableProvider>);
+            durable_providers.push(Arc::clone(&core) as Arc<dyn DurableProvider>);
         }
         validate_unique_provider_tags(&all_providers)?;
         Self::from_graph_parts_and_snapshot(
             graph,
+            core,
             all_providers,
             durable_providers,
             snapshot,
@@ -190,6 +191,7 @@ impl SharedGraph {
 
     pub(crate) fn from_graph_parts_and_snapshot(
         graph: SeleneGraph,
+        core: Arc<CoreProvider>,
         providers: Vec<Arc<dyn IndexProvider>>,
         durable_providers: Vec<Arc<dyn DurableProvider>>,
         snapshot: Arc<ArcSwap<SeleneGraph>>,
@@ -244,6 +246,7 @@ impl SharedGraph {
                 snapshot: Arc::clone(&snapshot),
                 schema_version: Arc::clone(&schema_version),
                 providers: Arc::clone(&providers),
+                core,
                 durable_providers: durable_providers.clone(),
                 batching,
             });
@@ -262,6 +265,49 @@ impl SharedGraph {
     #[must_use]
     pub fn read(&self) -> Arc<SeleneGraph> {
         self.snapshot.load_full()
+    }
+
+    /// Durably checkpoint the current ordered graph/provider state and rotate
+    /// the owned WAL through the MANIFEST protocol.
+    ///
+    /// Checkpointing is a hard boundary in the single committer's publish
+    /// order. Every lower commit is flushed, published, and applied to
+    /// providers before snapshot encoding starts; no higher commit is appended
+    /// until rotation completes. Readers remain lock-free and continue to
+    /// observe the last published snapshot while encoding runs.
+    ///
+    /// The snapshot directory and sequence come from the graph's owned
+    /// `wal.log`, and durability barriers are mandatory. Use
+    /// [`CheckpointConfig`](crate::CheckpointConfig) only to select section
+    /// compression.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called re-entrantly from a committer-thread provider
+    /// callback; a nested checkpoint would wait behind that same callback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the graph has no owned WAL, the WAL high-water
+    /// sequence is zero, it uses a non-default filename, a provider cannot
+    /// encode the ordered generation, or snapshot/WAL rotation fails. Provider
+    /// and snapshot-preparation failures leave the committer usable. Any error
+    /// or panic after WAL rotation starts requires reopening the graph because
+    /// the persistence API can no longer prove which side of the MANIFEST
+    /// commit point was reached; later writes fail fast.
+    pub fn checkpoint(
+        &self,
+        config: crate::CheckpointConfig,
+    ) -> GraphResult<crate::CheckpointOutcome> {
+        reject_provider_callback_reentry("SharedGraph::checkpoint()");
+        let committer = self.committer.handle();
+        let (seal_seq, generation) = {
+            let guard = self.shared.write();
+            let generation = guard.meta.generation;
+            let seal_seq = committer.next_seal_seq();
+            (seal_seq, generation)
+        };
+        committer.submit_checkpoint(seal_seq, generation, config)
     }
 
     /// Return compaction pressure for the current published snapshot.
@@ -299,12 +345,18 @@ impl SharedGraph {
     /// verbatim — and the allocator is kept in sync with `GraphMeta` on every
     /// commit), so no external id is ever reused after a later recovery.
     ///
+    /// # Panics
+    ///
+    /// Panics when called re-entrantly from a committer-thread provider
+    /// callback; nested maintenance would wait behind that same callback.
+    ///
     /// # Errors
     ///
     /// Returns [`GraphError`] if the graph's id↔row mapping is corrupt or the
     /// recompacted graph fails its consistency check (see
     /// [`compact_core`](crate::compact_core)).
     pub fn compact(&self) -> GraphResult<crate::CompactionReport> {
+        reject_provider_callback_reentry("SharedGraph::compact()");
         // Seal-and-handover for compaction (v1.2 BRIEF 1, P1 fix): build the
         // dense graph HERE, on the caller thread, under the write lock — exactly
         // like a commit seals under the lock — then hand the committer a
@@ -354,7 +406,13 @@ impl SharedGraph {
     /// The rebuild is strict on live data: if an indexed row no longer satisfies
     /// the registered vector dimension/metric invariant, this method returns an
     /// error instead of silently dropping the row from the index.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called re-entrantly from a committer-thread provider
+    /// callback; nested maintenance would wait behind that same callback.
     pub fn rebuild_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
+        reject_provider_callback_reentry("SharedGraph::rebuild_vector_indexes()");
         let committer = self.committer.handle();
         let (seal_seq, rebuilt, report) = {
             let mut guard = self.shared.write();
@@ -378,6 +436,11 @@ impl SharedGraph {
     ///
     /// The rebuild is strict on live data for selected indexes, matching
     /// [`Self::rebuild_vector_indexes`].
+    ///
+    /// # Panics
+    ///
+    /// Panics when called re-entrantly from a committer-thread provider
+    /// callback; nested maintenance would wait behind that same callback.
     pub fn rebuild_recommended_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
         self.maintain_vector_indexes(VectorIndexMaintenancePolicy::recommended())
     }
@@ -392,10 +455,16 @@ impl SharedGraph {
     ///
     /// The rebuild is strict on live data for selected indexes, matching
     /// [`Self::rebuild_vector_indexes`].
+    ///
+    /// # Panics
+    ///
+    /// Panics when called re-entrantly from a committer-thread provider
+    /// callback; nested maintenance would wait behind that same callback.
     pub fn maintain_vector_indexes(
         &self,
         policy: VectorIndexMaintenancePolicy,
     ) -> GraphResult<VectorIndexRebuildReport> {
+        reject_provider_callback_reentry("SharedGraph::maintain_vector_indexes()");
         let committer = self.committer.handle();
         let (seal_seq, rebuilt, report) = {
             let mut guard = self.shared.write();
@@ -457,24 +526,23 @@ impl SharedGraph {
     /// Begin a write transaction by acquiring the single graph write lock.
     ///
     /// Concurrent writers from other threads queue normally on the write
-    /// lock; the engine does **not** panic legitimate concurrent writes
-    /// during another commit's provider fanout.
+    /// lock; the engine does **not** panic legitimate concurrent writes during
+    /// another committer-thread provider callback.
     ///
     /// Since v1.2 (BRIEF 1) the actual snapshot publish happens on the single
     /// committer thread, not here: `WriteTxn::commit` seals under this lock,
-    /// releases it, and hands the frozen bundle to the committer. Provider
-    /// fan-out therefore now runs on the **committer thread**, so the
-    /// re-entrancy guard below protects the committer thread (sound with exactly
-    /// one committer — see `reentry.rs` and the v1.2 design §7.7).
+    /// releases it, and hands the frozen bundle to the committer. Commit fan-out
+    /// and coordinated checkpoint serialization run on the **committer
+    /// thread**, so the re-entrancy guard below protects that thread (sound with
+    /// exactly one committer — see `reentry.rs` and the v1.2 design §7.7).
     ///
     /// # Panics
     ///
-    /// Panics when called from inside an [`IndexProvider`] callback **on
-    /// the committer thread** as the active fanout. Re-entrant writes from a
-    /// provider callback are unsupported; the committer is publishing, so a
-    /// nested write would recurse indefinitely. The panic is caught by the
-    /// committer's `notify_providers` boundary; provider state may drift, but
-    /// the commit still completes.
+    /// Panics when called from inside an [`IndexProvider`] callback on the
+    /// committer thread. Re-entrant graph operations from a provider callback
+    /// are unsupported because their work would wait behind the callback that
+    /// initiated them. The enclosing callback boundary catches the panic; the
+    /// nested mutation does not run.
     ///
     /// Cross-thread re-entry — a provider spawning a worker thread that
     /// calls `begin_write` and waiting for it — is **documented misuse**
@@ -484,16 +552,7 @@ impl SharedGraph {
     #[must_use]
     #[tracing::instrument(name = "selene.graph.begin_write", skip(self))]
     pub fn begin_write(&self) -> WriteTxn<'_> {
-        if crate::reentry::in_fanout() {
-            panic!(
-                "selene-graph: SharedGraph::begin_write() called from within \
-                 a provider fan-out callback on the committer thread; \
-                 re-entrant writes from a provider callback are not supported. \
-                 The committer's fan-out boundary will catch this panic; \
-                 the commit succeeds, but the offending provider's \
-                 chained mutation does not."
-            );
-        }
+        reject_provider_callback_reentry("SharedGraph::begin_write()");
         WriteTxn::new(
             self.shared.write(),
             self.committer.handle(),
@@ -537,6 +596,16 @@ impl SharedGraph {
     ) -> GraphResult<std::sync::mpsc::Receiver<GraphResult<crate::CommitOutcome>>> {
         self.committer.handle().submit_commit_async_for_test(sealed)
     }
+}
+
+fn reject_provider_callback_reentry(operation: &str) {
+    assert!(
+        !crate::reentry::in_fanout(),
+        "selene-graph: {operation} called from within a provider callback on the committer \
+         thread; re-entrant graph operations from a provider callback are not supported. \
+         The enclosing callback boundary will catch this panic; the nested operation does \
+         not run."
+    );
 }
 
 mod builder;

@@ -3,6 +3,8 @@
 mod recovery_state;
 mod sections;
 
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -12,7 +14,8 @@ use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 use selene_core::{Change, HlcTimestamp, Origin};
 use selene_persist::{
-    AuditLog, AuditRecord, RecoveryError, RecoveryProvider, RecoveryResult, WalWriter,
+    AuditLog, AuditRecord, DEFAULT_WAL_FILE_NAME, RecoveryError, RecoveryProvider, RecoveryResult,
+    SnapshotBuilder, WalRotationOutcome, WalWriter,
 };
 
 use crate::core_provider::recovery_state::RecoveryState;
@@ -21,7 +24,7 @@ use crate::core_provider::sections::{
     encode_schemas, encode_text_schemas, encode_vector_schemas,
 };
 use crate::durable_provider::DurableProvider;
-use crate::error::GraphResult;
+use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
@@ -76,6 +79,15 @@ const CORE_SUB_TAGS: &[SubTag] = &[
 /// [`CoreProvider::finish_recovery`] materializes a [`SeleneGraph`].
 pub struct CoreProvider {
     inner: Mutex<CoreInner>,
+}
+
+/// WAL-owned target for one ordered graph checkpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckpointTarget {
+    /// Directory that owns `wal.log`, snapshots, archives, and the MANIFEST.
+    pub(crate) dir: PathBuf,
+    /// Current durable WAL high-water sequence.
+    pub(crate) sequence: u64,
 }
 
 enum CoreInner {
@@ -229,6 +241,62 @@ impl CoreProvider {
         }
     }
 
+    /// Resolve the target owned by this provider's live conventional WAL.
+    ///
+    /// # Errors
+    ///
+    /// Rejects recovery-mode providers, live providers without a WAL, an empty
+    /// epoch at sequence zero, and WAL paths whose filename is not `wal.log`.
+    pub(crate) fn checkpoint_target(&self) -> GraphResult<CheckpointTarget> {
+        let inner = self.inner.lock();
+        match &*inner {
+            CoreInner::Live {
+                durable: Some(durable),
+                ..
+            } => checkpoint_target_for_writer(&durable.writer.lock()),
+            CoreInner::Live { durable: None, .. } => Err(checkpoint_unavailable(
+                "ordered checkpoint requires a graph opened with a WAL",
+            )),
+            CoreInner::Recovery { .. } => Err(checkpoint_unavailable(
+                "ordered checkpoint is unavailable on a recovery-mode CORE provider",
+            )),
+        }
+    }
+
+    /// Rotate a populated snapshot builder through the owned live WAL writer.
+    ///
+    /// The writer target is revalidated under its mutex immediately before the
+    /// crash-safe MANIFEST rotation. The builder sequence must still equal the
+    /// writer high-water mark; [`WalWriter::rotate_with_manifest`] enforces that
+    /// final equality.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same availability errors as [`Self::checkpoint_target`] and
+    /// propagates snapshot, archive, MANIFEST, and active-WAL reset failures.
+    pub(crate) fn rotate_checkpoint(
+        &self,
+        builder: SnapshotBuilder,
+    ) -> GraphResult<WalRotationOutcome> {
+        let mut inner = self.inner.lock();
+        match &mut *inner {
+            CoreInner::Live {
+                durable: Some(durable),
+                ..
+            } => {
+                let mut writer = durable.writer.lock();
+                checkpoint_target_for_writer(&writer)?;
+                writer.rotate_with_manifest(builder).map_err(Into::into)
+            }
+            CoreInner::Live { durable: None, .. } => Err(checkpoint_unavailable(
+                "ordered checkpoint requires a graph opened with a WAL",
+            )),
+            CoreInner::Recovery { .. } => Err(checkpoint_unavailable(
+                "ordered checkpoint is unavailable on a recovery-mode CORE provider",
+            )),
+        }
+    }
+
     fn read_section_inner(&self, sub_tag: SubTag, bytes: &[u8]) -> Result<(), ProviderError> {
         let mut inner = self.inner.lock();
         match &mut *inner {
@@ -239,33 +307,38 @@ impl CoreProvider {
         }
     }
 
-    fn write_section_inner(&self, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+    fn live_snapshot(&self, operation: &'static str) -> Result<Arc<SeleneGraph>, ProviderError> {
         // The snapshot is an `Arc<ArcSwap<SeleneGraph>>`: `load_full()` clones the
         // Arc lock-free. Hold `inner` ONLY long enough to grab that Arc, then drop
         // the guard so the (potentially ≤1 GiB) rkyv encode runs lock-free and
         // never blocks the commit hot path that shares this Mutex.
-        let graph = {
-            let inner = self.inner.lock();
-            match &*inner {
-                CoreInner::Live { snapshot, .. } => snapshot.load_full(),
-                CoreInner::Recovery { .. } => {
-                    return Err(inconsistent(
-                        "write_section called on recovery-mode CoreProvider",
-                    ));
-                }
-            }
-        };
-        match sub_tag.0 {
-            CORE_GTYP_SUB => encode_graph_types(&graph),
-            CORE_META_SUB => encode_meta(&graph.meta, graph.meta.generation),
-            CORE_NODE_SUB => encode_nodes(&graph),
-            CORE_EDGE_SUB => encode_edges(&graph),
-            CORE_SCMA_SUB => encode_schemas(&graph),
-            CORE_CPIX_SUB => encode_composite_schemas(&graph),
-            CORE_VIDX_SUB => encode_vector_schemas(&graph),
-            CORE_TIDX_SUB => encode_text_schemas(&graph),
-            _ => Err(invalid_sub_tag(sub_tag)),
+        let inner = self.inner.lock();
+        match &*inner {
+            CoreInner::Live { snapshot, .. } => Ok(snapshot.load_full()),
+            CoreInner::Recovery { .. } => Err(inconsistent(format!(
+                "{operation} called on recovery-mode CoreProvider"
+            ))),
         }
+    }
+
+    fn write_section_inner(&self, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+        let graph = self.live_snapshot("write_section")?;
+        encode_section(&graph, sub_tag)
+    }
+
+    fn write_section_at_generation_inner(
+        &self,
+        sub_tag: SubTag,
+        generation: u64,
+    ) -> Result<Vec<u8>, ProviderError> {
+        let graph = self.live_snapshot("write_section_at_generation")?;
+        if graph.meta.generation != generation {
+            return Err(inconsistent(format!(
+                "CORE snapshot generation {} does not match checkpoint generation {generation}",
+                graph.meta.generation
+            )));
+        }
+        encode_section(&graph, sub_tag)
     }
 
     fn on_change_inner(&self, change: &Change) -> Result<(), ProviderError> {
@@ -274,6 +347,50 @@ impl CoreProvider {
             CoreInner::Live { .. } => Ok(()),
             CoreInner::Recovery { state } => state.apply_change(change),
         }
+    }
+}
+
+fn encode_section(graph: &SeleneGraph, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+    match sub_tag.0 {
+        CORE_GTYP_SUB => encode_graph_types(graph),
+        CORE_META_SUB => encode_meta(&graph.meta, graph.meta.generation),
+        CORE_NODE_SUB => encode_nodes(graph),
+        CORE_EDGE_SUB => encode_edges(graph),
+        CORE_SCMA_SUB => encode_schemas(graph),
+        CORE_CPIX_SUB => encode_composite_schemas(graph),
+        CORE_VIDX_SUB => encode_vector_schemas(graph),
+        CORE_TIDX_SUB => encode_text_schemas(graph),
+        _ => Err(invalid_sub_tag(sub_tag)),
+    }
+}
+
+fn checkpoint_target_for_writer(writer: &WalWriter) -> GraphResult<CheckpointTarget> {
+    if writer.path().file_name() != Some(OsStr::new(DEFAULT_WAL_FILE_NAME)) {
+        return Err(checkpoint_unavailable(format!(
+            "ordered checkpoint requires the active WAL filename {DEFAULT_WAL_FILE_NAME:?}, observed {:?}",
+            writer.path()
+        )));
+    }
+    let sequence = writer.last_sequence();
+    if sequence == 0 {
+        return Err(checkpoint_unavailable(
+            "ordered checkpoint requires a nonzero durable WAL high-water sequence",
+        ));
+    }
+    let dir = checkpoint_dir(writer.path());
+    Ok(CheckpointTarget { dir, sequence })
+}
+
+fn checkpoint_dir(wal_path: &Path) -> PathBuf {
+    wal_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+}
+
+fn checkpoint_unavailable(reason: impl Into<String>) -> GraphError {
+    GraphError::Inconsistent {
+        reason: reason.into(),
     }
 }
 
@@ -288,6 +405,14 @@ impl IndexProvider for CoreProvider {
 
     fn write_section(&self, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
         self.write_section_inner(sub_tag)
+    }
+
+    fn write_section_at_generation(
+        &self,
+        sub_tag: SubTag,
+        generation: u64,
+    ) -> Result<Vec<u8>, ProviderError> {
+        self.write_section_at_generation_inner(sub_tag, generation)
     }
 
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
