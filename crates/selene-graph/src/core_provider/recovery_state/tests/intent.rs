@@ -50,6 +50,7 @@ const SCHEMA_CHANGE_INTENT: &[SchemaChangeIntent] = &[
     schema_intent!(apply intent_text_index_created),
     schema_intent!(apply intent_text_index_dropped),
     schema_intent!(apply intent_node_type_altered_v2),
+    schema_intent!(apply intent_edge_type_altered_v2),
 ];
 
 fn intent_graph_created() -> SchemaChange {
@@ -193,6 +194,16 @@ fn intent_node_type_altered_v2() -> SchemaChange {
     SchemaChange::NodeTypeAlteredV2 {
         graph_type: test_graph_type_id(),
         label: db_string("IntentNode").unwrap(),
+        properties: smallvec![],
+    }
+}
+
+fn intent_edge_type_altered_v2() -> SchemaChange {
+    SchemaChange::EdgeTypeAlteredV2 {
+        graph_type: test_graph_type_id(),
+        name: db_string("IntentEdge").unwrap(),
+        source_node_type: Some(selene_core::EdgeEndpointDef::Any),
+        target_node_type: None,
         properties: smallvec![],
     }
 }

@@ -172,11 +172,7 @@ fn wal_replay_altered_oneof_edge_type() {
                 ..
             },
             Change::SchemaChanged {
-                change: SchemaChange::EdgeTypeDropped { .. },
-                ..
-            },
-            Change::SchemaChanged {
-                change: SchemaChange::EdgeTypeAddedV2 { .. },
+                change: SchemaChange::EdgeTypeAlteredV2 { .. },
                 ..
             }
         ]

@@ -5,8 +5,8 @@ use std::sync::Arc;
 use selene_core::{Change, DbString, SchemaChange};
 use smallvec::SmallVec;
 
-use super::catalog::{core_edge_type_def, core_property_def, implicit_graph_type_id};
-use crate::{EdgeEndpointDef, GraphError, GraphResult, Mutator, PropertyTypeDef};
+use super::catalog::{core_edge_endpoint_def, core_property_def, implicit_graph_type_id};
+use crate::{EdgeEndpointDef, GraphError, GraphResult, GraphTypeDef, Mutator, PropertyTypeDef};
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Add nullable properties to an existing node type.
@@ -64,7 +64,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ///
     /// Returns [`GraphError::Inconsistent`] when the graph is open, the edge
     /// type does not exist, an endpoint would narrow, a new property is
-    /// required, or a duplicate property has a different descriptor.
+    /// required, or a duplicate property has a different descriptor. Invalid
+    /// defaults and property or endpoint descriptors that cannot round-trip
+    /// losslessly through the durable schema codec are rejected before
+    /// transaction state changes.
     pub fn alter_edge_type(
         &mut self,
         name: DbString,
@@ -79,35 +82,46 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             });
         };
         let mut edge_type = graph_type.edge_types[index as usize].clone();
-        if let Some(source) = source_node_type {
-            ensure_endpoint_widening("source", &name, &edge_type.source_node_type, &source)?;
-            edge_type.source_node_type = source;
+        let source_node_type = encode_changed_endpoint(
+            &graph_type,
+            &name,
+            "source",
+            &edge_type.source_node_type,
+            source_node_type,
+        )?;
+        if let Some((next, _)) = source_node_type.as_ref() {
+            edge_type.source_node_type = next.clone();
         }
-        if let Some(target) = target_node_type {
-            ensure_endpoint_widening("target", &name, &edge_type.target_node_type, &target)?;
-            edge_type.target_node_type = target;
+        let target_node_type = encode_changed_endpoint(
+            &graph_type,
+            &name,
+            "target",
+            &edge_type.target_node_type,
+            target_node_type,
+        )?;
+        if let Some((next, _)) = target_node_type.as_ref() {
+            edge_type.target_node_type = next.clone();
         }
+        let mut added = SmallVec::new();
         for property in properties {
-            merge_added_property(&name, &mut edge_type.properties, property)?;
+            merge_added_edge_property(&name, &mut edge_type.properties, &mut added, property)?;
         }
-        graph_type.edge_types[index as usize] = edge_type.clone();
+        if source_node_type.is_none() && target_node_type.is_none() && added.is_empty() {
+            return Ok(());
+        }
+        graph_type.edge_types[index as usize] = edge_type;
         graph_type.validate_ref()?;
 
         let graph_id = self.txn.read().graph_id();
-        self.txn.guard_mut().meta.bound_type = Some(Arc::new(graph_type.clone()));
+        self.txn.guard_mut().meta.bound_type = Some(Arc::new(graph_type));
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,
-            change: SchemaChange::EdgeTypeDropped {
+            change: SchemaChange::EdgeTypeAlteredV2 {
                 graph_type: implicit_graph_type_id(),
-                name: name.clone(),
-            },
-        });
-        self.txn.changes.push(Change::SchemaChanged {
-            graph: graph_id,
-            change: SchemaChange::EdgeTypeAddedV2 {
-                graph_type: implicit_graph_type_id(),
-                label: edge_type.name.clone(),
-                def: core_edge_type_def(&graph_type, &edge_type)?,
+                name,
+                source_node_type: source_node_type.map(|(_, encoded)| encoded),
+                target_node_type: target_node_type.map(|(_, encoded)| encoded),
+                properties: added,
             },
         });
         Ok(())
@@ -165,11 +179,26 @@ fn merge_added_node_property(
     Ok(())
 }
 
-fn merge_added_property(
+fn merge_added_edge_property(
     edge_type: &DbString,
     properties: &mut Vec<PropertyTypeDef>,
+    added: &mut SmallVec<[selene_core::PropertyDef; 4]>,
     property: PropertyTypeDef,
 ) -> GraphResult<()> {
+    if let Some(existing) = properties
+        .iter()
+        .find(|candidate| candidate.name == property.name)
+    {
+        if existing == &property {
+            return Ok(());
+        }
+        return Err(GraphError::Inconsistent {
+            reason: format!(
+                "ALTER EDGE TYPE :{edge_type} cannot redefine property {}",
+                property.name
+            ),
+        });
+    }
     if property.required {
         return Err(GraphError::Inconsistent {
             reason: format!(
@@ -178,22 +207,58 @@ fn merge_added_property(
             ),
         });
     }
-    let Some(existing) = properties
-        .iter()
-        .find(|candidate| candidate.name == property.name)
-    else {
-        properties.push(property);
-        return Ok(());
-    };
-    if existing == &property {
-        return Ok(());
+    crate::type_validator::validate_property_default(&property)?;
+    let encoded = core_property_def(&property)?;
+    let decoded = crate::core_provider::decode_schema_property(&encoded).map_err(|error| {
+        GraphError::Inconsistent {
+            reason: format!(
+                "ALTER EDGE TYPE :{edge_type} property {} cannot be represented durably: {error}",
+                property.name
+            ),
+        }
+    })?;
+    if decoded != property {
+        return Err(GraphError::Inconsistent {
+            reason: format!(
+                "ALTER EDGE TYPE :{edge_type} property {} cannot be represented losslessly in WAL",
+                property.name
+            ),
+        });
     }
-    Err(GraphError::Inconsistent {
-        reason: format!(
-            "ALTER EDGE TYPE :{edge_type} cannot redefine property {}",
-            property.name
-        ),
-    })
+    properties.push(property);
+    added.push(encoded);
+    Ok(())
+}
+
+fn encode_changed_endpoint(
+    graph_type: &GraphTypeDef,
+    edge_type: &DbString,
+    role: &'static str,
+    current: &EdgeEndpointDef,
+    next: Option<EdgeEndpointDef>,
+) -> GraphResult<Option<(EdgeEndpointDef, selene_core::EdgeEndpointDef)>> {
+    let Some(next) = next else {
+        return Ok(None);
+    };
+    ensure_endpoint_widening(role, edge_type, current, &next)?;
+    if current == &next {
+        return Ok(None);
+    }
+    let encoded = core_edge_endpoint_def(graph_type, edge_type.clone(), &next)?;
+    let decoded = crate::core_provider::decode_schema_edge_endpoint(graph_type, &encoded, role)
+        .map_err(|error| GraphError::Inconsistent {
+            reason: format!(
+                "ALTER EDGE TYPE :{edge_type} {role} endpoint cannot be represented durably: {error}"
+            ),
+        })?;
+    if decoded != next {
+        return Err(GraphError::Inconsistent {
+            reason: format!(
+                "ALTER EDGE TYPE :{edge_type} {role} endpoint cannot be represented losslessly in WAL"
+            ),
+        });
+    }
+    Ok(Some((next, encoded)))
 }
 
 fn ensure_endpoint_widening(

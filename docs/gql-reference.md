@@ -659,7 +659,9 @@ ALTER EDGE TYPE :CONCERNS (
 endpoint set and may add nullable properties. Existing endpoint members must
 remain present; endpoint narrowing, property redefinition, and new `NOT NULL`
 properties reject during catalog execution. The migration is durable catalog
-state and replays through WAL recovery as the updated edge type definition.
+state. WAL recovery applies only the changed endpoints and newly added
+properties to the named edge type in place, preserving catalog declaration
+order and leaving unchanged property descriptors untouched.
 
 ### `DROP NODE TYPE` / `DROP EDGE TYPE`
 

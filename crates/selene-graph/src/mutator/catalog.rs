@@ -351,7 +351,7 @@ pub(super) fn core_edge_type_def(
     })
 }
 
-fn core_edge_endpoint_def(
+pub(super) fn core_edge_endpoint_def(
     graph_type: &GraphTypeDef,
     edge_name: DbString,
     endpoint: &EdgeEndpointDef,

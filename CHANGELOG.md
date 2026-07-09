@@ -15,7 +15,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ALTER EDGE TYPE` can now widen an existing edge type's source and/or target
   endpoint set and add optional properties as a forward-only schema migration.
   Narrowing endpoints, redefining properties, and adding required properties
-  are rejected.
+  are rejected. WAL replay applies endpoint/property deltas in place, preserving
+  edge-type declaration order and untouched legacy property descriptors.
 - `ALTER NODE TYPE` can now add optional properties to an existing node type in
   a closed graph type without dropping its instances. The
   implementation-defined migration preserves node-type ordering during WAL

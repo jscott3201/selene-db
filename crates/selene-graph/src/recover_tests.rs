@@ -26,6 +26,9 @@ mod catalog_ddl;
 #[path = "recover_tests/alter_node_type.rs"]
 mod alter_node_type;
 
+#[path = "recover_tests/alter_edge_type.rs"]
+mod alter_edge_type;
+
 #[path = "recover_tests/oneof.rs"]
 mod oneof;
 
