@@ -103,8 +103,9 @@ enum CoreInner {
 /// Durable WAL state owned by a live [`CoreProvider`].
 ///
 /// The HLC counter is seeded from [`WalWriter::last_sequence`]. On a fresh WAL
-/// this is zero and the first commit receives `HlcTimestamp::new(1, 0)`; after
-/// reopening, the next timestamp advances past the recovered WAL sequence.
+/// this is zero and the first physical commit or checkpoint-marker entry
+/// receives `HlcTimestamp::new(1, 0)`; after reopening, the next timestamp
+/// advances past the recovered WAL sequence.
 pub struct DurableState {
     writer: Mutex<WalWriter>,
     next_hlc: AtomicU64,
@@ -245,8 +246,9 @@ impl CoreProvider {
     ///
     /// # Errors
     ///
-    /// Rejects recovery-mode providers, live providers without a WAL, an empty
-    /// epoch at sequence zero, and WAL paths whose filename is not `wal.log`.
+    /// Rejects recovery-mode providers, live providers without a WAL, and WAL
+    /// paths whose filename is not `wal.log`. Sequence zero is a valid base:
+    /// the coordinated checkpoint watermark advances it before rotation.
     pub(crate) fn checkpoint_target(&self) -> GraphResult<CheckpointTarget> {
         let inner = self.inner.lock();
         match &*inner {
@@ -263,18 +265,18 @@ impl CoreProvider {
         }
     }
 
-    /// Rotate a populated snapshot builder through the owned live WAL writer.
+    /// Append a physical checkpoint watermark and rotate a populated snapshot.
     ///
     /// The writer target is revalidated under its mutex immediately before the
-    /// crash-safe MANIFEST rotation. The builder sequence must still equal the
-    /// writer high-water mark; [`WalWriter::rotate_with_manifest`] enforces that
-    /// final equality.
+    /// crash-safe MANIFEST rotation. The builder sequence must be exactly one
+    /// greater than the writer high-water mark. The marker consumes the CORE
+    /// HLC counter so later commit timestamps remain monotonic.
     ///
     /// # Errors
     ///
     /// Returns the same availability errors as [`Self::checkpoint_target`] and
     /// propagates snapshot, archive, MANIFEST, and active-WAL reset failures.
-    pub(crate) fn rotate_checkpoint(
+    pub(crate) fn rotate_checkpoint_with_watermark(
         &self,
         builder: SnapshotBuilder,
     ) -> GraphResult<WalRotationOutcome> {
@@ -284,9 +286,14 @@ impl CoreProvider {
                 durable: Some(durable),
                 ..
             } => {
+                let seconds = durable
+                    .next_hlc
+                    .fetch_add(1, Ordering::Relaxed)
+                    .saturating_add(1);
                 let mut writer = durable.writer.lock();
-                checkpoint_target_for_writer(&writer)?;
-                writer.rotate_with_manifest(builder).map_err(Into::into)
+                writer
+                    .rotate_with_checkpoint_watermark(builder, HlcTimestamp::new(seconds, 0))
+                    .map_err(Into::into)
             }
             CoreInner::Live { durable: None, .. } => Err(checkpoint_unavailable(
                 "ordered checkpoint requires a graph opened with a WAL",
@@ -372,11 +379,6 @@ fn checkpoint_target_for_writer(writer: &WalWriter) -> GraphResult<CheckpointTar
         )));
     }
     let sequence = writer.last_sequence();
-    if sequence == 0 {
-        return Err(checkpoint_unavailable(
-            "ordered checkpoint requires a nonzero durable WAL high-water sequence",
-        ));
-    }
     let dir = checkpoint_dir(writer.path());
     Ok(CheckpointTarget { dir, sequence })
 }

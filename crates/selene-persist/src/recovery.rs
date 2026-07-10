@@ -28,6 +28,11 @@ pub struct RecoveryOutcome {
     pub snapshot_providers_invoked: Vec<[u8; 4]>,
     /// Number of WAL `Change` values delivered to provider fan-out.
     pub wal_changes_applied: u64,
+    /// Number of logical WAL commit frames applied after the snapshot.
+    ///
+    /// This counts ordinary empty commits, but excludes checkpoint watermarks
+    /// and replicated frames rejected by deduplication.
+    pub wal_commit_entries_applied: u64,
     /// Number of replicated `Change` values skipped by `(source, sequence)`
     /// dedupe.
     pub replicated_changes_deduplicated: u64,
@@ -46,6 +51,7 @@ impl RecoveryOutcome {
             providers_invoked: Vec::new(),
             snapshot_providers_invoked: Vec::new(),
             wal_changes_applied: 0,
+            wal_commit_entries_applied: 0,
             replicated_changes_deduplicated: 0,
             manifest_present: false,
         }
@@ -71,8 +77,10 @@ impl RecoveryOutcome {
 /// forward.
 ///
 /// Snapshot sections are routed by provider tag to [`ProviderRegistry`]. WAL
-/// entries after the applied snapshot sequence are decoded and fanned out to
-/// every registered provider in deterministic provider-tag order.
+/// entries after the applied snapshot sequence are decoded. Checkpoint
+/// watermarks advance physical sequence only and are skipped; logical commit
+/// changes are fanned out to every registered provider in deterministic
+/// provider-tag order.
 /// The input directory is canonicalized once for the entire pass, and a present
 /// active WAL must be a regular final directory entry before any provider
 /// callback runs.
@@ -267,6 +275,9 @@ fn replay_wal(
         };
         let entry = view.into_entry()?;
         outcome.last_wal_seq = entry.header.sequence;
+        if entry.header.is_checkpoint_watermark() {
+            continue;
+        }
         if skip_replicated_entry(
             entry.header.origin,
             entry.changes.len(),
@@ -275,6 +286,7 @@ fn replay_wal(
         ) {
             continue;
         }
+        outcome.wal_commit_entries_applied = outcome.wal_commit_entries_applied.saturating_add(1);
         if entry.changes.is_empty() {
             continue;
         }

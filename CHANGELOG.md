@@ -37,6 +37,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Coordinated graph checkpoints now append a typed, empty WAL watermark before
+  MANIFEST rotation, so every checkpoint receives a fresh physical sequence
+  even when no user mutation followed the prior snapshot. This makes
+  compaction and other WAL-free maintenance durably checkpointable, permits an
+  empty graph to checkpoint at sequence 1, and keeps recovery generation
+  accounting based on logical commit frames rather than physical watermark
+  entries.
 - WAL writers now resolve and retain the canonical parent directory before
   opening the active file, reject a final `wal.log` symlink or non-file entry,
   and force MANIFEST rotation snapshots onto that anchor after directory
@@ -49,8 +56,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   regressing the live epoch or deleting an in-flight checkpoint's artifacts.
 - MANIFEST-backed rotation now accepts pre-existing same-sequence snapshots and
   WAL archives only after exact regular-file byte comparison with the newly
-  written temporary. Completed same-sequence checkpoints return an explicit
-  already-current outcome instead of comparing or recreating the historical
+  written temporary. Completed same-sequence lower-level rotations return an
+  explicit already-current outcome instead of comparing or recreating the historical
   archive from the header-only active WAL. Ahead-MANIFEST and invalid committed
   artifact states poison stale writers until reopen, preventing sequence reuse
   that recovery could otherwise filter.

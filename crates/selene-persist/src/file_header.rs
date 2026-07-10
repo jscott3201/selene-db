@@ -23,6 +23,12 @@ pub const WAL_VERSION_MAJOR: u16 = 2;
 /// variants ahead of `List` / `Record`. `#[serde(default)]` is a no-op for
 /// postcard's positional decode, so pre-descriptor WALs must be rejected by the
 /// version gate rather than mis-decoded as shifted fields/discriminants.
+///
+/// Typed checkpoint watermarks did not bump this version: they use the existing
+/// entry-header flag field plus the already-valid empty `Vec<Change>` payload.
+/// Pre-watermark v2.2 readers preserve graph data but can conservatively fold a
+/// physical watermark into graph generation, so exact generation continuity
+/// across a downgrade is not supported after a coordinated checkpoint.
 pub const WAL_VERSION_MINOR: u16 = 2;
 /// Fixed WAL file header length.
 pub const WAL_FILE_HEADER_LEN: usize = 16;

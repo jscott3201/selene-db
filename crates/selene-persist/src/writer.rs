@@ -1,27 +1,24 @@
 //! Append-only WAL writer.
 
-use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+mod append;
 
-use selene_core::{Change, HlcTimestamp, Origin, metrics};
+use std::fs::File;
+use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+
+use selene_core::HlcTimestamp;
 
 use crate::compression::ZstdCompressor;
-use crate::entry_header::{
-    encode_entry_header, ensure_payload_len, read_entry_header, validate_principal,
-};
+use crate::entry_header::{ensure_payload_len, read_entry_header};
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::manifest::Manifest;
 use crate::manifest_lock::{ManifestEpochGuard, canonical_directory_path};
-use crate::payload::{WalCompression, encode_changes_with_compressor, verify_checksum};
+use crate::payload::{WalCompression, verify_checksum};
 use crate::retention::{PruneOutcome, RetentionPolicy};
 use crate::snapshot_writer::SnapshotBuilder;
 use crate::wal_path::open_locked_wal;
 use crate::writer_rotation::{RotationInputs, WalRotationOutcome, rotate_with_manifest};
-use crate::{PersistError, PersistResult, WalEntryHeader};
-
-const WAL_RECORD_BUFFER_RETAIN_LIMIT: usize = 4 * 1024 * 1024;
+use crate::{PersistError, PersistResult};
 
 /// Conventional v1.0 single-file WAL name used by embedders.
 pub const DEFAULT_WAL_FILE_NAME: &str = "wal.log";
@@ -216,90 +213,6 @@ impl WalWriter {
         })
     }
 
-    /// Append one WAL entry and return its assigned sequence.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PersistError::WalWriterPoisoned`] after rotation detects
-    /// persistence-state divergence, or codec, cap, compression, or I/O
-    /// errors. On any error, the in-memory sequence counter is **not** advanced
-    /// and the file is
-    /// truncated back to the last fully-committed entry, so the next
-    /// append (or a reopen + retry) observes a consistent state.
-    #[tracing::instrument(
-        name = "selene.persist.wal.append",
-        skip(self, principal, changes),
-        fields(sequence = self.last_sequence + 1, change_count = changes.len(), has_principal = principal.is_some())
-    )]
-    pub fn append(
-        &mut self,
-        hlc: HlcTimestamp,
-        origin: Origin,
-        principal: Option<Arc<[u8]>>,
-        changes: &[Change],
-    ) -> PersistResult<u64> {
-        self.ensure_usable()?;
-        validate_principal(principal.as_deref())?;
-        let payload =
-            encode_changes_with_compressor(changes, self.compression, Some(&mut self.compressor))?;
-        let sequence = self.last_sequence + 1;
-        let header = WalEntryHeader::new(
-            payload.bytes.len(),
-            payload.checksum_lo,
-            sequence,
-            hlc,
-            origin,
-            payload.flags,
-            principal,
-        )?;
-        let header_bytes = encode_entry_header(&header)?;
-        let pending_count = self.entries_since_fsync.saturating_add(1);
-        let needs_fsync = match self.sync_policy {
-            SyncPolicy::EveryN(threshold) => pending_count >= threshold,
-            SyncPolicy::OnFlushOnly => false,
-        };
-
-        // Single contiguous record. Write it in one syscall via a Vec
-        // assembly so partial writes are easier to reason about.
-        self.record.clear();
-        self.record
-            .reserve(header_bytes.len() + payload.bytes.len());
-        self.record.extend_from_slice(&header_bytes);
-        self.record.extend_from_slice(&payload.bytes);
-        let record_len = self.record.len();
-
-        let result = (|| -> PersistResult<()> {
-            self.file.write_all(&self.record)?;
-            if needs_fsync {
-                self.file.sync_data()?;
-            }
-            Ok(())
-        })();
-
-        match result {
-            Ok(()) => {
-                let new_offset = self.committed_offset.saturating_add(record_len as u64);
-                self.committed_offset = new_offset;
-                self.last_sequence = sequence;
-                self.entries_since_fsync = if needs_fsync { 0 } else { pending_count };
-                metrics::counter_inc(metrics::WAL_APPENDS_TOTAL);
-                self.trim_record_buffer();
-                Ok(sequence)
-            }
-            Err(error) => {
-                self.rollback_to_committed_offset();
-                self.trim_record_buffer();
-                Err(error)
-            }
-        }
-    }
-
-    fn trim_record_buffer(&mut self) {
-        if self.record.capacity() > WAL_RECORD_BUFFER_RETAIN_LIMIT {
-            self.record = Vec::new();
-        }
-    }
-
     /// Flush + fsync without appending. Useful before snapshot publication.
     ///
     /// # Errors
@@ -418,6 +331,79 @@ impl WalWriter {
         #[cfg(test)]
         crate::wal_path::run_after_rotation_preflight_hook();
         let mut epoch_guard = ManifestEpochGuard::acquire(&dir)?;
+        let prior_manifest = self.read_prior_manifest(&epoch_guard, builder.sequence())?;
+        let target_already_committed = prior_manifest
+            .as_ref()
+            .is_some_and(|manifest| manifest.live_snapshot_seq == builder.sequence())
+            || (prior_manifest.is_none()
+                && self.snapshot_seq == builder.sequence()
+                && self.committed_offset == WAL_FILE_HEADER_LEN as u64);
+        self.finish_rotation(
+            builder,
+            &mut epoch_guard,
+            prior_manifest,
+            target_already_committed,
+        )
+    }
+
+    /// Append a typed checkpoint watermark and rotate its prepared snapshot.
+    ///
+    /// `builder.sequence()` must be exactly one greater than this writer's
+    /// current high-water mark. The method holds `MANIFEST.lock` while it
+    /// rejects a stale writer, appends the local/principal-free/empty marker,
+    /// flushes it through the existing rotation barrier, and commits the new
+    /// snapshot epoch. Provider serialization should be complete before this
+    /// call so preparation failures cannot consume a physical sequence.
+    ///
+    /// Unlike [`Self::rotate_with_manifest`], this operation intentionally
+    /// creates a fresh epoch even when the active WAL is header-only. The
+    /// marker is a physical sequence watermark, not a logical graph commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns typed layout, sequence, stale-MANIFEST, marker append, or
+    /// rotation errors. A marker append failure poisons the writer; reopen it
+    /// before further mutation. Once append succeeds, the marker sequence is
+    /// consumed even if a pre-MANIFEST artifact collision leaves the writer
+    /// usable. Such a caller must prepare a fresh builder for the new
+    /// `last_sequence + 1`, not retry the old builder. Ambiguous or
+    /// post-MANIFEST failures follow [`Self::rotate_with_manifest`]'s
+    /// poison/reopen contract.
+    pub fn rotate_with_checkpoint_watermark(
+        &mut self,
+        builder: SnapshotBuilder,
+        hlc: HlcTimestamp,
+    ) -> PersistResult<WalRotationOutcome> {
+        self.ensure_usable()?;
+        let expected_sequence =
+            self.last_sequence
+                .checked_add(1)
+                .ok_or(PersistError::WalSequenceExhausted {
+                    last_sequence: self.last_sequence,
+                })?;
+        let dir = self.validate_rotation_layout(&builder)?;
+        if builder.sequence() != expected_sequence {
+            return Err(PersistError::WalCheckpointSequenceMismatch {
+                snapshot_seq: builder.sequence(),
+                expected_sequence,
+            });
+        }
+        #[cfg(test)]
+        crate::wal_path::run_after_rotation_preflight_hook();
+        let mut epoch_guard = ManifestEpochGuard::acquire(&dir)?;
+        let prior_manifest = self.read_prior_manifest(&epoch_guard, self.last_sequence)?;
+        if let Err(error) = self.append_checkpoint_watermark_record(hlc) {
+            self.poisoned = true;
+            return Err(error);
+        }
+        self.finish_rotation(builder, &mut epoch_guard, prior_manifest, false)
+    }
+
+    fn read_prior_manifest(
+        &mut self,
+        epoch_guard: &ManifestEpochGuard,
+        maximum_sequence: u64,
+    ) -> PersistResult<Option<Manifest>> {
         let prior_manifest = match Manifest::read(epoch_guard.dir()) {
             Ok(manifest) => manifest,
             Err(error) => {
@@ -435,20 +421,24 @@ impl WalWriter {
             });
         }
         if let Some(manifest) = &prior_manifest
-            && manifest.live_snapshot_seq > builder.sequence()
+            && manifest.live_snapshot_seq > maximum_sequence
         {
             self.poisoned = true;
             return Err(PersistError::WalRotationManifestAhead {
                 manifest_sequence: manifest.live_snapshot_seq,
-                snapshot_sequence: builder.sequence(),
+                snapshot_sequence: maximum_sequence,
             });
         }
-        let target_already_committed = prior_manifest
-            .as_ref()
-            .is_some_and(|manifest| manifest.live_snapshot_seq == builder.sequence())
-            || (prior_manifest.is_none()
-                && self.snapshot_seq == builder.sequence()
-                && self.committed_offset == WAL_FILE_HEADER_LEN as u64);
+        Ok(prior_manifest)
+    }
+
+    fn finish_rotation(
+        &mut self,
+        builder: SnapshotBuilder,
+        epoch_guard: &mut ManifestEpochGuard,
+        prior_manifest: Option<Manifest>,
+        target_already_committed: bool,
+    ) -> PersistResult<WalRotationOutcome> {
         // Every input invariant above is checked before this durability write.
         // Invalid callers must not flush group-commit state or create artifacts.
         self.flush()?;
@@ -460,7 +450,7 @@ impl WalWriter {
             snapshot_seq: self.snapshot_seq,
             prior_manifest,
         };
-        let (outcome, state) = match rotate_with_manifest(inputs, builder, &mut epoch_guard) {
+        let (outcome, state) = match rotate_with_manifest(inputs, builder, epoch_guard) {
             Ok(result) => result,
             Err(error @ PersistError::WalRotationIncomplete { .. }) => {
                 self.poisoned = true;
@@ -480,6 +470,19 @@ impl WalWriter {
     }
 
     fn validate_rotation_inputs(&self, builder: &SnapshotBuilder) -> PersistResult<PathBuf> {
+        if builder.sequence() == 0 || self.last_sequence == 0 {
+            return Err(PersistError::WalRotationZeroSequence);
+        }
+        if builder.sequence() != self.last_sequence {
+            return Err(PersistError::WalRotationSequenceMismatch {
+                snapshot_seq: builder.sequence(),
+                last_sequence: self.last_sequence,
+            });
+        }
+        self.validate_rotation_layout(builder)
+    }
+
+    fn validate_rotation_layout(&self, builder: &SnapshotBuilder) -> PersistResult<PathBuf> {
         let observed_name = self
             .path
             .file_name()
@@ -489,15 +492,6 @@ impl WalWriter {
             return Err(PersistError::UnexpectedActiveWal {
                 observed: observed_name,
                 expected: DEFAULT_WAL_FILE_NAME,
-            });
-        }
-        if builder.sequence() == 0 || self.last_sequence == 0 {
-            return Err(PersistError::WalRotationZeroSequence);
-        }
-        if builder.sequence() != self.last_sequence {
-            return Err(PersistError::WalRotationSequenceMismatch {
-                snapshot_seq: builder.sequence(),
-                last_sequence: self.last_sequence,
             });
         }
         let wal_dir = self
@@ -549,20 +543,6 @@ impl WalWriter {
             Err(PersistError::WalWriterPoisoned)
         } else {
             Ok(())
-        }
-    }
-
-    /// Best-effort rollback to the last committed offset on append failure.
-    /// On rollback failure, the writer is left in a half-consistent state;
-    /// the caller should reopen the WAL (which scan-truncates on open) to
-    /// recover.
-    fn rollback_to_committed_offset(&mut self) {
-        if let Err(error) = self.file.set_len(self.committed_offset) {
-            tracing::error!(%error, "failed to truncate WAL after append error");
-            return;
-        }
-        if let Err(error) = self.file.seek(SeekFrom::Start(self.committed_offset)) {
-            tracing::error!(%error, "failed to seek WAL after append error");
         }
     }
 }
@@ -664,3 +644,7 @@ fn scan_existing(file: &mut File) -> PersistResult<Scan> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "writer/checkpoint_watermark_tests.rs"]
+mod checkpoint_watermark_tests;

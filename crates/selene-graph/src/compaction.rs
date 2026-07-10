@@ -10,7 +10,9 @@
 //! and atomically republishes the dense graph in the same total publication
 //! order as commits. Snapshot I/O remains a separate, caller-driven maintenance
 //! step. Database strings are plain owned values, so compaction has no
-//! string-pool reclamation work to perform.
+//! string-pool reclamation work to perform. A coordinated checkpoint appends a
+//! typed physical WAL watermark, so the newly dense layout can be published at
+//! a fresh snapshot sequence without requiring a dummy user mutation.
 //!
 //! Because 4a left edges + adjacency keyed by stable external `NodeId`, a row
 //! renumber does not touch edge endpoints or adjacency — only the row-keyed

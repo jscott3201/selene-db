@@ -474,25 +474,40 @@ fn live_mutate_snapshot_recover_matches_state() {
 }
 
 #[test]
-fn recover_advances_generation_to_last_replayed_wal_sequence() {
-    // After recovery, the next mutation must increment from the recovered tip,
-    // not from the snapshot's stale generation. Regression guard for the bug
-    // where SharedGraph::recover discarded RecoveryOutcome.last_wal_seq.
+fn recover_adds_logical_commit_count_when_wal_sequence_differs() {
+    // Physical WAL sequence is deliberately far above graph generation. One
+    // replayed commit must advance generation exactly once, not jump to the WAL
+    // sequence and not remain at the snapshot generation.
     let dir = temp_dir("generation");
     let shared = sample_shared_graph();
     let snapshot_generation = shared.read().meta.generation;
-    write_snapshot(&dir, &shared, snapshot_generation);
-    // Append two WAL entries past the snapshot — each entry advances the
-    // sequence by 1 because WalWriter starts at snapshot_seq+1.
-    append_wal(&dir, snapshot_generation, &[node_created(60)]);
+    write_snapshot(&dir, &shared, 100);
+    append_wal(&dir, 100, &[node_created(60)]);
 
     let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
     let recovered_generation = recovered.read().meta.generation;
-    assert!(
-        recovered_generation > snapshot_generation,
-        "expected recovered generation {recovered_generation} to advance past \
-         snapshot generation {snapshot_generation} after WAL replay"
-    );
+    assert_eq!(recovered_generation, snapshot_generation + 1);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_counts_unflagged_empty_wal_commit_as_generation() {
+    let dir = temp_dir("empty-commit-generation");
+    let graph_id = GraphId::new(71);
+    let shared = SharedGraph::builder(graph_id)
+        .with_wal(dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let committed = shared.begin_write().commit().unwrap();
+    assert!(committed.changes.is_empty());
+    assert_eq!(shared.read().meta.generation, 1);
+    drop(shared);
+
+    let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
+    assert_eq!(recovered.read().meta.generation, 1);
+    drop(recovered);
     let _ = fs::remove_dir_all(dir);
 }
 

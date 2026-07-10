@@ -35,7 +35,7 @@ fn generation_aware_core_snapshot_rejects_a_different_generation() {
 }
 
 #[test]
-fn checkpoint_target_requires_live_nonzero_default_wal() {
+fn checkpoint_target_requires_live_default_wal_and_accepts_zero_base() {
     let snapshot = Arc::new(ArcSwap::from_pointee(SeleneGraph::new(GraphId::new(
         91_002,
     ))));
@@ -51,10 +51,10 @@ fn checkpoint_target_requires_live_nonzero_default_wal() {
         Arc::clone(&snapshot),
         Some(DurableState::new(zero_writer)),
     );
-    assert!(matches!(
-        zero.checkpoint_target(),
-        Err(GraphError::Inconsistent { reason }) if reason.contains("nonzero durable WAL")
-    ));
+    let zero_target = zero
+        .checkpoint_target()
+        .expect("watermark can advance a zero-sequence WAL");
+    assert_eq!(zero_target.sequence, 0);
 
     let custom_path = zero_path.parent().unwrap().join("custom-checkpoint.wal");
     let custom_writer = WalWriter::open(

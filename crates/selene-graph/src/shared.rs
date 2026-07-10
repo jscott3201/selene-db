@@ -279,7 +279,10 @@ impl SharedGraph {
     /// The snapshot directory and sequence come from the graph's owned
     /// `wal.log`, and durability barriers are mandatory. Use
     /// [`CheckpointConfig`](crate::CheckpointConfig) only to select section
-    /// compression.
+    /// compression. After every provider section is prepared, the checkpoint
+    /// reserves a fresh physical WAL sequence with a typed watermark and
+    /// rotates at that sequence. The watermark is not a graph commit and does
+    /// not advance graph or provider generation.
     ///
     /// # Panics
     ///
@@ -288,9 +291,9 @@ impl SharedGraph {
     ///
     /// # Errors
     ///
-    /// Returns an error when the graph has no owned WAL, the WAL high-water
-    /// sequence is zero, it uses a non-default filename, a provider cannot
-    /// encode the ordered generation, or snapshot/WAL rotation fails. Provider
+    /// Returns an error when the graph has no owned WAL, it uses a non-default
+    /// filename, a provider cannot encode the ordered generation, or
+    /// watermark/snapshot/WAL rotation fails. Provider
     /// and snapshot-preparation failures leave the committer usable. A verified
     /// artifact collision that leaves the active epoch unchanged is also
     /// non-poisoning. Other errors or panics after WAL rotation starts require reopening the graph
@@ -333,7 +336,9 @@ impl SharedGraph {
     /// comes from the next snapshot, which encodes the now-dense live graph (the
     /// CORE provider reads the same `snapshot` cell this method publishes into). A
     /// crash before that snapshot simply reloads the pre-compaction state and
-    /// recompacts later — compaction can never lose data.
+    /// recompacts later — compaction can never lose data. A coordinated
+    /// [`Self::checkpoint`] reserves its own physical WAL watermark, so it can
+    /// durably publish this new row layout without waiting for a user mutation.
     ///
     /// The dense graph is built under the write lock on the calling thread
     /// (seal-and-handover, exactly like a commit), and is allocated a publish

@@ -18,7 +18,7 @@ data directory:
 
 | Artifact      | Magic  | Purpose                                           | Cost model                                |
 | :------------ | :----- | :------------------------------------------------ | :---------------------------------------- |
-| Write-ahead log | `SLDB` | One append per committed transaction.              | Constant per commit; bounded by `fsync`.  |
+| Write-ahead log | `SLDB` | One frame per committed transaction, plus physical checkpoint watermarks. | Constant per frame; bounded by `fsync`. |
 | Snapshot      | `SLSN` | Point-in-time freeze of the entire materialized graph. | Linear in graph size; taken on a cadence. |
 
 The WAL gives the engine **per-commit durability**: every `Mutator::commit`
@@ -31,8 +31,8 @@ periodically materializes the live graph as a single archive and trims its
 Recovery is always the same two steps in order:
 
 1. Apply the most recent snapshot (if any).
-2. Replay every WAL entry whose sequence is greater than the snapshot's
-   sequence.
+2. Read WAL frames whose sequence is greater than the snapshot's sequence,
+   skipping physical checkpoint watermarks and replaying logical commits.
 
 This is the only ordering the engine supports. There is no incremental
 snapshot format, no delta snapshot, no shadow paging.
@@ -146,11 +146,12 @@ pub struct WalConfig {
 }
 ```
 
-`snapshot_seq` is the watermark a snapshot publishes; it is written into the
-WAL file header on a fresh file, and used to seed the first appended
-sequence so it lands at `snapshot_seq + 1`. On reopen, the on-disk header
-wins — recovery never moves a snapshot watermark backward, even if the
-config passed in is stale.
+`snapshot_seq` is the physical WAL watermark a snapshot publishes; it is
+written into the WAL file header on a fresh file, and used to seed the first
+appended sequence so it lands at `snapshot_seq + 1`. A coordinated graph
+checkpoint reserves this sequence with a typed checkpoint-watermark frame
+before rotation. On reopen, the on-disk header wins — recovery never moves a
+snapshot watermark backward, even if the config passed in is stale.
 
 ### Append flow
 
@@ -158,6 +159,22 @@ config passed in is stale.
 entry point. On any error during append, the in-memory sequence counter is
 **not** advanced and the file is truncated back to the last fully-committed
 entry. The next append (or a reopen + retry) observes a consistent state.
+
+WAL entry-header flag bit 1 identifies a checkpoint watermark. Such a frame
+must be local, principal-free, and carry an empty `Vec<Change>`; malformed
+marked frames are rejected during decoding. It advances physical WAL order but
+is not a logical graph commit, is not fanned out to recovery providers, and
+does not produce an audit event. An unflagged empty `Vec<Change>` remains an
+ordinary committed transaction and therefore still advances logical graph
+generation.
+
+The marker uses the existing WAL v2.2 entry-header flag field and empty payload
+encoding, so it does not require a format-version bump. Binaries predating
+checkpoint watermarks can decode the frame as an ordinary empty commit and may
+conservatively advance graph generation to the physical snapshot sequence.
+Graph data remains unchanged and generation remains monotonic, but exact
+generation identity is not preserved; downgrading after a newer build has
+written a coordinated checkpoint is therefore not a supported continuity path.
 
 ## Snapshot creation
 
@@ -253,14 +270,24 @@ encoded at that exact generation; later writes wait behind the boundary.
 Lock-free readers continue to use the previously published graph while the
 checkpoint runs.
 
-A successful new checkpoint flushes any pending group commit, writes and fsyncs
-all provider sections, archives the covered WAL, commits the new MANIFEST epoch,
-and resets the active WAL through `WalWriter::rotate_with_manifest`. A repeated
-same-sequence call verifies the exact snapshot and returns without re-archiving
-the header-only active WAL. The returned `CheckpointOutcome` identifies the
-published snapshot through `snapshot_sequence` and `snapshot_path`; its
-lower-level `rotation` is `WalRotationOutcome::Rotated` for a new epoch or
-`WalRotationOutcome::AlreadyCurrent` for that verified no-op.
+A successful checkpoint first prepares every provider section without changing
+the WAL. It then holds `MANIFEST.lock`, rejects a MANIFEST ahead of the writer's
+pre-marker high-water mark, appends a typed checkpoint watermark at the exact
+next sequence, flushes any pending group commit, writes and fsyncs the prepared
+snapshot, archives the covered WAL, commits the new MANIFEST epoch, and resets
+the active WAL through `WalWriter::rotate_with_checkpoint_watermark`. Provider
+preparation failures therefore consume no sequence. The marker and rotation
+are one writer operation, so no other append can split them.
+
+Every coordinated checkpoint creates a fresh physical epoch, including a
+repeated checkpoint with no intervening mutation and the first checkpoint of a
+sequence-zero WAL. The returned `CheckpointOutcome` identifies that epoch
+through `snapshot_sequence` and `snapshot_path`; its `rotation` is
+`WalRotationOutcome::Rotated`. The graph and provider generation encoded in the
+snapshot is unchanged by the watermark. `WalRotationOutcome::AlreadyCurrent`
+remains a lower-level `rotate_with_manifest` crash-retry result when the exact
+requested epoch is already committed; it is not the repeated-checkpoint policy
+of `SharedGraph::checkpoint`.
 
 `SharedGraph::write_snapshot` is deliberately different: it is a standalone,
 uncoordinated snapshot writer for offline tooling, tests, or a host that has
@@ -273,15 +300,17 @@ ordered checkpoint protocol may claim those snapshot sequence paths. Likewise,
 live graph hosts should not collect a `SnapshotBuilder` and try to reproduce the
 graph committer's ordering protocol. Direct callers are still constrained to a
 nonzero sequence, the conventional `wal.log` filename, and a builder directory
-that resolves to the WAL directory. `WalWriter::open` canonicalizes the parent
-once, rejects a final WAL symlink or other non-file entry, and reports that
-anchored path through `WalWriter::path` and rotation outcomes. After validating
-the builder directory, rotation publishes the snapshot through the anchor rather
-than the caller spelling, so retargeting a parent alias cannot split artifacts
-across directories. Before the MANIFEST advances, an existing snapshot or
-archive is accepted only after exact comparison with the newly written
-temporary; a valid but different same-sequence artifact fails closed. An
-incomplete post-MANIFEST rotation, an ahead MANIFEST, or a conflict with an
+that resolves to the WAL directory. The checkpoint-specific writer operation
+instead requires its builder to target exactly `last_sequence + 1` and accepts
+sequence zero only as the pre-marker base. `WalWriter::open` canonicalizes the
+parent once, rejects a final WAL symlink or other non-file entry, and reports
+that anchored path through `WalWriter::path` and rotation outcomes. After
+validating the builder directory, rotation publishes the snapshot through the
+anchor rather than the caller spelling, so retargeting a parent alias cannot
+split artifacts across directories. Before the MANIFEST advances, an existing
+snapshot or archive is accepted only after exact comparison with the newly
+written temporary; a valid but different same-sequence artifact fails closed.
+An incomplete post-MANIFEST rotation, an ahead MANIFEST, or a conflict with an
 already-committed target poisons that writer until it is reopened and recovered.
 
 Every managed MANIFEST epoch mutation uses the persistent per-directory
@@ -313,16 +342,15 @@ security boundary against a process concurrently replacing resolved ancestors
 or `wal.log` between path-based checks. Hostile-directory resistance would
 require no-follow, directory-handle-relative operations beyond this contract.
 
-The coordinated facade requires an owned WAL at the standard `wal.log` path and
-a nonzero WAL high-water sequence, supplied by either a prior snapshot epoch or
-a committed change. A graph without a WAL, a fresh sequence-zero WAL, or a
-custom WAL filename is rejected without poisoning the committer. Provider
-serialization errors or panics also leave the graph usable for a later retry
-because rotation has not begun. An exact collision that leaves the active
-MANIFEST epoch unchanged also leaves the committer usable. Other errors or
-panics after `rotate_with_manifest` starts poison the committer because the
-lower-level API can no longer prove whether the writer stopped before or after
-the MANIFEST commit point. A MANIFEST ahead of the owned writer, or a conflict
+The coordinated facade requires an owned WAL at the standard `wal.log` path. A
+graph without a WAL or with a custom WAL filename is rejected without poisoning
+the committer; a fresh sequence-zero WAL checkpoints successfully at sequence
+1. Provider serialization errors or panics also leave the graph usable for a
+later retry because no marker has been appended. An exact pre-MANIFEST artifact
+collision leaves the committer usable at the newly reserved physical sequence.
+Other errors or panics after the combined watermark/rotation operation starts
+poison the committer because the graph facade can no longer prove which
+durability phase completed. A MANIFEST ahead of the owned writer, or a conflict
 with an already-committed snapshot/archive, also poisons the graph: a later
 commit could otherwise reuse a covered sequence or extend state that recovery
 cannot reproduce. Close and recover the graph before accepting more writes.
@@ -388,10 +416,12 @@ same ordered handoff used by commits; lock-free readers continue to observe the
 previous snapshot until publication. Callers should not invoke the lower-level
 `compact_core()` transform and attempt to republish its result themselves.
 
-Compaction changes only physical row layout. It emits no `Change` and writes no
-WAL entry, so the dense layout becomes durable with the next graph snapshot. A
-crash before that snapshot is logically safe: recovery restores the same graph
-with its prior sparse layout, and a later maintenance tick can compact it again.
+Compaction changes only physical row layout. It emits no logical `Change`; the
+dense layout becomes durable with the next graph snapshot, whose checkpoint
+watermark supplies a fresh physical sequence even without an intervening user
+mutation. A crash before that snapshot is logically safe: recovery restores the
+same graph with its prior sparse layout, and a later maintenance tick can
+compact it again.
 
 GQL-driven hosts can use the equivalent native procedures: inspect
 `CALL selene.compaction_stats()` and invoke maintenance-tier
@@ -401,15 +431,10 @@ transaction. The same scheduling and snapshot-durability rules apply.
 
 For a scheduled live rotation, call `SharedGraph::checkpoint`. Because both
 compaction and checkpointing use the ordered committer queue, compacting before
-the first checkpoint at a WAL high-water mark durably captures the dense layout
-without manually quiescing writers. If that sequence already has a committed
-snapshot, compaction can change its physical bytes without advancing the WAL;
-an immediate same-sequence checkpoint then fails closed with
-`CommittedSnapshotIdentityMismatch`. Because that condition is
-indistinguishable from replacement by a valid foreign snapshot, it poisons the
-committer. Reopen the graph, advance the WAL with the next durable mutation,
-repeat the WAL-free maintenance pass, and then checkpoint the new sequence.
-Direct `SnapshotBuilder` plus
+the next checkpoint durably captures the dense layout without manually
+quiescing writers or forcing a dummy mutation. The checkpoint watermark gives
+the post-compaction snapshot a new path and epoch, so a previously committed
+snapshot is never rewritten in place. Direct `SnapshotBuilder` plus
 `WalWriter::rotate_with_manifest` orchestration is reserved for lower-level
 persistence tooling that does not own a live `SharedGraph`.
 
@@ -429,23 +454,30 @@ let outcome = recover(data_dir, &registry)?;
 
 The orchestrator:
 
-1. Scans `data_dir` for `snapshot.{seq}.snap` files and picks the one with
-   the highest sequence.
-2. Verifies the snapshot's body hash. On mismatch this is a **hard failure**
+1. Reads `MANIFEST` when present and selects its authoritative
+   `live_snapshot_seq`. A legacy MANIFEST-less directory instead scans
+   `snapshot.{seq}.snap` files for the highest sequence.
+2. Verifies the selected snapshot's body hash. On mismatch this is a
+   **hard failure**
    (`PersistError::BodyHashMismatch`); recovery does not silently fall back to
    an older snapshot.
 3. For each section in the snapshot's section table (in declared order),
    looks up the provider by tag and calls `provider.read_section(sub, bytes)`.
    Unknown provider tags surface as `PersistError::UnknownProvider`.
-4. Opens the WAL (`wal.log`) if present. The WAL header's `snapshot_seq` must
-   match the snapshot just applied; mismatch is rejected with
-   `PersistError::WalSnapshotMismatch`.
-5. Iterates WAL entries whose `sequence > snapshot_seq` and fans every
-   decoded `Change` out to every registered provider. The order is
-   deterministic provider-tag ascending order.
-6. Returns a `RecoveryOutcome` with the applied snapshot sequence, the last
-   WAL sequence, the set of providers invoked, and counters for changes
-   applied versus replicated changes deduplicated.
+4. Opens the WAL (`wal.log`) if present. On the legacy MANIFEST-less path, the
+   WAL header's `snapshot_seq` must match the selected snapshot; a MANIFEST-led
+   recovery instead uses its live sequence as the replay floor because the WAL
+   header may legitimately lag during a Phase-3-before-Phase-4 crash.
+5. Iterates WAL entries whose `sequence > snapshot_seq`. Checkpoint watermarks
+   advance the physical `last_wal_seq` but receive no provider callback.
+   Non-deduplicated logical commit frames increment
+   `wal_commit_entries_applied`, including ordinary empty commits; their
+   decoded changes are fanned out in deterministic provider-tag order.
+6. Returns a `RecoveryOutcome` with the applied snapshot sequence, physical
+   last WAL sequence, provider sets, logical commit-frame count, change count,
+   and replicated-deduplication count. `SharedGraph::recover` adds the logical
+   commit-frame count to the snapshot's graph generation; it never derives
+   generation from the physical checkpoint sequence.
 
 For the common case the convenience wrapper in `selene-graph` does the
 registration:
@@ -606,7 +638,7 @@ recoverable or loud, never silent. The expected failure modes:
 | Pre-commit same-sequence snapshot/archive collision | Rotation compares the complete regular-file bytes with its newly written temporary. | `PersistError::ArtifactIdentityMismatch`; the active MANIFEST epoch stays unchanged and the writer remains usable. |
 | Committed snapshot/archive is missing, foreign, or invalid | Retry validates regular-file shape, exact snapshot identity, and already-current retained archive structure; a pre-reset retry can recreate a missing archive from the intact active WAL. | `CommittedSnapshotUnavailable`, `CommittedSnapshotIdentityMismatch`, `CommittedArchiveInvalid`, or the underlying snapshot format/hash error; reopen/recover before accepting writes. |
 | Prune overlaps rotation | Rotation and prune take `MANIFEST.lock` before their authoritative read and hold it through cleanup. | The later operation blocks, reads the committed epoch under the lock, and cannot regress the MANIFEST or delete the new live snapshot/archive. |
-| Checkpoint has no eligible owned WAL   | Graph facade validates the WAL path and nonzero sequence at the ordered boundary. | The call fails without poisoning; configure the standard `wal.log` or commit first. |
+| Checkpoint has no eligible owned WAL   | Graph facade validates ownership and the conventional WAL filename at the ordered boundary. | The call fails without poisoning; configure the standard `wal.log`. A fresh sequence-zero WAL is eligible. |
 | Checkpoint provider preparation fails | Ordered checkpoint returns the provider error before rotation begins. | The committer remains usable; fix the provider and retry. |
 | Other checkpoint rotation errors or panics | The lower-level error cannot always prove which side of the MANIFEST commit point was reached. | The committer is poisoned; close and recover before accepting more writes. |
 | Schema drift (closed graph)            | `CoreProvider` validates declared `GraphType` against the snapshot's bound type. | `GraphError::Provider` at recovery time. |

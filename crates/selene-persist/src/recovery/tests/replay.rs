@@ -15,8 +15,8 @@ use selene_core::{Change, HlcTimestamp, NodeId, Origin};
 
 use super::*;
 use crate::{
-    DEFAULT_WAL_FILE_NAME, PersistError, ProviderRegistry, RecoveryProvider, RecoveryResult,
-    WalEntryHeader, WalReader, recover,
+    DEFAULT_WAL_FILE_NAME, FLAG_CHECKPOINT_WATERMARK, PersistError, ProviderRegistry,
+    RecoveryProvider, RecoveryResult, WalEntryHeader, WalReader, recover,
 };
 
 /// Hand-assemble a WAL file (header + the supplied entries) so a test can
@@ -268,10 +268,9 @@ fn recover_delivers_per_commit_batch_to_on_changes_override() {
 }
 
 #[test]
-fn recover_skips_empty_change_entry_but_advances_seq() {
-    // An entry carrying an empty `Vec<Change>` is skipped by replay's
-    // `if entry.changes.is_empty() { continue; }` guard, but last_wal_seq must
-    // still advance past it (it is a committed, durable sequence).
+fn recover_distinguishes_empty_commit_from_checkpoint_watermark() {
+    // An ordinary empty commit advances logical generation; a flagged
+    // checkpoint watermark advances only the physical sequence.
     use std::io::Write;
 
     use crate::entry_header::encode_entry_header;
@@ -283,11 +282,11 @@ fn recover_skips_empty_change_entry_but_advances_seq() {
     {
         let mut file = fs::File::create(&path).unwrap();
         WalFileHeader::new(0).write_to(&mut file).unwrap();
-        // Entry 1: one change. Entry 2: empty. Entry 3: one change.
-        for (seq, batch) in [
-            (1_u64, vec![change(1)]),
-            (2, Vec::new()),
-            (3, vec![change(3)]),
+        for (seq, batch, watermark) in [
+            (1_u64, vec![change(1)], false),
+            (2, Vec::new(), false),
+            (3, Vec::new(), true),
+            (4, vec![change(4)], false),
         ] {
             let payload = encode_changes(&batch).unwrap();
             let header = WalEntryHeader::new(
@@ -296,7 +295,12 @@ fn recover_skips_empty_change_entry_but_advances_seq() {
                 seq,
                 HlcTimestamp::new(seq, 0),
                 Origin::Local,
-                payload.flags,
+                payload.flags
+                    | if watermark {
+                        FLAG_CHECKPOINT_WATERMARK
+                    } else {
+                        0
+                    },
                 None,
             )
             .unwrap();
@@ -307,14 +311,14 @@ fn recover_skips_empty_change_entry_but_advances_seq() {
     }
     let core = RecordingProvider::new(*b"CORE");
     let outcome = recover(&dir, &registry(std::slice::from_ref(&core))).unwrap();
-    // The empty entry advanced last_wal_seq to 3 but contributed no changes.
-    assert_eq!(outcome.last_wal_seq, 3);
+    assert_eq!(outcome.last_wal_seq, 4);
+    assert_eq!(outcome.wal_commit_entries_applied, 3);
     assert_eq!(outcome.wal_changes_applied, 2);
     assert_eq!(
         core.events(),
         vec![
             Event::Change(Box::new(change(1))),
-            Event::Change(Box::new(change(3)))
+            Event::Change(Box::new(change(4)))
         ]
     );
     let _ = fs::remove_dir_all(dir);
