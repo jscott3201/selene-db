@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::manifest::{Manifest, sync_dir};
+use crate::manifest_lock::ManifestEpochGuard;
 use crate::snapshot_path::snapshot_path;
 use crate::snapshot_writer::SnapshotBuilder;
 use crate::{DEFAULT_WAL_FILE_NAME, PersistError, PersistResult, SnapshotReader};
@@ -351,8 +352,10 @@ pub(crate) struct RotationInputs<'a> {
 pub(crate) fn rotate_with_manifest(
     inputs: RotationInputs<'_>,
     builder: SnapshotBuilder,
-    dir: &Path,
+    epoch_guard: &mut ManifestEpochGuard,
 ) -> PersistResult<(WalRotationOutcome, RotationCommitState)> {
+    let dir = epoch_guard.dir().to_path_buf();
+    let dir = dir.as_path();
     let RotationInputs {
         file,
         wal_path,
@@ -416,7 +419,7 @@ pub(crate) fn rotate_with_manifest(
             active_wal: DEFAULT_WAL_FILE_NAME.to_owned(),
             archived_wal_seqs: Vec::new(),
         }
-        .write_atomic(dir)?;
+        .write_atomic_locked(epoch_guard)?;
     }
 
     // Phase 1 — publish the snapshot. A re-rotate accepts an existing final
@@ -508,6 +511,9 @@ pub(crate) fn rotate_with_manifest(
         Ok(()) => {}
     }
 
+    #[cfg(test)]
+    run_before_manifest_commit_hook();
+
     // Phase 3 — COMMIT. The atomic rename is the linearization point.
     if !manifest_committed_target {
         let mut archived_wal_seqs = prior_archived_seqs;
@@ -522,7 +528,7 @@ pub(crate) fn rotate_with_manifest(
             active_wal: DEFAULT_WAL_FILE_NAME.to_owned(),
             archived_wal_seqs,
         };
-        manifest.write_atomic(dir)?;
+        manifest.write_atomic_locked(epoch_guard)?;
     }
 
     // Phase 4 — safe-after-commit atomic WAL replacement.
@@ -545,6 +551,28 @@ pub(crate) fn rotate_with_manifest(
             committed_offset: WAL_FILE_HEADER_LEN as u64,
         },
     ))
+}
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_MANIFEST_COMMIT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_before_manifest_commit_hook(hook: impl FnOnce() + 'static) {
+    BEFORE_MANIFEST_COMMIT_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+fn run_before_manifest_commit_hook() {
+    BEFORE_MANIFEST_COMMIT_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
 }
 
 fn verify_committed_archive(path: &Path, expected_last_sequence: u64) -> PersistResult<()> {
@@ -600,3 +628,7 @@ fn verify_committed_snapshot(path: &Path) -> PersistResult<()> {
 #[cfg(test)]
 #[path = "writer_rotation/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "writer_rotation/concurrency_tests.rs"]
+mod concurrency_tests;

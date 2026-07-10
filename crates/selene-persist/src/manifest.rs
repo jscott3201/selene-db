@@ -53,6 +53,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
+use crate::manifest_lock::ManifestEpochGuard;
 use crate::{PersistError, PersistResult};
 
 /// MANIFEST file magic.
@@ -195,7 +196,11 @@ impl Manifest {
     /// Writes `MANIFEST.tmp`, fsyncs it (data + metadata — a brand-new file's
     /// size must be durable before the rename can name it), atomically renames
     /// it onto `MANIFEST`, then fsyncs the parent directory so the new directory
-    /// entry is durable.
+    /// entry is durable. Publication holds the directory's persistent
+    /// [`crate::MANIFEST_LOCK_FILE_NAME`] lock so it cannot clobber a concurrent
+    /// rotation or prune temporary. Callers constructing a replacement from a
+    /// prior read must still provide their own semantic freshness policy; the
+    /// lock serializes publication but is not a compare-and-swap operation.
     ///
     /// # Why this is the commit point
     ///
@@ -210,9 +215,18 @@ impl Manifest {
     ///
     /// # Errors
     ///
-    /// Returns I/O errors from the tmp write, fsync, rename, or directory
-    /// fsync. A best-effort tmp cleanup runs on any pre-rename failure.
+    /// Returns I/O errors from opening/acquiring the epoch lock or from the tmp
+    /// write, fsync, rename, or directory fsync. Targets whose filesystems do
+    /// not support file locking return that underlying I/O error. A best-effort
+    /// tmp cleanup runs on any pre-rename failure.
     pub fn write_atomic(&self, dir: &Path) -> PersistResult<()> {
+        let mut guard = ManifestEpochGuard::acquire(dir)?;
+        self.write_atomic_locked(&mut guard)
+    }
+
+    /// Publish while the caller holds the directory epoch lock.
+    pub(crate) fn write_atomic_locked(&self, guard: &mut ManifestEpochGuard) -> PersistResult<()> {
+        let dir = guard.dir();
         let bytes = self.encode()?;
         let tmp_path = dir.join(MANIFEST_TMP_FILE_NAME);
         let final_path = dir.join(MANIFEST_FILE_NAME);

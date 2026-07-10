@@ -44,6 +44,16 @@
 //! [`crate::WalWriter::prune`]) on a cadence does. Prune is idempotent and
 //! MANIFEST-atomic, so a periodic call is safe and a no-op when nothing is
 //! reclaimable.
+//!
+//! # Serialization with rotation
+//!
+//! Prune holds the persistent [`crate::MANIFEST_LOCK_FILE_NAME`] lock from its
+//! authoritative MANIFEST read through every post-commit deletion. WAL
+//! rotation holds the same lock through its active-WAL reset. This makes the
+//! two operations linear rather than allowing a stale prune plan to overwrite
+//! a newer epoch or delete its just-published artifacts. The lock file is
+//! permanent coordination state and must never be unlinked while the directory
+//! may be in use.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -51,6 +61,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::PersistResult;
 use crate::manifest::Manifest;
+use crate::manifest_lock::{ManifestEpochGuard, cwd_independent_directory_path};
 use crate::snapshot_path::parse_snapshot_filename;
 use crate::writer_rotation::parse_wal_archive_filename;
 
@@ -137,12 +148,32 @@ struct FileEntry {
 ///
 /// # Errors
 ///
-/// Returns I/O errors from scanning the directory or committing the rewritten
-/// MANIFEST, or any [`Manifest::decode`] error from a corrupt committed
-/// MANIFEST. Best-effort file deletion runs *after* the MANIFEST commit and a
-/// missing file is treated as already-reclaimed, so post-commit deletion does
-/// not fail the prune (a residual orphan is reclaimed by the next prune).
+/// Returns I/O errors opening/acquiring the epoch lock, scanning the directory,
+/// or committing the rewritten MANIFEST, or any [`Manifest::decode`] error from
+/// a corrupt committed MANIFEST. Best-effort file deletion runs *after* the
+/// MANIFEST commit and a missing file is treated as already-reclaimed, so
+/// post-commit deletion does not fail the prune (a residual orphan is reclaimed
+/// by the next prune).
 pub fn prune(dir: &Path, policy: &RetentionPolicy) -> PersistResult<PruneOutcome> {
+    let dir = cwd_independent_directory_path(dir)?;
+    // Preserve the no-MANIFEST no-op contract without creating coordination
+    // state. If a first rotation commits immediately after this read, this
+    // no-op linearizes before it and remains safe. A present MANIFEST is read
+    // again authoritatively after acquiring the lock below.
+    if Manifest::read(&dir)?.is_none() {
+        return Ok(PruneOutcome::default());
+    }
+    let mut guard = ManifestEpochGuard::acquire(&dir)?;
+    prune_locked(&mut guard, policy)
+}
+
+/// Execute prune while the caller holds the directory epoch lock.
+pub(crate) fn prune_locked(
+    guard: &mut ManifestEpochGuard,
+    policy: &RetentionPolicy,
+) -> PersistResult<PruneOutcome> {
+    let dir = guard.dir().to_path_buf();
+    let dir = dir.as_path();
     let Some(manifest) = Manifest::read(dir)? else {
         return Ok(PruneOutcome::default());
     };
@@ -189,12 +220,14 @@ pub fn prune(dir: &Path, policy: &RetentionPolicy) -> PersistResult<PruneOutcome
     // prior one (never grows), so the manifest can shrink but never adopt an
     // orphan. A manifest seq whose file vanished is also dropped here.
     let new_archived: Vec<u64> = retained_archs.iter().copied().collect();
+    #[cfg(test)]
+    run_before_commit_hook();
     if new_archived != manifest.archived_wal_seqs {
         let next = Manifest {
             archived_wal_seqs: new_archived.clone(),
             ..manifest.clone()
         };
-        next.write_atomic(dir)?;
+        next.write_atomic_locked(guard)?;
     }
 
     // Post-commit cleanup: safe-after-commit destructive deletes.
@@ -227,6 +260,28 @@ pub fn prune(dir: &Path, policy: &RetentionPolicy) -> PersistResult<PruneOutcome
     outcome.deleted_snapshots.sort_unstable();
     outcome.deleted_wal_archives.sort_unstable();
     Ok(outcome)
+}
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_COMMIT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_before_commit_hook(hook: impl FnOnce() + 'static) {
+    BEFORE_COMMIT_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+fn run_before_commit_hook() {
+    BEFORE_COMMIT_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
 }
 
 /// Build the snapshot-retention floor + count selection.

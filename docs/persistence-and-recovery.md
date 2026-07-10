@@ -279,6 +279,26 @@ written temporary; a valid but different same-sequence artifact fails closed.
 An incomplete post-MANIFEST rotation, an ahead MANIFEST, or a conflict with an
 already-committed target poisons that writer until it is reopened and recovered.
 
+Every managed MANIFEST epoch mutation uses the persistent per-directory
+`MANIFEST.lock`. `WalWriter::rotate_with_manifest` holds it from the authoritative
+MANIFEST read through active-WAL reset; free `selene_persist::prune` and
+`WalWriter::prune` hold it through their post-commit artifact deletions. Direct
+`Manifest::write_atomic` publication also participates to protect the shared
+temporary name, but remains a blind publication rather than a semantic
+compare-and-swap. Contending rotation and prune operations block and then read
+the committed epoch under the lock, so prune cannot stale-overwrite a newer
+rotation or classify its Phase-1/2 files as disposable orphans. The lock file is
+coordination state, not recovery data, and need not be copied into a backup;
+never unlink or replace it while any process may use the live directory.
+
+The epoch lock is advisory coordination among cooperating handles and processes
+on a filesystem that supports Rust file locking. The fixed writer order is the
+lifetime `wal.log` lock, then `MANIFEST.lock`, then any replacement-WAL temporary
+lock. The OS releases a held lock when its file handle is dropped or its process
+exits, while the named lock file remains. Keep the persistence directory, its
+ancestors, and any symlink aliases stable while writers, rotation, or prune are
+live; renaming, replacing, or retargeting that topology requires quiescence.
+
 The coordinated facade requires an owned WAL at the standard `wal.log` path and
 a nonzero WAL high-water sequence, supplied by either a prior snapshot epoch or
 a committed change. A graph without a WAL, a fresh sequence-zero WAL, or a
@@ -566,6 +586,7 @@ recoverable or loud, never silent. The expected failure modes:
 | Non-monotonic WAL sequence             | Per-entry header check during scan.        | `PersistError::NonMonotonicSequence`. Indicates the WAL was edited or merged incorrectly. |
 | Pre-commit same-sequence snapshot/archive collision | Rotation compares the complete regular-file bytes with its newly written temporary. | `PersistError::ArtifactIdentityMismatch`; the active MANIFEST epoch stays unchanged and the writer remains usable. |
 | Committed snapshot/archive is missing, foreign, or invalid | Retry validates regular-file shape, exact snapshot identity, and already-current retained archive structure; a pre-reset retry can recreate a missing archive from the intact active WAL. | `CommittedSnapshotUnavailable`, `CommittedSnapshotIdentityMismatch`, `CommittedArchiveInvalid`, or the underlying snapshot format/hash error; reopen/recover before accepting writes. |
+| Prune overlaps rotation | Rotation and prune take `MANIFEST.lock` before their authoritative read and hold it through cleanup. | The later operation blocks, reads the committed epoch under the lock, and cannot regress the MANIFEST or delete the new live snapshot/archive. |
 | Checkpoint has no eligible owned WAL   | Graph facade validates the WAL path and nonzero sequence at the ordered boundary. | The call fails without poisoning; configure the standard `wal.log` or commit first. |
 | Checkpoint provider preparation fails | Ordered checkpoint returns the provider error before rotation begins. | The committer remains usable; fix the provider and retry. |
 | Other checkpoint rotation errors or panics | The lower-level error cannot always prove which side of the MANIFEST commit point was reached. | The committer is poisoned; close and recover before accepting more writes. |
