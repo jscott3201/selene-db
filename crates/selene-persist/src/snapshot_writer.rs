@@ -187,9 +187,14 @@ impl SnapshotBuilder {
     /// snapshot left by an earlier attempt. When `require_existing` is true,
     /// absence is an identity failure and this method never publishes the temp.
     pub(crate) fn finalize_for_rotation(
-        self,
+        mut self,
+        publish_dir: &Path,
         require_existing: bool,
     ) -> PersistResult<SnapshotFinalizeOutcome> {
+        // The caller already verified the configured directory resolves to its
+        // WAL anchor. Consume only that anchor so a later alias retarget cannot
+        // redirect temporary or final snapshot publication.
+        self.config.dir = publish_dir.to_path_buf();
         self.finalize_inner(true, require_existing)
     }
 

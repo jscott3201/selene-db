@@ -191,6 +191,35 @@ fn recover_empty_dir_returns_empty_outcome() {
 }
 
 #[test]
+fn recover_missing_directory_is_not_an_empty_database() {
+    let dir = temp_dir("missing-directory");
+    fs::remove_dir_all(&dir).unwrap();
+
+    let error = recover(&dir, &ProviderRegistry::new()).unwrap_err();
+
+    assert!(
+        matches!(error, PersistError::Io(source) if source.kind() == std::io::ErrorKind::NotFound)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn recover_dangling_directory_alias_is_not_an_empty_database() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_dir("dangling-directory-alias");
+    let alias = root.join("live");
+    symlink(root.join("missing"), &alias).unwrap();
+
+    let error = recover(&alias, &ProviderRegistry::new()).unwrap_err();
+
+    assert!(
+        matches!(error, PersistError::Io(source) if source.kind() == std::io::ErrorKind::NotFound)
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn recover_snapshot_only_routes_sections() {
     let dir = temp_dir("snapshot-only");
     write_snapshot(
@@ -413,6 +442,39 @@ fn recover_corrupt_snapshot_body_hash_is_hard_failure() {
     assert!(matches!(err, PersistError::BodyHashMismatch { .. }));
     assert!(core.events().is_empty());
     let _ = fs::remove_dir_all(dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn recover_rejects_symlink_active_wal_before_provider_callbacks() {
+    use std::os::unix::fs::symlink;
+
+    let dir = temp_dir("symlink-active-wal");
+    write_snapshot(&dir, 1, &[(*b"CORE", *b"META", b"meta".to_vec())]);
+    let backing = dir.join("backing.log");
+    drop(
+        WalWriter::open(
+            &backing,
+            WalConfig {
+                snapshot_seq: 1,
+                ..WalConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let active = dir.join(DEFAULT_WAL_FILE_NAME);
+    let anchored_active = dir.canonicalize().unwrap().join(DEFAULT_WAL_FILE_NAME);
+    symlink(&backing, &active).unwrap();
+    let core = RecordingProvider::new(*b"CORE");
+
+    let error = recover(&dir, &registry(std::slice::from_ref(&core))).unwrap_err();
+
+    assert!(matches!(
+        error,
+        PersistError::WalPathNotRegular { path } if path == anchored_active
+    ));
+    assert!(core.events().is_empty());
+    fs::remove_dir_all(dir).unwrap();
 }
 
 fn tag_strategy() -> impl Strategy<Value = [u8; 4]> {

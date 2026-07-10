@@ -88,5 +88,8 @@ fn checkpoint_target_requires_live_nonzero_default_wal() {
         CoreProvider::new_for_live_with_wal(snapshot, Some(DurableState::new(ready_writer)));
     let target = ready.checkpoint_target().expect("default WAL target");
     assert_eq!(target.sequence, 9);
-    assert_eq!(target.dir, ready_path.parent().unwrap());
+    assert_eq!(
+        target.dir,
+        ready_path.parent().unwrap().canonicalize().unwrap()
+    );
 }

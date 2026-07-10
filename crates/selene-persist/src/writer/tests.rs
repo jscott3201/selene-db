@@ -1,4 +1,4 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::{Change, NodeId, Origin, PropertyMap, Value, db_string};
@@ -55,7 +55,13 @@ fn open_new_file_writes_header() {
 fn writer_reports_its_active_path() {
     let path = temp_path("active-path");
     let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
-    assert_eq!(writer.path(), path);
+    let expected = path
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .unwrap()
+        .join(path.file_name().unwrap());
+    assert_eq!(writer.path(), expected);
     drop(writer);
     let _ = fs::remove_file(path);
 }

@@ -1,6 +1,6 @@
 //! Append-only WAL writer.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,10 +13,11 @@ use crate::entry_header::{
 };
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::manifest::Manifest;
-use crate::manifest_lock::ManifestEpochGuard;
+use crate::manifest_lock::{ManifestEpochGuard, canonical_directory_path};
 use crate::payload::{WalCompression, encode_changes_with_compressor, verify_checksum};
 use crate::retention::{PruneOutcome, RetentionPolicy};
 use crate::snapshot_writer::SnapshotBuilder;
+use crate::wal_path::open_locked_wal;
 use crate::writer_rotation::{RotationInputs, WalRotationOutcome, rotate_with_manifest};
 use crate::{PersistError, PersistResult, WalEntryHeader};
 
@@ -117,7 +118,9 @@ impl WalConfig {
 /// Holds an exclusive OS-level file lock on the WAL file for the writer's
 /// lifetime, so a second `WalWriter::open` call on the same path
 /// (in-process or cross-process) fails fast with
-/// [`PersistError::WriterLockHeld`] rather than corrupting the log.
+/// [`PersistError::WriterLockHeld`] rather than corrupting the log. The parent
+/// directory is canonicalized once at open; a final symlink or non-file entry
+/// is rejected with [`PersistError::WalPathNotRegular`].
 pub struct WalWriter {
     file: File,
     path: PathBuf,
@@ -148,8 +151,8 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns I/O, header, sequence, lock, or checksum errors encountered
-    /// while opening and validating the WAL.
+    /// Returns I/O, header, sequence, lock, checksum, or non-regular-path errors
+    /// encountered while opening and validating the WAL.
     pub fn open(path: &Path, config: WalConfig) -> PersistResult<Self> {
         Self::open_with_compression(path, config, WalCompression::default())
     }
@@ -162,35 +165,17 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns I/O, header, sequence, lock, or checksum errors encountered
-    /// while opening and validating the WAL.
+    /// Returns I/O, header, sequence, lock, checksum, or non-regular-path errors
+    /// encountered while opening and validating the WAL.
     pub fn open_with_compression(
         path: &Path,
         config: WalConfig,
         compression: WalCompression,
     ) -> PersistResult<Self> {
         let sync_policy = config.sync_policy.normalized();
-        // Retain a CWD-independent path for every later snapshot/archive/
-        // MANIFEST operation. The file handle stays bound to the inode opened
-        // here; keeping a caller-relative path would let a later `set_current_dir`
-        // redirect rotation artifacts away from the active file this handle owns.
-        let stable_path = stable_wal_path(path)?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&stable_path)?;
-        // Acquire an exclusive lock before doing anything else. A second
-        // writer on the same path observes WriterLockHeld and returns
-        // without touching the file.
-        match file.try_lock() {
-            Ok(()) => {}
-            Err(std::fs::TryLockError::WouldBlock) => {
-                return Err(PersistError::WriterLockHeld);
-            }
-            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
-        }
+        // Resolve the parent once, reject a symlink/non-file final component,
+        // and retain only the anchored path for every later managed artifact.
+        let (mut file, stable_path) = open_locked_wal(path)?;
         let len = file.metadata()?.len();
         let header_snapshot_seq = if len == 0 {
             WalFileHeader::new(config.snapshot_seq).write_to(&mut file)?;
@@ -337,11 +322,10 @@ impl WalWriter {
 
     /// Return the path of the active WAL file owned by this writer.
     ///
-    /// Relative caller paths are resolved against the working directory at
-    /// [`Self::open`] time, so this path remains stable if the process later
-    /// changes its working directory. It is exposed read-only so graph-layer
-    /// checkpoint orchestration can verify the conventional `wal.log` layout
-    /// before committing a MANIFEST rotation.
+    /// Relative caller paths and parent symlink aliases are resolved at
+    /// [`Self::open`] time. The returned path uses the canonical parent and
+    /// remains the authority for graph-layer checkpoint orchestration even if
+    /// the original alias or process working directory later changes.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
@@ -379,7 +363,8 @@ impl WalWriter {
     /// builder is finalized as Phase 1, so the caller adds every section before
     /// calling. The MANIFEST's `archived_wal_seqs` extends the set already named
     /// by any live MANIFEST in this writer's directory, so retention (Item-5)
-    /// has the full archive history.
+    /// has the full archive history. Once the builder directory resolves to the
+    /// writer anchor, Phase 1 consumes that anchor rather than the caller path.
     ///
     /// Before the first Phase 1 in a legacy MANIFEST-less directory, rotation
     /// durably bootstraps a baseline MANIFEST naming the current WAL-header
@@ -430,6 +415,8 @@ impl WalWriter {
     ) -> PersistResult<WalRotationOutcome> {
         self.ensure_usable()?;
         let dir = self.validate_rotation_inputs(&builder)?;
+        #[cfg(test)]
+        crate::wal_path::run_after_rotation_preflight_hook();
         let mut epoch_guard = ManifestEpochGuard::acquire(&dir)?;
         let prior_manifest = match Manifest::read(epoch_guard.dir()) {
             Ok(manifest) => manifest,
@@ -517,10 +504,9 @@ impl WalWriter {
             .path
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        let snapshot_dir = stable_wal_path(builder.dir())?;
-        let canonical_snapshot_dir = std::fs::canonicalize(&snapshot_dir)?;
-        let canonical_wal_dir = std::fs::canonicalize(&wal_dir)?;
-        if canonical_snapshot_dir != canonical_wal_dir {
+        let snapshot_dir = builder.dir().to_path_buf();
+        let canonical_snapshot_dir = canonical_directory_path(&snapshot_dir)?;
+        if canonical_snapshot_dir != wal_dir {
             return Err(PersistError::WalRotationDirectoryMismatch {
                 snapshot_dir,
                 wal_dir,
@@ -578,14 +564,6 @@ impl WalWriter {
         if let Err(error) = self.file.seek(SeekFrom::Start(self.committed_offset)) {
             tracing::error!(%error, "failed to seek WAL after append error");
         }
-    }
-}
-
-fn stable_wal_path(path: &Path) -> std::io::Result<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(std::env::current_dir()?.join(path))
     }
 }
 

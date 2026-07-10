@@ -28,6 +28,7 @@ pub mod snapshot_file_header;
 pub mod snapshot_path;
 pub mod snapshot_reader;
 pub mod snapshot_writer;
+mod wal_path;
 mod writer;
 mod writer_rotation;
 

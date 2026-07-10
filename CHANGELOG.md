@@ -37,6 +37,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- WAL writers now resolve and retain the canonical parent directory before
+  opening the active file, reject a final `wal.log` symlink or non-file entry,
+  and force MANIFEST rotation snapshots onto that anchor after directory
+  validation. Parent-alias retargeting can no longer split the active WAL,
+  snapshot, archive, MANIFEST, lock, or recovered graph writer across
+  directories.
 - MANIFEST publication, WAL rotation, and snapshot/archive pruning now share a
   persistent per-directory `MANIFEST.lock`. Rotation holds it through active-WAL
   reset and prune through post-commit deletion, preventing a stale prune from

@@ -364,6 +364,7 @@ pub(crate) fn rotate_with_manifest(
         snapshot_seq: prior_snapshot_seq,
         prior_manifest,
     } = inputs;
+    debug_assert_eq!(wal_path.parent(), Some(dir));
 
     let snapshot_seq = builder.sequence();
     if snapshot_seq == 0 || last_sequence == 0 {
@@ -430,7 +431,7 @@ pub(crate) fn rotate_with_manifest(
     if target_already_committed {
         verify_committed_snapshot(&snapshot_file)?;
     }
-    match builder.finalize_for_rotation(target_already_committed) {
+    match builder.finalize_for_rotation(dir, target_already_committed) {
         Err(PersistError::ArtifactIdentityMismatch { path }) if target_already_committed => {
             return Err(PersistError::CommittedSnapshotIdentityMismatch { path });
         }
@@ -632,3 +633,7 @@ mod tests;
 #[cfg(test)]
 #[path = "writer_rotation/concurrency_tests.rs"]
 mod concurrency_tests;
+
+#[cfg(test)]
+#[path = "writer_rotation/path_anchor_tests.rs"]
+mod path_anchor_tests;

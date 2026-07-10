@@ -7,6 +7,8 @@ use std::time::Instant;
 use selene_core::{NodeId, Origin, metrics};
 
 use crate::manifest::Manifest;
+use crate::manifest_lock::canonical_directory_path;
+use crate::wal_path::require_regular_wal_or_absent;
 use crate::{
     DEFAULT_WAL_FILE_NAME, PersistError, PersistResult, ProviderRegistry, SnapshotReader,
     WalReader, find_latest_snapshot, snapshot_path,
@@ -71,15 +73,22 @@ impl RecoveryOutcome {
 /// Snapshot sections are routed by provider tag to [`ProviderRegistry`]. WAL
 /// entries after the applied snapshot sequence are decoded and fanned out to
 /// every registered provider in deterministic provider-tag order.
+/// The input directory is canonicalized once for the entire pass, and a present
+/// active WAL must be a regular final directory entry before any provider
+/// callback runs.
 ///
 /// # Errors
 ///
-/// Returns persistence format errors, provider errors, or — on the legacy
-/// MANIFEST-absent path only — a [`PersistError::WalSnapshotMismatch`] when the
-/// WAL does not extend the applied snapshot epoch.
+/// Returns directory-resolution, non-regular-WAL, persistence-format, or
+/// provider errors, or — on the legacy MANIFEST-absent path only — a
+/// [`PersistError::WalSnapshotMismatch`] when the WAL does not extend the
+/// applied snapshot epoch.
 #[tracing::instrument(name = "selene.persist.recover", skip(registry), fields(dir = %dir.display()))]
 pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<RecoveryOutcome> {
     let started = Instant::now();
+    let dir = canonical_directory_path(dir)?;
+    require_regular_wal_or_absent(&dir.join(DEFAULT_WAL_FILE_NAME))?;
+    let dir = dir.as_path();
     let mut outcome = RecoveryOutcome::empty();
     let mut providers_invoked = BTreeSet::new();
     let mut snapshot_providers_invoked = BTreeSet::new();
