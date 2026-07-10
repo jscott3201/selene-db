@@ -105,13 +105,16 @@ impl SharedGraph {
         expected_bound_type: Option<Arc<GraphTypeDef>>,
         providers: Vec<Arc<dyn IndexProvider>>,
     ) -> GraphResult<Self> {
+        // Bind recovery, live WAL reopen, and audit reopen to one physical
+        // directory so a caller alias cannot retarget between those phases.
+        let dir = std::fs::canonicalize(dir).map_err(selene_persist::PersistError::from)?;
         let core = CoreProvider::new_for_recovery();
         validate_recovery_provider_tags(&core, &providers)?;
         let mut registry = ProviderRegistry::new();
         let provider: Arc<dyn RecoveryProvider> = core.clone();
         registry.register(provider)?;
         register_index_recovery_providers(&mut registry, &providers)?;
-        let outcome = selene_persist::recover(dir, &registry)?;
+        let outcome = selene_persist::recover(&dir, &registry)?;
         let mut graph = core.finish_recovery(graph_id, expected_bound_type)?;
         // The committed graph generation must reflect every change that was
         // replayed. Snapshot+WAL recovery applies WAL entries past the
@@ -120,6 +123,8 @@ impl SharedGraph {
         // duplicating sequencing relative to the recovered tip.
         graph.meta.generation = graph.meta.generation.max(outcome.last_wal_seq);
         mark_recovered_provider_generation(&providers, &graph, &outcome)?;
+        #[cfg(test)]
+        run_after_persist_recovery_hook();
         // Reopen the WAL file as a live writer so post-recovery commits
         // continue to append durably. Without this, recover() returns a
         // graph whose commits go to memory only — a crash after recovery
@@ -158,6 +163,28 @@ impl SharedGraph {
             crate::committer_batch::CommitBatching::Off,
         )
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_PERSIST_RECOVERY_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_after_persist_recovery_hook(hook: impl FnOnce() + 'static) {
+    AFTER_PERSIST_RECOVERY_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+fn run_after_persist_recovery_hook() {
+    AFTER_PERSIST_RECOVERY_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
 }
 
 /// Recovery wrapper that drives a runtime [`IndexProvider`] through

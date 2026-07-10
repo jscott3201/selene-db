@@ -273,10 +273,15 @@ ordered checkpoint protocol may claim those snapshot sequence paths. Likewise,
 live graph hosts should not collect a `SnapshotBuilder` and try to reproduce the
 graph committer's ordering protocol. Direct callers are still constrained to a
 nonzero sequence, the conventional `wal.log` filename, and a builder directory
-that resolves to the WAL directory. Before the MANIFEST advances, an existing
-snapshot or archive is accepted only after exact comparison with the newly
-written temporary; a valid but different same-sequence artifact fails closed.
-An incomplete post-MANIFEST rotation, an ahead MANIFEST, or a conflict with an
+that resolves to the WAL directory. `WalWriter::open` canonicalizes the parent
+once, rejects a final WAL symlink or other non-file entry, and reports that
+anchored path through `WalWriter::path` and rotation outcomes. After validating
+the builder directory, rotation publishes the snapshot through the anchor rather
+than the caller spelling, so retargeting a parent alias cannot split artifacts
+across directories. Before the MANIFEST advances, an existing snapshot or
+archive is accepted only after exact comparison with the newly written
+temporary; a valid but different same-sequence artifact fails closed. An
+incomplete post-MANIFEST rotation, an ahead MANIFEST, or a conflict with an
 already-committed target poisons that writer until it is reopened and recovered.
 
 Every managed MANIFEST epoch mutation uses the persistent per-directory
@@ -295,9 +300,18 @@ The epoch lock is advisory coordination among cooperating handles and processes
 on a filesystem that supports Rust file locking. The fixed writer order is the
 lifetime `wal.log` lock, then `MANIFEST.lock`, then any replacement-WAL temporary
 lock. The OS releases a held lock when its file handle is dropped or its process
-exits, while the named lock file remains. Keep the persistence directory, its
-ancestors, and any symlink aliases stable while writers, rotation, or prune are
-live; renaming, replacing, or retargeting that topology requires quiescence.
+exits, while the named lock file remains. Each epoch-lock operation also
+canonicalizes its directory before opening the lock. A live writer no longer
+uses its original parent alias, so that alias may retarget without redirecting
+the writer; keep the resolved directory, its real ancestors, and its `wal.log`
+entry stable while the writer is live. Renaming or replacing those entries
+requires quiescence. Hard-link aliases of mutable persistence files are
+unsupported because rotation replaces only the anchored directory entry.
+The same stable-topology requirement applies while opening or recovering: the
+portable regular-file checks reject stable symlinks and non-files but are not a
+security boundary against a process concurrently replacing resolved ancestors
+or `wal.log` between path-based checks. Hostile-directory resistance would
+require no-follow, directory-handle-relative operations beyond this contract.
 
 The coordinated facade requires an owned WAL at the standard `wal.log` path and
 a nonzero WAL high-water sequence, supplied by either a prior snapshot epoch or
@@ -446,6 +460,10 @@ let graph = SharedGraph::recover(data_dir, GraphId::new(1))?;
 `SharedGraph::recover` constructs a `CoreProvider`, registers it, drives
 `selene_persist::recover`, then materializes the rebuilt graph state. The
 closed-graph variant is `SharedGraph::recover_closed(dir, graph_id, bound_type)`.
+Both recovery layers resolve the data directory once. The low-level orchestrator
+rejects a present `wal.log` symlink or non-file before provider callbacks, and
+the graph wrapper uses the same resolved directory for replay, live-writer
+reopen, and audit-log reopen, so an input alias cannot retarget between phases.
 
 A truncated WAL tail (torn write at the end of the log) is **not** an error
 during recovery: the iterator stops at the last fully-checksummed entry,
@@ -584,6 +602,7 @@ recoverable or loud, never silent. The expected failure modes:
 | Snapshot section for unknown provider  | Recovery routes by tag.                    | `PersistError::UnknownProvider`. The embedder forgot to register a provider. |
 | WAL/snapshot epoch mismatch            | WAL header `snapshot_seq` vs applied snapshot. | `PersistError::WalSnapshotMismatch`. The pair on disk is inconsistent. |
 | Non-monotonic WAL sequence             | Per-entry header check during scan.        | `PersistError::NonMonotonicSequence`. Indicates the WAL was edited or merged incorrectly. |
+| Active `wal.log` is a symlink or non-file | Open/recovery inspect the anchored final directory entry before mutation or provider callbacks. | `PersistError::WalPathNotRegular`; replace it offline with a regular WAL file. |
 | Pre-commit same-sequence snapshot/archive collision | Rotation compares the complete regular-file bytes with its newly written temporary. | `PersistError::ArtifactIdentityMismatch`; the active MANIFEST epoch stays unchanged and the writer remains usable. |
 | Committed snapshot/archive is missing, foreign, or invalid | Retry validates regular-file shape, exact snapshot identity, and already-current retained archive structure; a pre-reset retry can recreate a missing archive from the intact active WAL. | `CommittedSnapshotUnavailable`, `CommittedSnapshotIdentityMismatch`, `CommittedArchiveInvalid`, or the underlying snapshot format/hash error; reopen/recover before accepting writes. |
 | Prune overlaps rotation | Rotation and prune take `MANIFEST.lock` before their authoritative read and hold it through cleanup. | The later operation blocks, reads the committed epoch under the lock, and cannot regress the MANIFEST or delete the new live snapshot/archive. |

@@ -61,7 +61,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::PersistResult;
 use crate::manifest::Manifest;
-use crate::manifest_lock::{ManifestEpochGuard, cwd_independent_directory_path};
+use crate::manifest_lock::{ManifestEpochGuard, canonical_directory_path};
 use crate::snapshot_path::parse_snapshot_filename;
 use crate::writer_rotation::parse_wal_archive_filename;
 
@@ -155,7 +155,13 @@ struct FileEntry {
 /// post-commit deletion does not fail the prune (a residual orphan is reclaimed
 /// by the next prune).
 pub fn prune(dir: &Path, policy: &RetentionPolicy) -> PersistResult<PruneOutcome> {
-    let dir = cwd_independent_directory_path(dir)?;
+    let dir = match canonical_directory_path(dir) {
+        Ok(dir) => dir,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PruneOutcome::default());
+        }
+        Err(error) => return Err(error.into()),
+    };
     // Preserve the no-MANIFEST no-op contract without creating coordination
     // state. If a first rotation commits immediately after this read, this
     // no-op linearizes before it and remains safe. A present MANIFEST is read

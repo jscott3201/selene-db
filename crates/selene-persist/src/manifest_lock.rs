@@ -3,9 +3,10 @@
 //! Cooperating handles and processes on a supported local filesystem use one
 //! persistent lock-file inode. A writer's lock order is its lifetime
 //! `wal.log` lock, then this epoch lock, then any replacement-WAL temporary
-//! lock. The persistence directory, its ancestors, and any symlink aliases must
-//! not be renamed, replaced, or retargeted while an operation is live; broader
-//! path anchoring is a separate concern from epoch serialization.
+//! lock. The directory is canonicalized before the lock opens, so retargeting a
+//! caller alias cannot redirect an operation after acquisition. The resolved
+//! directory and its real ancestors must not be renamed or replaced while an
+//! operation is live.
 
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -31,7 +32,7 @@ impl ManifestEpochGuard {
     /// Acquire the directory's stable epoch lock, blocking behind another
     /// cooperating rotation, prune, or direct MANIFEST publication.
     pub(crate) fn acquire(dir: &Path) -> PersistResult<Self> {
-        let dir = cwd_independent_directory_path(dir)?;
+        let dir = canonical_directory_path(dir)?;
         let path = dir.join(MANIFEST_LOCK_FILE_NAME);
         let file = OpenOptions::new()
             .create(true)
@@ -53,18 +54,23 @@ impl ManifestEpochGuard {
         Ok(Self { dir, _file: file })
     }
 
-    /// CWD-independent absolute directory path protected by this guard.
+    /// Canonical directory path protected by this guard.
     pub(crate) fn dir(&self) -> &Path {
         &self.dir
     }
 }
 
-pub(crate) fn cwd_independent_directory_path(path: &Path) -> std::io::Result<PathBuf> {
+fn cwd_independent_directory_path(path: &Path) -> std::io::Result<PathBuf> {
     if path.is_absolute() {
         Ok(path.to_path_buf())
     } else {
         Ok(std::env::current_dir()?.join(path))
     }
+}
+
+/// Resolve one existing directory independently of CWD and symlink aliases.
+pub(crate) fn canonical_directory_path(path: &Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(cwd_independent_directory_path(path)?)
 }
 
 #[cfg(test)]

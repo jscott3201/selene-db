@@ -20,7 +20,7 @@ fn temp_dir(name: &str) -> PathBuf {
         std::process::id()
     ));
     fs::create_dir(&dir).unwrap();
-    dir
+    dir.canonicalize().unwrap()
 }
 
 fn meta_builder(dir: &Path, sequence: u64, bytes: &[u8]) -> SnapshotBuilder {

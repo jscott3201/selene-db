@@ -346,6 +346,14 @@ pub enum PersistError {
         /// Retained archive path that could not be validated.
         path: PathBuf,
     },
+
+    /// The active WAL path names a symlink or another non-regular entry.
+    #[error("active WAL path is not a regular file: {path}")]
+    #[diagnostic(code(SLENE_P_040))]
+    WalPathNotRegular {
+        /// Anchored active WAL path that failed the regular-file check.
+        path: PathBuf,
+    },
 }
 
 impl PersistError {
@@ -390,7 +398,8 @@ impl PersistError {
             | Self::WalRotationManifestAhead { .. }
             | Self::CommittedSnapshotUnavailable { .. }
             | Self::CommittedSnapshotIdentityMismatch { .. }
-            | Self::CommittedArchiveInvalid { .. } => "5GQL0",
+            | Self::CommittedArchiveInvalid { .. }
+            | Self::WalPathNotRegular { .. } => "5GQL0",
         }
     }
 }
@@ -464,6 +473,9 @@ mod tests {
     }, "5GQL0")]
     #[case(PersistError::CommittedArchiveInvalid {
         path: "wal.3.archive".into(),
+    }, "5GQL0")]
+    #[case(PersistError::WalPathNotRegular {
+        path: "wal.log".into(),
     }, "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);

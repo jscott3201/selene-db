@@ -148,3 +148,35 @@ fn direct_manifest_publication_uses_the_epoch_lock() {
 
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn guard_keeps_publication_on_the_resolved_directory_after_alias_retarget() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_dir("alias-retarget").canonicalize().unwrap();
+    let first_dir = root.join("first");
+    let second_dir = root.join("second");
+    let alias = root.join("live");
+    std::fs::create_dir(&first_dir).unwrap();
+    std::fs::create_dir(&second_dir).unwrap();
+    symlink(&first_dir, &alias).unwrap();
+    let mut guard = ManifestEpochGuard::acquire(&alias).unwrap();
+    assert_eq!(guard.dir(), first_dir);
+
+    std::fs::remove_file(&alias).unwrap();
+    symlink(&second_dir, &alias).unwrap();
+    let manifest = Manifest {
+        live_snapshot_seq: 9,
+        active_wal_header_seq: 9,
+        compaction_epoch: 0,
+        active_wal: DEFAULT_WAL_FILE_NAME.to_owned(),
+        archived_wal_seqs: vec![9],
+    };
+    manifest.write_atomic_locked(&mut guard).unwrap();
+
+    assert_eq!(Manifest::read(&first_dir).unwrap(), Some(manifest));
+    assert!(Manifest::read(&second_dir).unwrap().is_none());
+    drop(guard);
+    std::fs::remove_dir_all(root).unwrap();
+}

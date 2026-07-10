@@ -53,6 +53,10 @@ mod vector_recovery;
 #[path = "recover_tests/json_recovery.rs"]
 mod json_recovery;
 
+#[cfg(unix)]
+#[path = "recover_tests/path_anchor.rs"]
+mod path_anchor;
+
 #[path = "recover_tests/text_recovery.rs"]
 mod text_recovery;
 
