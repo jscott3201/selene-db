@@ -37,6 +37,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- MANIFEST publication, WAL rotation, and snapshot/archive pruning now share a
+  persistent per-directory `MANIFEST.lock`. Rotation holds it through active-WAL
+  reset and prune through post-commit deletion, preventing a stale prune from
+  regressing the live epoch or deleting an in-flight checkpoint's artifacts.
 - MANIFEST-backed rotation now accepts pre-existing same-sequence snapshots and
   WAL archives only after exact regular-file byte comparison with the newly
   written temporary. Completed same-sequence checkpoints return an explicit

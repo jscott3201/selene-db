@@ -13,6 +13,7 @@ use crate::entry_header::{
 };
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::manifest::Manifest;
+use crate::manifest_lock::ManifestEpochGuard;
 use crate::payload::{WalCompression, encode_changes_with_compressor, verify_checksum};
 use crate::retention::{PruneOutcome, RetentionPolicy};
 use crate::snapshot_writer::SnapshotBuilder;
@@ -394,7 +395,9 @@ impl WalWriter {
     /// comparison with the newly encoded snapshot and copied WAL temporary. A
     /// fully committed same-sequence call returns
     /// [`WalRotationOutcome::AlreadyCurrent`] instead of re-archiving the
-    /// header-only active WAL.
+    /// header-only active WAL. Rotation holds
+    /// [`crate::MANIFEST_LOCK_FILE_NAME`] from its authoritative MANIFEST read
+    /// through active-WAL reset, so free prune cannot interleave.
     ///
     /// A second mutable borrow cannot overlap the rotation:
     ///
@@ -427,7 +430,8 @@ impl WalWriter {
     ) -> PersistResult<WalRotationOutcome> {
         self.ensure_usable()?;
         let dir = self.validate_rotation_inputs(&builder)?;
-        let prior_manifest = match Manifest::read(&dir) {
+        let mut epoch_guard = ManifestEpochGuard::acquire(&dir)?;
+        let prior_manifest = match Manifest::read(epoch_guard.dir()) {
             Ok(manifest) => manifest,
             Err(error) => {
                 self.poisoned = true;
@@ -469,7 +473,7 @@ impl WalWriter {
             snapshot_seq: self.snapshot_seq,
             prior_manifest,
         };
-        let (outcome, state) = match rotate_with_manifest(inputs, builder, &dir) {
+        let (outcome, state) = match rotate_with_manifest(inputs, builder, &mut epoch_guard) {
             Ok(result) => result,
             Err(error @ PersistError::WalRotationIncomplete { .. }) => {
                 self.poisoned = true;
@@ -529,27 +533,29 @@ impl WalWriter {
     /// `policy`, committing through the MANIFEST.
     ///
     /// Thin ergonomic wrapper over [`crate::retention::prune`] bound to this
-    /// writer's directory. Pending appends are flushed first so the on-disk
-    /// state the prune reasons about is current, and the `&mut self` receiver
-    /// serializes the prune against [`Self::rotate_with_manifest`] — the two
-    /// must never interleave their MANIFEST rewrites. The prune never touches
-    /// the active WAL this writer owns; it only reclaims snapshot/archive files
-    /// the live epoch no longer needs.
+    /// writer's directory. It acquires [`crate::MANIFEST_LOCK_FILE_NAME`] before
+    /// flushing pending appends and holds it through post-commit deletion. The
+    /// `&mut self` receiver serializes this handle while the directory lock
+    /// serializes free prune and rotation across handles/processes. Prune never
+    /// touches the active WAL; it reclaims only superseded snapshot/archive
+    /// files.
     ///
     /// # Errors
     ///
-    /// Returns [`PersistError::WalWriterPoisoned`] after rotation detects
-    /// persistence-state divergence, flush errors, or any error from
-    /// [`crate::retention::prune`] (directory scan, MANIFEST decode/commit).
-    /// Post-commit file deletion is best-effort and never fails the prune.
+    /// Returns [`PersistError::WalWriterPoisoned`] when the writer was already
+    /// poisoned. Otherwise returns an epoch-lock, flush, directory-scan,
+    /// MANIFEST-decode, or MANIFEST-commit error. These prune failures do not
+    /// newly poison the writer. Post-commit file deletion is best-effort and
+    /// never fails the prune.
     pub fn prune(&mut self, policy: &RetentionPolicy) -> PersistResult<PruneOutcome> {
         self.ensure_usable()?;
-        self.flush()?;
         let dir = self
             .path
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        crate::retention::prune(&dir, policy)
+        let mut epoch_guard = ManifestEpochGuard::acquire(&dir)?;
+        self.flush()?;
+        crate::retention::prune_locked(&mut epoch_guard, policy)
     }
 
     fn ensure_usable(&self) -> PersistResult<()> {
