@@ -28,6 +28,21 @@ fn wait_for_path(path: &Path, phase: &str) {
     }
 }
 
+fn wait_for_child_exit(child: &mut std::process::Child, phase: &str) -> std::process::ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        if Instant::now() >= deadline {
+            let kill = child.kill();
+            let reap = child.wait();
+            panic!("timed out waiting for {phase}; kill={kill:?}, reap={reap:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn same_directory_guards_serialize_and_lock_file_persists() {
     let dir = temp_dir("same-dir");
@@ -55,6 +70,83 @@ fn same_directory_guards_serialize_and_lock_file_persists() {
     worker.join().unwrap();
 
     assert!(dir.join(MANIFEST_LOCK_FILE_NAME).is_file());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn shared_read_guards_coexist_and_block_epoch_mutation() {
+    let dir = temp_dir("shared-readers");
+    let first = PersistenceReadGuard::acquire(&dir).unwrap();
+    let (reader_acquired_tx, reader_acquired_rx) = sync_channel(0);
+    let (release_reader_tx, release_reader_rx) = sync_channel(0);
+    let reader_dir = dir.clone();
+    let reader = thread::spawn(move || {
+        let _second = PersistenceReadGuard::acquire(&reader_dir).unwrap();
+        reader_acquired_tx.send(()).unwrap();
+        release_reader_rx.recv().unwrap();
+    });
+    reader_acquired_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("second shared reader acquires concurrently");
+
+    let (contended_tx, contended_rx) = sync_channel(0);
+    let (writer_acquired_tx, writer_acquired_rx) = sync_channel(0);
+    let writer_dir = dir.clone();
+    let writer = thread::spawn(move || {
+        set_contention_hook(move || contended_tx.send(()).unwrap());
+        let _exclusive = ManifestEpochGuard::acquire(&writer_dir).unwrap();
+        writer_acquired_tx.send(()).unwrap();
+    });
+    contended_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("exclusive epoch mutation reaches shared-lock contention");
+    assert_eq!(
+        writer_acquired_rx.recv_timeout(Duration::from_millis(50)),
+        Err(RecvTimeoutError::Timeout)
+    );
+
+    drop(first);
+    assert_eq!(
+        writer_acquired_rx.recv_timeout(Duration::from_millis(50)),
+        Err(RecvTimeoutError::Timeout),
+        "all shared readers must release before exclusive acquisition"
+    );
+    release_reader_tx.send(()).unwrap();
+    reader.join().unwrap();
+    writer_acquired_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("exclusive epoch mutation acquires after readers release");
+    writer.join().unwrap();
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn exclusive_epoch_mutation_blocks_shared_reader() {
+    let dir = temp_dir("exclusive-blocks-reader");
+    let exclusive = ManifestEpochGuard::acquire(&dir).unwrap();
+    let (contended_tx, contended_rx) = sync_channel(0);
+    let (acquired_tx, acquired_rx) = sync_channel(0);
+    let worker_dir = dir.clone();
+    let worker = thread::spawn(move || {
+        set_contention_hook(move || contended_tx.send(()).unwrap());
+        let _reader = PersistenceReadGuard::acquire(&worker_dir).unwrap();
+        acquired_tx.send(()).unwrap();
+    });
+
+    contended_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("shared reader reaches exclusive-lock contention");
+    assert_eq!(
+        acquired_rx.recv_timeout(Duration::from_millis(50)),
+        Err(RecvTimeoutError::Timeout)
+    );
+    drop(exclusive);
+    acquired_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("shared reader acquires after exclusive mutation releases");
+    worker.join().unwrap();
+
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -101,6 +193,32 @@ fn separate_process_contends_on_the_same_lock_file() {
     assert!(child.try_wait().unwrap().is_none());
     drop(first);
     assert!(child.wait().unwrap().success());
+    assert!(acquired.is_file());
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn separate_process_epoch_mutation_contends_with_shared_reader() {
+    let dir = temp_dir("separate-process-reader");
+    let reader = PersistenceReadGuard::acquire(&dir).unwrap();
+    let contended = dir.join("child-contended");
+    let acquired = dir.join("child-acquired");
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "manifest_lock::tests::manifest_lock_child_helper",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(CHILD_DIR_ENV, &dir)
+        .spawn()
+        .unwrap();
+
+    wait_for_path(&contended, "child-process shared-lock contention");
+    assert!(child.try_wait().unwrap().is_none());
+    drop(reader);
+    assert!(wait_for_child_exit(&mut child, "child-process lock release").success());
     assert!(acquired.is_file());
 
     std::fs::remove_dir_all(dir).unwrap();

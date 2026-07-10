@@ -33,6 +33,11 @@ impl Default for CheckpointConfig {
 }
 
 /// Result of a successful coordinated graph checkpoint.
+///
+/// The paths identify the epoch published by this call; they are not retention
+/// leases. Before opening or copying them later, acquire a
+/// [`selene_persist::PersistenceReadGuard`], re-read its authoritative
+/// MANIFEST, and verify both the canonical directory and snapshot sequence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointOutcome {
     /// Physical checkpoint epoch covered by the durable snapshot.

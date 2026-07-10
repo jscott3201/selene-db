@@ -8,13 +8,16 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{RecvTimeoutError, sync_channel};
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::*;
-use crate::DEFAULT_WAL_FILE_NAME;
 use crate::manifest::Manifest;
+use crate::manifest_lock::set_contention_hook;
 use crate::snapshot_path::snapshot_path;
 use crate::writer_rotation::wal_archive_path;
+use crate::{DEFAULT_WAL_FILE_NAME, PersistenceReadGuard};
 
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -164,6 +167,54 @@ fn prune_default_keeps_live_plus_one_predecessor() {
     assert!(snap_exists(&dir, 9) && snap_exists(&dir, 10));
     assert!(!snap_exists(&dir, 6) && !snap_exists(&dir, 7) && !snap_exists(&dir, 8));
     let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn read_guard_pins_backup_artifacts_until_reader_releases() {
+    let dir = temp_dir("read-guard-prune");
+    snap(&dir, 9, b"backup-predecessor");
+    snap(&dir, 10, b"live");
+    write_manifest(&dir, 10, vec![]);
+    let guard = PersistenceReadGuard::acquire(&dir).unwrap();
+    assert_eq!(
+        guard.read_manifest().unwrap().unwrap().live_snapshot_seq,
+        10
+    );
+
+    let (contended_tx, contended_rx) = sync_channel(0);
+    let (finished_tx, finished_rx) = sync_channel(0);
+    let worker_dir = dir.clone();
+    let worker = thread::spawn(move || {
+        set_contention_hook(move || contended_tx.send(()).unwrap());
+        let outcome = prune(
+            &worker_dir,
+            &RetentionPolicy {
+                keep_n_snapshots: 1,
+                keep_n_wal_archives: 0,
+                ..RetentionPolicy::default()
+            },
+        )
+        .unwrap();
+        finished_tx.send(outcome).unwrap();
+    });
+
+    contended_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("prune reaches shared read-guard contention");
+    assert!(snap_exists(&dir, 9));
+    assert_eq!(
+        finished_rx.recv_timeout(Duration::from_millis(50)),
+        Err(RecvTimeoutError::Timeout)
+    );
+
+    drop(guard);
+    let outcome = finished_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("prune completes after backup read guard releases");
+    assert_eq!(outcome.deleted_snapshots, vec![9]);
+    assert!(!snap_exists(&dir, 9));
+    worker.join().unwrap();
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

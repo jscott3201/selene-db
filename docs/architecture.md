@@ -240,21 +240,21 @@ This separation has three consequences:
 
 ### Two-step recovery
 
-`selene_persist::recover(snapshot_dir, wal_dir, &ProviderRegistry) ->
-RecoveryOutcome` does two things in order:
+`selene_persist::recover(data_dir, &ProviderRegistry) -> RecoveryOutcome`
+acquires a shared `PersistenceReadGuard`, then does two things in order:
 
-1. Locate the most recent valid `SLSN` snapshot (via `find_latest_snapshot`
-   on a sorted directory listing), read its CORE sections to rebuild
-   `SeleneGraph` state, and dispatch each provider-owned section to its
-   `IndexProvider::read_section` callback.
-2. Stream the WAL from the offset recorded in the snapshot footer,
-   apply each `Change` to the rebuilt graph through the mutator, and
-   notify providers via `on_change` for each replayed change.
+1. Select the MANIFEST-authoritative `SLSN` snapshot (or the highest legacy
+   snapshot when no MANIFEST exists), verify it, and dispatch its sections to
+   `RecoveryProvider::read_section`.
+2. Stream post-snapshot logical commit frames from the active WAL and notify
+   providers through `on_changes`; physical checkpoint-watermark frames are
+   skipped.
 
-The end state is byte-equivalent to the original graph plus the
-provider-owned derived state. Snapshot frequency, sync policy
-(`SyncPolicy::Always` | `SyncPolicy::Batched` | `SyncPolicy::Off`),
-and compression thresholds are embedder-tunable knobs.
+The shared guard pins one snapshot/WAL epoch against rotation and prune for the
+entire replay. `SharedGraph::recover` acquires an existing WAL writer first and
+retains it through guarded replay. For a snapshot-only directory, it verifies
+recovery under the guard before creating a seeded WAL with a non-blocking open.
+In both paths the retained writer tip must exactly match the replay high-water.
 
 ### Why graph-blind
 

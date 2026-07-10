@@ -153,6 +153,15 @@ checkpoint reserves this sequence with a typed checkpoint-watermark frame
 before rotation. On reopen, the on-disk header wins — recovery never moves a
 snapshot watermark backward, even if the config passed in is stale.
 
+A new WAL is not initialized in place at `wal.log`. The writer creates a unique
+same-directory temporary, locks its inode, writes and fsyncs the complete
+header, then publishes that inode with an atomic fail-on-existing hard link and
+fsyncs the directory. Competing initializers cannot overwrite one another, and
+readers observe either no active WAL or a complete valid header. Fresh WAL
+creation therefore requires hard-link support in the persistence filesystem;
+an already-present zero-length file is rejected as truncated rather than being
+silently initialized.
+
 ### Append flow
 
 `WalWriter::append(hlc, origin, principal, &changes)` is the only mutation
@@ -313,23 +322,29 @@ written temporary; a valid but different same-sequence artifact fails closed.
 An incomplete post-MANIFEST rotation, an ahead MANIFEST, or a conflict with an
 already-committed target poisons that writer until it is reopened and recovered.
 
-Every managed MANIFEST epoch mutation uses the persistent per-directory
-`MANIFEST.lock`. `WalWriter::rotate_with_manifest` holds it from the authoritative
-MANIFEST read through active-WAL reset; free `selene_persist::prune` and
-`WalWriter::prune` hold it through their post-commit artifact deletions. Direct
-`Manifest::write_atomic` publication also participates to protect the shared
-temporary name, but remains a blind publication rather than a semantic
-compare-and-swap. Contending rotation and prune operations block and then read
-the committed epoch under the lock, so prune cannot stale-overwrite a newer
-rotation or classify its Phase-1/2 files as disposable orphans. The lock file is
-coordination state, not recovery data, and need not be copied into a backup;
-never unlink or replace it while any process may use the live directory.
+Every managed MANIFEST epoch operation uses the persistent per-directory
+`MANIFEST.lock`. `WalWriter::rotate_with_manifest` holds its exclusive side from
+the authoritative MANIFEST read through active-WAL reset; free
+`selene_persist::prune` and `WalWriter::prune` hold it through their post-commit
+artifact deletions. Direct `Manifest::write_atomic` publication also takes the
+exclusive lock to protect the shared temporary name, but remains a blind
+publication rather than a semantic compare-and-swap. Recovery and online backup
+readers take the shared side through MANIFEST selection plus snapshot/WAL use.
+Multiple readers can coexist, while epoch mutation waits for every reader to
+finish. The lock file is coordination state, not recovery data, and must not be
+copied into a backup; never unlink or replace it while any process may use the
+live directory.
 
 The epoch lock is advisory coordination among cooperating handles and processes
 on a filesystem that supports Rust file locking. The fixed writer order is the
-lifetime `wal.log` lock, then `MANIFEST.lock`, then any replacement-WAL temporary
-lock. The OS releases a held lock when its file handle is dropped or its process
-exits, while the named lock file remains. Each epoch-lock operation also
+lifetime `wal.log` lock, then shared or exclusive `MANIFEST.lock`, then any
+replacement-WAL temporary lock. Do not upgrade a shared guard or invoke
+same-directory checkpoint, rotation, prune, or MANIFEST publication while
+holding one. Missing-WAL graph recovery is the narrow exception: it verifies
+the snapshot under a shared guard, then uses a non-blocking WAL open, so it
+cannot wait in the reverse order. The OS releases a held lock when its file
+handle is dropped or its process exits, while the named file remains. Each
+epoch-lock operation also
 canonicalizes its directory before opening the lock. A live writer no longer
 uses its original parent alias, so that alias may retarget without redirecting
 the writer; keep the resolved directory, its real ancestors, and its `wal.log`
@@ -452,6 +467,15 @@ registry.register(core_provider.clone())?;
 let outcome = recover(data_dir, &registry)?;
 ```
 
+`recover` acquires a shared [`PersistenceReadGuard`](../crates/selene-persist/src/manifest_lock.rs)
+before reading authoritative metadata and retains it through snapshot
+verification, provider callbacks, and complete WAL replay. Rotation, prune, and
+direct MANIFEST publication therefore cannot switch or delete the selected
+epoch midway through recovery. Ordinary WAL appends may continue during the
+low-level read, so it reconstructs a valid framed prefix. Acquiring the guard
+may create the persistent `MANIFEST.lock` coordination file in an empty or
+legacy directory.
+
 The orchestrator:
 
 1. Reads `MANIFEST` when present and selects its authoritative
@@ -489,13 +513,20 @@ use selene_core::GraphId;
 let graph = SharedGraph::recover(data_dir, GraphId::new(1))?;
 ```
 
-`SharedGraph::recover` constructs a `CoreProvider`, registers it, drives
-`selene_persist::recover`, then materializes the rebuilt graph state. The
+`SharedGraph::recover` is a writer takeover rather than an online inspection.
+When `wal.log` exists, it opens and exclusively locks it before acquiring the
+shared epoch guard and driving `recover_guarded`; another live graph therefore
+fails fast with `WriterLockHeld`, and rotation cannot interpose between replay
+and writer handoff. For a snapshot-only directory, it verifies recovery under
+the shared guard before creating a WAL seeded from the verified snapshot. That
+open is non-blocking, so a racing writer fails the takeover rather than forming
+a lock cycle. Every path requires the retained writer tip to equal recovery's
+high-water sequence, keeping later commits above the replay floor. The
 closed-graph variant is `SharedGraph::recover_closed(dir, graph_id, bound_type)`.
 Both recovery layers resolve the data directory once. The low-level orchestrator
 rejects a present `wal.log` symlink or non-file before provider callbacks, and
-the graph wrapper uses the same resolved directory for replay, live-writer
-reopen, and audit-log reopen, so an input alias cannot retarget between phases.
+the graph wrapper uses the same resolved directory for replay, live writer, and
+audit-log reopen, so an input alias cannot retarget between phases.
 
 A truncated WAL tail (torn write at the end of the log) is **not** an error
 during recovery: the iterator stops at the last fully-checksummed entry,
@@ -511,6 +542,10 @@ its in-memory state through two surfaces:
   decodes the bytes back into its in-memory state.
 - `on_change(change)`: called for every WAL `Change` past the snapshot
   sequence. The provider decides whether the change is relevant to it.
+
+These callbacks run while the shared persistence epoch is held. They must not
+re-enter same-directory checkpoint, rotation, prune, or direct MANIFEST
+publication; those operations need the exclusive side of the same lock.
 
 The recovery boundary has a sharp edge: **WAL replay only covers events
 after the snapshot's last sequence**. Any state that is not derivable from
@@ -591,23 +626,42 @@ version.
 
 ## Backups
 
-A consistent backup is **one** snapshot plus the WAL it extends, that is:
+A manifest-free current-state backup is **one** snapshot plus the WAL it
+extends, that is:
 
 - `snapshot.{S}.snap` for some sequence `S`, and
 - `wal.log` whose header `snapshot_seq` equals `S`.
 
-The recipe:
+`CheckpointOutcome` identifies what one checkpoint published; it does not pin
+that snapshot against a later checkpoint or prune. An online backup must join
+the persistence lock domain and select its epoch only after acquiring the
+shared guard:
 
-1. Call `SharedGraph::checkpoint` and retain its `CheckpointOutcome`. This
-   publishes one complete snapshot/WAL epoch; do not start another checkpoint
-   while copying that epoch.
-2. Copy `outcome.snapshot_path` and the current `wal.log` to the backup
-   destination. Ordinary commits may continue while `wal.log` is copied; a
-   partial final entry is a recoverable torn tail.
-3. Copy the matching `MANIFEST` when preserving the complete epoch directory.
-   A deliberately manifest-free two-file backup remains recoverable through
-   the legacy snapshot/WAL cross-check, provided the destination has no stale
-   MANIFEST.
+1. Optionally call `SharedGraph::checkpoint` to bound the active WAL. Then
+   acquire `PersistenceReadGuard::acquire(data_dir)`.
+2. Re-read the authoritative MANIFEST with `guard.read_manifest()`. If an exact
+   checkpoint outcome is required, first verify that the canonical parent of
+   `outcome.snapshot_path` equals `guard.dir()`, then compare its
+   `snapshot_sequence` with the guarded `live_snapshot_seq`; retry or select the
+   newer live epoch on a mismatch. Equal sequence numbers from different data
+   directories do not establish identity. Never copy outcome paths blindly.
+3. While the guard remains alive, open and copy the named live snapshot and
+   `wal.log`. Capture the WAL source length once and copy exactly that prefix;
+   ordinary commits may append beyond it, and a partial final frame within the
+   prefix is a recoverable torn tail. Rotation and prune wait.
+4. For a complete source MANIFEST bundle, also copy every archive named by that
+   MANIFEST and publish the MANIFEST in the destination last. A current-state
+   two-file backup may instead omit MANIFEST and all archives; the destination
+   must contain no stale MANIFEST, and legacy recovery will cross-check the
+   snapshot/WAL pair.
+5. Drop the guard after source files are closed. Do not copy `MANIFEST.lock`,
+   `MANIFEST.tmp`, `wal.log.init.*.tmp`, reset/snapshot temporaries, or
+   crash-orphan artifacts.
+
+The shared guard does not itself stop ordinary WAL appends. A checkpoint that
+has reached its exclusive-lock wait still occupies the graph's ordered
+committer, however, so subsequent graph writes can queue until the backup reader
+releases and checkpoint rotation completes.
 
 To restore: drop the two files into the configured data directory and start
 up. `recover` will apply the snapshot, replay the WAL forward, and the
@@ -616,7 +670,11 @@ engine will reach the same logical state.
 For point-in-time restore you can keep archived WALs plus their snapshots and
 replay forward from any retained epoch. `rotate_with_manifest` creates the WAL
 archives, and `RetentionPolicy` prunes superseded snapshots and archives; the
-embedder still owns checkpoint and retention cadence.
+embedder still owns checkpoint and retention cadence. Copy tracked history
+under the same read guard so prune cannot remove an archive midway through the
+copy. `audit.log` has an independent append/prune lifecycle and is not protected
+by `PersistenceReadGuard`; preserving audit history requires separate
+audit-prune quiescence.
 
 ## What can go wrong
 
@@ -638,6 +696,10 @@ recoverable or loud, never silent. The expected failure modes:
 | Pre-commit same-sequence snapshot/archive collision | Rotation compares the complete regular-file bytes with its newly written temporary. | `PersistError::ArtifactIdentityMismatch`; the active MANIFEST epoch stays unchanged and the writer remains usable. |
 | Committed snapshot/archive is missing, foreign, or invalid | Retry validates regular-file shape, exact snapshot identity, and already-current retained archive structure; a pre-reset retry can recreate a missing archive from the intact active WAL. | `CommittedSnapshotUnavailable`, `CommittedSnapshotIdentityMismatch`, `CommittedArchiveInvalid`, or the underlying snapshot format/hash error; reopen/recover before accepting writes. |
 | Prune overlaps rotation | Rotation and prune take `MANIFEST.lock` before their authoritative read and hold it through cleanup. | The later operation blocks, reads the committed epoch under the lock, and cannot regress the MANIFEST or delete the new live snapshot/archive. |
+| Recovery or backup overlaps rotation/prune | `PersistenceReadGuard` takes the shared `MANIFEST.lock` side from authoritative selection through artifact use. | Epoch mutation waits; the reader cannot combine an old snapshot with a newly reset WAL or lose a selected file to prune. |
+| Graph recovery overlaps a live writer | `SharedGraph::recover` locks an existing `wal.log` before guarded replay, or uses a non-blocking open after verified snapshot-only replay. | `PersistError::WriterLockHeld`; stop the live owner before writer takeover. Low-level guarded recovery remains available for online inspection. |
+| Persistence lock path is obstructed or unsupported | Guard acquisition opens and locks the persistent `MANIFEST.lock` regular file before provider callbacks. | An I/O error is returned without reading an unpinned epoch; repair the directory or use a filesystem with supported advisory locks. |
+| New WAL initialization overlaps a reader or another initializer | The complete header is fsynced under a unique sibling name, then hard-linked fail-on-existing into `wal.log` while its inode lock remains held. | Readers see absence or a complete header; exactly one initializer publishes, and a live winner makes losers return `WriterLockHeld`. |
 | Checkpoint has no eligible owned WAL   | Graph facade validates ownership and the conventional WAL filename at the ordered boundary. | The call fails without poisoning; configure the standard `wal.log`. A fresh sequence-zero WAL is eligible. |
 | Checkpoint provider preparation fails | Ordered checkpoint returns the provider error before rotation begins. | The committer remains usable; fix the provider and retry. |
 | Other checkpoint rotation errors or panics | The lower-level error cannot always prove which side of the MANIFEST commit point was reached. | The committer is poisoned; close and recover before accepting more writes. |
@@ -711,6 +773,7 @@ only in how often `fsync` runs and how often a checkpoint is taken. See
 - Snapshot writer: [`crates/selene-persist/src/snapshot_writer.rs`](../crates/selene-persist/src/snapshot_writer.rs)
 - Snapshot file header: [`crates/selene-persist/src/snapshot_file_header.rs`](../crates/selene-persist/src/snapshot_file_header.rs)
 - Recovery orchestrator: [`crates/selene-persist/src/recovery.rs`](../crates/selene-persist/src/recovery.rs)
+- Shared persistence read guard: [`crates/selene-persist/src/manifest_lock.rs`](../crates/selene-persist/src/manifest_lock.rs)
 - Recovery provider trait: [`crates/selene-persist/src/provider.rs`](../crates/selene-persist/src/provider.rs)
 - `Change` enum: [`crates/selene-core/src/changeset.rs`](../crates/selene-core/src/changeset.rs)
 - Coordinated graph checkpoint facade: [`crates/selene-graph/src/checkpoint.rs`](../crates/selene-graph/src/checkpoint.rs)

@@ -18,6 +18,8 @@ use crate::{
 
 mod replay;
 
+mod concurrency;
+
 #[derive(Clone, Debug, PartialEq)]
 enum Event {
     Section { sub: [u8; 4], bytes: Vec<u8> },

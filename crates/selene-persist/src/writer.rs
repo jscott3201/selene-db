@@ -117,7 +117,10 @@ impl WalConfig {
 /// (in-process or cross-process) fails fast with
 /// [`PersistError::WriterLockHeld`] rather than corrupting the log. The parent
 /// directory is canonicalized once at open; a final symlink or non-file entry
-/// is rejected with [`PersistError::WalPathNotRegular`].
+/// is rejected with [`PersistError::WalPathNotRegular`]. A new WAL is written
+/// and synced under a unique sibling name before a fail-on-existing hard-link
+/// publishes its complete header at the final path, so concurrent readers never
+/// observe a partially initialized file.
 pub struct WalWriter {
     file: File,
     path: PathBuf,
@@ -148,8 +151,9 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns I/O, header, sequence, lock, checksum, or non-regular-path errors
-    /// encountered while opening and validating the WAL.
+    /// Returns I/O (including unsupported hard-link publication for a new WAL),
+    /// header, sequence, lock, checksum, or non-regular-path errors encountered
+    /// while opening and validating the WAL.
     pub fn open(path: &Path, config: WalConfig) -> PersistResult<Self> {
         Self::open_with_compression(path, config, WalCompression::default())
     }
@@ -162,8 +166,9 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns I/O, header, sequence, lock, checksum, or non-regular-path errors
-    /// encountered while opening and validating the WAL.
+    /// Returns I/O (including unsupported hard-link publication for a new WAL),
+    /// header, sequence, lock, checksum, or non-regular-path errors encountered
+    /// while opening and validating the WAL.
     pub fn open_with_compression(
         path: &Path,
         config: WalConfig,
@@ -172,16 +177,9 @@ impl WalWriter {
         let sync_policy = config.sync_policy.normalized();
         // Resolve the parent once, reject a symlink/non-file final component,
         // and retain only the anchored path for every later managed artifact.
-        let (mut file, stable_path) = open_locked_wal(path)?;
-        let len = file.metadata()?.len();
-        let header_snapshot_seq = if len == 0 {
-            WalFileHeader::new(config.snapshot_seq).write_to(&mut file)?;
-            file.sync_data()?;
-            config.snapshot_seq
-        } else {
-            file.seek(SeekFrom::Start(0))?;
-            WalFileHeader::read_from(&mut file)?.snapshot_seq
-        };
+        let (mut file, stable_path) = open_locked_wal(path, config.snapshot_seq)?;
+        file.seek(SeekFrom::Start(0))?;
+        let header_snapshot_seq = WalFileHeader::read_from(&mut file)?.snapshot_seq;
 
         let scan = scan_existing(&mut file)?;
         if scan.truncate_to < file.metadata()?.len() {

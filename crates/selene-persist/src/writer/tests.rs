@@ -581,16 +581,15 @@ fn reopen_uses_header_snapshot_seq_not_config() {
 #[test]
 fn concurrent_open_admits_exactly_one_writer() {
     // The exclusive OS lock is the single-writer invariant. Race N threads to
-    // open the same WAL: exactly one must win (Ok), every other must observe
-    // WriterLockHeld — never a second writer corrupting the log. Every winning
-    // writer is parked in a shared vec and NOT dropped until all threads have
-    // finished their open attempt, so a winner's lock cannot be released and
-    // re-acquired mid-race. That makes the count deterministically exactly one.
+    // create and open the same initially absent WAL: exactly one must win (Ok),
+    // every other must observe WriterLockHeld — never a second initializer or
+    // writer corrupting the log. Every winning writer is parked in a shared vec
+    // and NOT dropped until all threads have finished their open attempt, so a
+    // winner's lock cannot be released and re-acquired mid-race. That makes the
+    // count deterministically exactly one.
     use std::sync::{Arc as StdArc, Barrier, Mutex};
 
     let path = temp_path("concurrent-lock");
-    // Ensure the file exists first so every thread races the lock, not create.
-    drop(WalWriter::open(&path, WalConfig::default()).unwrap());
 
     const THREADS: usize = 8;
     let start = StdArc::new(Barrier::new(THREADS));
@@ -631,6 +630,19 @@ fn concurrent_open_admits_exactly_one_writer() {
     // Drop the single winning writer (releasing the OS lock) before cleanup.
     winners.lock().unwrap().clear();
     let _ = fs::remove_file(path.as_path());
+}
+
+#[test]
+fn existing_zero_length_wal_is_rejected_without_initializing_in_place() {
+    let path = temp_path("existing-empty");
+    drop(fs::File::create(&path).unwrap());
+
+    assert!(matches!(
+        WalWriter::open(&path, WalConfig::default()),
+        Err(PersistError::TruncatedFileHeader)
+    ));
+    assert_eq!(fs::metadata(&path).unwrap().len(), 0);
+    let _ = fs::remove_file(path);
 }
 
 #[test]

@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use selene_core::{Change, GraphId};
 use selene_persist::{
-    AuditLog, DEFAULT_AUDIT_FILE_NAME, DEFAULT_WAL_FILE_NAME, ProviderRegistry, RecoveryError,
-    RecoveryProvider, RecoveryResult, WalConfig, WalWriter,
+    AuditLog, DEFAULT_AUDIT_FILE_NAME, DEFAULT_WAL_FILE_NAME, PersistError, PersistenceReadGuard,
+    ProviderRegistry, RecoveryError, RecoveryProvider, RecoveryResult, SyncPolicy, WalConfig,
+    WalWriter, recover_guarded,
 };
 
 use crate::core_provider::CoreProvider;
@@ -24,9 +25,11 @@ impl SharedGraph {
     ///
     /// # Errors
     ///
-    /// Returns persistence errors, [`crate::GraphError::Provider`] when a
-    /// snapshot disagrees with `graph_id` or declares a closed binding, or
-    /// graph errors when the recovered state cannot be materialized.
+    /// Returns persistence or epoch-lock errors, including
+    /// [`selene_persist::PersistError::WriterLockHeld`] when another live graph
+    /// owns the WAL; [`crate::GraphError::Provider`] when a snapshot disagrees
+    /// with `graph_id` or declares a closed binding; or graph errors when the
+    /// recovered state cannot be materialized.
     pub fn recover(dir: &Path, graph_id: GraphId) -> GraphResult<Self> {
         Self::recover_inner(dir, graph_id, None, Vec::new())
     }
@@ -114,7 +117,48 @@ impl SharedGraph {
         let provider: Arc<dyn RecoveryProvider> = core.clone();
         registry.register(provider)?;
         register_index_recovery_providers(&mut registry, &providers)?;
-        let outcome = selene_persist::recover(&dir, &registry)?;
+
+        // A graph recovery is a writer takeover, not an online inspection. An
+        // existing WAL is locked before the shared MANIFEST epoch. When no WAL
+        // exists, verify recovery under the shared guard before publishing a
+        // seeded WAL; WalWriter acquisition is non-blocking, so a racing writer
+        // fails this takeover without creating a lock-order cycle.
+        let wal_path = dir.join(DEFAULT_WAL_FILE_NAME);
+        let wal_existed = wal_path.try_exists().map_err(PersistError::from)?;
+        let (writer, read_guard, outcome) = if wal_existed {
+            let writer = open_recovery_writer(&wal_path, 0)?;
+            let read_guard = PersistenceReadGuard::acquire(&dir)?;
+            let outcome = recover_guarded(&read_guard, &registry)?;
+            (writer, read_guard, outcome)
+        } else {
+            let read_guard = PersistenceReadGuard::acquire(&dir)?;
+            let outcome = recover_guarded(&read_guard, &registry)?;
+            #[cfg(test)]
+            run_before_missing_wal_open_hook();
+            let writer = open_recovery_writer(&wal_path, outcome.applied_snapshot_seq)?;
+            (writer, read_guard, outcome)
+        };
+
+        if !wal_existed && writer.snapshot_seq() != outcome.applied_snapshot_seq {
+            return Err(PersistError::WalSnapshotMismatch {
+                wal_snapshot_seq: writer.snapshot_seq(),
+                snapshot_seq: outcome.applied_snapshot_seq,
+            }
+            .into());
+        }
+
+        // The retained writer and guarded replay scanned the same immutable
+        // WAL prefix. Exact agreement prevents later commits from reusing a
+        // sequence at or below the recovered replay floor, while accepting the
+        // legitimate Phase-3 state whose lagging-header WAL still reaches the
+        // MANIFEST snapshot sequence through its entries.
+        if writer.last_sequence() != outcome.last_wal_seq {
+            return Err(PersistError::WalRecoverySequenceMismatch {
+                writer_sequence: writer.last_sequence(),
+                recovered_sequence: outcome.last_wal_seq,
+            }
+            .into());
+        }
         let mut graph = core.finish_recovery(graph_id, expected_bound_type)?;
         // Physical WAL sequences include checkpoint watermarks and can diverge
         // from logical graph generations. Advance the snapshot META generation
@@ -130,23 +174,11 @@ impl SharedGraph {
         mark_recovered_provider_generation(&providers, &graph, &outcome)?;
         #[cfg(test)]
         run_after_persist_recovery_hook();
-        // Reopen the WAL file as a live writer so post-recovery commits
-        // continue to append durably. Without this, recover() returns a
-        // graph whose commits go to memory only — a crash after recovery
-        // would lose every post-recovery change even though the feature
-        // advertises live WAL durability.
-        //
-        // v1.2 BRIEF 2: the single committer is the sole fsync caller, so the
-        // reopened WAL is driven in OnFlushOnly (the committer flushes once per
-        // drained run). Recovery uses CommitBatching::Off below, so the committer
-        // still fsyncs once per post-recovery commit — durability is unchanged.
-        let writer = WalWriter::open(
-            &dir.join(DEFAULT_WAL_FILE_NAME),
-            WalConfig {
-                sync_policy: selene_persist::SyncPolicy::OnFlushOnly,
-                ..WalConfig::default()
-            },
-        )?;
+        drop(read_guard);
+
+        // The retained writer makes post-recovery commits durable. The single
+        // committer is the sole fsync caller, so OnFlushOnly still yields one
+        // flush per commit under CommitBatching::Off below.
         // Reattach the audit log iff one exists on disk (its `SLAU` presence
         // means the embedder enabled audit) so post-recovery lifecycle commits
         // keep being mirrored. The historical events already persist in the file
@@ -170,9 +202,21 @@ impl SharedGraph {
     }
 }
 
+fn open_recovery_writer(path: &Path, snapshot_seq: u64) -> GraphResult<WalWriter> {
+    Ok(WalWriter::open(
+        path,
+        WalConfig {
+            sync_policy: SyncPolicy::OnFlushOnly,
+            snapshot_seq,
+        },
+    )?)
+}
+
 #[cfg(test)]
 thread_local! {
     static AFTER_PERSIST_RECOVERY_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_MISSING_WAL_OPEN_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -184,8 +228,24 @@ fn set_after_persist_recovery_hook(hook: impl FnOnce() + 'static) {
 }
 
 #[cfg(test)]
+fn set_before_missing_wal_open_hook(hook: impl FnOnce() + 'static) {
+    BEFORE_MISSING_WAL_OPEN_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
 fn run_after_persist_recovery_hook() {
     AFTER_PERSIST_RECOVERY_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(test)]
+fn run_before_missing_wal_open_hook() {
+    BEFORE_MISSING_WAL_OPEN_HOOK.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }

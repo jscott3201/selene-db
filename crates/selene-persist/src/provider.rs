@@ -17,7 +17,10 @@ pub type RecoveryResult<T> = Result<T, RecoveryError>;
 ///
 /// Implementations own any in-memory state they materialize from section bytes
 /// and changes. The trait uses only raw tags and core change payloads so
-/// `selene-persist` stays graph-blind.
+/// `selene-persist` stays graph-blind. Recovery invokes callbacks while holding
+/// a shared [`crate::PersistenceReadGuard`]; callbacks must not re-enter
+/// same-directory checkpoint, rotation, prune, or direct MANIFEST publication,
+/// because those operations require an exclusive lock and may deadlock.
 pub trait RecoveryProvider: Send + Sync {
     /// Stable four-byte tag identifying this provider in snapshot section tables.
     fn provider_tag(&self) -> [u8; 4];

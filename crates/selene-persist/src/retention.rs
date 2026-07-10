@@ -45,7 +45,7 @@
 //! MANIFEST-atomic, so a periodic call is safe and a no-op when nothing is
 //! reclaimable.
 //!
-//! # Serialization with rotation
+//! # Serialization with rotation and readers
 //!
 //! Prune holds the persistent [`crate::MANIFEST_LOCK_FILE_NAME`] lock from its
 //! authoritative MANIFEST read through every post-commit deletion. WAL
@@ -53,7 +53,9 @@
 //! two operations linear rather than allowing a stale prune plan to overwrite
 //! a newer epoch or delete its just-published artifacts. The lock file is
 //! permanent coordination state and must never be unlinked while the directory
-//! may be in use.
+//! may be in use. [`crate::PersistenceReadGuard`] takes the shared side of the
+//! same lock, so prune also waits for online recovery and backup readers to
+//! finish using the artifact set they selected under the guard.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -148,12 +150,13 @@ struct FileEntry {
 ///
 /// # Errors
 ///
-/// Returns I/O errors opening/acquiring the epoch lock, scanning the directory,
-/// or committing the rewritten MANIFEST, or any [`Manifest::decode`] error from
-/// a corrupt committed MANIFEST. Best-effort file deletion runs *after* the
-/// MANIFEST commit and a missing file is treated as already-reclaimed, so
-/// post-commit deletion does not fail the prune (a residual orphan is reclaimed
-/// by the next prune).
+/// Returns I/O errors opening/acquiring the exclusive epoch lock, scanning the
+/// directory, or committing the rewritten MANIFEST, or any [`Manifest::decode`]
+/// error from a corrupt committed MANIFEST. Acquisition waits for active
+/// [`crate::PersistenceReadGuard`] readers. Best-effort file deletion runs
+/// *after* the MANIFEST commit and a missing file is treated as
+/// already-reclaimed, so post-commit deletion does not fail the prune (a
+/// residual orphan is reclaimed by the next prune).
 pub fn prune(dir: &Path, policy: &RetentionPolicy) -> PersistResult<PruneOutcome> {
     let dir = match canonical_directory_path(dir) {
         Ok(dir) => dir,
