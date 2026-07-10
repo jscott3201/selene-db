@@ -354,6 +354,27 @@ pub enum PersistError {
         /// Anchored active WAL path that failed the regular-file check.
         path: PathBuf,
     },
+
+    /// A checkpoint snapshot did not target the marker sequence immediately
+    /// after the writer's current high-water mark.
+    #[error(
+        "checkpoint snapshot sequence {snapshot_seq} does not match expected watermark sequence {expected_sequence}"
+    )]
+    #[diagnostic(code(SLENE_P_041))]
+    WalCheckpointSequenceMismatch {
+        /// Sequence configured on the checkpoint snapshot builder.
+        snapshot_seq: u64,
+        /// Exact next sequence the checkpoint marker would receive.
+        expected_sequence: u64,
+    },
+
+    /// The WAL sequence counter cannot advance beyond `u64::MAX`.
+    #[error("wal sequence is exhausted at {last_sequence}")]
+    #[diagnostic(code(SLENE_P_042))]
+    WalSequenceExhausted {
+        /// Current high-water sequence that cannot be incremented.
+        last_sequence: u64,
+    },
 }
 
 impl PersistError {
@@ -399,7 +420,9 @@ impl PersistError {
             | Self::CommittedSnapshotUnavailable { .. }
             | Self::CommittedSnapshotIdentityMismatch { .. }
             | Self::CommittedArchiveInvalid { .. }
-            | Self::WalPathNotRegular { .. } => "5GQL0",
+            | Self::WalPathNotRegular { .. }
+            | Self::WalCheckpointSequenceMismatch { .. }
+            | Self::WalSequenceExhausted { .. } => "5GQL0",
         }
     }
 }
@@ -476,6 +499,13 @@ mod tests {
     }, "5GQL0")]
     #[case(PersistError::WalPathNotRegular {
         path: "wal.log".into(),
+    }, "5GQL0")]
+    #[case(PersistError::WalCheckpointSequenceMismatch {
+        snapshot_seq: 4,
+        expected_sequence: 5,
+    }, "5GQL0")]
+    #[case(PersistError::WalSequenceExhausted {
+        last_sequence: u64::MAX,
     }, "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);

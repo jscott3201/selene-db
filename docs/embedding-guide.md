@@ -581,12 +581,23 @@ Now every committed change flows into the WAL atomically with the snapshot publi
 
 Snapshots are atomic envelopes containing zero or more **sections** keyed by `(provider, sub)` tag pair. The engine-owned graph state lives under the `CORE` provider (`META`, `NODE`, `EDGE`, `SCMA` sub-tags); extension providers own their own sections under their own provider tags.
 
+For a live graph opened with `.with_wal(...)`, call
+`SharedGraph::checkpoint(CheckpointConfig::default())`. The coordinated facade
+prepares every engine-owned provider at one graph generation, reserves a fresh
+physical WAL sequence with a checkpoint watermark, and performs the crash-safe
+MANIFEST rotation. Graph generation and snapshot sequence are intentionally
+distinct; never substitute `CommitOutcome::generation` for the checkpoint
+sequence.
+
+Direct `SnapshotBuilder` construction is for offline tooling or a host that has
+already quiesced writes and owns its sequence policy:
+
 ```rust
 use selene_persist::{SectionCompression, SnapshotBuilder, SnapshotConfig};
 
 let config = SnapshotConfig {
     dir: wal_dir.to_path_buf(),
-    sequence: outcome.generation,  // from the last CommitOutcome
+    sequence: offline_snapshot_sequence,
     compression: SectionCompression::DEFAULT,  // zstd level 1, per-section
     fsync: true,
 };
@@ -623,10 +634,11 @@ println!(
 );
 ```
 
-`recover` runs in two stages:
+`recover` runs in two stages after selecting the MANIFEST-authoritative
+snapshot (or the highest snapshot in a legacy MANIFEST-less directory):
 
-1. **Snapshot apply.** Find the latest `snapshot.{seq}.snap`, verify its body hash, and call `read_section` on every section in section-table order, routed by `provider` tag.
-2. **WAL replay.** Read every WAL entry with `sequence > applied_snapshot_seq`, decode the changes, and fan out to every registered provider in deterministic tag order. The WAL must extend the snapshot epoch; mismatched chains return `PersistError::WalSnapshotMismatch`.
+1. **Snapshot apply.** Verify the selected snapshot's body hash and call `read_section` on every section in section-table order, routed by `provider` tag.
+2. **WAL replay.** Read every WAL frame with `sequence > applied_snapshot_seq`. Physical checkpoint watermarks advance `last_wal_seq` but are skipped. Logical commit frames, including unflagged empty commits, advance `wal_commit_entries_applied`; their changes fan out to registered providers in deterministic tag order. On the legacy path, the WAL must extend the snapshot epoch or recovery returns `PersistError::WalSnapshotMismatch`.
 
 Both `IndexProvider` and `RecoveryProvider` exist because `selene-graph` and `selene-persist` are separately layered (D8). Most providers implement both traits with thin shims so that the same derived state is written at snapshot time and re-read at recovery time.
 

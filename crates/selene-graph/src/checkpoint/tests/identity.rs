@@ -1,14 +1,15 @@
 use selene_core::{GraphId, LabelSet, PropertyMap, db_string};
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, Manifest, PersistError, SnapshotBuilder, SnapshotConfig,
+    DEFAULT_WAL_FILE_NAME, Manifest, PersistError, SectionCompression, SnapshotBuilder,
+    SnapshotConfig,
 };
 
-use super::{commit_node, temp_dir, wal_graph};
+use super::{active_wal_sequences, commit_node, temp_dir, wal_graph};
 use crate::{CheckpointConfig, GraphError, SharedGraph};
 
 #[test]
-fn same_sequence_compaction_conflict_is_fail_closed_until_reopen() {
-    let dir = temp_dir("same-sequence-compaction");
+fn wal_free_compaction_checkpoints_at_a_fresh_physical_sequence() {
+    let dir = temp_dir("wal-free-compaction");
     let graph_id = GraphId::new(91_012);
     let shared = wal_graph(&dir, graph_id);
     let tombstone = commit_node(&shared, "DeletedBeforeCheckpoint");
@@ -21,45 +22,27 @@ fn same_sequence_compaction_conflict_is_fail_closed_until_reopen() {
     let first = shared
         .checkpoint(CheckpointConfig::default())
         .expect("initial checkpoint succeeds");
-    assert_eq!(first.snapshot_sequence, 2);
-    shared.compact().expect("compaction removes tombstone rows");
+    assert_eq!(first.snapshot_sequence, 3);
+    let report = shared.compact().expect("compaction removes tombstone rows");
+    assert_eq!(report.reclaimed_nodes, 1);
+    assert_eq!(shared.compaction_stats().reclaimable_nodes, 0);
 
-    let error = shared
+    let compacted = shared
         .checkpoint(CheckpointConfig::default())
-        .expect_err("same-sequence physical rewrite fails closed");
-
-    assert!(matches!(
-        error,
-        GraphError::Persist(PersistError::CommittedSnapshotIdentityMismatch { .. })
-    ));
-    let mut rejected = shared.begin_write();
-    rejected
-        .mutator()
-        .create_node(
-            LabelSet::single(db_string("RejectedAfterIdentityConflict").expect("valid label")),
-            PropertyMap::new(),
-        )
-        .expect("mutation stages before poison is observed");
-    rejected
-        .commit()
-        .expect_err("same-epoch committed conflict poisons the graph");
+        .expect("WAL-free compaction receives a fresh checkpoint watermark");
+    assert_eq!(compacted.snapshot_sequence, 4);
+    assert_eq!(shared.read().meta.generation, 2);
     drop(shared);
 
-    let recovered = SharedGraph::recover(&dir, graph_id).expect("reopen restores the live epoch");
-    let after = commit_node(&recovered, "AfterIdentityConflictReopen");
-    assert_eq!(recovered.compaction_stats().reclaimable_nodes, 1);
-    let report = recovered
-        .compact()
-        .expect("reopen can repeat the WAL-free compaction");
-    assert_eq!(report.reclaimed_nodes, 1);
+    let recovered = SharedGraph::recover(&dir, graph_id).expect("dense checkpoint recovers");
+    assert!(!recovered.read().is_node_alive(tombstone));
+    assert_eq!(recovered.read().meta.generation, 2);
     assert_eq!(recovered.compaction_stats().reclaimable_nodes, 0);
-    let repaired = recovered
-        .checkpoint(CheckpointConfig::default())
-        .expect("the next durable sequence checkpoints after reopen");
-    assert_eq!(repaired.snapshot_sequence, 3);
+    let after = commit_node(&recovered, "AfterCompactedCheckpoint");
+    assert_eq!(recovered.read().meta.generation, 3);
     drop(recovered);
 
-    let verified = SharedGraph::recover(&dir, graph_id).expect("repaired epoch recovers");
+    let verified = SharedGraph::recover(&dir, graph_id).expect("later commit recovers");
     assert!(verified.read().is_node_alive(after));
     assert!(!verified.read().is_node_alive(tombstone));
     assert_eq!(verified.compaction_stats().reclaimable_nodes, 0);
@@ -108,45 +91,73 @@ fn manifest_ahead_checkpoint_error_poisons_stale_graph_writer() {
 }
 
 #[test]
-fn foreign_committed_snapshot_conflict_poisons_graph_writer() {
-    let dir = temp_dir("foreign-committed-snapshot");
-    let graph_id = GraphId::new(91_014);
+fn next_target_collision_consumes_marker_without_poisoning_graph() {
+    let dir = temp_dir("next-target-collision");
+    let graph_id = GraphId::new(91_015);
     let shared = wal_graph(&dir, graph_id);
-    commit_node(&shared, "BeforeForeignSnapshot");
-    let first = shared
-        .checkpoint(CheckpointConfig::default())
-        .expect("initial checkpoint succeeds");
-    std::fs::remove_file(&first.snapshot_path).expect("committed snapshot removes");
+    let before = commit_node(&shared, "BeforeTargetCollision");
     let mut foreign = SnapshotBuilder::new(SnapshotConfig {
         dir: dir.clone(),
-        sequence: 1,
-        compression: selene_persist::SectionCompression::None,
+        sequence: 2,
+        compression: SectionCompression::None,
         fsync: true,
     });
     foreign
-        .add_section(*b"TEST", *b"DATA", b"foreign-but-valid".to_vec())
+        .add_section(*b"TEST", *b"DATA", b"foreign-target".to_vec())
         .expect("foreign section adds");
-    foreign
-        .finalize()
-        .expect("foreign snapshot envelope publishes");
+    foreign.finalize().expect("foreign target publishes");
 
     let error = shared
         .checkpoint(CheckpointConfig::default())
-        .expect_err("foreign committed snapshot fails closed");
+        .expect_err("foreign next target fails closed");
     assert!(matches!(
         error,
-        GraphError::Persist(PersistError::CommittedSnapshotIdentityMismatch { .. })
+        GraphError::Persist(PersistError::ArtifactIdentityMismatch { .. })
     ));
+    assert_eq!(
+        active_wal_sequences(&dir.join(DEFAULT_WAL_FILE_NAME)),
+        vec![1, 2]
+    );
 
-    let mut txn = shared.begin_write();
-    txn.mutator()
-        .create_node(
-            LabelSet::single(db_string("RejectedAfterForeignSnapshot").expect("valid label")),
-            PropertyMap::new(),
-        )
-        .expect("mutation stages before poison is observed");
-    txn.commit()
-        .expect_err("poisoned graph rejects later writes");
+    let after = commit_node(&shared, "AfterTargetCollision");
+    let repaired = shared
+        .checkpoint(CheckpointConfig::default())
+        .expect("later fresh target checkpoints without reopening");
+    assert_eq!(repaired.snapshot_sequence, 4);
+    assert_eq!(shared.read().meta.generation, 2);
     drop(shared);
+
+    let recovered = SharedGraph::recover(&dir, graph_id).expect("later epoch recovers");
+    assert!(recovered.read().is_node_alive(before));
+    assert!(recovered.read().is_node_alive(after));
+    assert_eq!(recovered.read().meta.generation, 2);
+    drop(recovered);
+    std::fs::remove_dir_all(dir).expect("temp directory is removed");
+}
+
+#[test]
+fn repeated_checkpoint_with_different_compression_gets_a_fresh_epoch() {
+    let dir = temp_dir("compression-change");
+    let graph_id = GraphId::new(91_014);
+    let shared = wal_graph(&dir, graph_id);
+    let node = commit_node(&shared, "BeforeCompressionChange");
+    let first = shared
+        .checkpoint(CheckpointConfig {
+            compression: SectionCompression::None,
+        })
+        .expect("initial checkpoint succeeds");
+    let second = shared
+        .checkpoint(CheckpointConfig::default())
+        .expect("compression change publishes under a fresh watermark");
+    assert_eq!(first.snapshot_sequence, 2);
+    assert_eq!(second.snapshot_sequence, 3);
+    assert_ne!(first.snapshot_path, second.snapshot_path);
+    assert_eq!(shared.read().meta.generation, 1);
+    drop(shared);
+
+    let recovered = SharedGraph::recover(&dir, graph_id).expect("new compression epoch recovers");
+    assert!(recovered.read().is_node_alive(node));
+    assert_eq!(recovered.read().meta.generation, 1);
+    drop(recovered);
     std::fs::remove_dir_all(dir).expect("temp directory is removed");
 }

@@ -182,17 +182,21 @@ impl WalEntryView {
     ///
     /// # Errors
     ///
-    /// Returns checksum, compression, or postcard payload decode errors.
+    /// Returns checksum, compression, postcard payload decode, or malformed
+    /// checkpoint-watermark errors.
     pub fn body(&self) -> PersistResult<Vec<Change>> {
         verify_checksum(&self.header, &self.payload)?;
-        decode_changes(&self.payload, self.header.is_payload_compressed())
+        let changes = decode_changes(&self.payload, self.header.is_payload_compressed())?;
+        validate_checkpoint_watermark(&self.header, &changes)?;
+        Ok(changes)
     }
 
     /// Consume this view and return a fully decoded WAL entry.
     ///
     /// # Errors
     ///
-    /// Returns checksum, compression, or postcard payload decode errors.
+    /// Returns checksum, compression, postcard payload decode, or malformed
+    /// checkpoint-watermark errors.
     pub fn into_entry(self) -> PersistResult<WalEntry> {
         let changes = self.body()?;
         Ok(WalEntry {
@@ -200,6 +204,20 @@ impl WalEntryView {
             changes,
         })
     }
+}
+
+fn validate_checkpoint_watermark(header: &WalEntryHeader, changes: &[Change]) -> PersistResult<()> {
+    if header.is_checkpoint_watermark()
+        && (!matches!(header.origin, selene_core::Origin::Local)
+            || header.principal.is_some()
+            || !changes.is_empty())
+    {
+        return Err(PersistError::HeaderCodec(format!(
+            "checkpoint watermark at sequence {} must be local, principal-free, and empty",
+            header.sequence
+        )));
+    }
+    Ok(())
 }
 
 /// Fully decoded WAL entry.
@@ -307,6 +325,64 @@ mod tests {
         assert_eq!(entries[0].changes, changes(1));
         assert_eq!(entries[1].changes, changes(2));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn malformed_checkpoint_watermarks_are_rejected() {
+        use crate::FLAG_CHECKPOINT_WATERMARK;
+
+        let cases = [
+            ("changes", Origin::Local, None, changes(1)),
+            (
+                "replicated",
+                Origin::Replicated {
+                    source_node_id: NodeId::new(7),
+                    source_seq: 1,
+                },
+                None,
+                Vec::new(),
+            ),
+            (
+                "principal",
+                Origin::Local,
+                Some(Arc::from(b"actor".as_slice())),
+                Vec::new(),
+            ),
+        ];
+        for (name, origin, principal, body) in cases {
+            let path = temp_path(name);
+            let payload = encode_changes(&body).unwrap();
+            let header = WalEntryHeader::new(
+                payload.bytes.len(),
+                payload.checksum_lo,
+                1,
+                HlcTimestamp::new(1, 0),
+                origin,
+                payload.flags | FLAG_CHECKPOINT_WATERMARK,
+                principal,
+            )
+            .unwrap();
+            let mut file = fs::File::create(&path).unwrap();
+            WalFileHeader::new(0).write_to(&mut file).unwrap();
+            file.write_all(&encode_entry_header(&header).unwrap())
+                .unwrap();
+            file.write_all(&payload.bytes).unwrap();
+            drop(file);
+
+            let view = WalReader::open(&path)
+                .unwrap()
+                .iterate(|_| true)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                view.body(),
+                Err(PersistError::HeaderCodec(reason))
+                    if reason.contains("checkpoint watermark")
+            ));
+            fs::remove_file(path).unwrap();
+        }
     }
 
     #[test]

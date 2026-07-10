@@ -15,6 +15,11 @@ pub const MAX_PRINCIPAL_BYTES: usize = 4096;
 pub const COMPRESS_THRESHOLD: usize = 4_096;
 /// Header flag bit indicating that the on-disk payload is zstd-compressed.
 pub const FLAG_PAYLOAD_COMPRESSED: u8 = 0b0000_0001;
+/// Header flag bit identifying a physical checkpoint-sequence watermark.
+///
+/// Watermarks carry a local, principal-free, empty change payload. They advance
+/// the WAL sequence without representing a logical graph commit.
+pub const FLAG_CHECKPOINT_WATERMARK: u8 = 0b0000_0010;
 
 pub(crate) const FIXED_ENTRY_HEADER_BYTES: usize = 32;
 const REPLICATED_TAIL_BYTES: usize = 16;
@@ -44,7 +49,7 @@ pub struct WalEntryHeader {
     pub hlc_subseconds: u32,
     /// Mutation origin (Local or Replicated with full provenance).
     pub origin: Origin,
-    /// Entry flags; bit 0 means the payload is zstd-compressed.
+    /// Entry flags; bit 0 means payload compression and bit 1 is a checkpoint watermark.
     pub flags: u8,
     /// Caller-owned opaque audit principal bytes, capped at 4 KiB.
     pub principal: Option<Arc<[u8]>>,
@@ -91,6 +96,12 @@ impl WalEntryHeader {
     #[must_use]
     pub const fn is_payload_compressed(&self) -> bool {
         self.flags & FLAG_PAYLOAD_COMPRESSED != 0
+    }
+
+    /// Return true when this frame is a physical checkpoint watermark.
+    #[must_use]
+    pub const fn is_checkpoint_watermark(&self) -> bool {
+        self.flags & FLAG_CHECKPOINT_WATERMARK != 0
     }
 }
 

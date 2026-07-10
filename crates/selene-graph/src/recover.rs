@@ -13,7 +13,7 @@ use crate::core_provider::CoreProvider;
 use crate::graph_types::GraphTypeDef;
 use crate::index_provider::{IndexProvider, ProviderError, SubTag};
 use crate::shared::validate_unique_provider_tags;
-use crate::{GraphResult, SharedGraph};
+use crate::{GraphError, GraphResult, SharedGraph};
 
 impl SharedGraph {
     /// Recover an open (GG01) shared graph from a persistence directory.
@@ -116,12 +116,17 @@ impl SharedGraph {
         register_index_recovery_providers(&mut registry, &providers)?;
         let outcome = selene_persist::recover(&dir, &registry)?;
         let mut graph = core.finish_recovery(graph_id, expected_bound_type)?;
-        // The committed graph generation must reflect every change that was
-        // replayed. Snapshot+WAL recovery applies WAL entries past the
-        // snapshot's sequence; without this bump, the next mutation would
-        // increment from a stale snapshot generation, regressing or
-        // duplicating sequencing relative to the recovered tip.
-        graph.meta.generation = graph.meta.generation.max(outcome.last_wal_seq);
+        // Physical WAL sequences include checkpoint watermarks and can diverge
+        // from logical graph generations. Advance the snapshot META generation
+        // once per replayed logical commit (including ordinary empty commits),
+        // never once per physical watermark or Change value.
+        graph.meta.generation = graph
+            .meta
+            .generation
+            .checked_add(outcome.wal_commit_entries_applied)
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: "graph generation overflow while applying recovered WAL commits".to_owned(),
+            })?;
         mark_recovered_provider_generation(&providers, &graph, &outcome)?;
         #[cfg(test)]
         run_after_persist_recovery_hook();

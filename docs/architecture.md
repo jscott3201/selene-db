@@ -219,7 +219,7 @@ with a stable 4-byte magic prefix.
 
 | Format | Magic | Producer | Consumer | Purpose |
 |---|---|---|---|---|
-| WAL entry | `SLDB` | `selene_persist::WalWriter` | `WalReader`, `recover` | Per-commit framed entry: header (length, principal, flags, checksum) followed by postcard-serialized `Vec<Change>`. |
+| WAL entry | `SLDB` | `selene_persist::WalWriter` | `WalReader`, `recover` | Framed entry: header (length, principal, flags, checksum) followed by postcard-serialized `Vec<Change>`. Ordinary frames are logical commits; typed empty checkpoint-watermark frames reserve physical snapshot epochs without advancing graph generation. |
 | Snapshot | `SLSN` | `SnapshotBuilder` | `SnapshotReader` | rkyv-archived snapshot with TLV-tagged sections: CORE (engine-owned: metadata, nodes, edges, schemas) plus zero-or-more provider-owned sections keyed by `ProviderTag` + `SubTag`. |
 
 ### Graph-blind WAL

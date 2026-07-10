@@ -88,19 +88,20 @@ fn checkpoint_rotates_at_ordered_boundary_and_recovery_replays_later_commit() {
             compression: SectionCompression::None,
         })
         .expect("checkpoint succeeds");
-    assert_eq!(first.snapshot_sequence, 1);
+    assert_eq!(first.snapshot_sequence, 2);
     assert!(first.snapshot_path.is_file());
-    assert_eq!(first.rotation.snapshot_sequence(), 1);
+    assert_eq!(first.rotation.snapshot_sequence(), 2);
     assert!(first.rotation.archived_path().is_some());
 
     let repeated = shared
         .checkpoint(CheckpointConfig {
             compression: SectionCompression::None,
         })
-        .expect("same-sequence checkpoint converges idempotently");
-    assert_eq!(repeated.snapshot_sequence, first.snapshot_sequence);
-    assert_eq!(repeated.snapshot_path, first.snapshot_path);
-    assert!(repeated.rotation.archived_path().is_none());
+        .expect("repeated checkpoint reserves a fresh physical epoch");
+    assert_eq!(repeated.snapshot_sequence, 3);
+    assert_ne!(repeated.snapshot_path, first.snapshot_path);
+    assert!(repeated.rotation.archived_path().is_some());
+    assert_eq!(shared.read().meta.generation, 1);
 
     shared
         .compact()
@@ -110,8 +111,8 @@ fn checkpoint_rotates_at_ordered_boundary_and_recovery_replays_later_commit() {
         .expect("vector maintenance orders after compaction");
     let after = commit_node(&shared, "AfterCheckpoint");
     let active = WalReader::open(&wal).expect("active WAL opens");
-    assert_eq!(active.snapshot_seq(), 1);
-    assert_eq!(active_wal_sequences(&wal), vec![2]);
+    assert_eq!(active.snapshot_seq(), 3);
+    assert_eq!(active_wal_sequences(&wal), vec![4]);
     drop(shared);
 
     let recovered = SharedGraph::recover(&dir, graph_id).expect("checkpoint lineage recovers");
@@ -171,7 +172,7 @@ fn checkpoint_waits_for_lower_reordered_group_before_rotating() {
         .join()
         .expect("checkpoint thread joins")
         .expect("checkpoint runs after both lower commits");
-    assert_eq!(outcome.snapshot_sequence, 2);
+    assert_eq!(outcome.snapshot_sequence, 3);
     assert!(shared.read().is_node_alive(a));
     assert!(shared.read().is_node_alive(b));
     assert!(active_wal_sequences(&dir.join(DEFAULT_WAL_FILE_NAME)).is_empty());
@@ -217,13 +218,29 @@ fn checkpoint_keeps_graph_generation_distinct_from_wal_sequence() {
     let outcome = shared
         .checkpoint(CheckpointConfig::default())
         .expect("provider is checked against graph generation, not WAL sequence");
-    assert_eq!(outcome.snapshot_sequence, 1);
+    assert_eq!(outcome.snapshot_sequence, 2);
+    assert_eq!(shared.read().meta.generation, 11);
+    assert_eq!(provider.generation(), 11);
     drop(shared);
+
+    let recovered_provider = Arc::new(
+        MaintainedCandidateStateProvider::new(std::iter::empty())
+            .expect("empty candidate-state provider is valid"),
+    );
+    let recovered = SharedGraph::recover_with_providers(
+        &dir,
+        GraphId::new(91_002),
+        vec![Arc::clone(&recovered_provider) as Arc<dyn IndexProvider>],
+    )
+    .expect("physical checkpoint sequence recovers independently of generation");
+    assert_eq!(recovered.read().meta.generation, 11);
+    assert_eq!(recovered_provider.generation(), 11);
+    drop(recovered);
     std::fs::remove_dir_all(dir).expect("temp directory is removed");
 }
 
 #[test]
-fn rejected_checkpoint_work_does_not_poison_or_wedge_commits() {
+fn checkpoint_availability_errors_do_not_poison_or_wedge_commits() {
     let no_wal = SharedGraph::new(GraphId::new(91_003));
     no_wal
         .checkpoint(CheckpointConfig::default())
@@ -232,13 +249,20 @@ fn rejected_checkpoint_work_does_not_poison_or_wedge_commits() {
 
     let empty_dir = temp_dir("empty-wal");
     let empty = wal_graph(&empty_dir, GraphId::new(91_004));
-    empty
+    let empty_checkpoint = empty
         .checkpoint(CheckpointConfig::default())
-        .expect_err("sequence-zero WAL cannot checkpoint");
+        .expect("watermark lets a sequence-zero WAL checkpoint");
+    assert_eq!(empty_checkpoint.snapshot_sequence, 1);
+    assert_eq!(empty.read().meta.generation, 0);
+    drop(empty);
+    let empty = SharedGraph::recover(&empty_dir, GraphId::new(91_004))
+        .expect("marker-only empty checkpoint recovers");
+    assert_eq!(empty.read().meta.generation, 0);
     commit_node(&empty, "AfterSequenceZeroError");
-    empty
+    let after_commit = empty
         .checkpoint(CheckpointConfig::default())
         .expect("checkpoint succeeds after first durable commit");
+    assert_eq!(after_commit.snapshot_sequence, 3);
     drop(empty);
     std::fs::remove_dir_all(empty_dir).expect("temp directory is removed");
 
@@ -321,19 +345,27 @@ fn provider_error_and_panic_leave_committer_retryable() {
     shared
         .checkpoint(CheckpointConfig::default())
         .expect_err("provider error fails only this checkpoint");
+    assert_eq!(
+        active_wal_sequences(&dir.join(DEFAULT_WAL_FILE_NAME)),
+        vec![1]
+    );
     commit_node(&shared, "AfterProviderError");
 
     provider.behavior.store(2, Ordering::Release);
     shared
         .checkpoint(CheckpointConfig::default())
         .expect_err("provider panic fails only this checkpoint");
+    assert_eq!(
+        active_wal_sequences(&dir.join(DEFAULT_WAL_FILE_NAME)),
+        vec![1, 2]
+    );
     commit_node(&shared, "AfterProviderPanic");
 
     provider.behavior.store(0, Ordering::Release);
     let outcome = shared
         .checkpoint(CheckpointConfig::default())
         .expect("later checkpoint succeeds");
-    assert_eq!(outcome.snapshot_sequence, 3);
+    assert_eq!(outcome.snapshot_sequence, 4);
     drop(shared);
     std::fs::remove_dir_all(dir).expect("temp directory is removed");
 }
@@ -345,7 +377,7 @@ fn rotation_error_poisons_until_recovery_reopens_the_graph() {
     let shared = wal_graph(&dir, graph_id);
     let durable = commit_node(&shared, "BeforeRotationError");
     let obstructions = (0..128_u8)
-        .map(|attempt| snapshot_attempt_path(&dir, 1, attempt))
+        .map(|attempt| snapshot_attempt_path(&dir, 2, attempt))
         .collect::<Vec<_>>();
     for obstruction in &obstructions {
         std::fs::write(obstruction, b"occupied").expect("snapshot attempt is obstructed");
@@ -371,6 +403,7 @@ fn rotation_error_poisons_until_recovery_reopens_the_graph() {
     let recovered = SharedGraph::recover(&dir, graph_id).expect("reopen heals writer state");
     assert!(recovered.read().is_node_alive(durable));
     assert_eq!(recovered.read().node_count(), 1);
+    assert_eq!(recovered.read().meta.generation, 1);
     drop(recovered);
     std::fs::remove_dir_all(dir).expect("temp directory is removed");
 }
@@ -581,6 +614,11 @@ fn readers_continue_while_higher_writer_waits_behind_checkpoint() {
         .expect("higher writer commit succeeds");
     writer.join().expect("writer thread joins");
     assert!(shared.read().is_node_alive(after));
+    assert_eq!(
+        active_wal_sequences(&dir.join(DEFAULT_WAL_FILE_NAME)),
+        vec![3],
+        "higher writer receives the sequence immediately after the watermark"
+    );
     drop(shared);
     std::fs::remove_dir_all(dir).expect("temp directory is removed");
 }

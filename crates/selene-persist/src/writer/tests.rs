@@ -1,9 +1,12 @@
 use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::{Change, NodeId, Origin, PropertyMap, Value, db_string};
 
 use super::*;
+use crate::writer::append::WAL_RECORD_BUFFER_RETAIN_LIMIT;
 use crate::{MAX_PRINCIPAL_BYTES, WAL_FILE_HEADER_LEN, WalReader};
 
 fn temp_path(name: &str) -> std::path::PathBuf {

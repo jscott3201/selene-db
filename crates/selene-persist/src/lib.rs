@@ -37,8 +37,8 @@ pub use crate::audit::{
     AuditRecord, AuditRetentionPolicy, DEFAULT_AUDIT_FILE_NAME, MAX_AUDIT_PAYLOAD_BYTES,
 };
 pub use crate::entry_header::{
-    COMPRESS_THRESHOLD, FLAG_PAYLOAD_COMPRESSED, MAX_PRINCIPAL_BYTES, MAX_WAL_ENTRY_BYTES,
-    WalEntryHeader,
+    COMPRESS_THRESHOLD, FLAG_CHECKPOINT_WATERMARK, FLAG_PAYLOAD_COMPRESSED, MAX_PRINCIPAL_BYTES,
+    MAX_WAL_ENTRY_BYTES, WalEntryHeader,
 };
 pub use crate::error::{PersistError, PersistResult};
 pub use crate::file_header::{

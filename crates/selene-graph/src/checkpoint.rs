@@ -35,12 +35,18 @@ impl Default for CheckpointConfig {
 /// Result of a successful coordinated graph checkpoint.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointOutcome {
-    /// Checkpoint epoch covered by the durable snapshot.
+    /// Physical checkpoint epoch covered by the durable snapshot.
+    ///
+    /// Coordinated checkpoints reserve this fresh WAL sequence with a typed
+    /// watermark; it is independent of logical graph generation.
     pub snapshot_sequence: u64,
     /// Final path of the durable snapshot.
     pub snapshot_path: PathBuf,
-    /// Whether the MANIFEST-backed WAL operation rotated or found this exact
-    /// snapshot epoch already current.
+    /// Detail from the MANIFEST-backed WAL operation.
+    ///
+    /// Coordinated checkpoints create a fresh epoch and therefore return
+    /// [`WalRotationOutcome::Rotated`]. `AlreadyCurrent` remains part of the
+    /// lower-level rotation type for exact crash retries.
     pub rotation: WalRotationOutcome,
 }
 
@@ -50,13 +56,14 @@ pub(crate) struct CheckpointExecution {
     pub(crate) poison_committer: bool,
 }
 
-/// Encode every provider at `generation`, then rotate the owned WAL.
+/// Encode every provider, then append a physical watermark and rotate the WAL.
 ///
 /// Preparation failures happen before the MANIFEST protocol begins and are
-/// therefore safe to report without poisoning the committer. Rotation errors
-/// normally have an ambiguous writer/commit-point state and require reopen;
-/// a typed pre-commit artifact collision leaves the active epoch unchanged and
-/// the ordered writer usable.
+/// therefore safe to report without consuming a WAL sequence or poisoning the
+/// committer. The combined watermark/rotation phase normally has an ambiguous
+/// writer/commit-point state on error and requires reopen; a typed pre-commit
+/// artifact collision leaves the active epoch unchanged and the ordered writer
+/// usable at its newly reserved physical sequence.
 pub(crate) fn execute(
     core: &CoreProvider,
     providers: &[Arc<dyn IndexProvider>],
@@ -82,7 +89,9 @@ pub(crate) fn execute(
         }
     };
 
-    let rotated = std::panic::catch_unwind(AssertUnwindSafe(|| core.rotate_checkpoint(builder)));
+    let rotated = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        core.rotate_checkpoint_with_watermark(builder)
+    }));
     match rotated {
         Ok(Ok(rotation)) => CheckpointExecution {
             result: Ok(CheckpointOutcome {
@@ -102,7 +111,7 @@ pub(crate) fn execute(
         Err(payload) => CheckpointExecution {
             result: Err(GraphError::Durable {
                 reason: format!(
-                    "checkpoint WAL rotation panicked: {}; the graph must be reopened",
+                    "checkpoint WAL watermark/rotation panicked: {}; the graph must be reopened",
                     crate::panic_payload::describe(&payload)
                 ),
             }),
@@ -125,10 +134,17 @@ fn prepare(
     config: CheckpointConfig,
 ) -> GraphResult<(SnapshotBuilder, u64, PathBuf)> {
     let target = core.checkpoint_target()?;
-    let final_snapshot_path = snapshot_path(&target.dir, target.sequence);
+    let snapshot_sequence =
+        target
+            .sequence
+            .checked_add(1)
+            .ok_or(PersistError::WalSequenceExhausted {
+                last_sequence: target.sequence,
+            })?;
+    let final_snapshot_path = snapshot_path(&target.dir, snapshot_sequence);
     let mut builder = SnapshotBuilder::new(SnapshotConfig {
         dir: target.dir,
-        sequence: target.sequence,
+        sequence: snapshot_sequence,
         compression: config.compression,
         fsync: true,
     });
@@ -140,7 +156,7 @@ fn prepare(
             builder.add_section(provider_tag.0, sub_tag.0, bytes)?;
         }
     }
-    Ok((builder, target.sequence, final_snapshot_path))
+    Ok((builder, snapshot_sequence, final_snapshot_path))
 }
 
 fn provider_panic(phase: &str, payload: &Box<dyn std::any::Any + Send>) -> GraphError {

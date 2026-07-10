@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::GraphId;
-use selene_graph::{GraphError, SharedGraph};
+use selene_graph::{CheckpointConfig, GraphError, SharedGraph};
 use selene_persist::{
     AUDIT_KIND_RESERVED_0, AuditLog, AuditRecord, DEFAULT_AUDIT_FILE_NAME, DEFAULT_WAL_FILE_NAME,
     WalConfig,
@@ -74,6 +74,21 @@ fn audit_log_appends_are_durable() {
     assert_eq!(records[0], sample_record(1));
     assert_eq!(records[1], sample_record(2));
     let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn checkpoint_watermark_is_not_an_audit_event() {
+    let dir = temp_dir("checkpoint-watermark");
+    let shared = build_with_audit(&dir, GraphId::new(206));
+
+    let checkpoint = shared
+        .checkpoint(CheckpointConfig::default())
+        .expect("empty WAL-backed graph checkpoints through a watermark");
+
+    assert_eq!(checkpoint.snapshot_sequence, 1);
+    assert!(AuditLog::read_all(&audit_path(&dir)).unwrap().is_empty());
+    drop(shared);
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
