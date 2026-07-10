@@ -640,6 +640,13 @@ snapshot (or the highest snapshot in a legacy MANIFEST-less directory):
 1. **Snapshot apply.** Verify the selected snapshot's body hash and call `read_section` on every section in section-table order, routed by `provider` tag.
 2. **WAL replay.** Read every WAL frame with `sequence > applied_snapshot_seq`. Physical checkpoint watermarks advance `last_wal_seq` but are skipped. Logical commit frames, including unflagged empty commits, advance `wal_commit_entries_applied`; their changes fan out to registered providers in deterministic tag order. On the legacy path, the WAL must extend the snapshot epoch or recovery returns `PersistError::WalSnapshotMismatch`.
 
+The convenience `recover` function holds a shared `PersistenceReadGuard`
+across both stages, so checkpoint rotation and retention pruning cannot switch
+or delete the selected epoch during replay. If an embedder already holds a
+guard for a larger read transaction, use `recover_guarded(&guard, &registry)`.
+Provider callbacks must not invoke same-directory checkpoint, prune, rotation,
+or MANIFEST publication while the shared guard is held.
+
 Both `IndexProvider` and `RecoveryProvider` exist because `selene-graph` and `selene-persist` are separately layered (D8). Most providers implement both traits with thin shims so that the same derived state is written at snapshot time and re-read at recovery time.
 
 ## 8. Principals and authorization

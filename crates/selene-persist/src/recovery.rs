@@ -7,11 +7,10 @@ use std::time::Instant;
 use selene_core::{NodeId, Origin, metrics};
 
 use crate::manifest::Manifest;
-use crate::manifest_lock::canonical_directory_path;
 use crate::wal_path::require_regular_wal_or_absent;
 use crate::{
-    DEFAULT_WAL_FILE_NAME, PersistError, PersistResult, ProviderRegistry, SnapshotReader,
-    WalReader, find_latest_snapshot, snapshot_path,
+    DEFAULT_WAL_FILE_NAME, PersistError, PersistResult, PersistenceReadGuard, ProviderRegistry,
+    SnapshotReader, WalReader, find_latest_snapshot, snapshot_path,
 };
 
 /// Summary of a completed recovery pass.
@@ -90,19 +89,50 @@ impl RecoveryOutcome {
 /// Returns directory-resolution, non-regular-WAL, persistence-format, or
 /// provider errors, or — on the legacy MANIFEST-absent path only — a
 /// [`PersistError::WalSnapshotMismatch`] when the WAL does not extend the
-/// applied snapshot epoch.
+/// applied snapshot epoch. Acquiring the shared persistence guard may create
+/// the permanent `MANIFEST.lock` coordination file.
 #[tracing::instrument(name = "selene.persist.recover", skip(registry), fields(dir = %dir.display()))]
 pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<RecoveryOutcome> {
+    let guard = PersistenceReadGuard::acquire(dir)?;
+    recover_guarded(&guard, registry)
+}
+
+/// Recover through an already-held shared persistence epoch guard.
+///
+/// This is the composable counterpart to [`recover`]. It lets callers that
+/// already own a [`PersistenceReadGuard`] keep one authoritative epoch pinned
+/// across related reads. The guard remains held through snapshot verification,
+/// every provider callback, and complete WAL replay, so rotation and prune
+/// cannot replace or delete selected artifacts midway through recovery.
+/// Ordinary WAL appends may continue; replay observes a valid framed prefix.
+///
+/// Recovery-provider callbacks must not invoke same-directory checkpoint,
+/// rotation, prune, or direct MANIFEST publication while this function runs,
+/// because those operations require the exclusive side of the held lock.
+///
+/// # Errors
+///
+/// Returns non-regular-WAL, persistence-format, or provider errors, or — on the
+/// legacy MANIFEST-absent path only — [`PersistError::WalSnapshotMismatch`]
+/// when the WAL does not extend the applied snapshot epoch.
+#[tracing::instrument(
+    name = "selene.persist.recover_guarded",
+    skip(guard, registry),
+    fields(dir = %guard.dir().display())
+)]
+pub fn recover_guarded(
+    guard: &PersistenceReadGuard,
+    registry: &ProviderRegistry,
+) -> PersistResult<RecoveryOutcome> {
     let started = Instant::now();
-    let dir = canonical_directory_path(dir)?;
+    let dir = guard.dir();
     require_regular_wal_or_absent(&dir.join(DEFAULT_WAL_FILE_NAME))?;
-    let dir = dir.as_path();
     let mut outcome = RecoveryOutcome::empty();
     let mut providers_invoked = BTreeSet::new();
     let mut snapshot_providers_invoked = BTreeSet::new();
 
     // Step 0: the MANIFEST, if present, is authoritative.
-    let manifest = Manifest::read(dir)?;
+    let manifest = guard.read_manifest()?;
     outcome.manifest_present = manifest.is_some();
 
     // The active-WAL name is a de-facto fixed contract: every producer

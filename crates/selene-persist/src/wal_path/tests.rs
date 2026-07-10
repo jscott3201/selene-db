@@ -1,10 +1,12 @@
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::mpsc::sync_channel;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use selene_core::{Change, HlcTimestamp, NodeId, Origin};
 
 use super::*;
-use crate::{WalConfig, WalWriter};
+use crate::{PersistenceReadGuard, WalConfig, WalReader, WalWriter};
 
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -140,5 +142,136 @@ fn hard_link_alias_still_contends_on_the_open_inode() {
     ));
 
     drop(writer);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn new_wal_is_absent_until_its_complete_header_is_published() {
+    let dir = temp_dir("atomic-publish");
+    let active = dir.join("wal.log");
+    let guard = PersistenceReadGuard::acquire(&dir).unwrap();
+    let (staged_tx, staged_rx) = sync_channel(0);
+    let (release_tx, release_rx) = sync_channel(0);
+    let (done_tx, done_rx) = sync_channel(1);
+    let worker_active = active.clone();
+    let worker = thread::spawn(move || {
+        set_before_wal_publish_hook(move || {
+            staged_tx.send(()).unwrap();
+            release_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("WAL publication release arrives before timeout");
+        });
+        done_tx
+            .send(
+                WalWriter::open(
+                    &worker_active,
+                    WalConfig {
+                        snapshot_seq: 42,
+                        ..WalConfig::default()
+                    },
+                )
+                .map(|writer| writer.snapshot_seq()),
+            )
+            .unwrap();
+    });
+    staged_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("new WAL reaches pre-publication hook");
+
+    assert!(!active.exists());
+    assert!(guard.read_manifest().unwrap().is_none());
+    let staged_paths: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("wal.log.init."))
+        })
+        .collect();
+    assert_eq!(staged_paths.len(), 1);
+    assert_eq!(
+        WalReader::open(&staged_paths[0]).unwrap().snapshot_seq(),
+        42
+    );
+
+    release_tx.send(()).unwrap();
+    assert_eq!(
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("new WAL publishes after release")
+            .unwrap(),
+        42
+    );
+    worker.join().unwrap();
+    assert_eq!(WalReader::open(&active).unwrap().snapshot_seq(), 42);
+    assert!(staged_paths.iter().all(|path| !path.exists()));
+
+    drop(guard);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn racing_wal_initializer_never_overwrites_the_published_winner() {
+    let dir = temp_dir("atomic-publish-race");
+    let active = dir.join("wal.log");
+    let (first_staged_tx, first_staged_rx) = sync_channel(0);
+    let (release_first_tx, release_first_rx) = sync_channel(0);
+    let (first_done_tx, first_done_rx) = sync_channel(1);
+    let first_active = active.clone();
+    let first = thread::spawn(move || {
+        set_before_wal_publish_hook(move || {
+            first_staged_tx.send(()).unwrap();
+            release_first_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("first initializer release arrives before timeout");
+        });
+        first_done_tx
+            .send(WalWriter::open(
+                &first_active,
+                WalConfig {
+                    snapshot_seq: 11,
+                    ..WalConfig::default()
+                },
+            ))
+            .unwrap();
+    });
+    first_staged_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("first initializer stages its header");
+
+    let (winner_acquired_tx, winner_acquired_rx) = sync_channel(0);
+    let (release_winner_tx, release_winner_rx) = sync_channel(0);
+    let winner_active = active.clone();
+    let winner = thread::spawn(move || {
+        let writer = WalWriter::open(
+            &winner_active,
+            WalConfig {
+                snapshot_seq: 22,
+                ..WalConfig::default()
+            },
+        )
+        .unwrap();
+        winner_acquired_tx.send(()).unwrap();
+        release_winner_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("winner release arrives before timeout");
+        drop(writer);
+    });
+    winner_acquired_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("second initializer publishes and retains the winner");
+    release_first_tx.send(()).unwrap();
+
+    assert!(matches!(
+        first_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("losing initializer returns after publication race"),
+        Err(PersistError::WriterLockHeld)
+    ));
+    first.join().unwrap();
+    assert_eq!(WalReader::open(&active).unwrap().snapshot_seq(), 22);
+
+    release_winner_tx.send(()).unwrap();
+    winner.join().unwrap();
     std::fs::remove_dir_all(dir).unwrap();
 }

@@ -84,6 +84,15 @@ There is no umbrella crate. Keep dependency direction intentional:
 `selene-testing` provides fixtures, corpus helpers, OpenRouter/local embedding
 support, and benchmark profiles for dev-dependencies.
 
+Persistence-directory readers participate in the same epoch lock domain as
+rotation and prune. Low-level recovery and online backup-style reads hold
+`PersistenceReadGuard` from authoritative MANIFEST selection through snapshot
+and WAL use. `CheckpointOutcome` paths are not retention leases.
+`SharedGraph::recover` locks an existing `wal.log` before the shared epoch
+guard; a missing-WAL bootstrap verifies recovery under the guard before a
+non-blocking writer open. Recovery callbacks must not re-enter same-directory
+epoch mutation.
+
 | Crate | Owns |
 |---|---|
 | `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, `JsonValue`, vector metrics/top-k helpers, `DbString`, schema/value types, feature register, property maps, codecs, and changesets. |

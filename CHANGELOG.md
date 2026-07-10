@@ -8,6 +8,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `PersistenceReadGuard` now provides a shared, cross-handle/process epoch
+  transaction for online recovery and backup-style artifact reads. Guarded
+  readers can re-read the authoritative MANIFEST and pin its snapshot, active
+  WAL, and retained archives while rotation, prune, and direct MANIFEST
+  publication wait.
 - `SharedGraph::checkpoint` now provides an ordered, durable checkpoint facade
   for WAL-backed graphs. It snapshots every provider at one committed
   generation, flushes the group-commit boundary, and performs the MANIFEST/WAL
@@ -37,6 +42,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Recovery now holds a shared persistence epoch across MANIFEST selection,
+  snapshot callbacks, and WAL replay, preventing a concurrent rotation from
+  pairing snapshot N with the reset header-only WAL for N+1 and silently
+  omitting committed changes. `SharedGraph::recover` also retains an existing
+  WAL lock across guarded replay, creates a missing WAL only after snapshot
+  verification, and requires the retained writer tip to match replay exactly,
+  so writer takeover has no unsafe handoff and later commits stay above the
+  recovered snapshot floor.
 - Coordinated graph checkpoints now append a typed, empty WAL watermark before
   MANIFEST rotation, so every checkpoint receives a fresh physical sequence
   even when no user mutation followed the prior snapshot. This makes
@@ -46,10 +59,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   entries.
 - WAL writers now resolve and retain the canonical parent directory before
   opening the active file, reject a final `wal.log` symlink or non-file entry,
-  and force MANIFEST rotation snapshots onto that anchor after directory
-  validation. Parent-alias retargeting can no longer split the active WAL,
-  snapshot, archive, MANIFEST, lock, or recovered graph writer across
-  directories.
+  and stage, fsync, and fail-on-existing publish every new WAL header before the
+  final path becomes visible. Parent-alias retargeting can no longer split the
+  active WAL, snapshot, archive, MANIFEST, lock, or recovered graph writer
+  across directories, and concurrent readers cannot observe a partially
+  initialized WAL.
 - MANIFEST publication, WAL rotation, and snapshot/archive pruning now share a
   persistent per-directory `MANIFEST.lock`. Rotation holds it through active-WAL
   reset and prune through post-commit deletion, preventing a stale prune from

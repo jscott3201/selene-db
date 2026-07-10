@@ -48,11 +48,11 @@ pub use crate::manifest::{
     MANIFEST_FILE_NAME, MANIFEST_FORMAT_VERSION, MANIFEST_MAGIC, MANIFEST_TMP_FILE_NAME, Manifest,
     sync_dir,
 };
-pub use crate::manifest_lock::MANIFEST_LOCK_FILE_NAME;
+pub use crate::manifest_lock::{MANIFEST_LOCK_FILE_NAME, PersistenceReadGuard};
 pub use crate::payload::WalCompression;
 pub use crate::provider::{ProviderRegistry, RecoveryError, RecoveryProvider, RecoveryResult};
 pub use crate::reader::{WalEntry, WalEntryStream, WalEntryView, WalReader};
-pub use crate::recovery::{RecoveryOutcome, recover};
+pub use crate::recovery::{RecoveryOutcome, recover, recover_guarded};
 pub use crate::retention::{
     DEFAULT_KEEP_SNAPSHOTS, DEFAULT_KEEP_WAL_ARCHIVES, PruneOutcome, RetentionPolicy, prune,
 };

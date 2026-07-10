@@ -198,8 +198,9 @@ impl Manifest {
     /// it onto `MANIFEST`, then fsyncs the parent directory so the new directory
     /// entry is durable. Publication holds the directory's persistent
     /// [`crate::MANIFEST_LOCK_FILE_NAME`] lock so it cannot clobber a concurrent
-    /// rotation or prune temporary. Callers constructing a replacement from a
-    /// prior read must still provide their own semantic freshness policy; the
+    /// rotation or prune temporary and cannot replace the epoch beneath a
+    /// [`crate::PersistenceReadGuard`]. Callers constructing a replacement from
+    /// a prior read must still provide their own semantic freshness policy; the
     /// lock serializes publication but is not a compare-and-swap operation.
     ///
     /// # Why this is the commit point
@@ -263,6 +264,11 @@ impl Manifest {
     /// Returns `Ok(None)` when no `MANIFEST` exists (a fresh or pre-MANIFEST
     /// directory). A leftover `MANIFEST.tmp` is never consulted — only the
     /// committed `MANIFEST` is read.
+    ///
+    /// This is an atomic metadata read, not a lease on the snapshot, WAL, or
+    /// archive paths the returned manifest names. Callers that will open or
+    /// copy those artifacts must first acquire a
+    /// [`crate::PersistenceReadGuard`] and retain it through artifact use.
     ///
     /// # Errors
     ///

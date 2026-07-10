@@ -375,6 +375,19 @@ pub enum PersistError {
         /// Current high-water sequence that cannot be incremented.
         last_sequence: u64,
     },
+
+    /// A writer takeover's WAL tip disagrees with the sequence reached by its
+    /// guarded recovery pass.
+    #[error(
+        "wal writer sequence {writer_sequence} does not match recovered sequence {recovered_sequence}"
+    )]
+    #[diagnostic(code(SLENE_P_043))]
+    WalRecoverySequenceMismatch {
+        /// High-water sequence retained by the reopened writer.
+        writer_sequence: u64,
+        /// High-water sequence observed by guarded recovery.
+        recovered_sequence: u64,
+    },
 }
 
 impl PersistError {
@@ -422,7 +435,8 @@ impl PersistError {
             | Self::CommittedArchiveInvalid { .. }
             | Self::WalPathNotRegular { .. }
             | Self::WalCheckpointSequenceMismatch { .. }
-            | Self::WalSequenceExhausted { .. } => "5GQL0",
+            | Self::WalSequenceExhausted { .. }
+            | Self::WalRecoverySequenceMismatch { .. } => "5GQL0",
         }
     }
 }
@@ -506,6 +520,10 @@ mod tests {
     }, "5GQL0")]
     #[case(PersistError::WalSequenceExhausted {
         last_sequence: u64::MAX,
+    }, "5GQL0")]
+    #[case(PersistError::WalRecoverySequenceMismatch {
+        writer_sequence: 4,
+        recovered_sequence: 5,
     }, "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
