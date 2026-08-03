@@ -68,13 +68,20 @@ fn load_meta(provider: &CoreProvider, graph_id: GraphId) {
     .unwrap();
 }
 
+/// Assert the refusal names both identities *in their roles*.
+///
+/// Matching the two ids in order rather than independently is deliberate: both
+/// always appear, so a pair of `contains` checks passes even when the message
+/// has them swapped, and an operator reading "caller asserted" would be told
+/// they typed the id they in fact read off disk.
 fn assert_identity_refusal(error: &GraphError, observed: GraphId, asserted: GraphId) {
     let GraphError::Provider(ProviderError::Inconsistent { reason }) = error else {
         panic!("expected an Inconsistent provider error, got {error:?}");
     };
+    let expected = format!("declare {observed} but caller asserted {asserted}");
     assert!(
-        reason.contains(&observed.to_string()) && reason.contains(&asserted.to_string()),
-        "refusal must name both the on-disk and the asserted identity: {reason}"
+        reason.contains(&expected),
+        "refusal must report {observed} as on-disk and {asserted} as asserted: {reason}"
     );
 }
 
@@ -133,6 +140,28 @@ fn cross_wired_wal_is_refused_even_under_its_first_identity() {
         .expect_err("a WAL carrying two identities must not recover under either");
 
     assert_identity_refusal(&error, IMPOSTOR, AUTHOR);
+}
+
+/// The mirror of the case above, and the one that pins *which* id is retained.
+///
+/// Recovering a `[AUTHOR, IMPOSTOR]` WAL under `AUTHOR` refuses under either a
+/// first-wins or a last-wins rule, so that test alone does not distinguish
+/// them. Under `IMPOSTOR` they diverge: last-wins finds the retained id equal
+/// to the caller's, sees nothing to disagree with, and admits the graph — the
+/// exact silent cross-wiring this check exists to stop.
+#[test]
+fn cross_wired_wal_is_refused_under_its_last_identity_too() {
+    let provider = CoreProvider::new_for_recovery();
+    replay(
+        provider.as_ref(),
+        &[schema_change(AUTHOR), schema_change(IMPOSTOR)],
+    );
+
+    let error = provider
+        .finish_recovery(IMPOSTOR, None)
+        .expect_err("the earlier identity in the WAL is still evidence against the caller");
+
+    assert_identity_refusal(&error, AUTHOR, IMPOSTOR);
 }
 
 /// A `GraphReset` truncates and re-opens a graph; it does not rename one. The
