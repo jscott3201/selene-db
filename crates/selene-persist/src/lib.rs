@@ -29,6 +29,7 @@ pub mod snapshot_path;
 pub mod snapshot_reader;
 pub mod snapshot_writer;
 mod wal_path;
+mod wal_tail;
 mod writer;
 mod writer_rotation;
 
@@ -71,6 +72,7 @@ pub use crate::snapshot_reader::SnapshotReader;
 pub use crate::snapshot_writer::{
     SectionCompression, SnapshotBuilder, SnapshotConfig, SnapshotFinalizeOutcome,
 };
+pub use crate::wal_tail::{WalTailReason, WalTailRepair};
 pub use crate::writer::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
 pub use crate::writer_rotation::{
     WAL_ARCHIVE_PREFIX, WAL_ARCHIVE_SUFFIX, WalRotationOutcome, parse_wal_archive_filename,

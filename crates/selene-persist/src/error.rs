@@ -174,6 +174,48 @@ pub enum PersistError {
         offset: u64,
     },
 
+    /// A WAL entry's framing bytes failed their integrity check.
+    ///
+    /// The prefix checksum authenticates the framing fields — including the
+    /// payload length and the payload's own checksum — so this fires before any
+    /// of them is used as a length or a file offset. It is never a torn write:
+    /// the writer emits the prefix and its checksum in one buffer.
+    #[error("wal entry header checksum mismatch at offset {offset}")]
+    #[diagnostic(code(SLENE_P_044))]
+    WalHeaderChecksumMismatch {
+        /// File offset where the failing entry started.
+        offset: u64,
+    },
+
+    /// The 24-byte WAL file header failed its integrity check.
+    #[error("wal file header checksum mismatch")]
+    #[diagnostic(code(SLENE_P_045))]
+    WalFileHeaderChecksumMismatch,
+
+    /// A WAL frame before the tail failed validation.
+    ///
+    /// Distinguished from a torn tail: the failing frame is followed by more
+    /// file content, or its bytes are not the zero fill a short write leaves.
+    /// Truncating here would discard committed frames, so recovery refuses.
+    ///
+    /// The wrapper exists so the outcome is legible without inspecting the
+    /// file. The underlying `source` says what failed; only this variant says
+    /// the log was left intact, which is the distinction that was missing when
+    /// corruption anywhere was silently repaired as a torn tail.
+    #[error(
+        "wal corruption at offset {offset} is not a torn tail \
+         ({trailing_bytes} bytes follow it); the log was left intact"
+    )]
+    #[diagnostic(code(SLENE_P_046))]
+    WalMidLogCorruption {
+        /// File offset where the failing entry started.
+        offset: u64,
+        /// Bytes between the failing frame's start and end of file.
+        trailing_bytes: u64,
+        /// The validation failure that triggered the refusal.
+        source: Box<PersistError>,
+    },
+
     /// Snapshot filename could not be parsed.
     #[error("malformed snapshot filename")]
     #[diagnostic(code(SLENE_P_022))]
@@ -416,6 +458,9 @@ impl PersistError {
             | Self::BodyHashMismatch { .. }
             | Self::UnsupportedFlag { .. }
             | Self::ReservedBytesNonZero { .. }
+            | Self::WalHeaderChecksumMismatch { .. }
+            | Self::WalFileHeaderChecksumMismatch
+            | Self::WalMidLogCorruption { .. }
             | Self::MalformedSnapshotFilename
             | Self::SectionMissing { .. }
             | Self::MalformedSectionLayout { .. }

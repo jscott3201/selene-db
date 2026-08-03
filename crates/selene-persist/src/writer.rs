@@ -3,17 +3,16 @@
 mod append;
 
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use selene_core::HlcTimestamp;
 
 use crate::compression::ZstdCompressor;
-use crate::entry_header::{ensure_payload_len, read_entry_header};
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::manifest::Manifest;
 use crate::manifest_lock::{ManifestEpochGuard, canonical_directory_path};
-use crate::payload::{WalCompression, verify_checksum};
+use crate::payload::WalCompression;
 use crate::retention::{PruneOutcome, RetentionPolicy};
 use crate::snapshot_writer::SnapshotBuilder;
 use crate::wal_path::open_locked_wal;
@@ -132,6 +131,11 @@ pub struct WalWriter {
     compressor: Option<ZstdCompressor>,
     entries_since_fsync: u32,
     poisoned: bool,
+    /// Torn tail discarded at open, if any. See [`WalWriter::tail_repair`].
+    ///
+    /// Boxed because it is set at most once per open and read rarely, while
+    /// `WalWriter` is embedded in a hot enum variant whose size is linted.
+    tail_repair: Option<Box<crate::WalTailRepair>>,
     /// File offset of the last fully-committed entry's end. On any
     /// append-time error, the file is truncated and re-seeked to this
     /// offset so the writer's in-memory state and the on-disk state stay
@@ -181,11 +185,16 @@ impl WalWriter {
         file.seek(SeekFrom::Start(0))?;
         let header_snapshot_seq = WalFileHeader::read_from(&mut file)?.snapshot_seq;
 
-        let scan = scan_existing(&mut file)?;
-        if scan.truncate_to < file.metadata()?.len() {
+        // Returns Err without proposing a truncation when the failure cannot be
+        // a torn tail, so a corrupt log reaches the `?` below with its bytes
+        // still on disk. Nothing between here and there may modify the file.
+        let scan = crate::wal_tail::scan_existing(&mut file)?;
+        if let Some(repair) = scan.repair {
             tracing::warn!(
-                offset = scan.truncate_to,
-                "truncating WAL tail to last valid entry"
+                offset = repair.offset,
+                discarded_bytes = repair.discarded_bytes,
+                reason = ?repair.reason,
+                "discarding torn WAL tail"
             );
             file.set_len(scan.truncate_to)?;
         }
@@ -208,6 +217,7 @@ impl WalWriter {
             entries_since_fsync: 0,
             poisoned: false,
             committed_offset: scan.truncate_to,
+            tail_repair: scan.repair.map(Box::new),
         })
     }
 
@@ -240,6 +250,16 @@ impl WalWriter {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Report the torn tail discarded when this WAL was opened, if any.
+    ///
+    /// `None` means the log parsed cleanly to its end. A corrupt log never
+    /// reaches this accessor: [`WalWriter::open`] fails instead of repairing,
+    /// so a `Some` here always describes bytes that were never acknowledged.
+    #[must_use]
+    pub fn tail_repair(&self) -> Option<crate::WalTailRepair> {
+        self.tail_repair.as_deref().copied()
     }
 
     /// Return the durable file offset of the last fully committed WAL entry.
@@ -553,90 +573,6 @@ impl Drop for WalWriter {
             tracing::error!(%error, "failed to fsync WAL writer on drop");
         }
         // The exclusive file lock is released when `file` is dropped.
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Scan {
-    last_sequence: u64,
-    truncate_to: u64,
-}
-
-fn scan_existing(file: &mut File) -> PersistResult<Scan> {
-    let file_len = file.metadata()?.len();
-    let mut offset = WAL_FILE_HEADER_LEN as u64;
-    let mut previous = 0_u64;
-    let mut last_valid_offset = offset;
-    let mut payload = Vec::new();
-    file.seek(SeekFrom::Start(offset))?;
-    let mut reader = BufReader::with_capacity(64 * 1024, file);
-
-    loop {
-        if offset == file_len {
-            return Ok(Scan {
-                last_sequence: previous,
-                truncate_to: last_valid_offset,
-            });
-        }
-        if offset > file_len {
-            return Ok(Scan {
-                last_sequence: previous,
-                truncate_to: last_valid_offset,
-            });
-        }
-
-        let (header, bytes_consumed) = match read_entry_header(&mut reader, offset) {
-            Ok(header) => header,
-            // Treat oversized decoded headers as torn-tail too: with the
-            // fixed-layout v2 format, garbage bytes can decode as a valid
-            // u32 payload_len > MAX_WAL_ENTRY_BYTES or u16 principal_len > cap.
-            // Pre-v2 (postcard varint), oversized lengths surfaced as
-            // HeaderCodec; v2 surfaces them as typed cap errors that must be
-            // routed through the same recovery path.
-            Err(PersistError::TruncatedEntry { .. })
-            | Err(PersistError::HeaderCodec(_))
-            | Err(PersistError::PayloadTooLarge { .. })
-            | Err(PersistError::PrincipalTooLarge { .. }) => {
-                return Ok(Scan {
-                    last_sequence: previous,
-                    truncate_to: last_valid_offset,
-                });
-            }
-            Err(error) => return Err(error),
-        };
-
-        if header.sequence <= previous {
-            return Err(PersistError::NonMonotonicSequence {
-                previous,
-                current: header.sequence,
-            });
-        }
-        let payload_len = header.payload_len as usize;
-        if ensure_payload_len(payload_len).is_err() {
-            return Ok(Scan {
-                last_sequence: previous,
-                truncate_to: last_valid_offset,
-            });
-        }
-        let payload_start = offset.saturating_add(bytes_consumed as u64);
-        let payload_end = payload_start.saturating_add(u64::from(header.payload_len));
-        if payload_end > file_len {
-            return Ok(Scan {
-                last_sequence: previous,
-                truncate_to: last_valid_offset,
-            });
-        }
-        payload.resize(payload_len, 0);
-        reader.read_exact(&mut payload)?;
-        if verify_checksum(&header, &payload).is_err() {
-            return Ok(Scan {
-                last_sequence: previous,
-                truncate_to: last_valid_offset,
-            });
-        }
-        previous = header.sequence;
-        offset = payload_end;
-        last_valid_offset = payload_end;
     }
 }
 

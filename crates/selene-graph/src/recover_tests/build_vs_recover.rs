@@ -376,3 +376,59 @@ fn recover_still_opens_a_standalone_export_directory() {
     assert_eq!(node_count_after_recover(&dir, graph_id), 1);
     let _ = fs::remove_dir_all(dir);
 }
+
+/// End-to-end proof for the WAL mid-log corruption defect.
+///
+/// `SharedGraph::recover` opens the writer before it replays, so the writer's
+/// scan used to have already truncated the log by the time the strict
+/// replay-side guard ran: five committed nodes became one, `recover` returned
+/// `Ok`, and the bytes were gone from disk. The writer now refuses instead of
+/// repairing, so the error reaches the caller and the log survives for offline
+/// recovery.
+#[test]
+fn recover_refuses_midlog_wal_corruption_and_preserves_the_log() {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let dir = temp_dir("recover-midlog-corruption");
+    let graph_id = GraphId::new(64);
+    let wal = dir.join(DEFAULT_WAL_FILE_NAME);
+    seed_wal(&dir, graph_id, 5);
+    let before = fs::metadata(&wal).unwrap().len();
+
+    // Flip a bit inside the second frame's payload. The first frame starts at
+    // the file header, so this lands well before the tail.
+    let second_frame = selene_persist::WAL_FILE_HEADER_LEN as u64 + 60;
+    {
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&wal)
+            .unwrap();
+        file.seek(SeekFrom::Start(second_frame)).unwrap();
+        let mut byte = [0_u8; 1];
+        file.read_exact(&mut byte).unwrap();
+        byte[0] ^= 0b0000_0001;
+        file.seek(SeekFrom::Start(second_frame)).unwrap();
+        file.write_all(&byte).unwrap();
+    }
+
+    let error = SharedGraph::recover(&dir, graph_id)
+        .err()
+        .expect("corruption before the tail must not recover silently");
+    // Assert the specific variant, not merely `Persist(_)`: an embedder decides
+    // whether to hand the directory to offline recovery based on this error, and
+    // a bare checksum failure does not say whether the log still exists.
+    assert!(
+        matches!(
+            error,
+            GraphError::Persist(selene_persist::PersistError::WalMidLogCorruption { .. })
+        ),
+        "expected an explicit refusal to reach the caller, got {error:?}"
+    );
+    assert_eq!(
+        fs::metadata(&wal).unwrap().len(),
+        before,
+        "the log must survive so the committed frames stay recoverable offline"
+    );
+    let _ = fs::remove_dir_all(dir);
+}

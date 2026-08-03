@@ -616,19 +616,78 @@ reattaches the audit log purely by file presence. Retention here is
 independent of the snapshot/WAL `RetentionPolicy` (see [Backups](#backups)),
 so trimming audit history never affects graph recovery and vice versa.
 
-## Snapshot versioning
+## Persistence format compatibility
 
-The snapshot format carries explicit `version_major` and `version_minor` in
-the header. The `selene-persist` crate maintains the following discipline:
+**There is exactly one supported on-disk format: the current one.** A store
+written by any other version of selene-db is rejected at open time with
+`PersistError::UnsupportedVersion`, before any artifact is read further or
+modified. There is no dual decoder, no version dispatch, and no migrator.
+Recreate the store from source.
 
-- **Read-side compatibility for prior versions** is byte-for-byte preserved
-  across the v1.x major version. Sections that decoded on an earlier minor
-  version continue to decode on later minor versions in the same major.
+This retracts an earlier claim that read-side compatibility was preserved
+across 1.x. It never was: both the WAL and the snapshot gate on an exact
+`(major, minor)` match, so several released minor versions could not open one
+another's stores despite the promise. The policy is now what the code does.
+
+Format identities shipped to date:
+
+| Release | WAL | Snapshot |
+|---|---:|---:|
+| v1.0.0 | 2.0 | 1.0 |
+| v1.1.0 | 2.0 | 1.1 |
+| v1.2.0 | 2.2 | 1.4 |
+| v1.3.0, v1.4.0 | 2.2 | 1.5 |
+| current | **3.0** | 1.5 |
+
+WAL 3.0 brings the frame layout under integrity protection (see
+[WAL framing integrity](#wal-framing-integrity)); it is not readable by any
+released build, and no released build's WAL is readable by it.
+
+Until 2.0.0 the project makes **no backward-compatibility guarantee** for
+persisted data. Format breaks ship in ordinary minor releases, called out as
+BREAKING in the changelog. Plan upgrades as recreate-from-source, and take a
+backup of the source data — not of the store — before upgrading.
+
 - **Writers always emit the current version**. There is no flag to write a
   prior format.
-- An unsupported major version surfaces as `PersistError::UnsupportedVersion`
-  at open time. There is no automatic format upgrade pass; embedders that
-  cross a major version boundary go through an explicit migration step.
+- **Unsupported versions fail closed.** The version gate runs before the rest
+  of the header is parsed and before any scan or repair, so a store from
+  another version is never partially read or modified on the way to the error.
+
+## WAL framing integrity
+
+Every WAL entry carries two checksums beyond the payload's own:
+
+- a **prefix checksum** over the 40-byte fixed prefix, which authenticates the
+  framing fields — the payload length, the principal length, the flags, and
+  the payload's own checksum — before any of them is used as a read length or
+  a file offset;
+- an **extent checksum** over the replicated-provenance tail and the principal
+  bytes, which authenticates the identity an entry replays under.
+
+The 24-byte file header is likewise checksummed, covering the snapshot
+watermark that a rotated, entry-free WAL carries as its only content.
+
+This is what lets recovery tell a **torn tail** from **corruption**. The
+writer only ever appends, so bytes beyond a frame's extent prove that frame was
+complete before they were written: a frame that fails validation with data
+after it is corrupt, not torn, and recovery refuses rather than truncating,
+with `WalMidLogCorruption` naming the offset and carrying the underlying
+failure. Match on that variant rather than on the cause: it is the only signal
+that says the log is still on disk and worth handing to offline recovery.
+A frame that fails with nothing after it — or a trailing run of zeros, which is
+what a short extending write leaves — is a tear, is discarded, and is reported
+through `WalWriter::tail_repair()`.
+
+Before this, both cases were truncated silently: a single flipped bit in a
+frame's length field in the middle of a log discarded every committed frame
+after it, and `SharedGraph::recover` returned `Ok`.
+
+One limit is unfixable from inside the file: nothing on disk records *when*
+bytes became durable, so a lone trailing frame that rotted after being fsynced
+is still treated as a tear. The bound that matters holds regardless — nothing
+before the tail is ever discarded. The audit log keeps its own independent
+format and its own truncating scan; this change does not cover it.
 
 Reserved bytes in the snapshot header (offsets 12–15) must be zero on disk;
 nonzero values are rejected as `ReservedBytesNonZero` to make accidental
