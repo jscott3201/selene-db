@@ -94,6 +94,26 @@ impl PropertyIndexEntry {
             .flatten()
     }
 
+    /// Hand out the index for probing, declining while it is incomplete.
+    ///
+    /// Callers that need the index regardless — auditing it, or reporting its
+    /// registered kind — read the `index` field directly.
+    #[must_use]
+    pub fn probe_arc(&self) -> Option<Arc<TypedIndex>> {
+        self.is_complete().then(|| Arc::clone(&self.index))
+    }
+
+    /// Whether the registered kind can key `value` at all.
+    ///
+    /// Independent of completeness, so a caller validating a supplied value
+    /// gets the same answer whether or not the column has since drifted. Reject
+    /// on a bad value before choosing index-or-scan, or the same argument would
+    /// be an error on one graph and accepted on another.
+    #[must_use]
+    pub fn admits(&self, value: &Value) -> bool {
+        self.index.lookup_eq(value).is_some()
+    }
+
     /// Probe for rows equal to `value` even when the index is incomplete.
     ///
     /// Reserved for callers auditing the index against its column, which need

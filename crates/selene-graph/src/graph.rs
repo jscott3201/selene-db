@@ -315,6 +315,10 @@ impl SeleneGraph {
     }
 
     /// Return a clone of the registered `(label, property)` index.
+    ///
+    /// `None` also means the index omits live rows it cannot key, matching the
+    /// probe accessors. Keeping the two in step stops the optimizer costing a
+    /// plan against an index whose probes will decline at runtime.
     #[must_use]
     pub fn property_index_for(
         &self,
@@ -323,10 +327,12 @@ impl SeleneGraph {
     ) -> Option<Arc<TypedIndex>> {
         self.property_index
             .get(&(label.clone(), property.clone()))
-            .map(|entry| Arc::clone(&entry.index))
+            .and_then(PropertyIndexEntry::probe_arc)
     }
 
     /// Return a clone of the registered edge `(label, property)` index.
+    ///
+    /// Declines on an incomplete index, as [`SeleneGraph::property_index_for`].
     #[must_use]
     pub fn edge_property_index_for(
         &self,
@@ -335,7 +341,7 @@ impl SeleneGraph {
     ) -> Option<Arc<TypedIndex>> {
         self.edge_property_index
             .get(&(label.clone(), property.clone()))
-            .map(|entry| Arc::clone(&entry.index))
+            .and_then(PropertyIndexEntry::probe_arc)
     }
 
     /// Return a clone of the registered composite index.
@@ -511,9 +517,9 @@ impl SeleneGraph {
 
     /// Return the union of node rows matching any indexed scalar value.
     ///
-    /// `None` means no node property index is registered for `(label, property)`
-    /// or at least one supplied value cannot be used with that index kind.
-    /// `Some(empty)` means the index exists but no row matches the value set.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn nodes_with_property_any(
         &self,
@@ -533,9 +539,9 @@ impl SeleneGraph {
 
     /// Return edge rows matching `value` under a registered edge property index.
     ///
-    /// `None` means no edge index is registered for `(label, property)` or the
-    /// supplied value cannot be used with that index kind. `Some(empty)` means
-    /// the index exists but no edge row matches.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn edges_with_property_eq(
         &self,
@@ -550,10 +556,9 @@ impl SeleneGraph {
 
     /// Return the union of edge rows matching any indexed scalar value.
     ///
-    /// `None` means no edge property index is registered for `(label,
-    /// property)` or at least one supplied value cannot be used with that index
-    /// kind. `Some(empty)` means the index exists but no row matches the value
-    /// set.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn edges_with_property_any(
         &self,
@@ -573,9 +578,9 @@ impl SeleneGraph {
 
     /// Return rows matching `range` under a registered property index.
     ///
-    /// `None` means no index is registered or the supplied bounds do not match
-    /// the index kind. `Some(empty)` means the index exists but the range
-    /// matches no rows.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn nodes_with_property_range<R>(
         &self,
@@ -593,9 +598,9 @@ impl SeleneGraph {
 
     /// Return edge rows matching `range` under a registered edge property index.
     ///
-    /// `None` means no edge index is registered or the supplied bounds do not
-    /// match the index kind. `Some(empty)` means the index exists but no edge
-    /// row matches.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn edges_with_property_range<R>(
         &self,
@@ -613,8 +618,9 @@ impl SeleneGraph {
 
     /// Return rows whose string property key starts with `prefix`.
     ///
-    /// `None` means no index is registered or the registered index is not a
-    /// string index.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn nodes_with_property_prefix(
         &self,

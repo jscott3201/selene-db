@@ -260,3 +260,25 @@ fn probe_declines_while_drifted_and_recovers_after_repair() {
         "removing the drifted row must re-enable the index"
     );
 }
+
+#[test]
+fn edge_indexes_share_the_tally() {
+    let label = db_string("pi.drift.edge.label").unwrap();
+    let property = db_string("pi.drift.edge.weight").unwrap();
+    let mut indexes = PropertyIndexMap::default();
+    indexes.insert(
+        (label.clone(), property.clone()),
+        entry(TypedIndexKind::I64),
+    );
+    let props = property_map([(property.clone(), text("pi.drift.edge.text"))]);
+
+    apply_edge_create(&mut indexes, &label, &props, 0).unwrap();
+    assert_eq!(
+        drifted(&indexes, &label, &property),
+        1,
+        "edge indexes reuse the same commit funnel and must tally the same way"
+    );
+
+    apply_edge_delete(&mut indexes, &label, &props, 0).unwrap();
+    assert_eq!(drifted(&indexes, &label, &property), 0);
+}

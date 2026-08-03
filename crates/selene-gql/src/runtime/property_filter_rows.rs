@@ -2,49 +2,54 @@
 //!
 //! Procedure filters (`selene.text_search_nodes`, `selene.vector_search_nodes_ann`,
 //! `algo.pagerank`) admit candidates through an indexed property. They require
-//! the property to be indexed and report a bad argument when it is not.
+//! the property to be indexed and report a bad argument when it is not, or when
+//! the supplied values are of a kind the registered index cannot key.
 //!
-//! A registered index still declines to answer when it omits live rows whose
+//! A registered index still declines to answer while it omits live rows whose
 //! variant it cannot key, because an incomplete index would silently drop
 //! candidates. These helpers scan in that case, using the same cross-variant
 //! equality the executor's own fallback uses, so a filtered procedure returns
-//! what a complete index would have returned instead of failing or under-
-//! reporting.
+//! what a complete index would have returned instead of failing or
+//! under-reporting.
+//!
+//! Two properties are deliberate. Argument validity is decided against the
+//! registered kind *before* completeness is consulted, so the same call is an
+//! error or a success regardless of whether some unrelated row has drifted.
+//! And the scan walks the label's own row bitmap rather than every live row, so
+//! its cost tracks the label rather than the graph.
 
 use roaring::RoaringBitmap;
 use selene_core::{DbString, Value};
-use selene_graph::SeleneGraph;
+use selene_graph::{PropertyIndexEntry, SeleneGraph};
 
 use super::value_compare;
 
 /// Node rows of `label` whose `property` equals any of `values`.
 ///
-/// `None` means the caller supplied a property with no registered index, or
-/// values the registered index cannot key — the argument errors the procedures
-/// already report. It never means "the index is incomplete"; that case scans.
+/// `None` means no index is registered for `(label, property)`, or a supplied
+/// value is of a kind that index could never key — the two argument errors the
+/// procedures report. It never means "the index is incomplete"; that case
+/// scans.
 pub(crate) fn node_rows_with_property_any(
     snapshot: &SeleneGraph,
     label: &DbString,
     property: &DbString,
     values: &[Value],
 ) -> Option<RoaringBitmap> {
-    let entry = snapshot
-        .property_index
-        .get(&(label.clone(), property.clone()))?;
-    if let Some(rows) = snapshot.nodes_with_property_any(label, property, values) {
-        return Some(rows);
-    }
+    let entry = usable_entry(
+        snapshot
+            .property_index
+            .get(&(label.clone(), property.clone())),
+        values,
+    )?;
     if entry.is_complete() {
-        return None;
+        return snapshot.nodes_with_property_any(label, property, values);
     }
     let mut rows = RoaringBitmap::new();
-    for row in snapshot.live_nodes() {
-        let Some(labels) = snapshot.node_store.labels.get(row as usize) else {
-            continue;
-        };
-        if !labels.contains(label) {
-            continue;
-        }
+    let Some(labelled) = snapshot.nodes_with_label(label) else {
+        return Some(rows);
+    };
+    for row in labelled {
         let Some(properties) = snapshot.node_store.properties.get(row as usize) else {
             continue;
         };
@@ -64,23 +69,20 @@ pub(crate) fn edge_rows_with_property_any(
     property: &DbString,
     values: &[Value],
 ) -> Option<RoaringBitmap> {
-    let entry = snapshot
-        .edge_property_index
-        .get(&(label.clone(), property.clone()))?;
-    if let Some(rows) = snapshot.edges_with_property_any(label, property, values) {
-        return Some(rows);
-    }
+    let entry = usable_entry(
+        snapshot
+            .edge_property_index
+            .get(&(label.clone(), property.clone())),
+        values,
+    )?;
     if entry.is_complete() {
-        return None;
+        return snapshot.edges_with_property_any(label, property, values);
     }
     let mut rows = RoaringBitmap::new();
-    for row in snapshot.live_edges() {
-        let Some(edge_label) = snapshot.edge_store.label.get(row as usize) else {
-            continue;
-        };
-        if edge_label != label {
-            continue;
-        }
+    let Some(labelled) = snapshot.edges_with_label(label) else {
+        return Some(rows);
+    };
+    for row in labelled {
         let Some(properties) = snapshot.edge_store.properties.get(row as usize) else {
             continue;
         };
@@ -89,6 +91,18 @@ pub(crate) fn edge_rows_with_property_any(
         }
     }
     Some(rows)
+}
+
+/// The registered entry, if one exists and can key every supplied value.
+fn usable_entry<'a>(
+    entry: Option<&'a PropertyIndexEntry>,
+    values: &[Value],
+) -> Option<&'a PropertyIndexEntry> {
+    let entry = entry?;
+    values
+        .iter()
+        .all(|value| entry.admits(value))
+        .then_some(entry)
 }
 
 /// Whether a stored property value equals any supplied filter value.

@@ -234,6 +234,14 @@ fn indexable_values<'a>(
         .collect()
 }
 
+/// Whether an update can skip index maintenance entirely.
+///
+/// Deliberately does not reuse [`CompositeTypedIndex::values_share_key`], which
+/// treats any two unkeyable tuples as sharing a key. That is true of the
+/// bitmaps — neither tuple is in the index either way — but it is not true of
+/// the drift tally. A row moving between a NaN tuple and a kind-mismatched one
+/// changes whether it counts, and skipping would strand the count: the index
+/// would answer while still missing the row.
 fn values_share_key(
     entry: &CompositePropertyIndexEntry,
     old_values: Option<&SmallVec<[&Value; 4]>>,
@@ -242,7 +250,16 @@ fn values_share_key(
     match (old_values, new_values) {
         (None, None) => true,
         (Some(old_values), Some(new_values)) => {
-            entry.index.values_share_key(old_values, new_values)
+            match (
+                entry.index.key_from_values(old_values),
+                entry.index.key_from_values(new_values),
+            ) {
+                (Ok(old_key), Ok(new_key)) => old_key == new_key,
+                (Err(old_err), Err(new_err)) => {
+                    counts_as_drift(&old_err) == counts_as_drift(&new_err)
+                }
+                _ => false,
+            }
         }
         _ => false,
     }

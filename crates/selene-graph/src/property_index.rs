@@ -477,7 +477,16 @@ fn remove_commit(
 /// Whether a skipped value leaves the index an incomplete view of its column.
 ///
 /// A kind mismatch does: the row is live and a scan comparing across variants
-/// would match it, so the index must stop answering until the row leaves.
+/// may match it, so the index must stop answering until the row leaves.
+///
+/// This deliberately over-approximates. Cross-variant equality only collapses
+/// within the numeric family, so a String stored under an I64 index could never
+/// have matched an I64-keyed predicate and omitting it already agreed with a
+/// scan. Counting it anyway costs a needless demotion to scan, which is safe;
+/// the opposite error is not. Narrowing this to numeric-kind against
+/// numeric-variant is a worthwhile follow-up, but it must land with tests that
+/// pin every collapsing pair, because an under-count silently restores the
+/// wrong-answer bug this exists to prevent.
 ///
 /// NaN does not. NaN satisfies no equality or range predicate, so a scan omits
 /// the row too and index and scan already agree. Counting it would disable an

@@ -7,7 +7,13 @@
 //! predicate written two ways could disagree on identical data.
 //!
 //! An index is supposed to make a query faster, never different. These tests
-//! pin that.
+//! pin that for variant drift, which is what the surrounding change addresses.
+//!
+//! One index-versus-scan divergence is out of scope and still open: `-0.0` and
+//! `0.0` are equal under GQL comparison but key distinctly in a float index, so
+//! an indexed equality read can still disagree with a scan without any row
+//! being unkeyable. That is a separate defect in float key construction, not a
+//! completeness problem, and the tally cannot see it.
 
 use selene_core::{DbString, GraphId, Value, db_string as core_db_string};
 use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput};

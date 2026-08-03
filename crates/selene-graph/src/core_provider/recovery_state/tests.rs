@@ -633,9 +633,38 @@ fn wal_replay_property_index_create_is_lenient_for_later_kind_drift() {
     assert!(recovered.property_index_for(&label, &property).is_some());
     let shared = SharedGraph::try_from_graph(recovered).unwrap();
     let read = shared.read();
-    let rows = read
-        .nodes_with_property_eq(&label, &property, &Value::Int(42))
-        .unwrap();
-    assert!(rows.is_empty());
-    assert!(read.property_index_for(&label, &property).is_some());
+    assert!(
+        read.property_index
+            .contains_key(&(label.clone(), property.clone())),
+        "the registration survives replay even though the index cannot answer"
+    );
+    assert!(
+        read.property_index_for(&label, &property).is_none(),
+        "the accessor declines in step with the probes, so the planner does not \
+         cost a plan against an index whose probes will refuse it"
+    );
+
+    // The rebuild must carry its skip count into the entry. Without that a
+    // recovered graph would answer this probe while the live graph it replaced
+    // declined, so the same query would return different rows either side of a
+    // restart — worse than the drift itself.
+    let entry = read
+        .property_index
+        .get(&(label.clone(), property.clone()))
+        .expect("registration survives recovery");
+    assert_eq!(
+        entry.drifted_rows, 1,
+        "replay skipped one row it could not key and must say so"
+    );
+    assert!(
+        read.nodes_with_property_eq(&label, &property, &Value::Int(42))
+            .is_none(),
+        "an index missing a live row declines, so the caller scans"
+    );
+    assert!(
+        entry
+            .lookup_eq_ignoring_drift(&Value::Int(42))
+            .is_some_and(|rows| rows.is_empty()),
+        "the index itself is intact and simply holds no I64 rows"
+    );
 }
