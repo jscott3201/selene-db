@@ -19,17 +19,22 @@ use crate::{GraphError, GraphResult, SharedGraph};
 impl SharedGraph {
     /// Recover an open (GG01) shared graph from a persistence directory.
     ///
-    /// `graph_id` is the caller-asserted identity. If a snapshot is present
-    /// and declares a `bound_type`, recovery fails — a closed graph must be
-    /// recovered via [`SharedGraph::recover_closed`].
+    /// `graph_id` is the caller-asserted identity, and recovery fails if
+    /// anything the directory declares disagrees with it: a snapshot's
+    /// `CORE/META`, or the graph id stamped on any schema record replayed from
+    /// the WAL. A WAL carrying no schema record declares no identity, so there
+    /// the assertion is taken on trust. If a snapshot is present and declares a
+    /// `bound_type`, recovery fails — a closed graph must be recovered via
+    /// [`SharedGraph::recover_closed`].
     ///
     /// # Errors
     ///
     /// Returns persistence or epoch-lock errors, including
     /// [`selene_persist::PersistError::WriterLockHeld`] when another live graph
-    /// owns the WAL; [`crate::GraphError::Provider`] when a snapshot disagrees
-    /// with `graph_id` or declares a closed binding; or graph errors when the
-    /// recovered state cannot be materialized.
+    /// owns the WAL; [`crate::GraphError::Provider`] when a snapshot or a
+    /// replayed schema record disagrees with `graph_id`, or when a snapshot
+    /// declares a closed binding; or graph errors when the recovered state
+    /// cannot be materialized.
     pub fn recover(dir: &Path, graph_id: GraphId) -> GraphResult<Self> {
         Self::recover_inner(dir, graph_id, None, Vec::new())
     }
@@ -64,6 +69,11 @@ impl SharedGraph {
     ///   recovery fails (snapshot says open, caller says closed).
     /// - If no snapshot is present (WAL-only or empty-dir), the caller's
     ///   `bound_type` is used and validation runs against replayed state.
+    ///
+    /// `graph_id` is validated independently of the binding, against
+    /// `CORE/META` when a snapshot is present and against the graph id stamped
+    /// on any schema record replayed from the WAL. See
+    /// [`SharedGraph::recover`] for the limits of the WAL-side check.
     ///
     /// # Errors
     ///
