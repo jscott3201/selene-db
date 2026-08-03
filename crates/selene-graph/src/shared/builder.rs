@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use selene_core::GraphId;
-use selene_persist::{AuditLog, SyncPolicy, WalConfig, WalWriter};
+use selene_persist::{AuditLog, SyncPolicy, WAL_FILE_HEADER_LEN, WalConfig, WalWriter};
 
 use super::SharedGraph;
 use crate::committer_batch::CommitBatching;
@@ -64,17 +64,40 @@ impl SharedGraphBuilder {
     /// verbatim. Durability is unchanged: the committer always flushes before it
     /// publishes or acks, so a commit is durable before it is ever visible.
     ///
+    /// # The WAL must not already hold entries
+    ///
+    /// A builder starts from an *empty* graph, and [`WalWriter::open`] positions
+    /// an existing WAL for **append without replaying it**. Building over a
+    /// populated WAL therefore layers a second dataset's commits onto the first:
+    /// node ids restart at 1 and collide with ids the log already allocated, so
+    /// the directory stops recovering at all (`D11`), and the data that was
+    /// there is unreachable. Recovering is the operation that reads an existing
+    /// WAL — [`SharedGraph::recover`] and its variants — so an existing WAL with
+    /// entries is refused here instead of silently corrupting it. A header-only
+    /// WAL (freshly created, or reset by checkpoint rotation) is accepted.
+    ///
     /// # Errors
     ///
     /// Returns [`GraphError::Persist`] when the WAL cannot be opened, including
-    /// when another writer already holds the file lock.
+    /// when another writer already holds the file lock, and
+    /// [`GraphError::WalNotEmpty`] when it opens but already carries entries.
     pub fn with_wal(mut self, path: impl AsRef<Path>, mut config: WalConfig) -> GraphResult<Self> {
         // BRIEF 2: the committer owns fsync. Force OnFlushOnly before opening so
         // the committer's group flush is the single durability barrier. Done
         // before WalWriter::open so open-error timing (e.g. WriterLockHeld) is
         // unchanged for existing .unwrap() call sites.
         config.sync_policy = SyncPolicy::OnFlushOnly;
-        self.wal_writer = Some(WalWriter::open(path.as_ref(), config)?);
+        let writer = WalWriter::open(path.as_ref(), config)?;
+        // `committed_offset` is seeded to the header length and advances past it
+        // only once a valid entry has been scanned, so this is exactly "the log
+        // already carries commits". Refusing here drops the writer and releases
+        // its lock, leaving the directory untouched for a recover call.
+        if writer.committed_offset() > WAL_FILE_HEADER_LEN as u64 {
+            return Err(GraphError::WalNotEmpty {
+                path: writer.path().to_path_buf(),
+            });
+        }
+        self.wal_writer = Some(writer);
         Ok(self)
     }
 

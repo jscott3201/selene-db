@@ -20,6 +20,8 @@ use crate::{
 #[path = "recover_tests/variant_tests.rs"]
 mod variant_tests;
 
+#[path = "recover_tests/build_vs_recover.rs"]
+mod build_vs_recover;
 #[path = "recover_tests/catalog_ddl.rs"]
 mod catalog_ddl;
 

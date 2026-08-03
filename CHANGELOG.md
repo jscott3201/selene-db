@@ -29,6 +29,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `SharedGraphBuilder::with_wal` now refuses a WAL that already holds committed
+  entries, with the new `GraphError::WalNotEmpty` (`SLENE_G_028`). Building
+  starts from an empty graph and `WalWriter::open` positions an existing WAL for
+  append **without replaying it**, so building over a populated log layered a
+  second dataset's commits onto the first: node ids restarted at 1, collided
+  with ids the log had already allocated, and the directory then failed to
+  recover at all with the original data unreachable. `SharedGraph::recover` is
+  the operation that reads an existing WAL and is unaffected. A header-only WAL
+  — freshly created, or reset by checkpoint rotation with a snapshot watermark —
+  is still accepted, and a refusal releases the writer lock and leaves the
+  directory byte-for-byte recoverable.
+
 - Recovery now enforces the caller-asserted `GraphId` against the WAL, not only
   against a snapshot's `CORE/META`. Every schema record carries the graph id it
   was authored under, and recovery refuses when one disagrees with the asserted

@@ -253,6 +253,22 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_019))]
     Cancelled,
 
+    /// A graph was built over a WAL that already carries committed entries.
+    ///
+    /// Building starts from an empty graph and appends, so the new graph's
+    /// commits would land on top of the existing dataset's without replaying
+    /// it: ids restart at 1 and collide, and the directory stops recovering.
+    /// Recovering is the operation that reads an existing WAL.
+    #[error(
+        "WAL at {path} already holds committed entries; \
+         use SharedGraph::recover to open it, not the builder"
+    )]
+    #[diagnostic(code(SLENE_G_028))]
+    WalNotEmpty {
+        /// Path of the WAL that already carries entries.
+        path: std::path::PathBuf,
+    },
+
     /// Error propagated from selene-core.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -293,7 +309,7 @@ impl GraphError {
             Self::TypeViolation(_) => "G2000",
             Self::StoreAssignment(source) => source.exception.gqlstatus(),
             Self::Core(source) => source.gqlstatus(),
-            Self::Durable { .. } => "5GQL0",
+            Self::Durable { .. } | Self::WalNotEmpty { .. } => "5GQL0",
             Self::Cancelled => "5GQL2",
             Self::Provider(_) | Self::Persist(_) => "5GQL0",
         }
