@@ -84,7 +84,14 @@ pub(super) fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResu
             let Some(value) = properties.get(property) else {
                 continue;
             };
-            if let Some(bitmap) = snapshot.nodes_with_property_eq(label, property, value) {
+            // Audit the index against its column, so probe the entry directly
+            // rather than through `SeleneGraph::nodes_with_property_eq`. That
+            // accessor declines once the index omits rows it cannot key, which
+            // is right for queries and wrong here: every row would return
+            // `None`, `expected_rows` would stay 0 against a non-zero
+            // `indexed_rows`, and the tally below would report one issue per
+            // indexed row on an index that is behaving as designed.
+            if let Some(bitmap) = entry.lookup_eq_ignoring_drift(value) {
                 expected_rows += 1;
                 if !bitmap.contains(row) {
                     issues += 1;

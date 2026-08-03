@@ -108,7 +108,8 @@ fn drifted_property_index_is_caught() {
         age.clone(),
         TypedIndexKind::I64,
     )
-    .unwrap();
+    .unwrap()
+    .index;
     graph.property_index.insert(
         (person.clone(), age.clone()),
         PropertyIndexEntry::new(index, None),
@@ -165,7 +166,8 @@ fn drifted_composite_index_is_caught() {
         props.clone(),
         kinds.clone(),
     )
-    .unwrap();
+    .unwrap()
+    .index;
     let key = crate::graph::composite_property_key(&props);
     graph.composite_property_index.insert(
         (person.clone(), key.clone()),

@@ -201,6 +201,7 @@ pub(crate) fn build_property_index(
     kind: TypedIndexKind,
 ) -> GraphResult<TypedIndex> {
     build_property_index_inner(graph, label, property, kind, BuildPolicy::Strict)
+        .map(|built| built.index)
 }
 
 /// Build a property index leniently: kind-mismatched / NaN values are
@@ -214,7 +215,7 @@ pub(crate) fn build_property_index_lenient(
     label: DbString,
     property: DbString,
     kind: TypedIndexKind,
-) -> GraphResult<TypedIndex> {
+) -> GraphResult<LenientIndexBuild> {
     build_property_index_inner(graph, label, property, kind, BuildPolicy::Lenient)
 }
 
@@ -226,6 +227,7 @@ pub(crate) fn build_edge_property_index(
     kind: TypedIndexKind,
 ) -> GraphResult<TypedIndex> {
     build_edge_property_index_inner(graph, label, property, kind, BuildPolicy::Strict)
+        .map(|built| built.index)
 }
 
 /// Build an edge property index leniently for recovery/rebuild paths.
@@ -234,7 +236,7 @@ pub(crate) fn build_edge_property_index_lenient(
     label: DbString,
     property: DbString,
     kind: TypedIndexKind,
-) -> GraphResult<TypedIndex> {
+) -> GraphResult<LenientIndexBuild> {
     build_edge_property_index_inner(graph, label, property, kind, BuildPolicy::Lenient)
 }
 
@@ -244,14 +246,27 @@ enum BuildPolicy {
     Lenient,
 }
 
+/// A built index plus the number of live rows it could not key.
+///
+/// Under [`BuildPolicy::Strict`] the first rejection returns `Err`, so an `Ok`
+/// strict build always reports zero and the strict wrappers discard this.
+pub(crate) struct LenientIndexBuild {
+    /// The index over every row whose variant matched the registered kind.
+    pub(crate) index: TypedIndex,
+    /// Rows skipped for a kind mismatch. NaN skips are excluded; see
+    /// [`crate::graph::index_entries::PropertyIndexEntry::drifted_rows`].
+    pub(crate) drifted_rows: u64,
+}
+
 fn build_property_index_inner(
     graph: &crate::SeleneGraph,
     label: DbString,
     property: DbString,
     kind: TypedIndexKind,
     policy: BuildPolicy,
-) -> GraphResult<TypedIndex> {
+) -> GraphResult<LenientIndexBuild> {
     let mut index = TypedIndex::new(kind);
+    let mut drifted_rows = 0_u64;
     for row_index in 0..graph.node_store.labels.len() {
         let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
             reason: format!(
@@ -284,12 +299,18 @@ fn build_property_index_inner(
                     return Err(index_rejection(label.clone(), property.clone(), err));
                 }
                 BuildPolicy::Lenient => {
+                    if counts_as_drift(&err) {
+                        drifted_rows = drifted_rows.saturating_add(1);
+                    }
                     warn_rejected("rebuild", label.clone(), property.clone(), row, &err);
                 }
             },
         }
     }
-    Ok(index)
+    Ok(LenientIndexBuild {
+        index,
+        drifted_rows,
+    })
 }
 
 fn build_edge_property_index_inner(
@@ -298,8 +319,9 @@ fn build_edge_property_index_inner(
     property: DbString,
     kind: TypedIndexKind,
     policy: BuildPolicy,
-) -> GraphResult<TypedIndex> {
+) -> GraphResult<LenientIndexBuild> {
     let mut index = TypedIndex::new(kind);
+    let mut drifted_rows = 0_u64;
     for row_index in 0..graph.edge_store.label.len() {
         let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
             reason: format!(
@@ -332,12 +354,18 @@ fn build_edge_property_index_inner(
                     return Err(index_rejection(label.clone(), property.clone(), err));
                 }
                 BuildPolicy::Lenient => {
+                    if counts_as_drift(&err) {
+                        drifted_rows = drifted_rows.saturating_add(1);
+                    }
                     warn_rejected("edge rebuild", label.clone(), property.clone(), row, &err);
                 }
             },
         }
     }
-    Ok(index)
+    Ok(LenientIndexBuild {
+        index,
+        drifted_rows,
+    })
 }
 
 /// Rebuild every registered property index from the graph's columns,
@@ -352,10 +380,11 @@ pub(crate) fn rebuild_property_indexes(graph: &mut crate::SeleneGraph) -> GraphR
         .collect();
     graph.property_index.clear();
     for ((label, property), kind, name) in registrations {
-        let index = build_property_index_lenient(graph, label.clone(), property.clone(), kind)?;
-        graph
-            .property_index
-            .insert((label, property), PropertyIndexEntry::new(index, name));
+        let built = build_property_index_lenient(graph, label.clone(), property.clone(), kind)?;
+        graph.property_index.insert(
+            (label, property),
+            PropertyIndexEntry::new_with_drift(built.index, name, built.drifted_rows),
+        );
     }
     Ok(())
 }
@@ -369,11 +398,12 @@ pub(crate) fn rebuild_edge_property_indexes(graph: &mut crate::SeleneGraph) -> G
         .collect();
     graph.edge_property_index.clear();
     for ((label, property), kind, name) in registrations {
-        let index =
+        let built =
             build_edge_property_index_lenient(graph, label.clone(), property.clone(), kind)?;
-        graph
-            .edge_property_index
-            .insert((label, property), PropertyIndexEntry::new(index, name));
+        graph.edge_property_index.insert(
+            (label, property),
+            PropertyIndexEntry::new_with_drift(built.index, name, built.drifted_rows),
+        );
     }
     Ok(())
 }
@@ -413,12 +443,16 @@ fn insert_commit(
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
-    if let Some(index) = indexes.get_mut(&(label.clone(), property.clone()))
-        && let Err(err) = std::sync::Arc::make_mut(&mut index.index).insert(value, row)
-    {
-        return demote_or_promote(label, property, row, "insert", err);
+    let Some(entry) = indexes.get_mut(&(label.clone(), property.clone())) else {
+        return Ok(());
+    };
+    let Err(err) = std::sync::Arc::make_mut(&mut entry.index).insert(value, row) else {
+        return Ok(());
+    };
+    if counts_as_drift(&err) {
+        entry.drifted_rows = entry.drifted_rows.saturating_add(1);
     }
-    Ok(())
+    demote_or_promote(label, property, row, "insert", err)
 }
 
 fn remove_commit(
@@ -428,12 +462,32 @@ fn remove_commit(
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
-    if let Some(index) = indexes.get_mut(&(label.clone(), property.clone()))
-        && let Err(err) = std::sync::Arc::make_mut(&mut index.index).remove(value, row)
-    {
-        return demote_or_promote(label, property, row, "remove", err);
+    let Some(entry) = indexes.get_mut(&(label.clone(), property.clone())) else {
+        return Ok(());
+    };
+    let Err(err) = std::sync::Arc::make_mut(&mut entry.index).remove(value, row) else {
+        return Ok(());
+    };
+    if counts_as_drift(&err) {
+        entry.drifted_rows = entry.drifted_rows.saturating_sub(1);
     }
-    Ok(())
+    demote_or_promote(label, property, row, "remove", err)
+}
+
+/// Whether a skipped value leaves the index an incomplete view of its column.
+///
+/// A kind mismatch does: the row is live and a scan comparing across variants
+/// would match it, so the index must stop answering until the row leaves.
+///
+/// NaN does not. NaN satisfies no equality or range predicate, so a scan omits
+/// the row too and index and scan already agree. Counting it would disable an
+/// index that needs no disabling.
+///
+/// `insert_commit` and `remove_commit` must apply this identically. An
+/// asymmetric filter drives the tally toward zero and re-promotes an index that
+/// is still missing rows.
+const fn counts_as_drift(err: &TypedIndexValueError) -> bool {
+    matches!(err, TypedIndexValueError::KindMismatch { .. })
 }
 
 /// Commit-path branching for [`TypedIndexValueError`]. Open-graph kind

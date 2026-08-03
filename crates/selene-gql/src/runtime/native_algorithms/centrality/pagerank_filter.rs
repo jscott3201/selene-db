@@ -56,13 +56,17 @@ pub(super) fn resolve_edge_result_nodes(
     snapshot: &SeleneGraph,
     filter: &PageRankEdgeFilter,
 ) -> Result<BTreeSet<NodeId>, ProcedureError> {
-    let edge_rows = snapshot
-        .edges_with_property_any(&filter.label, &filter.property, &filter.values)
-        .ok_or_else(|| {
-            invalid_argument(format!(
-                "{PAGERANK_PROC} edge_filter_property must name an indexed scalar edge property and edge_filter_values must match that index kind"
-            ))
-        })?;
+    let edge_rows = crate::runtime::property_filter_rows::edge_rows_with_property_any(
+        snapshot,
+        &filter.label,
+        &filter.property,
+        &filter.values,
+    )
+    .ok_or_else(|| {
+        invalid_argument(format!(
+            "{PAGERANK_PROC} edge_filter_property must name an indexed scalar edge property and edge_filter_values must match that index kind"
+        ))
+    })?;
     let mut nodes = BTreeSet::new();
     for raw_edge_row in edge_rows.iter() {
         let edge_id = snapshot

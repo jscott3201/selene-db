@@ -7,6 +7,9 @@ use selene_graph::{RowIndex, SeleneGraph};
 use super::meta::StaticParameter;
 use super::vector_common::{invalid_arg, string_arg};
 use crate::procedure_registry::ProcedureError;
+use crate::runtime::property_filter_rows::{
+    edge_rows_with_property_any, node_rows_with_property_any,
+};
 use crate::{GqlType, ProcedureDefaultValue, ProcedureParameter};
 
 enum EdgeFilterEndpoint {
@@ -132,8 +135,7 @@ fn optional_node_filter_rows(
         ))),
         (_, Value::List(values)) => {
             let property = string_arg(proc_name, property, "filter_property")?;
-            snapshot
-                .nodes_with_property_any(label, &property, values)
+            node_rows_with_property_any(snapshot, label, &property, values)
                 .map(Some)
                 .ok_or_else(|| {
                     invalid_arg(format!(
@@ -162,8 +164,7 @@ fn optional_edge_filter_rows(
             let label = string_arg(proc_name, edge_label, "edge_filter_label")?;
             let property = string_arg(proc_name, edge_property, "edge_filter_property")?;
             let endpoint = edge_endpoint_arg(proc_name, endpoint)?;
-            let edge_rows = snapshot
-                .edges_with_property_any(&label, &property, values)
+            let edge_rows = edge_rows_with_property_any(snapshot, &label, &property, values)
                 .ok_or_else(|| {
                     invalid_arg(format!(
                         "{proc_name} edge_filter_property must name an indexed scalar edge property and edge_filter_values must match that index kind"
