@@ -6,6 +6,7 @@ use std::sync::Arc;
 use selene_core::GraphId;
 use selene_persist::{
     AuditLog, MANIFEST_FILE_NAME, SyncPolicy, WAL_FILE_HEADER_LEN, WalConfig, WalWriter,
+    find_latest_snapshot,
 };
 
 use super::SharedGraph;
@@ -23,7 +24,7 @@ use crate::index_provider::IndexProvider;
 /// does not — it opens its writer only after replaying the store, which is the
 /// whole point.
 ///
-/// Two pieces of evidence, because neither is sufficient alone:
+/// Three pieces of evidence, because no one of them is sufficient:
 ///
 /// - **WAL entries.** `committed_offset` is seeded to the header length and
 ///   advances past it only once a valid entry has been scanned, so this is
@@ -34,6 +35,14 @@ use crate::index_provider::IndexProvider;
 ///   Judging by the file alone would bless the state every long-lived directory
 ///   converges to. The header watermark cannot stand in for this: a brand-new
 ///   WAL created with a non-zero `snapshot_seq` has the identical header.
+/// - **A `snapshot.N.snap` with no `MANIFEST`.** This is what
+///   [`SharedGraph::write_snapshot`] exports, and recovery treats it as a
+///   store: with no `MANIFEST` to consult it applies the highest on-disk
+///   snapshot and seeds a fresh WAL header from that sequence. Attaching an
+///   unrelated WAL beside one therefore writes a `snapshot_seq: 0` header that
+///   recovery later cross-checks against the snapshot it just applied, and
+///   refuses. Recovering the export directory is the operation that gets this
+///   right.
 ///
 /// Refusing drops the writer, which releases its lock and leaves the directory
 /// exactly as it was found, ready for a recover call.
@@ -60,12 +69,14 @@ pub(super) fn open_fresh_wal(path: &Path, mut config: WalConfig) -> GraphResult<
     }
     // `parent` is empty for a bare relative filename, which resolves against the
     // cwd exactly as the WAL path itself did.
-    let manifest = path
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(MANIFEST_FILE_NAME);
-    if manifest.exists() {
+    let dir = path.parent().unwrap_or_else(|| Path::new(""));
+    if dir.join(MANIFEST_FILE_NAME).exists() {
         return refuse(ExistingStoreEvidence::PublishedManifest);
+    }
+    // Ask the same question recovery asks, with the same helper, so the two
+    // cannot disagree about whether this directory already holds a dataset.
+    if find_latest_snapshot(dir)?.is_some() {
+        return refuse(ExistingStoreEvidence::StandaloneSnapshot);
     }
     Ok(writer)
 }

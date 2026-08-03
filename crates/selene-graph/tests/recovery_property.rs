@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use proptest::prelude::*;
 use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Record, Value, db_string};
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotConfig, SyncPolicy, WalConfig,
+    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotConfig, SyncPolicy, WalConfig, WalWriter,
 };
 
 use selene_graph::{CommitBatching, SeleneGraph, SharedGraph, TypedIndexKind};
@@ -147,18 +147,19 @@ proptest! {
             // is satisfied and replay starts at snapshot_seq + 1; recover; commit
             // the second batch through the reopened WAL.
             {
+                // Seeding the anchored WAL file is a persistence-layer act, not
+                // an attach: the builder's graph is empty and would not reflect
+                // the snapshot, which is exactly what `with_wal` now refuses.
+                // `WalWriter::open` produces the identical file.
                 drop(
-                    SharedGraph::builder(graph_id)
-                        .with_wal(
-                            dir.join(DEFAULT_WAL_FILE_NAME),
-                            WalConfig {
-                                sync_policy: SyncPolicy::OnFlushOnly,
-                                snapshot_seq,
-                            },
-                        )
-                        .unwrap()
-                        .build()
-                        .unwrap(),
+                    WalWriter::open(
+                        &dir.join(DEFAULT_WAL_FILE_NAME),
+                        WalConfig {
+                            sync_policy: SyncPolicy::OnFlushOnly,
+                            snapshot_seq,
+                        },
+                    )
+                    .unwrap(),
                 );
                 let live = SharedGraph::recover(&dir, graph_id).unwrap();
                 for (i, op) in second.iter().enumerate() {

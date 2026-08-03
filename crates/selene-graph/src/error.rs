@@ -47,10 +47,13 @@ pub struct StoreAssignmentError {
 
 /// What proved that a persistence directory already holds a committed store.
 ///
-/// The two are not interchangeable, and neither alone is sufficient. A WAL that
+/// No one of these is sufficient, because a store moves between them. A WAL that
 /// has never been checkpointed carries its whole dataset as entries; once
 /// rotation runs, that data moves into a snapshot and the active WAL is reset
-/// to a bare header, so the file looks empty while the directory is full.
+/// to a bare header, so the file looks empty while the directory is full; and a
+/// standalone export is a snapshot with no MANIFEST and no WAL at all. Each
+/// variant names the evidence that actually fired, so a refusal says which
+/// shape was found.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExistingStoreEvidence {
     /// The WAL itself carries committed entries past its header.
@@ -58,6 +61,16 @@ pub enum ExistingStoreEvidence {
     /// A `MANIFEST` beside the WAL names a published snapshot epoch. This is
     /// the state a directory is left in by every checkpoint.
     PublishedManifest,
+    /// A WAL file owns the directory. Presence is the test, not content: a
+    /// bare-header WAL still declares an epoch that a standalone snapshot
+    /// would preclaim.
+    ActiveWal,
+    /// A `snapshot.N.snap` with no `MANIFEST` names the directory's whole
+    /// dataset. Recovery treats such a directory as a store — it applies the
+    /// highest on-disk snapshot and seeds a fresh WAL header from it — so
+    /// attaching an unrelated WAL beside one produces a header that disagrees
+    /// with the snapshot it will be replayed against.
+    StandaloneSnapshot,
 }
 
 impl std::fmt::Display for ExistingStoreEvidence {
@@ -65,6 +78,8 @@ impl std::fmt::Display for ExistingStoreEvidence {
         let text = match self {
             Self::WalEntries => "the WAL carries committed entries",
             Self::PublishedManifest => "a MANIFEST names a published snapshot",
+            Self::ActiveWal => "a WAL file owns this directory",
+            Self::StandaloneSnapshot => "a snapshot names this directory's dataset",
         };
         f.write_str(text)
     }

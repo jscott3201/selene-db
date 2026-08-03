@@ -29,6 +29,37 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `SharedGraph::write_snapshot` now enforces the two preconditions it previously
+  only documented. It refuses a target directory that already holds a `MANIFEST`
+  or a `wal.log` with `GraphError::ExistingStore`, and it encodes every provider
+  section at one pinned graph generation, then re-checks that the published
+  graph was not replaced, failing with `GraphError::Inconsistent` instead of
+  writing an envelope torn across generations. Previously the section loop used
+  the unpinned encode hook and re-read the published graph once per section, so
+  a commit landing between two of the eight CORE sections produced an
+  internally inconsistent snapshot with nothing to detect it; and a standalone
+  snapshot dropped into a live directory made recovery cross-check it against
+  the WAL and hard-fail, leaving the directory unrecoverable. Presence, not
+  content, is the directory test: a bare-header WAL still declares an epoch, and
+  a checkpointed directory's active WAL is reset to a bare header while its data
+  lives in a snapshot. The pin is checked by pointer identity rather than
+  generation equality, because compaction and vector-index rebuilds republish
+  with `GraphMeta` — and therefore the generation — copied verbatim while every
+  row is renumbered. `write_snapshot` also now rejects re-entry from a provider
+  callback, matching `checkpoint`, `compact`, and the rebuild entry points.
+  `ExistingStoreEvidence` gains an `ActiveWal` variant.
+
+- `SharedGraphBuilder::with_wal` and `SharedGraph::from_graph_with_wal` now also
+  refuse a directory holding a `snapshot.N.snap` with no `MANIFEST` — what
+  `write_snapshot` exports. Recovery treats such a directory as a store, applying
+  the highest on-disk snapshot and seeding a fresh WAL header from that sequence,
+  so attaching an unrelated WAL beside one wrote a `snapshot_seq: 0` header that
+  recovery then cross-checked against the applied snapshot and rejected, leaving
+  the directory unopenable. The guard asks the same question through the same
+  `find_latest_snapshot` helper recovery uses, so the two cannot disagree.
+  `ExistingStoreEvidence` gains a `StandaloneSnapshot` variant. Recovering an
+  export directory is unaffected and remains the supported way to open one.
+
 - `SharedGraphBuilder::with_wal` and `SharedGraph::from_graph_with_wal` now
   refuse a persistence directory that already holds a committed store, with the
   new `GraphError::ExistingStore` (`SLENE_G_028`) reporting which evidence was
