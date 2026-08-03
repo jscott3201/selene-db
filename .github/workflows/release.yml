@@ -104,7 +104,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check --exclude-dev bans
+          arguments: --all-features --exclude-dev
+          command: check bans
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses sources
