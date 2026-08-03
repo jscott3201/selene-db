@@ -15,6 +15,8 @@ use crate::{
     ProviderError, SharedGraph, SubTag, TypedIndexKind, ValidationMode,
 };
 
+#[path = "tests/graph_identity.rs"]
+mod graph_identity;
 #[path = "tests/intent.rs"]
 mod intent;
 

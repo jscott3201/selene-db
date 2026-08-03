@@ -92,6 +92,17 @@ pub(crate) struct RecoveryState {
     /// declares no binding, caller asserts one) or silently restore the
     /// pre-reset type from the snapshot.
     schema_reset_to_open: bool,
+    /// Graph id carried by the first replayed [`Change::SchemaChanged`].
+    ///
+    /// Production DDL stamps the authoring graph's own id into every schema
+    /// record, so for a WAL-only directory this is the only identity that
+    /// exists on disk. A [`Change::GraphReset`] does not clear it: a reset
+    /// truncates and re-opens a graph, it does not rename one.
+    wal_graph_id: Option<GraphId>,
+    /// First replayed schema-record graph id that disagreed with
+    /// [`Self::wal_graph_id`], if any. A WAL holding two identities is already
+    /// cross-wired, and is retained only to name the second id in the error.
+    wal_graph_id_conflict: Option<GraphId>,
 }
 
 const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
@@ -224,6 +235,37 @@ impl RecoveryState {
         Ok(())
     }
 
+    /// Refuse a WAL whose schema records were authored under a different graph.
+    ///
+    /// `CORE/META` carries the identity of a snapshot-bearing directory and is
+    /// checked against the caller's assertion below. A WAL-only directory has
+    /// no `CORE/META`, so before this check nothing on disk contradicted a
+    /// wrong `expected_graph_id`: recovery reconstructed another graph's rows
+    /// under the caller's name and then kept writing into them.
+    ///
+    /// Production DDL stamps the live graph's own id into every
+    /// `Change::SchemaChanged`, so any schema record in the WAL is evidence of
+    /// the authoring identity. Coverage is therefore partial by construction —
+    /// a WAL carrying only data changes declares no identity, and a wrong
+    /// assertion against it still cannot be detected here.
+    fn check_wal_graph_id(&self, expected_graph_id: GraphId) -> crate::GraphResult<()> {
+        // A conflicting id is reported even when the first one matches: a WAL
+        // holding two identities is cross-wired whichever one the caller
+        // asserted, so recovering it replays some other graph's commits.
+        let Some(observed) = self
+            .wal_graph_id
+            .filter(|id| *id != expected_graph_id)
+            .or(self.wal_graph_id_conflict)
+        else {
+            return Ok(());
+        };
+        Err(crate::GraphError::Provider(inconsistent(format!(
+            "WAL schema records declare {observed} but caller asserted \
+             {expected_graph_id} during recovery; refusing to silently \
+             reconstruct under the wrong identity",
+        ))))
+    }
+
     pub(crate) fn into_graph(
         self,
         expected_graph_id: GraphId,
@@ -238,6 +280,7 @@ impl RecoveryState {
                  structurally inconsistent",
             )));
         }
+        self.check_wal_graph_id(expected_graph_id)?;
         // BRIEF-152: a replayed GraphReset forces the recovered graph open and
         // moots every prior schema intent. Short-circuit the snapshot/caller
         // bound-type reconciliation entirely — bind to None regardless of what

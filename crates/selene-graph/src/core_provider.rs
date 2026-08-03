@@ -213,18 +213,20 @@ impl CoreProvider {
 
     /// Drain the recovery accumulator into a graph snapshot.
     ///
-    /// `expected_graph_id` is the caller-asserted graph identity. If a
-    /// snapshot's `CORE/META` was applied and disagrees with this id,
-    /// recovery fails. If no `CORE/META` was applied (WAL-only or empty
-    /// recovery), `expected_graph_id` is used directly with default scalar
-    /// metadata fields.
+    /// `expected_graph_id` is the caller-asserted graph identity, and recovery
+    /// fails if anything on disk disagrees with it. A snapshot declares its
+    /// identity in `CORE/META`. A WAL declares its identity in the graph id
+    /// stamped on every replayed schema record, which is all a WAL-only
+    /// directory has; a WAL carrying no schema record declares no identity, so
+    /// there the caller's assertion is taken on trust and used with default
+    /// scalar metadata fields.
     ///
     /// # Errors
     ///
     /// Returns [`crate::GraphError::Provider`] if this provider was
-    /// constructed for live mode, if META disagrees with
-    /// `expected_graph_id`, or if the accumulated section/changelog state
-    /// cannot be materialized into graph columns.
+    /// constructed for live mode, if META or a replayed schema record
+    /// disagrees with `expected_graph_id`, or if the accumulated
+    /// section/changelog state cannot be materialized into graph columns.
     pub fn finish_recovery(
         self: Arc<Self>,
         expected_graph_id: selene_core::GraphId,

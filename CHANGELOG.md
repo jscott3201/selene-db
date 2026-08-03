@@ -29,6 +29,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Recovery now enforces the caller-asserted `GraphId` against the WAL, not only
+  against a snapshot's `CORE/META`. Every schema record carries the graph id it
+  was authored under, and recovery refuses when one disagrees with the asserted
+  identity, so a WAL-only directory can no longer be reconstructed under a
+  `GraphId` nobody wrote it with and then written into. A WAL holding two
+  identities is refused under either. This is a new hard failure for a
+  DDL-bearing directory opened under the wrong id, and coverage is partial by
+  construction: a WAL carrying only data changes declares no identity, so a
+  wrong assertion against it still cannot be detected.
+
 - `ALTER EDGE TYPE` WAL replay now applies endpoint and property deltas in
   place. Replay previously dropped and re-added the edge type, which moved it to
   the end of declaration order and discarded property descriptors the alter did
