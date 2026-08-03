@@ -10,7 +10,7 @@ use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
 use selene_core::GraphId;
-use selene_persist::{AuditLog, SyncPolicy, WalConfig, WalWriter};
+use selene_persist::{AuditLog, WalConfig, WalWriter};
 
 use crate::committer_batch::CommitBatching;
 use crate::core_provider::{CoreProvider, DurableState};
@@ -104,26 +104,33 @@ impl SharedGraph {
     /// Construct shared state from a graph snapshot and commit-critical WAL file.
     ///
     /// Since v1.2 (BRIEF 2) the committer is the sole fsync caller, so the WAL is
-    /// **always** opened in [`SyncPolicy::OnFlushOnly`] regardless of the
+    /// **always** opened in [`selene_persist::SyncPolicy::OnFlushOnly`] regardless of the
     /// `config.sync_policy` passed (it is overwritten before
     /// [`WalWriter::open`]). This non-builder constructor uses
     /// [`CommitBatching::Off`], so the committer still fsyncs once per commit —
     /// behaviorally identical to BRIEF 1's `EveryN(1)`.
     ///
+    /// # The directory must not already hold a store
+    ///
+    /// `graph` is attached as-is and never reconciled against what is on disk,
+    /// so this carries the same hazard as [`SharedGraphBuilder::with_wal`] and
+    /// goes through the same guard. Reconstructing a graph *from* an existing
+    /// store is [`Self::recover`]; hand-rolled recovery should drive
+    /// [`crate::CoreProvider`] and then attach its own writer through the
+    /// crate-internal constructor `recover` itself uses.
+    ///
     /// # Errors
     ///
-    /// Returns [`GraphError::Persist`] when the WAL cannot be opened, plus the
-    /// same consistency and provider-registration errors as [`Self::try_from_graph`].
+    /// Returns [`GraphError::Persist`] when the WAL cannot be opened,
+    /// [`GraphError::ExistingStore`] when the directory already holds a store,
+    /// plus the same consistency and provider-registration errors as
+    /// [`Self::try_from_graph`].
     pub fn from_graph_with_wal(
         graph: SeleneGraph,
         path: impl AsRef<Path>,
-        mut config: WalConfig,
+        config: WalConfig,
     ) -> GraphResult<Self> {
-        // BRIEF 2: the committer owns fsync via flush_durables(); force the
-        // committer-managed WAL into OnFlushOnly before opening it (overwriting
-        // any caller policy), keeping open-error timing unchanged.
-        config.sync_policy = SyncPolicy::OnFlushOnly;
-        let writer = WalWriter::open(path.as_ref(), config)?;
+        let writer = builder::open_fresh_wal(path.as_ref(), config)?;
         Self::from_graph_with_core_and_durables(
             graph,
             Vec::new(),

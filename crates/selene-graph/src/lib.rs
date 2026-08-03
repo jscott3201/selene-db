@@ -69,7 +69,7 @@ pub use core_provider::{
     CORE_TIDX_SUB, CORE_VIDX_SUB, CoreProvider, DurableState,
 };
 pub use durable_provider::DurableProvider;
-pub use error::{GraphError, GraphResult};
+pub use error::{ExistingStoreEvidence, GraphError, GraphResult};
 pub use graph::{
     CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph, TextIndexEntry,
     VectorIndexEntry,

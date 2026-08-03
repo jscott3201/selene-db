@@ -4,14 +4,71 @@ use std::path::Path;
 use std::sync::Arc;
 
 use selene_core::GraphId;
-use selene_persist::{AuditLog, SyncPolicy, WAL_FILE_HEADER_LEN, WalConfig, WalWriter};
+use selene_persist::{
+    AuditLog, MANIFEST_FILE_NAME, SyncPolicy, WAL_FILE_HEADER_LEN, WalConfig, WalWriter,
+};
 
 use super::SharedGraph;
 use crate::committer_batch::CommitBatching;
-use crate::error::{GraphError, GraphResult};
+use crate::error::{ExistingStoreEvidence, GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::graph_types::GraphTypeDef;
 use crate::index_provider::IndexProvider;
+
+/// Open `path` as the WAL of a directory that does not yet hold a store.
+///
+/// Every path that attaches a WAL to a graph the engine did *not* just recover
+/// goes through here, so the two cannot drift apart: the builder, and
+/// [`SharedGraph::from_graph_with_wal`]. [`SharedGraph::recover`] deliberately
+/// does not — it opens its writer only after replaying the store, which is the
+/// whole point.
+///
+/// Two pieces of evidence, because neither is sufficient alone:
+///
+/// - **WAL entries.** `committed_offset` is seeded to the header length and
+///   advances past it only once a valid entry has been scanned, so this is
+///   exactly "the log already carries commits".
+/// - **A published `MANIFEST` beside it.** Checkpoint rotation archives the
+///   entries and resets the active WAL to a bare header, so a checkpointed
+///   directory has an *empty-looking* WAL while its dataset sits in a snapshot.
+///   Judging by the file alone would bless the state every long-lived directory
+///   converges to. The header watermark cannot stand in for this: a brand-new
+///   WAL created with a non-zero `snapshot_seq` has the identical header.
+///
+/// Refusing drops the writer, which releases its lock and leaves the directory
+/// exactly as it was found, ready for a recover call.
+///
+/// # Errors
+///
+/// Returns [`GraphError::Persist`] when the WAL cannot be opened, and
+/// [`GraphError::ExistingStore`] when the directory already holds a store.
+pub(super) fn open_fresh_wal(path: &Path, mut config: WalConfig) -> GraphResult<WalWriter> {
+    // BRIEF 2: the committer owns fsync. Force OnFlushOnly before opening so the
+    // committer's group flush is the single durability barrier. Done before
+    // WalWriter::open so open-error timing (e.g. WriterLockHeld) is unchanged
+    // for existing .unwrap() call sites.
+    config.sync_policy = SyncPolicy::OnFlushOnly;
+    let writer = WalWriter::open(path, config)?;
+    let refuse = |evidence| {
+        Err(GraphError::ExistingStore {
+            path: writer.path().to_path_buf(),
+            evidence,
+        })
+    };
+    if writer.committed_offset() > WAL_FILE_HEADER_LEN as u64 {
+        return refuse(ExistingStoreEvidence::WalEntries);
+    }
+    // `parent` is empty for a bare relative filename, which resolves against the
+    // cwd exactly as the WAL path itself did.
+    let manifest = path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(MANIFEST_FILE_NAME);
+    if manifest.exists() {
+        return refuse(ExistingStoreEvidence::PublishedManifest);
+    }
+    Ok(writer)
+}
 
 /// Builder for a [`SharedGraph`] and its fixed provider registry.
 pub struct SharedGraphBuilder {
@@ -64,40 +121,27 @@ impl SharedGraphBuilder {
     /// verbatim. Durability is unchanged: the committer always flushes before it
     /// publishes or acks, so a commit is durable before it is ever visible.
     ///
-    /// # The WAL must not already hold entries
+    /// # The directory must not already hold a store
     ///
     /// A builder starts from an *empty* graph, and [`WalWriter::open`] positions
     /// an existing WAL for **append without replaying it**. Building over a
-    /// populated WAL therefore layers a second dataset's commits onto the first:
-    /// node ids restart at 1 and collide with ids the log already allocated, so
-    /// the directory stops recovering at all (`D11`), and the data that was
-    /// there is unreachable. Recovering is the operation that reads an existing
-    /// WAL — [`SharedGraph::recover`] and its variants — so an existing WAL with
-    /// entries is refused here instead of silently corrupting it. A header-only
-    /// WAL (freshly created, or reset by checkpoint rotation) is accepted.
+    /// directory that already holds data therefore layers a second dataset's
+    /// commits onto the first: node ids restart at 1 and collide with ids the
+    /// store already allocated, so the directory stops recovering at all
+    /// (`D11`) and the data that was there is unreachable. Recovering is the
+    /// operation that reads an existing store — [`SharedGraph::recover`] and its
+    /// variants — so an existing store is refused here rather than silently
+    /// corrupted. Committed WAL entries and a `MANIFEST` naming a published
+    /// snapshot each count as existing; see `open_fresh_wal` for why both are
+    /// needed.
     ///
     /// # Errors
     ///
     /// Returns [`GraphError::Persist`] when the WAL cannot be opened, including
     /// when another writer already holds the file lock, and
-    /// [`GraphError::WalNotEmpty`] when it opens but already carries entries.
-    pub fn with_wal(mut self, path: impl AsRef<Path>, mut config: WalConfig) -> GraphResult<Self> {
-        // BRIEF 2: the committer owns fsync. Force OnFlushOnly before opening so
-        // the committer's group flush is the single durability barrier. Done
-        // before WalWriter::open so open-error timing (e.g. WriterLockHeld) is
-        // unchanged for existing .unwrap() call sites.
-        config.sync_policy = SyncPolicy::OnFlushOnly;
-        let writer = WalWriter::open(path.as_ref(), config)?;
-        // `committed_offset` is seeded to the header length and advances past it
-        // only once a valid entry has been scanned, so this is exactly "the log
-        // already carries commits". Refusing here drops the writer and releases
-        // its lock, leaving the directory untouched for a recover call.
-        if writer.committed_offset() > WAL_FILE_HEADER_LEN as u64 {
-            return Err(GraphError::WalNotEmpty {
-                path: writer.path().to_path_buf(),
-            });
-        }
-        self.wal_writer = Some(writer);
+    /// [`GraphError::ExistingStore`] when the directory already holds a store.
+    pub fn with_wal(mut self, path: impl AsRef<Path>, config: WalConfig) -> GraphResult<Self> {
+        self.wal_writer = Some(open_fresh_wal(path.as_ref(), config)?);
         Ok(self)
     }
 
