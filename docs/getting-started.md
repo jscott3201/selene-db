@@ -42,16 +42,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.2.0" }
-selene-graph = { package = "selene-db-graph", version = "1.2.0" }
-selene-gql = { package = "selene-db-gql", version = "1.2.0" }
+selene-core = { package = "selene-db-core", version = "1.4.0" }
+selene-graph = { package = "selene-db-graph", version = "1.4.0" }
+selene-gql = { package = "selene-db-gql", version = "1.4.0" }
 ```
 
 For on-disk persistence, add `selene-persist`. For graph algorithms — PageRank, betweenness, Louvain, and the rest, reachable both as a native Rust API and via `CALL algo.*` — add `selene-algorithms`:
 
 ```toml
-selene-persist = { package = "selene-db-persist", version = "1.2.0" }
-selene-algorithms = { package = "selene-db-algorithms", version = "1.2.0" }
+selene-persist = { package = "selene-db-persist", version = "1.4.0" }
+selene-algorithms = { package = "selene-db-algorithms", version = "1.4.0" }
 ```
 
 When developing against a local checkout, first clone the repository with
