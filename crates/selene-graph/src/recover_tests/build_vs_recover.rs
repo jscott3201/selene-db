@@ -296,3 +296,83 @@ fn recover_still_opens_what_the_builder_refuses() {
     assert_eq!(node_count_after_recover(&dir, graph_id), 3);
     let _ = fs::remove_dir_all(dir);
 }
+
+/// The reverse direction, and the third class of directory evidence.
+///
+/// `SharedGraph::write_snapshot` exports a `snapshot.N.snap` with no MANIFEST
+/// and no WAL. Recovery treats such a directory as a store: with no MANIFEST to
+/// consult it applies the highest on-disk snapshot and seeds a fresh WAL header
+/// from that sequence. So attaching an unrelated WAL beside one writes a
+/// `snapshot_seq: 0` header, and recovery then cross-checks it against the
+/// snapshot it just applied and refuses — the same unopenable directory,
+/// reached in the opposite order from the case above.
+#[test]
+fn builder_refuses_a_directory_holding_a_standalone_snapshot() {
+    let dir = temp_dir("build-over-standalone-snapshot");
+    let graph_id = GraphId::new(64);
+    let exporter = SharedGraph::builder(graph_id).build().unwrap();
+    exporter
+        .write_snapshot(selene_persist::SnapshotConfig {
+            dir: dir.clone(),
+            sequence: 7,
+            compression: selene_persist::SectionCompression::None,
+            fsync: false,
+        })
+        .unwrap();
+
+    let error = expect_existing_store(
+        SharedGraph::builder(graph_id)
+            .with_wal(dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default()),
+        "a snapshot with no MANIFEST is still this directory's dataset",
+    );
+    assert!(
+        matches!(
+            &error,
+            GraphError::ExistingStore { evidence, .. }
+                if *evidence == ExistingStoreEvidence::StandaloneSnapshot
+        ),
+        "the snapshot is what proves it: {error:?}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The companion positive control: recovering an export directory is the
+/// operation that gets this right, seeding the fresh WAL header from the
+/// applied snapshot instead of from zero. Without this, "refuse any directory
+/// containing a snapshot" could be implemented in `recover` too and the suite
+/// would not notice the lost capability.
+#[test]
+fn recover_still_opens_a_standalone_export_directory() {
+    let dir = temp_dir("recover-standalone-export");
+    let graph_id = GraphId::new(64);
+    let exporter = SharedGraph::builder(graph_id).build().unwrap();
+    {
+        let mut txn = exporter.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(
+                    LabelSet::single(db_string("build.vs.recover").unwrap()),
+                    PropertyMap::new(),
+                )
+                .unwrap();
+        }
+        txn.commit().unwrap();
+    }
+    exporter
+        .write_snapshot(selene_persist::SnapshotConfig {
+            dir: dir.clone(),
+            sequence: 7,
+            compression: selene_persist::SectionCompression::None,
+            fsync: false,
+        })
+        .unwrap();
+    drop(exporter);
+
+    let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
+    assert_eq!(recovered.read().node_count(), 1);
+    drop(recovered);
+    // And it stays recoverable after the WAL it just created.
+    assert_eq!(node_count_after_recover(&dir, graph_id), 1);
+    let _ = fs::remove_dir_all(dir);
+}
