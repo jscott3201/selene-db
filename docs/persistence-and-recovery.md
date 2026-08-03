@@ -300,11 +300,29 @@ of `SharedGraph::checkpoint`.
 
 `SharedGraph::write_snapshot` is deliberately different: it is a standalone,
 uncoordinated snapshot writer for offline tooling, tests, or a host that has
-already quiesced writes. It trusts the caller-provided directory, sequence, and
-fsync policy, does not rotate the WAL, and cannot by itself guarantee that
-separately encoded provider sections represent one generation. Do not point it
-at the persistence directory owned by a live WAL-backed `SharedGraph`; only the
-ordered checkpoint protocol may claim those snapshot sequence paths. Likewise,
+already quiesced writes. It trusts the caller-provided sequence and fsync
+policy and does not rotate the WAL, so what it writes is not a recoverable
+epoch on its own — only the ordered checkpoint protocol may claim those snapshot
+sequence paths.
+
+Both of its preconditions are enforced rather than merely documented. It refuses
+a target directory that already holds a `MANIFEST` or a `wal.log`, returning
+`GraphError::ExistingStore` with the evidence that fired; presence is the test,
+because a bare-header WAL still declares an epoch whose sequence a standalone
+write would preclaim, and a checkpointed directory's active WAL is reset to a
+bare header while its data lives in a snapshot. It also encodes every provider
+section at one pinned graph generation and then re-checks that the published
+graph was not replaced, so a commit, compaction, or vector-index rebuild landing
+mid-encode fails with `GraphError::Inconsistent` instead of producing an
+envelope torn across generations. That second check is an error rather than a
+wait: the call quiesces nothing, so a host racing its own writers must serialize
+them and retry.
+
+The refusal deliberately stops short of publishing a `MANIFEST` for the
+standalone snapshot. A stray snapshot with no `MANIFEST` makes recovery
+cross-check it against the WAL and fail loudly; naming it in a `MANIFEST` would
+instead make recovery trust it and apply its sequence as the replay floor,
+converting a visible operator error into silent data loss. Likewise,
 `WalWriter::rotate_with_manifest` remains the lower-level persistence primitive;
 live graph hosts should not collect a `SnapshotBuilder` and try to reproduce the
 graph committer's ordering protocol. Direct callers are still constrained to a

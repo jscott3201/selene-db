@@ -58,6 +58,10 @@ pub enum ExistingStoreEvidence {
     /// A `MANIFEST` beside the WAL names a published snapshot epoch. This is
     /// the state a directory is left in by every checkpoint.
     PublishedManifest,
+    /// A WAL file owns the directory. Presence is the test, not content: a
+    /// bare-header WAL still declares an epoch that a standalone snapshot
+    /// would preclaim.
+    ActiveWal,
 }
 
 impl std::fmt::Display for ExistingStoreEvidence {
@@ -65,6 +69,7 @@ impl std::fmt::Display for ExistingStoreEvidence {
         let text = match self {
             Self::WalEntries => "the WAL carries committed entries",
             Self::PublishedManifest => "a MANIFEST names a published snapshot",
+            Self::ActiveWal => "a WAL file owns this directory",
         };
         f.write_str(text)
     }

@@ -613,7 +613,7 @@ impl SharedGraph {
     }
 }
 
-fn reject_provider_callback_reentry(operation: &str) {
+pub(crate) fn reject_provider_callback_reentry(operation: &str) {
     assert!(
         !crate::reentry::in_fanout(),
         "selene-graph: {operation} called from within a provider callback on the committer \
