@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 
 use rustc_hash::FxHashMap;
 use selene_core::{
-    Change, DbString, EdgeId, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange, db_string,
+    Change, DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
+    db_string,
 };
 
 use crate::{
@@ -32,6 +33,13 @@ impl RecoveryState {
     /// `SCHEMA_CHANGE_INTENT` in this module's tests; new variants must update
     /// both this match and that table.
     pub(crate) fn apply_change(&mut self, change: &Change) -> Result<(), ProviderError> {
+        // Schema records are the only changes that name their authoring graph,
+        // which makes them the sole on-disk identity of a WAL-only directory.
+        // Recorded here rather than in the arm below so the identity is captured
+        // even for a schema record the arm goes on to reject.
+        if let Change::SchemaChanged { graph, .. } = change {
+            self.observe_wal_graph_id(*graph);
+        }
         match change {
             Change::NodeCreated {
                 id,
@@ -217,6 +225,20 @@ impl RecoveryState {
             },
         }
         Ok(())
+    }
+
+    /// Record the graph id a replayed schema record was authored under.
+    ///
+    /// First id wins; a later disagreeing id is kept separately so
+    /// `into_graph` can name both when refusing a cross-wired WAL.
+    fn observe_wal_graph_id(&mut self, graph: GraphId) {
+        match self.wal_graph_id {
+            None => self.wal_graph_id = Some(graph),
+            Some(first) if first != graph => {
+                self.wal_graph_id_conflict.get_or_insert(graph);
+            }
+            Some(_) => {}
+        }
     }
 }
 
