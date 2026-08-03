@@ -315,6 +315,10 @@ impl SeleneGraph {
     }
 
     /// Return a clone of the registered `(label, property)` index.
+    ///
+    /// `None` also means the index omits live rows it cannot key, matching the
+    /// probe accessors. Keeping the two in step stops the optimizer costing a
+    /// plan against an index whose probes will decline at runtime.
     #[must_use]
     pub fn property_index_for(
         &self,
@@ -323,10 +327,12 @@ impl SeleneGraph {
     ) -> Option<Arc<TypedIndex>> {
         self.property_index
             .get(&(label.clone(), property.clone()))
-            .map(|entry| Arc::clone(&entry.index))
+            .and_then(PropertyIndexEntry::probe_arc)
     }
 
     /// Return a clone of the registered edge `(label, property)` index.
+    ///
+    /// Declines on an incomplete index, as [`SeleneGraph::property_index_for`].
     #[must_use]
     pub fn edge_property_index_for(
         &self,
@@ -335,7 +341,7 @@ impl SeleneGraph {
     ) -> Option<Arc<TypedIndex>> {
         self.edge_property_index
             .get(&(label.clone(), property.clone()))
-            .map(|entry| Arc::clone(&entry.index))
+            .and_then(PropertyIndexEntry::probe_arc)
     }
 
     /// Return a clone of the registered composite index.
@@ -346,7 +352,7 @@ impl SeleneGraph {
         properties: &[DbString],
     ) -> Option<Arc<CompositeTypedIndex>> {
         self.composite_property_index_entry_for(label, properties)
-            .map(|entry| Arc::clone(&entry.index))
+            .and_then(CompositePropertyIndexEntry::probe_arc)
     }
 
     /// Return composite index metadata for a property set.
@@ -485,11 +491,18 @@ impl SeleneGraph {
 
     /// Return rows matching `value` under a registered property index.
     ///
-    /// `None` means no index is registered for `(label, property)` or the
-    /// supplied value cannot be used with that index kind. `Some(empty)` means
-    /// the index exists but no row matches. A kind-mismatched probe returns
-    /// `None` so the caller drops to a linear scan; open-graph kind drift
-    /// remains discoverable via cross-variant `value_compare`.
+    /// `None` means the index cannot answer and the caller must scan; every
+    /// probe on this type shares that contract. It covers three cases: no index
+    /// is registered for `(label, property)`, the supplied value cannot be used
+    /// with the registered kind, or the index omits live rows whose variant it
+    /// cannot key and is therefore an incomplete view of the column.
+    ///
+    /// That last case is why probing with the index's own kind is not enough to
+    /// stay correct. GQL equality is cross-variant, so `Int(3)` and
+    /// `Float(3.0)` are equal, and an index keyed on one variant silently drops
+    /// the other. Declining keeps the indexed and unindexed answers identical.
+    ///
+    /// `Some(empty)` means the index answered and no row matches.
     #[must_use]
     pub fn nodes_with_property_eq(
         &self,
@@ -499,14 +512,14 @@ impl SeleneGraph {
     ) -> Option<Cow<'_, RoaringBitmap>> {
         self.property_index
             .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_eq(value))
+            .and_then(|entry| entry.lookup_eq(value))
     }
 
     /// Return the union of node rows matching any indexed scalar value.
     ///
-    /// `None` means no node property index is registered for `(label, property)`
-    /// or at least one supplied value cannot be used with that index kind.
-    /// `Some(empty)` means the index exists but no row matches the value set.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn nodes_with_property_any(
         &self,
@@ -519,16 +532,16 @@ impl SeleneGraph {
             .get(&(label.clone(), property.clone()))?;
         let mut rows = RoaringBitmap::new();
         for value in values {
-            rows |= entry.index.lookup_eq(value)?.as_ref();
+            rows |= entry.lookup_eq(value)?.as_ref();
         }
         Some(rows)
     }
 
     /// Return edge rows matching `value` under a registered edge property index.
     ///
-    /// `None` means no edge index is registered for `(label, property)` or the
-    /// supplied value cannot be used with that index kind. `Some(empty)` means
-    /// the index exists but no edge row matches.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn edges_with_property_eq(
         &self,
@@ -538,15 +551,14 @@ impl SeleneGraph {
     ) -> Option<Cow<'_, RoaringBitmap>> {
         self.edge_property_index
             .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_eq(value))
+            .and_then(|entry| entry.lookup_eq(value))
     }
 
     /// Return the union of edge rows matching any indexed scalar value.
     ///
-    /// `None` means no edge property index is registered for `(label,
-    /// property)` or at least one supplied value cannot be used with that index
-    /// kind. `Some(empty)` means the index exists but no row matches the value
-    /// set.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn edges_with_property_any(
         &self,
@@ -559,16 +571,16 @@ impl SeleneGraph {
             .get(&(label.clone(), property.clone()))?;
         let mut rows = RoaringBitmap::new();
         for value in values {
-            rows |= entry.index.lookup_eq(value)?.as_ref();
+            rows |= entry.lookup_eq(value)?.as_ref();
         }
         Some(rows)
     }
 
     /// Return rows matching `range` under a registered property index.
     ///
-    /// `None` means no index is registered or the supplied bounds do not match
-    /// the index kind. `Some(empty)` means the index exists but the range
-    /// matches no rows.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn nodes_with_property_range<R>(
         &self,
@@ -581,14 +593,14 @@ impl SeleneGraph {
     {
         self.property_index
             .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_range(range))
+            .and_then(|entry| entry.lookup_range(range))
     }
 
     /// Return edge rows matching `range` under a registered edge property index.
     ///
-    /// `None` means no edge index is registered or the supplied bounds do not
-    /// match the index kind. `Some(empty)` means the index exists but no edge
-    /// row matches.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn edges_with_property_range<R>(
         &self,
@@ -601,13 +613,14 @@ impl SeleneGraph {
     {
         self.edge_property_index
             .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_range(range))
+            .and_then(|entry| entry.lookup_range(range))
     }
 
     /// Return rows whose string property key starts with `prefix`.
     ///
-    /// `None` means no index is registered or the registered index is not a
-    /// string index.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
     pub fn nodes_with_property_prefix(
         &self,
@@ -617,7 +630,7 @@ impl SeleneGraph {
     ) -> Option<RoaringBitmap> {
         self.property_index
             .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_prefix(prefix))
+            .and_then(|entry| entry.lookup_prefix(prefix))
     }
 
     fn live_node_row(&self, id: NodeId) -> Option<usize> {

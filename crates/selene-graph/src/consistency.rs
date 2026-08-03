@@ -164,12 +164,20 @@ impl SeleneGraph {
             .map_err(|err| {
                 format!("failed to re-derive property index ({label}, {property}): {err}")
             })?;
-            if !entry.index.buckets_eq(&reference) {
+            if entry.drifted_rows != reference.drifted_rows {
+                return Err(format!(
+                    "property index ({label}, {property}) records {} unkeyable rows but a fresh \
+                     re-derivation found {}; an over-count disables the index for good and an \
+                     under-count lets it answer while rows are missing",
+                    entry.drifted_rows, reference.drifted_rows,
+                ));
+            }
+            if !entry.index.buckets_eq(&reference.index) {
                 return Err(format!(
                     "property index ({label}, {property}) drifted from a fresh re-derivation \
                      (maintained cardinality {}, reference cardinality {})",
                     entry.index.cardinality(),
-                    reference.cardinality(),
+                    reference.index.cardinality(),
                 ));
             }
         }
@@ -193,12 +201,19 @@ impl SeleneGraph {
             .map_err(|err| {
                 format!("failed to re-derive edge property index ({label}, {property}): {err}")
             })?;
-            if !entry.index.buckets_eq(&reference) {
+            if entry.drifted_rows != reference.drifted_rows {
+                return Err(format!(
+                    "edge property index ({label}, {property}) records {} unkeyable rows but a \
+                     fresh re-derivation found {}",
+                    entry.drifted_rows, reference.drifted_rows,
+                ));
+            }
+            if !entry.index.buckets_eq(&reference.index) {
                 return Err(format!(
                     "edge property index ({label}, {property}) drifted from a fresh \
                      re-derivation (maintained cardinality {}, reference cardinality {})",
                     entry.index.cardinality(),
-                    reference.cardinality(),
+                    reference.index.cardinality(),
                 ));
             }
         }
@@ -227,13 +242,20 @@ impl SeleneGraph {
                         entry.declared_properties
                     )
                 })?;
-            if !entry.index.buckets_eq(&reference) {
+            if entry.drifted_rows != reference.drifted_rows {
+                return Err(format!(
+                    "composite index ({label}, {:?}) records {} unkeyable rows but a fresh \
+                     re-derivation found {}",
+                    entry.declared_properties, entry.drifted_rows, reference.drifted_rows,
+                ));
+            }
+            if !entry.index.buckets_eq(&reference.index) {
                 return Err(format!(
                     "composite index ({label}, {:?}) drifted from a fresh re-derivation \
                      (maintained cardinality {}, reference cardinality {})",
                     entry.declared_properties,
                     entry.index.cardinality(),
-                    reference.cardinality(),
+                    reference.index.cardinality(),
                 ));
             }
         }

@@ -71,7 +71,8 @@ pub use core_provider::{
 pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
 pub use graph::{
-    CompositePropertyIndexEntry, GraphMeta, SeleneGraph, TextIndexEntry, VectorIndexEntry,
+    CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph, TextIndexEntry,
+    VectorIndexEntry,
 };
 pub use graph_types::{
     DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_RECORD_TYPE_NESTING, NodeTypeDef,

@@ -31,6 +31,7 @@ mod pattern;
 mod pipeline;
 mod plan_cache;
 mod plan_runner;
+mod property_filter_rows;
 mod questioned;
 mod repeat;
 mod scan;
