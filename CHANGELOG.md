@@ -21,26 +21,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   uses a synced atomic replacement, relative WAL paths stay anchored to their
   open-time directory, and unique snapshot temporaries make crash retries
   progress without reusing a stale fixed temp file.
-- Global BM25 text search, ANN vector search, and PageRank result candidate
-  production can now admit candidates through indexed edge-property filters,
-  including source, target, or both endpoints, while preserving the existing
-  indexed node-property and explicit-result-node filter surfaces.
-- `ALTER EDGE TYPE` can now widen an existing edge type's source and/or target
-  endpoint set and add optional properties as a forward-only schema migration.
-  Narrowing endpoints, redefining properties, and adding required properties
-  are rejected. WAL replay applies endpoint/property deltas in place, preserving
-  edge-type declaration order and untouched legacy property descriptors.
 - `ALTER NODE TYPE` can now add optional properties to an existing node type in
   a closed graph type without dropping its instances. The
   implementation-defined migration preserves node-type ordering during WAL
   replay; required properties, descriptor changes, inline indexes, and
   key-label changes remain rejected.
-- `selene.reachable_nodes(roots, edge_label, k, max_depth?, direction?)` now
-  produces bounded transitive graph candidates with hop depths, so callers can
-  feed HEAD/tip reachability windows into the existing vector, text, JSON, or
-  fusion procedures without hard-coding a memory policy into candidate states.
 
 ### Fixed
+
+- `ALTER EDGE TYPE` WAL replay now applies endpoint and property deltas in
+  place. Replay previously dropped and re-added the edge type, which moved it to
+  the end of declaration order and discarded property descriptors the alter did
+  not touch.
 
 - Recovery now holds a shared persistence epoch across MANIFEST selection,
   snapshot callbacks, and WAL replay, preventing a concurrent rotation from
@@ -80,6 +72,23 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Updated the transitive `crossbeam-epoch` dependency from 0.9.18 to 0.9.20,
   closing RUSTSEC-2026-0204's invalid pointer dereference in pointer formatting.
+
+## [1.4.0] - 2026-06-24
+
+### Added
+
+- Global BM25 text search, ANN vector search, and PageRank result candidate
+  production can now admit candidates through indexed edge-property filters,
+  including source, target, or both endpoints, while preserving the existing
+  indexed node-property and explicit-result-node filter surfaces.
+- `ALTER EDGE TYPE` can now widen an existing edge type's source and/or target
+  endpoint set and add optional properties as a forward-only schema migration.
+  Narrowing endpoints, redefining properties, and adding required properties
+  are rejected.
+- `selene.reachable_nodes(roots, edge_label, k, max_depth?, direction?)` now
+  produces bounded transitive graph candidates with hop depths, so callers can
+  feed HEAD/tip reachability windows into the existing vector, text, JSON, or
+  fusion procedures without hard-coding a memory policy into candidate states.
 
 ## [1.3.0] - 2026-06-16
 
@@ -1898,7 +1907,8 @@ The following items are intentionally deferred and tracked for future
 - OPQ rotation inner-allocation tightening.
 - Fresh extension crates beyond `selene-vector` and `selene-algorithms`.
 
-[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/jscott3201/selene-db/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/jscott3201/selene-db/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/jscott3201/selene-db/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.1.0
