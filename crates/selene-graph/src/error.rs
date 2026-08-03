@@ -45,6 +45,31 @@ pub struct StoreAssignmentError {
     pub reason: String,
 }
 
+/// What proved that a persistence directory already holds a committed store.
+///
+/// The two are not interchangeable, and neither alone is sufficient. A WAL that
+/// has never been checkpointed carries its whole dataset as entries; once
+/// rotation runs, that data moves into a snapshot and the active WAL is reset
+/// to a bare header, so the file looks empty while the directory is full.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExistingStoreEvidence {
+    /// The WAL itself carries committed entries past its header.
+    WalEntries,
+    /// A `MANIFEST` beside the WAL names a published snapshot epoch. This is
+    /// the state a directory is left in by every checkpoint.
+    PublishedManifest,
+}
+
+impl std::fmt::Display for ExistingStoreEvidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Self::WalEntries => "the WAL carries committed entries",
+            Self::PublishedManifest => "a MANIFEST names a published snapshot",
+        };
+        f.write_str(text)
+    }
+}
+
 /// Error type for graph storage and mutation operations.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
@@ -253,6 +278,27 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_019))]
     Cancelled,
 
+    /// A graph was attached to a persistence directory that already holds a
+    /// committed store.
+    ///
+    /// Attaching does not replay: the caller's graph is used as-is and its
+    /// commits append to whatever is already there. When that graph does not
+    /// already reflect the store, ids restart at 1 and collide with ids the
+    /// store allocated, and the directory stops recovering at all. Recovering
+    /// is the operation that reads an existing store.
+    #[error(
+        "{path} already holds a committed store ({evidence}); \
+         use SharedGraph::recover to open it"
+    )]
+    #[diagnostic(code(SLENE_G_028))]
+    ExistingStore {
+        /// Path of the WAL the caller asked to attach.
+        path: std::path::PathBuf,
+        /// What was found on disk. A rotated WAL is header-only while its data
+        /// lives in a snapshot, so the WAL alone cannot answer this.
+        evidence: ExistingStoreEvidence,
+    },
+
     /// Error propagated from selene-core.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -293,7 +339,7 @@ impl GraphError {
             Self::TypeViolation(_) => "G2000",
             Self::StoreAssignment(source) => source.exception.gqlstatus(),
             Self::Core(source) => source.gqlstatus(),
-            Self::Durable { .. } => "5GQL0",
+            Self::Durable { .. } | Self::ExistingStore { .. } => "5GQL0",
             Self::Cancelled => "5GQL2",
             Self::Provider(_) | Self::Persist(_) => "5GQL0",
         }

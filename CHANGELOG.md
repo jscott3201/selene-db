@@ -29,6 +29,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `SharedGraphBuilder::with_wal` and `SharedGraph::from_graph_with_wal` now
+  refuse a persistence directory that already holds a committed store, with the
+  new `GraphError::ExistingStore` (`SLENE_G_028`) reporting which evidence was
+  found. Attaching does not replay: `WalWriter::open` positions an existing WAL
+  for append, so attaching a graph that does not already reflect the store
+  layered a second dataset's commits onto the first — node ids restarted at 1,
+  collided with ids the store had already allocated, and the directory then
+  failed to recover at all with the original data unreachable. Two pieces of
+  evidence are checked, because neither is sufficient alone: committed entries
+  in the WAL, and a `MANIFEST` naming a published snapshot. The second matters
+  because checkpoint rotation archives the entries and resets the active WAL to
+  a bare header, so a checkpointed directory has an empty-*looking* WAL while
+  its dataset sits in a snapshot. `SharedGraph::recover` is the operation that
+  reads an existing store and is unaffected; a refusal releases the writer lock
+  and leaves the directory byte-for-byte recoverable.
+
 - Recovery now enforces the caller-asserted `GraphId` against the WAL, not only
   against a snapshot's `CORE/META`. Every schema record carries the graph id it
   was authored under, and recovery refuses when one disagrees with the asserted
