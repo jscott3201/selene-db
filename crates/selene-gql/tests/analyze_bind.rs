@@ -363,3 +363,83 @@ fn analyzed_statement_preserves_top_level_shape() {
         panic!("expected call");
     };
 }
+
+// ---------------------------------------------------------------------------
+// ISO §14.10 SR 4)c)i)2)A)III defines ORDER_REFS in three cases, and SR IV makes
+// membership mandatory. The plain case is permissive and the planner carries the
+// binding across the projection; the other two close the set, and a reference
+// outside it has to be rejected rather than silently evaluate to NULL.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn order_by_accepts_a_discarded_binding_under_a_plain_return() {
+    for source in [
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY n.score",
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY n.score + 0 DESC",
+        "MATCH (n:Person) RETURN 1 AS one ORDER BY n.score, n.name",
+    ] {
+        analyze_one(source)
+            .unwrap_or_else(|err| panic!("{source} is legal under GA07, got {err:?}"));
+    }
+}
+
+#[test]
+fn order_by_rejects_a_discarded_binding_under_distinct_or_aggregation() {
+    for source in [
+        // DISTINCT: ORDER_REFS is RETURN_IDENTIFIERS alone.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY n.score",
+        // An aggregate return item with no GROUP BY: likewise.
+        "MATCH (n:Person) RETURN count(*) AS c ORDER BY n.score",
+        // GROUP BY: ORDER_REFS adds the grouping keys, and `n` is not one.
+        "FOR x IN [1, 2] RETURN x AS x GROUP BY x ORDER BY y",
+        // SR IV applies to every sort key, not just the first: the leading term
+        // is in scope and only the second one escapes it.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY name, n.score",
+        "MATCH (n:Person) RETURN count(*) AS c ORDER BY c DESC, n.score",
+    ] {
+        let err = analyze_one(source)
+            .expect_err("a projection that discards the row cannot be ordered by it");
+        assert!(
+            matches!(err, AnalysisError::SortKeyReferenceNotInScope { .. }),
+            "{source} should reject with SortKeyReferenceNotInScope, got {err:?}"
+        );
+        assert_eq!(err.gqlstatus().as_str(), "42001");
+    }
+}
+
+#[test]
+fn order_by_accepts_grouping_keys_and_output_columns_under_aggregation() {
+    for source in [
+        // A grouping key is in ORDER_REFS even when it is not projected.
+        "FOR x IN [1, 2] RETURN count(*) AS c GROUP BY x ORDER BY x",
+        // SR III case 2 is unconditional on DISTINCT: a GROUP BY clause keeps
+        // its grouping keys in ORDER_REFS even under a set quantifier.
+        "FOR x IN [1, 2] RETURN DISTINCT count(*) AS c GROUP BY x ORDER BY x",
+        // Every sort key is checked, so a multi-term list of in-scope names
+        // must still be accepted.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name, n.score AS score \
+         ORDER BY score DESC, name",
+        // Output columns are always in ORDER_REFS.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY name",
+        "MATCH (n:Person) RETURN count(*) AS c ORDER BY c",
+    ] {
+        analyze_one(source)
+            .unwrap_or_else(|err| panic!("{source} orders by an in-scope name, got {err:?}"));
+    }
+}
+
+/// `RETURN *` keeps the whole input row, so the closing rules do not apply.
+///
+/// The `DISTINCT` case is the one that makes the star check load-bearing: a
+/// star projection has no return items, so without the early return it would
+/// fall through to `Closed([])` and reject every sort key.
+#[test]
+fn order_by_accepts_any_incoming_binding_under_return_star() {
+    for source in [
+        "MATCH (n:Person) RETURN * ORDER BY n.score",
+        "MATCH (n:Person) RETURN DISTINCT * ORDER BY n.score",
+    ] {
+        analyze_one(source)
+            .unwrap_or_else(|err| panic!("{source} keeps every incoming column, got {err:?}"));
+    }
+}

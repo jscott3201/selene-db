@@ -552,9 +552,32 @@ fn bind_for(ctx: &mut BindContext, statement: &ForStatement) -> Result<(), Analy
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct ReturnSortContext {
     allows_aggregate_sort_key: bool,
+    order_refs: OrderRefs,
+}
+
+/// ORDER_REFS, the set a sort key's binding-variable references must come from.
+///
+/// ISO/IEC 39075:2024 §14.10 SR 4)c)i)2)A)III defines it in three cases, and SR
+/// IV makes membership mandatory rather than advisory.
+///
+/// This is the only copy of SR III. The planner does not re-derive it: SR IV
+/// makes membership a hard rejection here, so by lowering time every surviving
+/// sort-key reference is already in the set and the planner can carry it
+/// unconditionally (ISO SR VIII).
+#[derive(Clone, Debug)]
+enum OrderRefs {
+    /// Plain `RETURN`: the return aliases plus every column of the incoming
+    /// working table. Nothing to check — the binder's non-boundary projection
+    /// scope resolves exactly that set already, and the planner carries the
+    /// referenced bindings across the projection so the sort can read them.
+    IncomingTableAndAliases,
+    /// `GROUP BY`, `DISTINCT`, or an aggregate return item: the pre-projection
+    /// row does not survive into the ordering, so ORDER_REFS closes to a fixed
+    /// set of names and anything outside it must be rejected.
+    Closed(Vec<selene_core::DbString>),
 }
 
 impl ReturnSortContext {
@@ -565,7 +588,59 @@ impl ReturnSortContext {
                     .items
                     .iter()
                     .any(|item| aggregate_rules::contains_aggregate_function(&item.expr)),
+            order_refs: order_refs(clause),
         }
+    }
+}
+
+/// Compute ORDER_REFS for a `RETURN` clause per ISO §14.10 SR 4)c)i)2)A)III.
+fn order_refs(clause: &ReturnClause) -> OrderRefs {
+    // `RETURN *` keeps the whole input row, so every incoming column stays a
+    // legal sort reference regardless of the rest of the clause.
+    if clause.star {
+        return OrderRefs::IncomingTableAndAliases;
+    }
+    let has_aggregate_item = clause
+        .items
+        .iter()
+        .any(|item| aggregate_rules::contains_aggregate_function(&item.expr));
+    let mut names: Vec<selene_core::DbString> =
+        clause.items.iter().filter_map(projection_name).collect();
+    match &clause.group_by {
+        // RETURN_IDENTIFIERS plus every binding variable reference in GROUP BY.
+        Some(keys) => {
+            for key in keys {
+                collect_variable_names(key, &mut names);
+            }
+            OrderRefs::Closed(names)
+        }
+        // RETURN_IDENTIFIERS alone.
+        None if clause.distinct || has_aggregate_item => OrderRefs::Closed(names),
+        None => OrderRefs::IncomingTableAndAliases,
+    }
+}
+
+/// Collect binding-variable names referenced directly by an expression.
+///
+/// `for_each_child` does not descend into `EXISTS` or a value subquery. A value
+/// subquery is a `<nested query specification>`, which SR I rejects outright, so
+/// that half costs nothing. `EXISTS` is only partly covered: SR I catches its
+/// `EXISTS { <query specification> }` form but not the `<graph pattern>` /
+/// `<match statement block>` forms, so a *free* outer reference inside
+/// `ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }` is a genuine SR IV reference
+/// that this function misses. Closing that needs scope-aware collection, to tell
+/// a free outer reference from a variable the subquery pattern binds itself.
+/// Tracked separately; today such a sort key fails in the subquery seeder rather
+/// than being caught here.
+fn collect_variable_names(expr: &ValueExpr, out: &mut Vec<selene_core::DbString>) {
+    let mut pending = vec![expr];
+    while let Some(expr) = pending.pop() {
+        if let ValueExpr::Variable { name, .. } = expr
+            && !out.contains(name)
+        {
+            out.push(name.clone());
+        }
+        push_value_expr_children(expr, &mut pending);
     }
 }
 
@@ -586,6 +661,22 @@ fn bind_sorting(
             return Err(AnalysisError::SortKeyContainsAggregate {
                 span: term.expr.span(),
             });
+        }
+        if let Some(OrderRefs::Closed(allowed)) = return_context.map(|context| &context.order_refs)
+        {
+            // ISO §14.10 SR IV: every binding-variable reference in a sort key
+            // must be in ORDER_REFS. Under GROUP BY / DISTINCT / aggregation the
+            // pre-projection row is gone, so a reference outside the set could
+            // only ever evaluate to NULL — which is a sort that silently does
+            // nothing, the exact failure this rule exists to prevent.
+            let mut referenced = Vec::new();
+            collect_variable_names(&term.expr, &mut referenced);
+            if let Some(name) = referenced.into_iter().find(|name| !allowed.contains(name)) {
+                return Err(AnalysisError::SortKeyReferenceNotInScope {
+                    name: name.as_str().to_owned(),
+                    span: term.expr.span(),
+                });
+            }
         }
         expr::bind_value_expr(ctx, &term.expr)?;
     }

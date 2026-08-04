@@ -6,6 +6,9 @@ use selene_core::{DbString, NodeId, Value};
 
 use crate::plan::{BindingTableSchema, InsertSiteId};
 
+/// Owned row storage: ordered values plus the insert sites the row carries.
+type BindingParts = (SmallVec<[Value; 8]>, SmallVec<[(InsertSiteId, NodeId); 4]>);
+
 /// One executor binding-table row.
 #[derive(Clone, Debug)]
 pub struct Binding {
@@ -62,6 +65,10 @@ impl Binding {
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&Value> {
         self.values.get(index)
+    }
+
+    pub(crate) fn into_parts(self) -> BindingParts {
+        (self.values, self.insert_sites)
     }
 
     pub(crate) fn insert_sites(&self) -> &[(InsertSiteId, NodeId)] {

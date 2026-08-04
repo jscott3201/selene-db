@@ -120,7 +120,8 @@ pub(crate) fn recurse_subplans(
                 changed |= recurse_plan_box(&mut subquery.body, visit);
             }
             PipelineOp::ExplainPlan { inner, .. } => changed |= recurse_plan_box(inner, visit),
-            PipelineOp::Filter(_)
+            PipelineOp::TrimOrderCarriers { .. }
+            | PipelineOp::Filter(_)
             | PipelineOp::Project(_)
             | PipelineOp::Let(_)
             | PipelineOp::Unwind { .. }
@@ -343,6 +344,7 @@ fn walk_pipeline_op_exprs(
         PipelineOp::Mutation(mutation) => walk_mutation_exprs(mutation, bindings, visit),
         PipelineOp::Catalog(catalog) => walk_catalog_exprs(catalog, bindings, visit),
         PipelineOp::Limit { .. }
+        | PipelineOp::TrimOrderCarriers { .. }
         | PipelineOp::Distinct
         | PipelineOp::Union { .. }
         | PipelineOp::Chain(_)

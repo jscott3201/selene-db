@@ -195,6 +195,9 @@ fn dispatch_pipeline(
                     &eval_ctx,
                 )?
             }
+            PipelineOp::TrimOrderCarriers { projected_width } => {
+                order_by::trim_carriers(*projected_width, table)
+            }
             PipelineOp::OrderBy(keys) => {
                 let eval_ctx = ctx.eval_ctx(expr_ids, subqueries);
                 order_by::execute(keys, table, &eval_ctx)?
