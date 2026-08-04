@@ -279,9 +279,16 @@ fn committed_archive_validation_rejects_sequence_below_header_floor() {
         7
     );
     drop(writer);
+    // Rewrite the first entry's sequence, then repair the prefix checksum over
+    // [4..40) so the frame stays internally consistent. Without the repair the
+    // frame fails its checksum, which verify_committed_archive blankets into the
+    // same CommittedArchiveInvalid this test asserts — so it would go green
+    // without ever reaching the sequence-continuity check it exists to pin.
     let mut bytes = fs::read(&path).unwrap();
-    let sequence_offset = WAL_FILE_HEADER_LEN + 8;
-    bytes[sequence_offset..sequence_offset + 8].copy_from_slice(&1_u64.to_le_bytes());
+    let frame = WAL_FILE_HEADER_LEN;
+    bytes[frame + 12..frame + 20].copy_from_slice(&1_u64.to_le_bytes());
+    let repaired = crate::payload::checksum_lo(&bytes[frame + 4..frame + 40]);
+    bytes[frame..frame + 4].copy_from_slice(&repaired.to_le_bytes());
     fs::write(&path, bytes).unwrap();
 
     assert!(matches!(

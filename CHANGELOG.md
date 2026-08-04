@@ -6,6 +6,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING (on-disk format): the WAL format version is now 3.0.** Stores
+  written by v1.0.0-v1.4.0 (WAL 2.0 or 2.2) are rejected at open with
+  `PersistError::UnsupportedVersion` before any artifact is read further or
+  modified. There is no dual decoder and no migrator — recreate the store from
+  source. The entry prefix grows from 32 to 40 bytes and the file header from
+  16 to 24; the `origin_tag` byte becomes a flag bit, and undefined flag bits
+  are now rejected at both append and read.
+
+- **The documented 1.x read-side compatibility guarantee is retracted.** It was
+  never enforced: both the WAL and the snapshot readers gate on an exact
+  `(major, minor)` match, so several released minor versions already could not
+  open one another's stores. `docs/persistence-and-recovery.md` now states the
+  policy the code implements — exactly one supported format, recreate from
+  source across a break — and carries the table of shipped format identities.
+  Until 2.0.0 there is no backward-compatibility guarantee for persisted data.
+
 ### Added
 
 - `PersistenceReadGuard` now provides a shared, cross-handle/process epoch
@@ -28,6 +46,48 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   key-label changes remain rejected.
 
 ### Fixed
+
+- WAL framing is now under integrity protection. Each entry carries a prefix
+  checksum over its framing fields — payload length, principal length, flags,
+  and the payload's own checksum — plus an extent checksum over the replicated
+  provenance tail and the principal bytes; the file header is checksummed too.
+  Previously the only checksum covered the payload, so a flipped bit in
+  `hlc_seconds` replayed with the wrong timestamp, a flipped bit in the
+  principal replayed under the wrong audit identity, and a flipped bit in
+  `payload_len` was used directly as a file offset. The prefix checksum is
+  verified before any framing field is used as a length or an offset.
+
+- Recovery no longer silently discards committed WAL frames after a corrupt
+  one. `WalWriter::open` truncated at the first frame that failed validation,
+  wherever it sat, so bit rot in the middle of a log deleted every committed
+  frame after it while `SharedGraph::recover` returned `Ok` — measured as five
+  committed nodes becoming one. Corruption and a torn tail are now
+  distinguished by whether anything follows the failing frame: the writer only
+  appends, so trailing bytes prove the frame was complete before them, and that
+  case refuses with the new `PersistError::WalMidLogCorruption` — which carries
+  the underlying failure as its source and, unlike a bare checksum error, says
+  that the file was left intact — and leaves the log untouched for offline
+  recovery. A genuine tear — a frame running past end of file, a
+  failing frame with nothing after it, or a trailing run of zeros — is still
+  repaired transparently and is now reported through the new
+  `WalWriter::tail_repair()` rather than only logged. The two cases are split by
+  type rather than by care: a frame prefix exists only in its verified form, and
+  every check that can fail with a knowable extent takes one as an argument.
+
+- The WAL version gate no longer reports a corrupted version field as an
+  unsupported version. The gate runs before the header checksum so that a
+  16-byte v2 header is diagnosed by version rather than as truncated, which made
+  the version the one checksum-covered field corruption could escape through —
+  and `UnsupportedVersion` means *recreate the store from source*. A single
+  flipped bit would have told an operator to discard an intact log. The gate now
+  substitutes the current version and re-checks the stored checksum, which
+  matches only if the rest of the header is a current-version header.
+
+- `decode_wal` fuzzing now synthesizes valid framing around the fuzzer's bytes
+  in a second pass. Without it the new checksums made the target vacuous: a
+  coverage-guided fuzzer cannot invert xxh3, so every input died at the first
+  frame and the extent, principal, payload, zstd, and postcard paths were
+  unreachable. Corpus seeds are no longer pinned to a format version.
 
 - `SharedGraph::write_snapshot` now enforces the two preconditions it previously
   only documented. It refuses a target directory that already holds a `MANIFEST`

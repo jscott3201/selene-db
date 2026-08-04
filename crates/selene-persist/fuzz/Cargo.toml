@@ -12,6 +12,10 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 selene-persist = { package = "selene-db-persist", path = "..", version = "1.4.0" }
+# Same version the workspace already uses. `decode_wal` has to author frames
+# whose checksums are correct, or WAL 3.0's integrity checks make the target
+# unreachable past its first frame.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [[bin]]
 name = "decode_manifest"

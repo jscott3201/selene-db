@@ -571,19 +571,23 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// A released v1.2.0-v1.4.0 store, byte for byte, opened by a v3 reader.
+    /// Expressed as the literal 16-byte v2 header rather than as
+    /// `WAL_VERSION_MAJOR - 1`, because the point is the exact on-disk shape a
+    /// real consumer has.
     #[test]
-    fn major_version_mismatch_is_rejected() {
+    fn released_v2_store_is_rejected_by_version() {
         let path = temp_path("version");
         {
             let mut file = File::create(&path).unwrap();
             file.write_all(b"SLDB").unwrap();
-            file.write_all(&3_u16.to_le_bytes()).unwrap();
-            file.write_all(&0_u16.to_le_bytes()).unwrap();
+            file.write_all(&2_u16.to_le_bytes()).unwrap();
+            file.write_all(&2_u16.to_le_bytes()).unwrap();
             file.write_all(&0_u64.to_le_bytes()).unwrap();
         }
         assert!(matches!(
             WalReader::open(&path),
-            Err(PersistError::UnsupportedVersion { major: 3, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 2, minor: 2 })
         ));
         let _ = fs::remove_file(path);
     }

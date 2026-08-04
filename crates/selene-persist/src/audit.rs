@@ -397,7 +397,14 @@ fn read_records(file: &mut File, file_len: u64) -> PersistResult<Vec<AuditRecord
 /// Read the record at `offset`. Returns `Ok(Some((record, next_offset)))` for a
 /// good record, or `Ok(None)` at a clean end or the first torn record (short
 /// read, over-cap length, or checksum mismatch — all treated as the durable
-/// tail, never a hard error, mirroring the WAL scan).
+/// tail, never a hard error).
+///
+/// This no longer mirrors the WAL scan, and the difference is a known gap. The
+/// WAL distinguishes a torn tail from corruption by asking whether anything
+/// follows the failing frame (see `wal_tail`); the audit log has no such
+/// discriminator, so damage in the middle of it still truncates every record
+/// after the damage. Closing that needs the audit format's own integrity
+/// fields, which is a separate format change from WAL 3.0.
 fn read_one_record(
     file: &mut File,
     offset: u64,
