@@ -262,6 +262,30 @@ fn corrupt_origin_bit_fails_the_prefix_checksum() {
     ));
 }
 
+/// The twin of the flag test, for the reserved byte at prefix offset 33.
+///
+/// It sits inside the prefix checksum's coverage, so a plain bit flip is caught
+/// by the checksum and never reaches the guard. Only a re-signed frame does —
+/// which is exactly the frame a future writer using that byte would produce.
+#[test]
+fn nonzero_reserved_byte_is_rejected_on_a_consistent_frame() {
+    let header =
+        WalEntryHeader::new(17, 42, 3, HlcTimestamp::new(10, 20), Origin::Local, 0, None).unwrap();
+    let mut bytes = encode_entry_header(&header).unwrap();
+    bytes[33] = 1;
+    let checksum = crate::payload::checksum_lo(&bytes[4..40]);
+    bytes[0..4].copy_from_slice(&checksum.to_le_bytes());
+    let mut cursor = bytes.as_slice();
+    let observed = read_entry_header(&mut cursor, 100);
+    assert!(
+        matches!(
+            observed,
+            Err(PersistError::ReservedBytesNonZero { offset: 133 })
+        ),
+        "expected the reserved guard reporting the frame-relative offset, got {observed:?}"
+    );
+}
+
 /// An undefined flag bit is rejected at both ends: a producer cannot write
 /// a frame this version cannot describe, and a reader will not guess.
 #[test]

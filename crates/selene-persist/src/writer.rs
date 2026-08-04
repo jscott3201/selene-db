@@ -144,10 +144,18 @@ pub struct WalWriter {
 }
 
 impl WalWriter {
-    /// Open a WAL file for append, creating the v2 header for a new file.
+    /// Open a WAL file for append, writing a fresh header for a new file.
     ///
-    /// Existing files are scanned once to find the last valid entry. A partial
-    /// or checksum-invalid tail is truncated to the last valid offset.
+    /// Existing files are scanned once. A **torn tail** — the file ending inside
+    /// the last frame, a failing last frame with nothing after it, or a trailing
+    /// run of zeros — is discarded, and [`Self::tail_repair`] reports that it
+    /// happened. Those bytes were never acknowledged, so losing them is ordinary
+    /// crash recovery.
+    ///
+    /// A frame that fails validation with committed bytes *after* it is not a
+    /// tail. It is corruption, and open fails with
+    /// [`PersistError::WalMidLogCorruption`] leaving the file untouched, rather
+    /// than truncating away every committed frame beyond the damage.
     ///
     /// Acquires an exclusive OS-level file lock; a second writer on the
     /// same path fails immediately with
@@ -155,9 +163,11 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns I/O (including unsupported hard-link publication for a new WAL),
-    /// header, sequence, lock, checksum, or non-regular-path errors encountered
-    /// while opening and validating the WAL.
+    /// Returns [`PersistError::WalMidLogCorruption`] for damage before the tail;
+    /// [`PersistError::UnsupportedVersion`] for a store from another format
+    /// version; and I/O (including unsupported hard-link publication for a new
+    /// WAL), header, sequence, lock, checksum, or non-regular-path errors
+    /// encountered while opening and validating the WAL.
     pub fn open(path: &Path, config: WalConfig) -> PersistResult<Self> {
         Self::open_with_compression(path, config, WalCompression::default())
     }

@@ -35,6 +35,10 @@ fn changes() -> Vec<Change> {
 
 /// Write `count` flushed frames and return each frame's start offset.
 fn seed(path: &std::path::Path, count: u64) -> Vec<u64> {
+    seed_with_principal(path, count, None)
+}
+
+fn seed_with_principal(path: &std::path::Path, count: u64, principal: Option<&[u8]>) -> Vec<u64> {
     let mut writer = WalWriter::open(path, WalConfig::default()).unwrap();
     let mut starts = Vec::new();
     for sequence in 1..=count {
@@ -43,7 +47,7 @@ fn seed(path: &std::path::Path, count: u64) -> Vec<u64> {
             .append(
                 HlcTimestamp::new(sequence, 0),
                 Origin::Local,
-                None,
+                principal.map(std::sync::Arc::from),
                 &changes(),
             )
             .unwrap();
@@ -183,6 +187,58 @@ fn corrupt_final_frame_is_repaired_not_refused() {
         WalTailReason::CorruptFinalFrame
     );
     assert_eq!(len_of(&path), starts[2]);
+    let _ = fs::remove_file(path);
+}
+
+/// The same tail, damaged one byte earlier — in the principal rather than the
+/// payload — must reach the same verdict.
+///
+/// It did not. Every failure raised after the prefix checksum passed was routed
+/// into the no-trustworthy-extent fallback, whose zero probe sees the intact
+/// 40-byte prefix, calls it corruption, and refuses. So a store with nothing
+/// wrong but an unacknowledged tail would not open, while the identical bit flip
+/// one byte later opened fine. The principal is written on every
+/// `commit_with_principal`, so this is not an exotic frame shape.
+#[test]
+fn corrupt_principal_in_the_final_frame_is_repaired_not_refused() {
+    let path = temp_path("corrupt-final-principal");
+    let starts = seed_with_principal(&path, 3, Some(b"alice"));
+    // Past the fixed prefix is the extent: no provenance tail for a local
+    // origin, so this lands directly in the principal bytes.
+    flip_bit(&path, starts[2] + FIXED_PREFIX_FOR_TEST);
+
+    let writer = WalWriter::open(&path, WalConfig::default())
+        .expect("a corrupt principal in the LAST frame is still a tail");
+    assert_eq!(writer.last_sequence(), 2);
+    assert_eq!(
+        writer.tail_repair().expect("repair").reason,
+        WalTailReason::CorruptFinalFrame
+    );
+    assert_eq!(len_of(&path), starts[2]);
+    let _ = fs::remove_file(path);
+}
+
+/// ...and mid-log, the same damage must still refuse. The stage-2 verdict has to
+/// depend on the frame's position, not on which stage raised the error.
+#[test]
+fn corrupt_principal_before_the_tail_refuses() {
+    let path = temp_path("midlog-principal");
+    let starts = seed_with_principal(&path, 5, Some(b"alice"));
+    let before = len_of(&path);
+    flip_bit(&path, starts[1] + FIXED_PREFIX_FOR_TEST);
+
+    let error = expect_open_err(
+        &path,
+        "a corrupt principal with frames after it is corruption",
+    );
+    assert!(
+        matches!(
+            error,
+            PersistError::WalMidLogCorruption { offset, .. } if offset == starts[1]
+        ),
+        "expected a refusal naming frame 2, got {error:?}"
+    );
+    assert_eq!(len_of(&path), before, "a refusal must not truncate");
     let _ = fs::remove_file(path);
 }
 

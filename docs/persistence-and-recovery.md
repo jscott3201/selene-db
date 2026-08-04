@@ -177,13 +177,13 @@ does not produce an audit event. An unflagged empty `Vec<Change>` remains an
 ordinary committed transaction and therefore still advances logical graph
 generation.
 
-The marker uses the existing WAL v2.2 entry-header flag field and empty payload
-encoding, so it does not require a format-version bump. Binaries predating
-checkpoint watermarks can decode the frame as an ordinary empty commit and may
-conservatively advance graph generation to the physical snapshot sequence.
-Graph data remains unchanged and generation remains monotonic, but exact
-generation identity is not preserved; downgrading after a newer build has
-written a coordinated checkpoint is therefore not a supported continuity path.
+The marker reuses the entry-header flag field and the already-valid empty
+payload encoding, so it needed no format-version bump of its own. That is now
+moot for downgrades: WAL 3.0 is rejected wholesale by every 1.0.0–1.4.0 build
+at the version gate, before any frame is examined, so there is no build that
+both predates checkpoint watermarks and can read the file to misinterpret one.
+Downgrading across a coordinated checkpoint was already unsupported; it is now
+unsupported for the simpler reason that downgrading at all is.
 
 ## Snapshot creation
 
@@ -683,11 +683,19 @@ Before this, both cases were truncated silently: a single flipped bit in a
 frame's length field in the middle of a log discarded every committed frame
 after it, and `SharedGraph::recover` returned `Ok`.
 
-One limit is unfixable from inside the file: nothing on disk records *when*
-bytes became durable, so a lone trailing frame that rotted after being fsynced
-is still treated as a tear. The bound that matters holds regardless — nothing
-before the tail is ever discarded. The audit log keeps its own independent
-format and its own truncating scan; this change does not cover it.
+Two limits are worth stating plainly. Nothing on disk records *when* bytes
+became durable, so a lone trailing frame that rotted after being fsynced is
+still treated as a tear; the bound that matters holds regardless, in that
+nothing before the tail is ever discarded. And refusing preserves the log
+without yet recovering it — there is no repair tool, and the entry stream stops
+at the first bad frame rather than skipping it, so the guarantee is "the file
+is still there, unmodified" rather than "the later frames are readable."
+
+The audit log keeps its own independent format and its own truncating scan.
+Damage in the middle of it still discards every record after the damage. That
+is the same defect in a second place, and closing it needs the audit format's
+own integrity fields — a separate change that does not require breaking the WAL
+again.
 
 Reserved bytes in the snapshot header (offsets 12–15) must be zero on disk;
 nonzero values are rejected as `ReservedBytesNonZero` to make accidental

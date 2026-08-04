@@ -37,11 +37,10 @@ pub const WAL_VERSION_MAJOR: u16 = 3;
 /// postcard's positional decode, so pre-descriptor WALs must be rejected by the
 /// version gate rather than mis-decoded as shifted fields/discriminants.
 ///
-/// Typed checkpoint watermarks did not bump this version: they use the existing
-/// entry-header flag field plus the already-valid empty `Vec<Change>` payload.
-/// Pre-watermark v2.2 readers preserve graph data but can conservatively fold a
-/// physical watermark into graph generation, so exact generation continuity
-/// across a downgrade is not supported after a coordinated checkpoint.
+/// Reset to 0 by the `2 -> 3` major bump. The history above is retained because
+/// it records *why* each break was unavoidable — a positional postcard decode
+/// cannot tolerate a mid-struct field addition — not because any of those
+/// formats is still readable. None is.
 pub const WAL_VERSION_MINOR: u16 = 0;
 /// Fixed WAL file header length.
 pub const WAL_FILE_HEADER_LEN: usize = 24;
@@ -110,10 +109,12 @@ impl WalFileHeader {
         let version_major = u16::from_le_bytes([bytes[4], bytes[5]]);
         let version_minor = u16::from_le_bytes([bytes[6], bytes[7]]);
         if version_major != WAL_VERSION_MAJOR || version_minor != WAL_VERSION_MINOR {
-            return Err(PersistError::UnsupportedVersion {
-                major: version_major,
-                minor: version_minor,
-            });
+            return Err(unsupported_or_corrupt(
+                reader,
+                &mut bytes,
+                version_major,
+                version_minor,
+            ));
         }
         read_exact_or_truncated(reader, &mut bytes[WAL_VERSION_PREFIX_LEN..])?;
 
@@ -136,6 +137,44 @@ impl WalFileHeader {
             snapshot_seq,
         })
     }
+}
+
+/// Decide whether a non-current version field is a genuinely foreign store or a
+/// current header whose version bytes rotted.
+///
+/// Running the version gate first is what lets a 16-byte v2 header be diagnosed
+/// by version instead of as truncated — but it also means the version is the one
+/// checksum-covered field that corruption could escape through, and
+/// `UnsupportedVersion` is documented as *recreate the store from source*. A
+/// single flipped bit would therefore tell an operator to destroy an intact log.
+///
+/// The test is exact rather than heuristic: put the current version back and see
+/// whether the stored checksum then matches. It can only match if every other
+/// byte is already a current-version header, so a genuinely foreign store — whose
+/// bytes at [20..24) are its own entry data, since no released version wrote a
+/// header checksum — is misreported only at 1 in 2^32. A future version that does
+/// carry a checksum fails the substitution and is reported by version, correctly.
+fn unsupported_or_corrupt(
+    reader: &mut impl Read,
+    bytes: &mut [u8; WAL_FILE_HEADER_LEN],
+    major: u16,
+    minor: u16,
+) -> PersistError {
+    let unsupported = PersistError::UnsupportedVersion { major, minor };
+    // A store too short to hold a v3 header cannot be a corrupted one.
+    if reader
+        .read_exact(&mut bytes[WAL_VERSION_PREFIX_LEN..])
+        .is_err()
+    {
+        return unsupported;
+    }
+    let stored = u32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    bytes[4..6].copy_from_slice(&WAL_VERSION_MAJOR.to_le_bytes());
+    bytes[6..8].copy_from_slice(&WAL_VERSION_MINOR.to_le_bytes());
+    if stored == crate::payload::checksum_lo(&bytes[..WAL_FILE_HEADER_CHECKSUM_OFFSET]) {
+        return PersistError::WalFileHeaderChecksumMismatch;
+    }
+    unsupported
 }
 
 fn read_exact_or_truncated(reader: &mut impl Read, buf: &mut [u8]) -> PersistResult<()> {
@@ -192,6 +231,11 @@ mod tests {
         WalFileHeader::new(0).write_to(&mut bytes).unwrap();
         bytes[4..6].copy_from_slice(&major.to_le_bytes());
         bytes[6..8].copy_from_slice(&minor.to_le_bytes());
+        // Re-sign for the foreign version. Without this the header is not a
+        // foreign store at all but a corrupted current one, which is a different
+        // diagnosis — see version_field_corruption_is_not_reported_as_a_version.
+        let checksum = crate::payload::checksum_lo(&bytes[..WAL_FILE_HEADER_CHECKSUM_OFFSET]);
+        bytes[WAL_FILE_HEADER_CHECKSUM_OFFSET..].copy_from_slice(&checksum.to_le_bytes());
         let observed = WalFileHeader::read_from(&mut bytes.as_slice());
         assert!(
             matches!(
@@ -199,6 +243,25 @@ mod tests {
                 Err(PersistError::UnsupportedVersion { major: m, minor: n }) if m == major && n == minor
             ),
             "expected UnsupportedVersion({major}, {minor}), got {observed:?}"
+        );
+    }
+
+    /// The version gate runs before the checksum, so the version bytes are the
+    /// one covered field corruption could slip past it. It must not: the docs
+    /// define `UnsupportedVersion` as "recreate from source", which would throw
+    /// away an intact log over one flipped bit.
+    #[rstest]
+    #[case::major(4)]
+    #[case::minor(6)]
+    fn version_field_corruption_is_not_reported_as_a_version(#[case] index: usize) {
+        let mut bytes = Vec::new();
+        WalFileHeader::new(99).write_to(&mut bytes).unwrap();
+        bytes[index] ^= 0b0000_0001;
+        let observed = WalFileHeader::read_from(&mut bytes.as_slice());
+        assert!(
+            matches!(observed, Err(PersistError::WalFileHeaderChecksumMismatch)),
+            "byte {index} is inside the checksum's coverage and the rest of the \
+             header is intact, so this is corruption, not a foreign store; got {observed:?}"
         );
     }
 
@@ -241,6 +304,28 @@ mod tests {
         assert!(
             matches!(observed, Err(PersistError::WalFileHeaderChecksumMismatch)),
             "byte {index} must be under integrity protection, got {observed:?}"
+        );
+    }
+
+    /// The reserved word is checked AFTER the checksum, so the only header that
+    /// reaches the check is one where the reserved bytes were deliberately
+    /// written non-zero — a forward-compatibility signal, not corruption.
+    /// Without re-signing, the checksum fires first and the guard is dead code
+    /// that could be deleted with the suite still green.
+    #[test]
+    fn nonzero_reserved_word_is_rejected_on_a_valid_header() {
+        let mut bytes = Vec::new();
+        WalFileHeader::new(5).write_to(&mut bytes).unwrap();
+        bytes[16] = 1;
+        let checksum = crate::payload::checksum_lo(&bytes[..WAL_FILE_HEADER_CHECKSUM_OFFSET]);
+        bytes[WAL_FILE_HEADER_CHECKSUM_OFFSET..].copy_from_slice(&checksum.to_le_bytes());
+        let observed = WalFileHeader::read_from(&mut bytes.as_slice());
+        assert!(
+            matches!(
+                observed,
+                Err(PersistError::ReservedBytesNonZero { offset: 16 })
+            ),
+            "expected the reserved guard, got {observed:?}"
         );
     }
 

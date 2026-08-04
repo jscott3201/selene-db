@@ -70,7 +70,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   recovery. A genuine tear — a frame running past end of file, a
   failing frame with nothing after it, or a trailing run of zeros — is still
   repaired transparently and is now reported through the new
-  `WalWriter::tail_repair()` rather than only logged.
+  `WalWriter::tail_repair()` rather than only logged. The two cases are split by
+  type rather than by care: a frame prefix exists only in its verified form, and
+  every check that can fail with a knowable extent takes one as an argument.
+
+- The WAL version gate no longer reports a corrupted version field as an
+  unsupported version. The gate runs before the header checksum so that a
+  16-byte v2 header is diagnosed by version rather than as truncated, which made
+  the version the one checksum-covered field corruption could escape through —
+  and `UnsupportedVersion` means *recreate the store from source*. A single
+  flipped bit would have told an operator to discard an intact log. The gate now
+  substitutes the current version and re-checks the stored checksum, which
+  matches only if the rest of the header is a current-version header.
+
+- `decode_wal` fuzzing now synthesizes valid framing around the fuzzer's bytes
+  in a second pass. Without it the new checksums made the target vacuous: a
+  coverage-guided fuzzer cannot invert xxh3, so every input died at the first
+  frame and the extent, principal, payload, zstd, and postcard paths were
+  unreachable. Corpus seeds are no longer pinned to a format version.
 
 - `SharedGraph::write_snapshot` now enforces the two preconditions it previously
   only documented. It refuses a target directory that already holds a `MANIFEST`

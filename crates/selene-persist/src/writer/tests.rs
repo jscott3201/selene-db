@@ -321,6 +321,30 @@ fn partial_tail_is_truncated_on_open() {
     let _ = fs::remove_file(path);
 }
 
+/// Build a fixed prefix carrying a VALID prefix checksum around caller-chosen
+/// fields.
+///
+/// Under v2 any 32 bytes of garbage reached the length checks, so these tests
+/// used to just append junk. Under v3 an unauthenticated prefix is rejected
+/// before a single field is looked at — so a test that wants to exercise a
+/// post-prefix guard has to author a frame the prefix checksum accepts, or it
+/// silently tests the checksum instead of the guard it names.
+fn checksum_valid_prefix(payload_len: u32, principal_len_p1: u16, extent: &[u8]) -> [u8; 40] {
+    let mut prefix = [0_u8; 40];
+    prefix[4..8].copy_from_slice(&payload_len.to_le_bytes());
+    prefix[12..20].copy_from_slice(&2_u64.to_le_bytes());
+    prefix[34..36].copy_from_slice(&principal_len_p1.to_le_bytes());
+    prefix[36..40].copy_from_slice(&crate::payload::checksum_lo(extent).to_le_bytes());
+    let checksum = crate::payload::checksum_lo(&prefix[4..40]);
+    prefix[0..4].copy_from_slice(&checksum.to_le_bytes());
+    prefix
+}
+
+/// An authenticated prefix declaring a payload far past end of file.
+///
+/// The declared extent is what decides this, not the 256 MiB cap: the frame
+/// says it runs to roughly 4 GiB and the file ends 40 bytes later, so nothing
+/// can follow it and it is a tear.
 #[test]
 fn oversized_payload_len_in_tail_truncates_on_open() {
     let path = temp_path("tail-payload-oversize");
@@ -332,21 +356,27 @@ fn oversized_payload_len_in_tail_truncates_on_open() {
         writer.flush().unwrap();
     }
     let valid_len = fs::metadata(&path).unwrap().len();
-    // Write a 32-byte fixed-prefix header whose payload_len is u32::MAX
-    // (> MAX_WAL_ENTRY_BYTES). read_entry_header returns PayloadTooLarge;
-    // scan_existing must treat this as torn-tail and truncate back.
-    let mut garbage = [0_u8; 32];
-    garbage[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
     {
         let mut file = OpenOptions::new().append(true).open(&path).unwrap();
-        file.write_all(&garbage).unwrap();
+        file.write_all(&checksum_valid_prefix(u32::MAX, 0, &[]))
+            .unwrap();
     }
     let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
     assert_eq!(writer.last_sequence(), 1);
+    assert_eq!(
+        writer.tail_repair().expect("repair").reason,
+        crate::WalTailReason::ShortFrame
+    );
     assert_eq!(fs::metadata(&path).unwrap().len(), valid_len);
     let _ = fs::remove_file(path);
 }
 
+/// An authenticated prefix declaring a principal one byte over the 4 KiB cap,
+/// with those bytes actually present so the frame does fit in the file.
+///
+/// That is what makes this reach `PrincipalTooLarge` at all: the guard lives
+/// after the prefix checksum, so it is only reachable through a frame whose
+/// extent is well-formed and whose principal length is merely illegal.
 #[test]
 fn oversized_principal_len_in_tail_truncates_on_open() {
     let path = temp_path("tail-principal-oversize");
@@ -358,19 +388,21 @@ fn oversized_principal_len_in_tail_truncates_on_open() {
         writer.flush().unwrap();
     }
     let valid_len = fs::metadata(&path).unwrap().len();
-    // Fixed-prefix with valid payload_len = 0 but principal_len_p1 large
-    // enough that principal_len > MAX_PRINCIPAL_BYTES. The header decoder
-    // reports PrincipalTooLarge, and scan_existing must treat that as a
-    // torn tail rather than a durable corruption.
-    let mut garbage = [0_u8; 32];
-    let oversized_p1 = (MAX_PRINCIPAL_BYTES as u16).saturating_add(2);
-    garbage[30..32].copy_from_slice(&oversized_p1.to_le_bytes());
+    let extent = vec![7_u8; MAX_PRINCIPAL_BYTES + 1];
+    let oversized_p1 = u16::try_from(MAX_PRINCIPAL_BYTES + 2).unwrap();
     {
         let mut file = OpenOptions::new().append(true).open(&path).unwrap();
-        file.write_all(&garbage).unwrap();
+        file.write_all(&checksum_valid_prefix(0, oversized_p1, &extent))
+            .unwrap();
+        file.write_all(&extent).unwrap();
     }
     let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
     assert_eq!(writer.last_sequence(), 1);
+    assert_eq!(
+        writer.tail_repair().expect("repair").reason,
+        crate::WalTailReason::CorruptFinalFrame,
+        "the cap is enforced after the prefix, so this is a stage-2 verdict"
+    );
     assert_eq!(fs::metadata(&path).unwrap().len(), valid_len);
     let _ = fs::remove_file(path);
 }

@@ -11,6 +11,12 @@
 //!   fsynced and acknowledged. Discarding those bytes destroys committed data,
 //!   and destroys the evidence needed to recover it by other means.
 //!
+//! Refusing preserves the bytes; it does not by itself recover them. There is
+//! no repair tool in this crate yet, and `WalEntryStream` stops at the first
+//! error rather than skipping a bad frame, so today the guarantee is exactly
+//! "the file is still there, unmodified" — which is the precondition for any
+//! recovery, and strictly more than truncation leaves.
+//!
 //! Before the v3 frame layout the two were indistinguishable — both surfaced as
 //! a checksum mismatch or an implausible length — and both were handled by
 //! truncating everything from the failure to end of file. A corrupt frame in
@@ -32,17 +38,27 @@
 //!
 //! 1. **Prefix checksum passed, so the extent is trustworthy.** If the frame
 //!    ends at or past end of file, nothing follows it: torn. If it ends before
-//!    end of file, committed bytes follow it: corruption.
+//!    end of file, committed bytes follow it: corruption. This covers every
+//!    failure after the prefix — a bad extent checksum, an undefined flag, an
+//!    over-cap length — not only a bad payload checksum. A frame whose
+//!    principal rotted is no less a tail than one whose payload did.
 //! 2. **Prefix checksum failed, so there is no trustworthy extent.** Fall back
 //!    to shape: if everything from `offset` to end of file is zero — what a
 //!    short extending write leaves, and what no valid frame can be — torn.
 //!    Otherwise corruption.
+//!
 //! 3. **Corruption refuses**: return [`PersistError::WalMidLogCorruption`]
 //!    wrapping the underlying failure, and leave the file untouched so the
-//!    committed frames stay recoverable by other means. The wrapper is the
+//!    committed frames survive. The wrapper is the
 //!    part that matters to an operator: a bare checksum error does not say
 //!    whether the log survived, and that ambiguity is what let the old
 //!    truncate-and-continue behaviour pass for recovery.
+//!
+//! The split between 1 and 2 is enforced by types rather than by care:
+//! [`read_frame_prefix`] returns a `FramePrefix` only once the checksum passes,
+//! and everything that can fail with a knowable extent lives behind
+//! [`read_frame_extent`], which needs one. Routing a stage-2 failure into the
+//! stage-1 fallback is exactly the bug this shape exists to prevent.
 //!
 //! # What this cannot decide
 //!
@@ -55,7 +71,7 @@
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 
-use crate::entry_header::{ensure_payload_len, read_entry_header};
+use crate::entry_header::{read_frame_extent, read_frame_prefix};
 use crate::file_header::WAL_FILE_HEADER_LEN;
 use crate::payload::verify_checksum;
 use crate::{PersistError, PersistResult};
@@ -127,8 +143,10 @@ pub(crate) fn scan_existing(file: &mut File) -> PersistResult<Scan> {
         }
         let frame_start = offset;
 
-        let (header, bytes_consumed) = match read_entry_header(&mut reader, frame_start) {
-            Ok(decoded) => decoded,
+        // Stage 1: authenticate the prefix. Failing here means the frame's
+        // extent is unknown, so the fallback probe is the only tool left.
+        let prefix = match read_frame_prefix(&mut reader, frame_start) {
+            Ok(prefix) => prefix,
             // A short read means the file ended inside this frame; nothing can
             // follow it, so it is a tear by construction and needs no probe.
             Err(PersistError::TruncatedEntry { .. }) => {
@@ -139,17 +157,25 @@ pub(crate) fn scan_existing(file: &mut File) -> PersistResult<Scan> {
             }
         };
 
-        // The prefix checksum passed, so payload_len is trustworthy and the
-        // frame's extent can be used to decide what follows it.
-        let payload_len = header.payload_len as usize;
-        if let Err(error) = ensure_payload_len(payload_len) {
-            return classify_untrusted(&mut reader, previous, frame_start, file_len, error);
-        }
-        let payload_start = frame_start.saturating_add(bytes_consumed as u64);
-        let payload_end = payload_start.saturating_add(u64::from(header.payload_len));
+        // From here the extent IS trustworthy: header_len and payload_len both
+        // come from bytes the prefix checksum covered. Every later failure —
+        // a bad extent checksum, an undefined flag, an over-cap length — is
+        // therefore classifiable by where the frame ends, not by a zero probe.
+        let payload_start = frame_start.saturating_add(prefix.header_len() as u64);
+        let payload_end = payload_start.saturating_add(u64::from(prefix.payload_len()));
         if payload_end > file_len {
             return torn(previous, frame_start, file_len, WalTailReason::ShortFrame);
         }
+
+        // Stage 2: validate and read what the prefix described.
+        let header = match read_frame_extent(&mut reader, &prefix, frame_start) {
+            Ok(header) => header,
+            Err(error) => {
+                return classify_by_extent(previous, frame_start, payload_end, file_len, error);
+            }
+        };
+
+        let payload_len = header.payload_len as usize;
         if header.sequence <= previous {
             return classify_by_extent(
                 previous,
