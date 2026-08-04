@@ -41,6 +41,30 @@ struct KeyedRow {
     row: Binding,
 }
 
+/// Drop the carrier columns the planner appended so `ORDER BY` could reach a
+/// binding the `RETURN` discards.
+///
+/// Carriers are always appended after the projected columns, so this is a
+/// truncation. A width already at or below `projected_width` means the planner
+/// added no carriers for this plan, and truncating is then a no-op rather than
+/// an error — the op is emitted from one place and its own tests pin the pairing.
+pub(super) fn trim_carriers(projected_width: usize, table: BindingTable) -> BindingTable {
+    let (mut schema, rows) = table.into_parts();
+    if schema.columns.len() <= projected_width {
+        return BindingTable::new(schema, rows);
+    }
+    schema.columns.truncate(projected_width);
+    let rows = rows
+        .into_iter()
+        .map(|row| {
+            let (mut values, insert_sites) = row.into_parts();
+            values.truncate(projected_width);
+            Binding::from_parts(values, insert_sites)
+        })
+        .collect();
+    BindingTable::new(schema, rows)
+}
+
 pub(super) fn evaluate_key_tuple(
     keys: &[OrderKey],
     row: &Binding,

@@ -25,6 +25,11 @@ pub(super) fn lower_query_pipeline(
     let mut ops = Vec::new();
     let tail = &pipeline.statements[tail_start..];
     let mut index = 0;
+    // Set when RETURN appended sort carriers. ISO §14.10 GR 1)b)ii drops them
+    // after the whole ordering-and-page statement, and only OFFSET/LIMIT may
+    // follow a RETURN, so emitting the trim once the tail is exhausted is that
+    // position.
+    let mut pending_trim: Option<usize> = None;
     while index < tail.len() {
         match &tail[index] {
             PipelineStatement::Match(clause) => {
@@ -123,7 +128,14 @@ pub(super) fn lower_query_pipeline(
                 }
             }
             PipelineStatement::Return(clause) => {
-                lower_return(clause, analyzed, &mut ops, &mut visible)?;
+                // ISO §14.10: a RETURN and the ordering-and-page statement that
+                // follows it are one primitive result statement, so the sort
+                // keys have to be in hand while the projection is being built.
+                let sort_terms = match tail.get(index + 1) {
+                    Some(PipelineStatement::Sorting(terms)) => Some(terms.as_slice()),
+                    _ => None,
+                };
+                pending_trim = lower_return(clause, analyzed, &mut ops, &mut visible, sort_terms)?;
             }
             PipelineStatement::With(clause) => {
                 lower_with(clause, analyzed, &mut ops, &mut visible)?;
@@ -140,6 +152,9 @@ pub(super) fn lower_query_pipeline(
             }
         }
         index += 1;
+    }
+    if let Some(projected_width) = pending_trim {
+        ops.push(PipelineOp::TrimOrderCarriers { projected_width });
     }
     let next_pipeline_op_id = crate::PipelineOpId::new(ops.len() as u32);
     Ok(ExecutionPlan {
@@ -256,12 +271,84 @@ fn body_column(
         })
 }
 
+/// Collect the binding-variable references a sort key needs, in first-seen
+/// order.
+///
+/// ISO §14.10 SR 4)c)i)2)A)VIII appends `REF AS REF` — the *reference*, not the
+/// whole sort key — so `ORDER BY d.version` carries the node `d`, and
+/// `ORDER BY d.version + 0` carries it too without any special handling of the
+/// expression around it.
+fn sort_key_variables(terms: &[crate::OrderTerm]) -> Vec<&crate::ValueExpr> {
+    let mut found: Vec<&crate::ValueExpr> = Vec::new();
+    for term in terms {
+        let mut pending = vec![&term.expr];
+        while let Some(expr) = pending.pop() {
+            if let crate::ValueExpr::Variable { name, .. } = expr {
+                let seen = found.iter().any(|other| {
+                    matches!(other, crate::ValueExpr::Variable { name: other, .. } if other == name)
+                });
+                if !seen {
+                    found.push(expr);
+                }
+            }
+            expr.for_each_child(&mut |child| pending.push(child));
+        }
+    }
+    found
+}
+
+/// Build the carrier projections that keep a discarded binding alive across the
+/// projection so `ORDER BY` can still reach it.
+///
+/// ISO §14.10 SR 4)c)i)2)A)VIII appends `REF AS REF` for every reference in
+/// ORDER_REFS that RETURN_IDENTIFIERS does not already cover.
+///
+/// There is deliberately no ORDER_REFS test here. SR III lives in the analyzer
+/// (`analyze::bind::query::order_refs`) and SR IV makes it a hard rejection, so
+/// every reference that reaches this point is already in the set: it is either a
+/// return identifier, which the alias check below skips, or a binding ORDER_REFS
+/// admits, which is exactly what SR VIII carries. A second copy of SR III here
+/// could only ever disagree with the first — which is precisely how `GROUP BY`
+/// sort keys came to be admitted by the analyzer and then left with no column to
+/// read.
+///
+/// Narrowing to the references a sort key actually makes is deliberate. SR VIII
+/// appends the whole set, but GR 1)b)ii drops every appended column again and
+/// only the sort keys read them, so carrying the unreferenced remainder is
+/// unobservable work.
+fn carrier_projects(
+    sort_terms: Option<&[crate::OrderTerm]>,
+    projects: &[ProjectExpr],
+    analyzed: &AnalyzedStatement,
+) -> Result<Vec<ProjectExpr>, PlannerError> {
+    let Some(terms) = sort_terms else {
+        return Ok(Vec::new());
+    };
+    let mut carriers = Vec::new();
+    for variable in sort_key_variables(terms) {
+        let crate::ValueExpr::Variable { name, .. } = variable else {
+            continue;
+        };
+        // A return alias wins over an incoming column of the same name: SR VIII
+        // appends only for references RETURN_IDENTIFIERS does not already cover.
+        if projects
+            .iter()
+            .any(|project| project.alias.as_ref() == Some(name))
+        {
+            continue;
+        }
+        carriers.push(expr::project_expr(variable, Some(name.clone()), analyzed)?);
+    }
+    Ok(carriers)
+}
+
 pub(super) fn lower_return(
     clause: &ReturnClause,
     analyzed: &AnalyzedStatement,
     ops: &mut Vec<PipelineOp>,
     visible: &mut Vec<BindingTableColumn>,
-) -> Result<(), PlannerError> {
+    sort_terms: Option<&[crate::OrderTerm]>,
+) -> Result<Option<usize>, PlannerError> {
     let aggregate_rewrite = aggregate::push_grouping(
         &clause.group_by,
         &clause.items,
@@ -276,19 +363,28 @@ pub(super) fn lower_return(
             &aggregate_rewrite.names_by_expr_id,
         )?));
     }
+    let mut trim = None;
     if clause.star {
         // Why: RETURN * keeps the currently-visible binding table; emitting an
         // empty Project would erase columns that output_schema still advertises.
     } else {
-        let projects =
+        let mut projects =
             aggregate::project_items(&clause.items, analyzed, &aggregate_rewrite.names_by_expr_id)?;
         *visible = projects_to_columns(&projects);
+        let carriers = carrier_projects(sort_terms, &projects, analyzed)?;
+        if !carriers.is_empty() {
+            // `visible` stays the projected width, so the carriers are invisible
+            // to output_schema; the trim op is what makes the runtime table
+            // agree with it again once the sort has consumed them.
+            trim = Some(projects.len());
+            projects.extend(carriers);
+        }
         ops.push(PipelineOp::Project(projects));
     }
     if clause.distinct {
         ops.push(PipelineOp::Distinct);
     }
-    Ok(())
+    Ok(trim)
 }
 
 fn lower_with(

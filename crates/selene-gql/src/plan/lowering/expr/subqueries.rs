@@ -129,6 +129,7 @@ fn collect_subqueries_in_pipeline_op(
             collect_subqueries_in_catalog(op, analyzed, registry, entries, max_quantifier)?
         }
         PipelineOp::Limit { .. }
+        | PipelineOp::TrimOrderCarriers { .. }
         | PipelineOp::Distinct
         | PipelineOp::Tx(_)
         | PipelineOp::Session(_) => {}

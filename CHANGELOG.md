@@ -47,6 +47,47 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `ORDER BY` on a property access no longer runs and does nothing. `ORDER BY
+  d.version DESC` parsed, planned, reached the executor, and returned rows in
+  insertion order; only `ORDER BY <alias>` sorted. `OrderBy` runs after
+  `Project`, so the node binding `d` was no longer in scope, every row's sort key
+  evaluated to `NULL`, and the stable sort preserved input order. With `LIMIT 1`
+  that silently returned the wrong row — the shape of every "latest version",
+  "highest score", and "most recent reading" query.
+
+  ISO/IEC 39075:2024 §14.10 SR 4)c)i)2)A)VIII specifies the fix directly: for
+  every sort-key reference the return items do not already cover, append
+  `REF AS REF` to a copy of the return item list, and (GR 1)b)ii) drop exactly
+  those columns once the ordering and page statement has run. The planner now
+  does that, and the engine already claimed the features it needs — GA07
+  "Ordering by discarded binding variables" and GQ14 "Complex expressions in
+  sort keys".
+
+  The same rule closes the set in the other direction. SR III defines ORDER_REFS
+  in three cases, and the two narrowing ones are now enforced. Under `DISTINCT`
+  or an aggregate return item with no `GROUP BY`, ORDER_REFS is the output
+  columns alone, and a sort key reaching past them is rejected with
+  `SortKeyReferenceNotInScope` (GQLSTATUS `42001`) instead of silently sorting by
+  `NULL`. Under `GROUP BY` — a case that applies whether or not `DISTINCT` is
+  also present — ORDER_REFS adds every binding variable the grouping keys
+  reference, so `RETURN count(*) AS c GROUP BY x ORDER BY x` now sorts by the
+  grouping key instead of returning groups in encounter order.
+
+  Two consequences worth calling out. Because SR IX applies the set quantifier to
+  the *augmented* return item list, a carried binding participates in `DISTINCT`;
+  under `GROUP BY` the grouping keys are already unique per group, so the dedup
+  becomes a no-op and more rows can survive than before. And because SR III case
+  2 admits any binding the grouping keys mention, `GROUP BY n.tenant ORDER BY
+  n.score` is legal and orders by the group's representative row.
+
+  The root cause is closed too: the evaluator returned `Value::NULL` for any
+  variable missing from the row schema, with a comment explaining that a strict
+  error "would break those plans". It is strict again, and the carriers now
+  reach the shapes that comment was protecting — including path bindings and a
+  subquery body's imported outer bindings, which the runtime supplies in the
+  pre-projection row.
+
+
 - WAL framing is now under integrity protection. Each entry carries a prefix
   checksum over its framing fields — payload length, principal length, flags,
   and the payload's own checksum — plus an extent checksum over the replicated

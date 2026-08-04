@@ -100,7 +100,9 @@ pub(crate) fn lower_mutation(
     if let Some(terminator) = &pipeline.terminator {
         match terminator {
             MutationTerminator::Return(clause) => {
-                super::lower_return(clause, analyzed, &mut ops, &mut visible)?;
+                // A data-modifying statement's RETURN has no ordering-and-page
+                // statement after it, so there is never a sort carrier here.
+                super::lower_return(clause, analyzed, &mut ops, &mut visible, None)?;
             }
             MutationTerminator::Finish(_) => visible.clear(),
         }

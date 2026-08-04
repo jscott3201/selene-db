@@ -191,6 +191,26 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// ISO 14.10 SR IV: a sort key referenced a binding outside ORDER_REFS.
+    ///
+    /// Reached only when `GROUP BY`, `DISTINCT`, or an aggregate return item
+    /// has closed the set to the return aliases (plus grouping keys). A plain
+    /// `RETURN` keeps the incoming working table in scope and the planner
+    /// carries the referenced binding across the projection instead.
+    #[error(
+        "ORDER BY sort key references `{name}`, which this RETURN discards; \
+         GROUP BY, DISTINCT, and aggregate projections can only be ordered by \
+         their output columns"
+    )]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    SortKeyReferenceNotInScope {
+        /// The out-of-scope binding variable name.
+        name: String,
+        /// Source span of the invalid sort key.
+        #[label("this binding does not survive the projection")]
+        span: SourceSpan,
+    },
+
     /// A reference is syntactically resolved but not valid in this expression context.
     #[error("invalid reference: {message}")]
     #[diagnostic(code(SLENE_GQL_42002))]
@@ -513,6 +533,7 @@ impl AnalysisError {
             Self::ReturnStarRequiresInput { .. } => GqlStatus::SYNTAX_ERROR,
             Self::SortKeyContainsNestedQuery { .. } => GqlStatus::SYNTAX_ERROR,
             Self::SortKeyContainsAggregate { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::SortKeyReferenceNotInScope { .. } => GqlStatus::SYNTAX_ERROR,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } | Self::ConflictingParameterTypes { .. } => {

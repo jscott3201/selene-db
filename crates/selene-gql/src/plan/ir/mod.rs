@@ -484,6 +484,23 @@ pub enum PipelineOp {
     },
     /// Sort rows.
     OrderBy(Vec<OrderKey>),
+    /// Drop the carrier columns appended so `ORDER BY` could reach a binding
+    /// the `RETURN` discards.
+    ///
+    /// ISO/IEC 39075:2024 §14.10 SR 4)c)i)2)A)VIII appends `REF AS REF` to a
+    /// copy of the return item list for every sort-key reference that is not
+    /// already a return alias, and GR 1)b)ii sets the working table to a copy
+    /// without exactly those columns once the ordering and page statement has
+    /// run. Carriers are appended after the projected columns, so dropping them
+    /// is a truncation to `projected_width`.
+    ///
+    /// Positional rather than by name because a return item need not have an
+    /// alias: `RETURN d.tag` produces a column whose name is `None`, which no
+    /// name-keyed trim could reproduce.
+    TrimOrderCarriers {
+        /// Number of leading columns the `RETURN` actually projects.
+        projected_width: usize,
+    },
     /// Offset and limit rows.
     Limit {
         /// Rows to skip.

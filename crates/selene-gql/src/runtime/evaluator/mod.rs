@@ -255,12 +255,16 @@ fn lookup_variable(
         .iter()
         .position(|column| column.name.as_ref() == Some(name))
     else {
-        // GA07 binder keeps pre-projection bindings visible after RETURN.
-        // OrderBy evaluates against the projected schema when the TopK
-        // rewrite does not apply (unbounded ORDER BY); a strict
-        // InvalidReference here would break those plans. Surface
-        // analyzer-fault unbound vars at bind-time instead.
-        return Ok(Value::Null);
+        // Strict. This used to return NULL so that ORDER BY over a discarded
+        // binding would not fail — but the sort key then evaluated to NULL for
+        // every row and the stable sort returned input order, silently. The
+        // planner now carries those bindings across the projection (ISO §14.10
+        // SR VIII) and the analyzer rejects the references ISO puts out of
+        // scope, so reaching this point means the plan and the schema disagree.
+        return Err(ExecutorError::InvalidReference {
+            name: name.as_str().to_owned(),
+            span,
+        });
     };
     binding
         .get(index)

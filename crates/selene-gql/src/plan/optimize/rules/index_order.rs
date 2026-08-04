@@ -53,6 +53,7 @@ fn rewrite_pipeline_op(
         | PipelineOp::Unwind { .. }
         | PipelineOp::Limit { .. }
         | PipelineOp::GroupBy { .. }
+        | PipelineOp::TrimOrderCarriers { .. }
         | PipelineOp::Distinct
         | PipelineOp::Match(_)
         | PipelineOp::OptionalMatch(_)

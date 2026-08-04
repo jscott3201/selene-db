@@ -141,6 +141,7 @@ fn collect_order_access(pipeline: &[PipelineOp]) -> Vec<Option<String>> {
             | PipelineOp::Project(_)
             | PipelineOp::Let(_)
             | PipelineOp::Unwind { .. }
+            | PipelineOp::TrimOrderCarriers { .. }
             | PipelineOp::Limit { .. }
             | PipelineOp::GroupBy { .. }
             | PipelineOp::Distinct
