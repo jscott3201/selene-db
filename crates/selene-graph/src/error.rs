@@ -285,9 +285,17 @@ pub enum GraphError {
         reason: String,
     },
 
-    /// A commit reached the durable path and then failed, leaving its outcome
-    /// undetermined: the transition may or may not be present after the
-    /// mandated reopen.
+    /// A commit or checkpoint reached the durable path and then failed,
+    /// leaving its outcome undetermined: the work may or may not be present
+    /// after the mandated reopen.
+    ///
+    /// Both operations poison the committer, and the caller's obligation is the
+    /// same for either, which is why one variant covers both. It is also
+    /// already true of the API: once the committer is poisoned every later
+    /// submit — commit, compact, vector-index rebuild, or a second checkpoint —
+    /// short-circuits into this variant. Before it covered checkpoints, the
+    /// *only* caller that did not see it was the one whose checkpoint caused
+    /// the poison.
     ///
     /// # Why this is not [`GraphError::Durable`]
     ///
@@ -316,6 +324,15 @@ pub enum GraphError {
     /// - a publish-tail panic after a *successful* group flush error-acks
     ///   commits that are unambiguously durable and merely unpublished.
     ///
+    /// And every checkpoint failure that poisons the committer — anything in
+    /// the watermark/rotation phase other than a verified artifact collision.
+    /// By then `append_checkpoint_watermark_record` has already consumed a
+    /// physical sequence, so the engine cannot prove which side of the MANIFEST
+    /// commit point it reached: the new epoch may or may not be published.
+    /// Preparation failures happen before any of that and stay their own typed
+    /// errors, as does the artifact collision, which leaves the active epoch
+    /// unchanged and the writer usable.
+    ///
     /// The committer-managed WAL runs under
     /// [`SyncPolicy::OnFlushOnly`](selene_persist::SyncPolicy), so an appended
     /// record is a complete, checksum-valid frame in the page cache. Reopening
@@ -338,13 +355,13 @@ pub enum GraphError {
     ///
     /// # What a caller must do
     ///
-    /// Treat the transition as unknown. Quiesce, drop the handle, reopen
-    /// through [`crate::SharedGraph::recover`], read back to determine whether
-    /// it landed, and only then decide whether to retry. Retrying blind
-    /// double-applies.
-    #[error("commit outcome is indeterminate; reopen and reconcile: {reason}")]
+    /// Treat the work as unknown. Quiesce, drop the handle, reopen through
+    /// [`crate::SharedGraph::recover`], read back to determine whether it
+    /// landed, and only then decide whether to retry. Retrying blind
+    /// double-applies. [`GraphError::requires_reopen`] is the supported test.
+    #[error("outcome is indeterminate; reopen and reconcile: {reason}")]
     #[diagnostic(code(SLENE_G_029))]
-    IndeterminateCommit {
+    IndeterminateOutcome {
         /// Where the commit stopped, for operator diagnosis.
         reason: String,
     },
@@ -395,6 +412,32 @@ pub enum GraphError {
 }
 
 impl GraphError {
+    /// Whether this error means the graph handle is unusable and the caller
+    /// must reopen through [`crate::SharedGraph::recover`] before trusting or
+    /// retrying anything.
+    ///
+    /// The supported test for the condition, in preference to matching a
+    /// variant. Which failures poison the committer is an engine-internal
+    /// judgement that has already changed once — a checkpoint's
+    /// watermark/rotation phase started reporting it in the same release that
+    /// commits did — and a caller branching on this predicate does not have to
+    /// track that. It is also the honest shape for the question: "must I
+    /// reopen?" is what an embedder acts on, and a variant match is only a
+    /// proxy for it.
+    ///
+    /// Exactly one variant returns `true` today. That is deliberate rather than
+    /// incidental: the whole point of [`GraphError::IndeterminateOutcome`] is
+    /// that a single condition covers every operation whose durable outcome the
+    /// engine cannot determine, so a caller has one thing to handle.
+    ///
+    /// `false` does not mean "succeeded" — it means the failure was definite
+    /// and left the handle usable, so an ordinary retry or a typed recovery is
+    /// safe.
+    #[must_use]
+    pub const fn requires_reopen(&self) -> bool {
+        matches!(self, Self::IndeterminateOutcome { .. })
+    }
+
     /// Map this error to its 5-character ISO GQLSTATUS code.
     #[must_use]
     pub const fn gqlstatus(&self) -> &'static str {
@@ -424,7 +467,7 @@ impl GraphError {
             // subclass to the implementation (IE008); this one is
             // standard-defined rather than invented, and it is the only code in
             // the table that says what actually happened.
-            Self::IndeterminateCommit { .. } => "40003",
+            Self::IndeterminateOutcome { .. } => "40003",
             Self::Cancelled => "5GQL2",
             Self::Provider(_) | Self::Persist(_) => "5GQL0",
         }
@@ -532,7 +575,7 @@ mod tests {
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "0G003")]
     #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "5GQL0")]
     #[case(
-        GraphError::IndeterminateCommit { reason: "group flush failed".to_owned() },
+        GraphError::IndeterminateOutcome { reason: "group flush failed".to_owned() },
         "40003"
     )]
     #[case(GraphError::Cancelled, "5GQL2")]

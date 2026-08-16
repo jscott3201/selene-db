@@ -1,4 +1,4 @@
-//! Evidence for [`GraphError::IndeterminateCommit`] — commits that were
+//! Evidence for [`GraphError::IndeterminateOutcome`] — commits that were
 //! error-acked and are present anyway after a reopen.
 //!
 //! Three doc comments in the commit path used to assert that a poison exit's
@@ -96,7 +96,7 @@ fn a_flush_failure_errs_a_commit_whose_bytes_survive_the_reopen() {
     };
 
     assert!(
-        matches!(error, GraphError::IndeterminateCommit { .. }),
+        matches!(error, GraphError::IndeterminateOutcome { .. }),
         "a poison exit cannot promise the changes were canceled, got {error:?}"
     );
     assert_eq!(
@@ -176,7 +176,7 @@ fn a_partial_batch_append_failure_leaves_earlier_members_in_the_wal() {
     assert_eq!(errors.len(), MEMBERS);
     for error in &errors {
         assert!(
-            matches!(error, GraphError::IndeterminateCommit { .. }),
+            matches!(error, GraphError::IndeterminateOutcome { .. }),
             "every waiter on the poison exit gets the indeterminate outcome, \
              including the ones whose records reached the WAL, got {error:?}"
         );

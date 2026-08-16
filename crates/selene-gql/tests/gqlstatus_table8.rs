@@ -309,7 +309,7 @@ fn default_warning_sink_keeps_null_skip_non_fatal() {
 #[test]
 fn an_indeterminate_commit_surfaces_as_transaction_rollback_40003() {
     let error = selene_gql::ExecutorError::GraphMutation {
-        source: selene_graph::GraphError::IndeterminateCommit {
+        source: selene_graph::GraphError::IndeterminateOutcome {
             reason: "commit thread is no longer running; the graph must be reopened".to_owned(),
         },
         span: SourceSpan::default(),

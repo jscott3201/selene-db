@@ -69,13 +69,21 @@ fn manifest_ahead_checkpoint_error_poisons_stale_graph_writer() {
     let error = shared
         .checkpoint(CheckpointConfig::default())
         .expect_err("a MANIFEST ahead of the owned writer is rejected");
-    assert!(matches!(
-        error,
-        GraphError::Persist(PersistError::WalRotationManifestAhead {
-            manifest_sequence: 2,
-            snapshot_sequence: 1,
-        })
-    ));
+    // This failure is inside the watermark/rotation phase, so it poisons the
+    // committer. Before #1087 the caller received the raw
+    // `WalRotationManifestAhead` and had no way to learn the handle was dead.
+    assert!(
+        error.requires_reopen(),
+        "a rotation-phase failure poisons the committer, got {error:?}"
+    );
+    assert!(matches!(error, GraphError::IndeterminateOutcome { .. }));
+    // The source error is preserved, not swallowed: an operator still needs to
+    // see WHICH rotation step failed.
+    let reason = error.to_string();
+    assert!(
+        reason.contains("manifest") || reason.contains("MANIFEST"),
+        "the source rotation error survives reclassification, got {reason}"
+    );
 
     let mut txn = shared.begin_write();
     txn.mutator()
@@ -84,8 +92,13 @@ fn manifest_ahead_checkpoint_error_poisons_stale_graph_writer() {
             PropertyMap::new(),
         )
         .expect("mutation stages before the poisoned committer rejects it");
-    txn.commit()
+    let rejected = txn
+        .commit()
         .expect_err("the stale committer rejects later writes");
+    assert!(
+        rejected.requires_reopen(),
+        "the later write agrees with the checkpoint that caused the poison"
+    );
     drop(shared);
     std::fs::remove_dir_all(dir).expect("temp directory is removed");
 }
@@ -114,6 +127,14 @@ fn next_target_collision_consumes_marker_without_poisoning_graph() {
         error,
         GraphError::Persist(PersistError::ArtifactIdentityMismatch { .. })
     ));
+    // The other side of the predicate: a verified artifact collision leaves the
+    // active epoch unchanged and the writer usable, so it stays its own typed
+    // error and the handle survives. Without this the fix could reclassify
+    // every checkpoint failure and still pass.
+    assert!(
+        !error.requires_reopen(),
+        "a verified artifact collision does not poison the committer"
+    );
     assert_eq!(
         active_wal_sequences(&dir.join(DEFAULT_WAL_FILE_NAME)),
         vec![1, 2]

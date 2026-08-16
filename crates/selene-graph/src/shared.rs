@@ -300,14 +300,29 @@ impl SharedGraph {
     ///
     /// Returns an error when the graph has no owned WAL, it uses a non-default
     /// filename, a provider cannot encode the ordered generation, or
-    /// watermark/snapshot/WAL rotation fails. Provider
-    /// and snapshot-preparation failures leave the committer usable. A verified
-    /// artifact collision that leaves the active epoch unchanged is also
-    /// non-poisoning. Other errors or panics after WAL rotation starts require reopening the graph
-    /// because the persistence API can no longer prove which side of the
-    /// MANIFEST commit point was reached; later writes fail fast. This includes
-    /// a MANIFEST ahead of the owned writer: accepting another commit could
-    /// reuse a sequence already covered by that snapshot.
+    /// watermark/snapshot/WAL rotation fails. **Test
+    /// [`GraphError::requires_reopen`] to tell the two classes apart** — do not
+    /// infer it from the error variant, and do not assume a failure left the
+    /// handle usable.
+    ///
+    /// *Retryable* (`requires_reopen() == false`): provider and
+    /// snapshot-preparation failures, which happen before the MANIFEST protocol
+    /// begins and consume no WAL sequence, plus a verified artifact collision
+    /// that leaves the active epoch unchanged.
+    ///
+    /// *Requires reopen* (`requires_reopen() == true`, reported as
+    /// [`GraphError::IndeterminateOutcome`]): any other error or panic once WAL
+    /// rotation starts. By then the watermark record has consumed a physical
+    /// sequence and the persistence API can no longer prove which side of the
+    /// MANIFEST commit point was reached, so the new epoch may or may not be
+    /// published. This includes a MANIFEST ahead of the owned writer: accepting
+    /// another commit could reuse a sequence already covered by that snapshot.
+    /// The source error's text is preserved in the reason.
+    ///
+    /// On the second class: quiesce, drop this handle, reopen through
+    /// [`SharedGraph::recover`], inspect durable state, and only then retry.
+    /// Every later call on the poisoned handle — commit, compact, or another
+    /// checkpoint — fails the same way.
     pub fn checkpoint(
         &self,
         config: crate::CheckpointConfig,

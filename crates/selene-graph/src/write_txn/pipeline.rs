@@ -117,7 +117,7 @@ const _: fn() = || {
 /// hands a complete, checksum-valid frame to the kernel, recovery's tail repair
 /// truncates only a torn tail, and such a frame is not torn. So the members
 /// replay. That is why the committer reports
-/// [`GraphError::IndeterminateCommit`] rather than an unqualified rollback; see
+/// [`GraphError::IndeterminateOutcome`] rather than an unqualified rollback; see
 /// that variant for the ISO §8.4 GR 1)b) reading. Making the old claim true is
 /// a WAL-side change (a flushed-offset watermark truncated to on the poison
 /// exit), tracked separately.

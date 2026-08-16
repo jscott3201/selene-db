@@ -242,9 +242,13 @@ fn checkpoint_keeps_graph_generation_distinct_from_wal_sequence() {
 #[test]
 fn checkpoint_availability_errors_do_not_poison_or_wedge_commits() {
     let no_wal = SharedGraph::new(GraphId::new(91_003));
-    no_wal
+    let unavailable = no_wal
         .checkpoint(CheckpointConfig::default())
         .expect_err("in-memory graph has no checkpoint WAL");
+    assert!(
+        !unavailable.requires_reopen(),
+        "an availability error touched nothing durable, got {unavailable:?}"
+    );
     commit_node(&no_wal, "AfterNoWalError");
 
     let empty_dir = temp_dir("empty-wal");
@@ -342,9 +346,17 @@ fn provider_error_and_panic_leave_committer_retryable() {
         .expect("graph builds");
     commit_node(&shared, "BeforeProviderFailure");
 
-    shared
+    let provider_error = shared
         .checkpoint(CheckpointConfig::default())
         .expect_err("provider error fails only this checkpoint");
+    // The other side of the #1087 predicate: a PREPARATION failure happens
+    // before the MANIFEST protocol begins, consumes no WAL sequence, and leaves
+    // the handle usable. Reclassifying it would tell an embedder to throw away
+    // a perfectly good graph.
+    assert!(
+        !provider_error.requires_reopen(),
+        "a provider encode failure is definite and retryable, got {provider_error:?}"
+    );
     assert_eq!(
         active_wal_sequences(&dir.join(DEFAULT_WAL_FILE_NAME)),
         vec![1]
@@ -352,9 +364,14 @@ fn provider_error_and_panic_leave_committer_retryable() {
     commit_node(&shared, "AfterProviderError");
 
     provider.behavior.store(2, Ordering::Release);
-    shared
+    let provider_panic = shared
         .checkpoint(CheckpointConfig::default())
         .expect_err("provider panic fails only this checkpoint");
+    assert!(
+        !provider_panic.requires_reopen(),
+        "a panic caught in PREPARATION is still retryable; only a panic in the \
+         watermark/rotation phase requires reopen. Got {provider_panic:?}"
+    );
     assert_eq!(
         active_wal_sequences(&dir.join(DEFAULT_WAL_FILE_NAME)),
         vec![1, 2]
@@ -383,9 +400,32 @@ fn rotation_error_poisons_until_recovery_reopens_the_graph() {
         std::fs::write(obstruction, b"occupied").expect("snapshot attempt is obstructed");
     }
 
-    shared
+    // #1087's reproduction: exhausting all 128 snapshot temporary candidates
+    // fails inside the ROTATION phase, after `append_checkpoint_watermark_record`
+    // has already consumed a physical sequence. The engine cannot prove which
+    // side of the MANIFEST commit point it reached.
+    let error = shared
         .checkpoint(CheckpointConfig::default())
         .expect_err("rotation error is reported");
+    assert!(
+        error.requires_reopen(),
+        "an exhausted-temporary-path rotation failure poisons the committer, so \
+         the caller must be told to reopen. It used to arrive as a bare \
+         Persist(Io(AlreadyExists)) indistinguishable from a retryable \
+         preparation failure. Got {error:?}"
+    );
+    assert_eq!(
+        error.gqlstatus(),
+        "40003",
+        "the same status a commit gets on the poison exit, so an embedder has \
+         one condition to handle rather than one per operation"
+    );
+    let reason = error.to_string();
+    assert!(
+        reason.contains("attempts exhausted"),
+        "reclassification preserves the source error text, got {reason}"
+    );
+
     let mut txn = shared.begin_write();
     txn.mutator()
         .create_node(
@@ -393,8 +433,19 @@ fn rotation_error_poisons_until_recovery_reopens_the_graph() {
             PropertyMap::new(),
         )
         .expect("mutation can seal before poison is observed");
-    txn.commit()
+    let rejected = txn
+        .commit()
         .expect_err("poisoned committer rejects subsequent commit");
+    assert!(rejected.requires_reopen());
+
+    // A SECOND checkpoint already answered this way before #1087 — it goes
+    // through the committer's poison gate rather than running. Pinning it here
+    // records the inconsistency the fix removed: only the call that CAUSED the
+    // poison used to differ.
+    let second = shared
+        .checkpoint(CheckpointConfig::default())
+        .expect_err("the poisoned committer refuses a second checkpoint");
+    assert!(second.requires_reopen());
     drop(shared);
 
     for obstruction in &obstructions {
