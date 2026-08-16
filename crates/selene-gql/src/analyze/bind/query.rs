@@ -732,21 +732,38 @@ fn sort_key_outer_references(
 /// the General Rules, which it applies contained-first — so that rewrite feeds
 /// §19.4's own later rules, not this one. This rule sees the syntax as written.
 ///
-/// Known gap: a `VALUE { ... }` buried inside an `EXISTS` body is contained in
-/// the sort key and so violates SR I too, but detecting it means walking the
-/// body's own expressions rather than only the sort key's.
+/// §5.3.2.1 makes *contain* transitive, so the search descends through a legal
+/// `EXISTS { <graph pattern> }` body rather than stopping at it: the body's own
+/// form is fine, but a `VALUE { ... }` inside its `WHERE` or an inline property
+/// value is still contained in the sort key and still violates SR I. That
+/// descent is why the body is walked with
+/// [`MatchClause::for_each_expr`](crate::MatchClause::for_each_expr) instead of
+/// being rejected on arrival — rejecting on arrival would undo the reading
+/// above and outlaw the four legal spellings.
+///
+/// The sibling `SortKeyContainsAggregate` check keeps the shallow shape and is
+/// deliberately not changed here: `contains_aggregate_function` walks only
+/// `for_each_child`, so it stops at a subquery boundary. Whether an aggregate
+/// inside an `EXISTS` body belongs to the sort key or to the subquery's own
+/// scope is a separate question from SR I's transitive *contain*, and this
+/// change does not answer it.
 fn sort_key_contains_nested_query(expr: &ValueExpr) -> bool {
     let mut pending = vec![expr];
     while let Some(expr) = pending.pop() {
-        if matches!(
-            expr,
+        match expr {
             ValueExpr::ValueSubquery { .. }
-                | ValueExpr::Exists {
-                    body: crate::ExistsBody::Query(_),
-                    ..
-                }
-        ) {
-            return true;
+            | ValueExpr::Exists {
+                body: crate::ExistsBody::Query(_),
+                ..
+            } => return true,
+            // The pattern and match-block spellings are legal themselves, and
+            // `for_each_child` yields nothing for a subquery node, so this is
+            // the only way into the body.
+            ValueExpr::Exists {
+                body: crate::ExistsBody::Match(clause),
+                ..
+            } => clause.for_each_expr(&mut |child| pending.push(child)),
+            _ => {}
         }
         push_value_expr_children(expr, &mut pending);
     }
