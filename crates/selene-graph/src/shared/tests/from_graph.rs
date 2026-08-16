@@ -67,8 +67,8 @@ fn from_graph_rebuilds_label_indexes_from_stores() {
     graph.edge_store.alive_mut().insert(0);
 
     // Caller-supplied indexes are intentionally empty / stale.
-    graph.idx_label.clear();
-    graph.idx_edge_label.clear();
+    graph.idx_label = Default::default();
+    graph.idx_edge_label = Default::default();
 
     let shared = SharedGraph::from_graph(graph);
     let snapshot = shared.read();
@@ -103,8 +103,8 @@ fn from_graph_rebuilds_adjacency_from_edge_store() {
     graph.edge_store.target.push(CoreNodeId::new(2));
     graph.edge_store.properties.push(PropertyMap::new());
     graph.edge_store.alive_mut().insert(0);
-    graph.adjacency_out.clear();
-    graph.adjacency_in.clear();
+    graph.adjacency_out = crate::id_map::engine_id_map();
+    graph.adjacency_in = crate::id_map::engine_id_map();
 
     let shared = SharedGraph::from_graph(graph);
     let snapshot = shared.read();
@@ -158,7 +158,7 @@ fn from_graph_discards_caller_supplied_index_drift() {
     phantom_bitmap.insert(99);
     graph
         .idx_label
-        .insert(phantom_label.clone(), phantom_bitmap);
+        .insert_cow(phantom_label.clone(), phantom_bitmap);
 
     let shared = SharedGraph::from_graph(graph);
     let snapshot = shared.read();

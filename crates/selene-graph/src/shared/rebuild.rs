@@ -12,14 +12,15 @@ use selene_core::DbString;
 use crate::adjacency::AdjacencyEdge;
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
+use crate::id_map::{engine_id_map, get_or_insert_default};
 use crate::index_provider::{IndexProvider, ProviderError};
 use crate::store::{EdgeStore, RowIndex};
 
 pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
-    graph.idx_label.clear();
-    graph.idx_edge_label.clear();
-    graph.adjacency_out.clear();
-    graph.adjacency_in.clear();
+    graph.idx_label = Default::default();
+    graph.idx_edge_label = Default::default();
+    graph.adjacency_out = engine_id_map();
+    graph.adjacency_in = engine_id_map();
 
     let node_count = graph.node_store.labels.len();
     for row_index in 0..node_count {
@@ -34,11 +35,7 @@ pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> 
         }
         if let Some(labels) = graph.node_store.labels.get(row_index) {
             for label in labels.iter() {
-                graph
-                    .idx_label
-                    .entry(label.clone())
-                    .or_default()
-                    .insert(row);
+                get_or_insert_default(&mut graph.idx_label, label.clone()).insert(row);
             }
         }
     }
@@ -55,11 +52,7 @@ pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> 
             continue;
         }
         if let Some(label) = graph.edge_store.label.get(row_index) {
-            graph
-                .idx_edge_label
-                .entry(label.clone())
-                .or_default()
-                .insert(row);
+            get_or_insert_default(&mut graph.idx_edge_label, label.clone()).insert(row);
         }
     }
     // BRIEF-Item-4a: bind external ids to rows BEFORE rebuild_adjacency, which
@@ -90,8 +83,8 @@ pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> 
 /// STEP-8 grep-gate; BRIEF-Item-4b drops it once every construction path
 /// persists ids.
 fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
-    graph.node_id_to_row.clear();
-    graph.edge_id_to_row.clear();
+    graph.node_id_to_row = engine_id_map();
+    graph.edge_id_to_row = engine_id_map();
     // Externally-built graphs may not have populated row_to_id; pad it to the
     // row-column length with tombstones so every materialized row is in-bounds.
     let node_len = graph.node_store.len();
@@ -125,7 +118,7 @@ fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
             id = selene_core::NodeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
             graph.node_store.row_to_id.set(row, id);
         }
-        graph.node_id_to_row.insert(id, RowIndex::new(raw));
+        graph.node_id_to_row.insert_cow(id, RowIndex::new(raw));
     }
     for row in 0..edge_len {
         let raw = row as u32;
@@ -142,7 +135,7 @@ fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
             id = selene_core::EdgeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
             graph.edge_store.row_to_id.set(row, id);
         }
-        graph.edge_id_to_row.insert(id, RowIndex::new(raw));
+        graph.edge_id_to_row.insert_cow(id, RowIndex::new(raw));
     }
     Ok(())
 }
@@ -186,24 +179,16 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
                         "alive edge row {row} has no mapped external id during rebuild"
                     ),
                 })?;
-        graph
-            .adjacency_out
-            .entry(source)
-            .or_default()
-            .add(AdjacencyEdge {
-                label: label.clone(),
-                neighbor: target,
-                edge_id,
-            });
-        graph
-            .adjacency_in
-            .entry(target)
-            .or_default()
-            .add(AdjacencyEdge {
-                label,
-                neighbor: source,
-                edge_id,
-            });
+        get_or_insert_default(&mut graph.adjacency_out, source).add(AdjacencyEdge {
+            label: label.clone(),
+            neighbor: target,
+            edge_id,
+        });
+        get_or_insert_default(&mut graph.adjacency_in, target).add(AdjacencyEdge {
+            label,
+            neighbor: source,
+            edge_id,
+        });
     }
     Ok(())
 }

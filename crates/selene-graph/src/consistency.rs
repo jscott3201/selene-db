@@ -21,13 +21,14 @@
 //! constructor) so every debug/test build self-checks each published snapshot
 //! at zero release cost.
 
+use immutable_chunkmap::map::MapM;
 use roaring::RoaringBitmap;
 
 use selene_core::{DbString, EdgeId, NodeId};
 
 use crate::adjacency::AdjacencyEdge;
 use crate::graph::SeleneGraph;
-use crate::id_map::{EngineIdMap, engine_id_map};
+use crate::id_map::{EngineIdMap, engine_id_map, get_or_insert_default};
 use crate::vector_index::VectorIndexConfig;
 
 impl SeleneGraph {
@@ -123,13 +124,13 @@ impl SeleneGraph {
 
     /// Family (1a): node label bitmaps.
     fn check_label_index(&self) -> Result<(), String> {
-        let mut reference: imbl::HashMap<DbString, RoaringBitmap> = imbl::HashMap::new();
+        let mut reference: MapM<DbString, RoaringBitmap> = MapM::new();
         for row in self.node_store.alive.iter() {
             let Some(labels) = self.node_store.labels.get(row as usize) else {
                 return Err(format!("alive node row {row} has no label column entry"));
             };
             for label in labels.iter() {
-                reference.entry(label.clone()).or_default().insert(row);
+                get_or_insert_default(&mut reference, label.clone()).insert(row);
             }
         }
         compare_bitmap_index("node label index", &self.idx_label, &reference)
@@ -137,12 +138,12 @@ impl SeleneGraph {
 
     /// Family (1b): edge label bitmaps.
     fn check_edge_label_index(&self) -> Result<(), String> {
-        let mut reference: imbl::HashMap<DbString, RoaringBitmap> = imbl::HashMap::new();
+        let mut reference: MapM<DbString, RoaringBitmap> = MapM::new();
         for row in self.edge_store.alive.iter() {
             let Some(label) = self.edge_store.label.get(row as usize) else {
                 return Err(format!("alive edge row {row} has no label column entry"));
             };
-            reference.entry(label.clone()).or_default().insert(row);
+            get_or_insert_default(&mut reference, label.clone()).insert(row);
         }
         compare_bitmap_index("edge label index", &self.idx_edge_label, &reference)
     }
@@ -324,15 +325,12 @@ impl SeleneGraph {
             let Some(target) = self.edge_store.target.get(row as usize).copied() else {
                 return Err(format!("alive edge row {row} has no target column entry"));
             };
-            out_reference
-                .entry(source)
-                .or_default()
-                .push(AdjacencyEdge {
-                    label: label.clone(),
-                    neighbor: target,
-                    edge_id,
-                });
-            in_reference.entry(target).or_default().push(AdjacencyEdge {
+            get_or_insert_default(&mut out_reference, source).push(AdjacencyEdge {
+                label: label.clone(),
+                neighbor: target,
+                edge_id,
+            });
+            get_or_insert_default(&mut in_reference, target).push(AdjacencyEdge {
                 label,
                 neighbor: source,
                 edge_id,
@@ -349,8 +347,8 @@ impl SeleneGraph {
 /// bucket.
 fn compare_bitmap_index(
     name: &str,
-    maintained: &imbl::HashMap<DbString, RoaringBitmap>,
-    reference: &imbl::HashMap<DbString, RoaringBitmap>,
+    maintained: &MapM<DbString, RoaringBitmap>,
+    reference: &MapM<DbString, RoaringBitmap>,
 ) -> Result<(), String> {
     for (label, bitmap) in maintained {
         if bitmap.is_empty() {
@@ -374,8 +372,8 @@ fn compare_bitmap_index(
             Some(_) => {}
         }
     }
-    for label in reference.keys() {
-        if !maintained.contains_key(label) {
+    for (label, _) in reference {
+        if maintained.get(label).is_none() {
             return Err(format!(
                 "{name}: key {label} is re-derived but missing from the maintained index"
             ));
@@ -418,8 +416,8 @@ fn compare_adjacency(
             }
         }
     }
-    for node in reference.keys() {
-        if !maintained.contains_key(node) {
+    for (node, _) in reference {
+        if maintained.get(node).is_none() {
             return Err(format!(
                 "{direction} adjacency: node {node} has alive edges but is missing from the \
                  maintained adjacency map"

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use selene_core::{Change, DbString, EdgeId, LabelSet, NodeId, PropertyMap, db_string};
 
@@ -13,9 +13,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     pub fn delete_node(&mut self, id: NodeId) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
         let incident = self.remove_node_row(id, row)?;
+        self.remove_edges_from_adjacency(&incident)?;
         self.txn.changes.push(Change::NodeDeleted { id });
         for edge_id in incident {
-            self.delete_edge_inner(edge_id, true)?;
+            self.delete_edge_inner(edge_id, true, false)?;
         }
         Ok(())
     }
@@ -98,20 +99,19 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
             // GRAPH-05: drop this node's own adjacency entries wholesale, O(1)
             // each. The incident set was already captured above, so the
-            // per-edge cascade (`remove_edge_row`) only has to clear the
-            // *neighbor* side of each incident edge; a `get_mut` on this
-            // now-absent hub key no-ops. This is what turns a degree-`D` hub
-            // delete from O(D^2) (clone + linear-scan the shrinking hub entry
-            // once per incident edge) into O(D).
-            graph.adjacency_out.remove(&id);
-            graph.adjacency_in.remove(&id);
+            // grouped adjacency cleanup only has to clear the *neighbor* side
+            // of each incident edge. This turns a degree-`D` hub delete from
+            // O(D^2) (clone + linear-scan the shrinking hub entry once per
+            // incident edge) into one sorted batch update.
+            graph.adjacency_out.remove_cow(&id);
+            graph.adjacency_in.remove_cow(&id);
         }
         Ok(incident)
     }
 
     /// Delete an alive edge.
     pub fn delete_edge(&mut self, id: EdgeId) -> GraphResult<()> {
-        self.delete_edge_inner(id, true)
+        self.delete_edge_inner(id, true, true)
     }
 
     /// Remove every node carrying `label` and all of their incident edges in one
@@ -161,6 +161,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         if node_tombstones.is_empty() {
             return Ok(());
         }
+        let incident_edges: Vec<EdgeId> = incident_edges.into_iter().collect();
+        self.remove_edges_from_adjacency(&incident_edges)?;
         let mut expansion = node_tombstones;
         for edge_id in incident_edges {
             let row = self
@@ -172,7 +174,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             // An incident edge may already be gone if two truncated endpoints
             // shared it; remove_edge_row is only called for still-alive rows.
             if self.txn.read().edge_store.is_alive(row) {
-                self.remove_edge_row(edge_id, row as usize)?;
+                self.remove_edge_row_inner(edge_id, row as usize, false)?;
                 expansion.push(Change::EdgeDeleted { id: edge_id });
             }
         }
@@ -222,9 +224,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         Ok(())
     }
 
-    fn delete_edge_inner(&mut self, id: EdgeId, record_change: bool) -> GraphResult<()> {
+    fn delete_edge_inner(
+        &mut self,
+        id: EdgeId,
+        record_change: bool,
+        remove_adjacency: bool,
+    ) -> GraphResult<()> {
         let row = self.require_live_edge(id)?;
-        self.remove_edge_row(id, row)?;
+        self.remove_edge_row_inner(id, row, remove_adjacency)?;
         if record_change {
             self.txn.changes.push(Change::EdgeDeleted { id });
         }
@@ -237,6 +244,15 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Shared change-free core for [`Self::delete_edge_inner`] and the truncate
     /// paths; callers own changeset accounting.
     pub(super) fn remove_edge_row(&mut self, id: EdgeId, row: usize) -> GraphResult<()> {
+        self.remove_edge_row_inner(id, row, true)
+    }
+
+    fn remove_edge_row_inner(
+        &mut self,
+        id: EdgeId,
+        row: usize,
+        remove_adjacency: bool,
+    ) -> GraphResult<()> {
         let graph = self.txn.read();
         let label = graph
             .edge_store
@@ -276,20 +292,87 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         // entry becomes empty. In a node-delete cascade the hub endpoint's
         // entry has already been dropped wholesale by `remove_node_row`, so its
         // lookup no-ops and only the neighbor side is touched.
-        remove_edge_from_adjacency(&mut graph.adjacency_out, source, id);
-        remove_edge_from_adjacency(&mut graph.adjacency_in, target, id);
+        if remove_adjacency {
+            remove_edge_from_adjacency(&mut graph.adjacency_out, source, id);
+            remove_edge_from_adjacency(&mut graph.adjacency_in, target, id);
+        }
         graph.edge_store.label.set(row, db_string("")?);
         graph.edge_store.source.set(row, NodeId::TOMBSTONE);
         graph.edge_store.target.set(row, NodeId::TOMBSTONE);
         graph.edge_store.properties.set(row, PropertyMap::new());
         Ok(())
     }
+
+    /// Remove every listed edge from both adjacency directions in one grouped
+    /// pass. Detached node entries are already absent; neighbors whose listed
+    /// edges exhaust their entry are removed through one sorted tree update.
+    fn remove_edges_from_adjacency(&mut self, edge_ids: &[EdgeId]) -> GraphResult<()> {
+        let mut outgoing = BTreeMap::<NodeId, Vec<EdgeId>>::new();
+        let mut incoming = BTreeMap::<NodeId, Vec<EdgeId>>::new();
+        for &edge_id in edge_ids {
+            let row = self.require_live_edge(edge_id)?;
+            let graph = self.txn.read();
+            let source = *graph
+                .edge_store
+                .source
+                .get(row)
+                .ok_or(GraphError::EdgeNotFound { id: edge_id })?;
+            let target = *graph
+                .edge_store
+                .target
+                .get(row)
+                .ok_or(GraphError::EdgeNotFound { id: edge_id })?;
+            outgoing.entry(source).or_default().push(edge_id);
+            incoming.entry(target).or_default().push(edge_id);
+        }
+
+        let graph = self.txn.guard_mut();
+        remove_edges_from_adjacency_map(&mut graph.adjacency_out, outgoing);
+        remove_edges_from_adjacency_map(&mut graph.adjacency_in, incoming);
+        Ok(())
+    }
+}
+
+/// Apply grouped edge removals to one adjacency direction.
+fn remove_edges_from_adjacency_map(
+    map: &mut EngineIdMap<NodeId, AdjacencyEntry>,
+    removals: BTreeMap<NodeId, Vec<EdgeId>>,
+) {
+    let mut empty_nodes = Vec::new();
+    for (node, edge_ids) in removals {
+        let Some(entry) = map.get(&node) else {
+            continue;
+        };
+        if entry.len() == edge_ids.len() {
+            debug_assert!(
+                edge_ids
+                    .iter()
+                    .all(|edge_id| entry.iter().any(|edge| edge.edge_id == *edge_id)),
+                "incident edge set must match an exhausted adjacency entry"
+            );
+            empty_nodes.push(node);
+            continue;
+        }
+
+        let now_empty = map.get_mut_cow(&node).is_some_and(|entry| {
+            for edge_id in edge_ids {
+                entry.remove(edge_id);
+            }
+            entry.is_empty()
+        });
+        if now_empty {
+            empty_nodes.push(node);
+        }
+    }
+    if !empty_nodes.is_empty() {
+        *map = map.remove_many(empty_nodes);
+    }
 }
 
 /// Remove edge `edge_id` from one direction's adjacency `map` in place,
 /// dropping the node's entry only when it becomes empty.
 ///
-/// In-place via `imbl::HashMap::get_mut` (no full-`SmallVec` clone), so a
+/// In-place via the persistent map's `get_mut` (no full-`SmallVec` clone), so a
 /// degree-`D` hub-delete cascade is O(D) rather than O(D^2). A missing key is a
 /// no-op — e.g. the hub endpoint whose whole entry `remove_node_row` already
 /// dropped. The empty-key removal preserves the "no present-but-empty entry"
@@ -299,16 +382,28 @@ fn remove_edge_from_adjacency(
     node: NodeId,
     edge_id: EdgeId,
 ) {
-    // The `get_mut` borrow ends with the match expression (it yields a bool),
-    // so the conditional `remove` below is a fresh, non-overlapping borrow.
-    let now_empty = match map.get_mut(&node) {
-        Some(entry) => {
-            entry.remove(edge_id);
-            entry.is_empty()
-        }
-        None => false,
+    // `immutable_chunkmap::Map::get_mut_cow` performs the copy-on-write
+    // mutation walk even when the key is absent. Avoid that work for missing
+    // keys. Singleton entries are the other common case; remove their map key
+    // directly instead of copy-on-writing a value that would immediately be
+    // discarded by a second tree mutation.
+    let Some(entry) = map.get(&node) else {
+        return;
     };
-    if now_empty {
-        map.remove(&node);
+    if entry.len() == 1 {
+        if entry
+            .iter()
+            .next()
+            .is_some_and(|edge| edge.edge_id == edge_id)
+        {
+            map.remove_cow(&node);
+        }
+        return;
+    }
+
+    // The immutable borrow above ends before this copy-on-write mutation. An
+    // entry with more than one edge cannot become empty after one removal.
+    if let Some(entry) = map.get_mut_cow(&node) {
+        entry.remove(edge_id);
     }
 }

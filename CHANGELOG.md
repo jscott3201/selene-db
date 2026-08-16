@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Graph ID, label, and adjacency maps now use the maintained
+  `immutable-chunkmap` Arc-backed chunked tree. Snapshot clones retain
+  structural sharing while the archived `bitmaps` and duplicate `wide` 0.7
+  dependency path are removed; detached-node cascades batch sorted neighbor
+  adjacency removals.
+
 - The workspace toolchain and minimum supported Rust version are now 1.97.1.
   Direct crates, standalone fuzz-workspace manifests, and CI action dependencies
   have moved to their current stable releases; this includes the fixed `rkyv`

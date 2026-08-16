@@ -7,7 +7,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "In-memory property-graph storage core (ArcSwap + imbl CoW, label/typed indexes, write funnel) for selene-db."
+description = "In-memory property-graph storage core (ArcSwap + persistent CoW, label/typed indexes, write funnel) for selene-db."
 autobenches = false
 
 [lib]
@@ -18,7 +18,7 @@ selene-core = { package = "selene-db-core", path = "../selene-core", version = "
 selene-persist.workspace = true
 arc-swap.workspace = true
 parking_lot.workspace = true
-imbl.workspace = true
+immutable-chunkmap.workspace = true
 rustc-hash.workspace = true
 jiff.workspace = true
 roaring.workspace = true

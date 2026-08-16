@@ -14,6 +14,7 @@ mod vector_index;
 
 use std::sync::Arc;
 
+use immutable_chunkmap::map::MapM;
 use roaring::RoaringBitmap;
 use selene_core::{
     Change, DbString, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
@@ -23,6 +24,7 @@ use selene_core::{
 use crate::adjacency::AdjacencyEdge;
 use crate::error::{GraphError, GraphResult};
 use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
+use crate::id_map::get_or_insert_default;
 use crate::index_provider::{IndexProvider, ProviderTag};
 use crate::store::RowIndex;
 use crate::type_validator::{EntityId, TypeViolation};
@@ -94,7 +96,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             // The live commit path never re-runs `rebuild_id_maps`, so the
             // `id -> row` map must be populated here. The row is remappable once
             // 4b compaction renumbers rows under stable ids.
-            graph.node_id_to_row.insert(id, RowIndex::new(row));
+            graph.node_id_to_row.insert_cow(id, RowIndex::new(row));
             insert_node_labels(&mut graph.idx_label, row, &labels);
         }
         self.txn.changes.push(Change::NodeCreated {
@@ -148,27 +150,19 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             graph.edge_store.row_to_id.push(id);
             graph.edge_store.alive_mut().insert(row);
             // BRIEF-Item-4a: bind the external edge id to its row (live path).
-            graph.edge_id_to_row.insert(id, RowIndex::new(row));
+            graph.edge_id_to_row.insert_cow(id, RowIndex::new(row));
             insert_index_row(&mut graph.idx_edge_label, label.clone(), row);
 
-            graph
-                .adjacency_out
-                .entry(source)
-                .or_default()
-                .add(AdjacencyEdge {
-                    label: label.clone(),
-                    neighbor: target,
-                    edge_id: id,
-                });
-            graph
-                .adjacency_in
-                .entry(target)
-                .or_default()
-                .add(AdjacencyEdge {
-                    label: label.clone(),
-                    neighbor: source,
-                    edge_id: id,
-                });
+            get_or_insert_default(&mut graph.adjacency_out, source).add(AdjacencyEdge {
+                label: label.clone(),
+                neighbor: target,
+                edge_id: id,
+            });
+            get_or_insert_default(&mut graph.adjacency_in, target).add(AdjacencyEdge {
+                label: label.clone(),
+                neighbor: source,
+                edge_id: id,
+            });
         }
         self.txn.changes.push(Change::EdgeCreated {
             id,
@@ -394,42 +388,29 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 }
 
-fn insert_node_labels(
-    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
-    row: u32,
-    labels: &LabelSet,
-) {
+fn insert_node_labels(index: &mut MapM<DbString, RoaringBitmap>, row: u32, labels: &LabelSet) {
     for label in labels.iter().cloned() {
         insert_index_row(index, label, row);
     }
 }
 
-fn remove_node_labels(
-    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
-    row: u32,
-    labels: &LabelSet,
-) {
+fn remove_node_labels(index: &mut MapM<DbString, RoaringBitmap>, row: u32, labels: &LabelSet) {
     for label in labels.iter() {
         remove_index_row(index, label, row);
     }
 }
 
-fn insert_index_row(index: &mut imbl::HashMap<DbString, RoaringBitmap>, label: DbString, row: u32) {
-    // In-place insert via `entry().or_default()`: the rebuild path uses the same
-    // idiom (see `consistency.rs` / `typed_index.rs`). `guard_mut` already gives
-    // unique ownership of the bitmap (Arc::make_mut), so we never clone the whole
-    // RoaringBitmap per label per node — bulk-loading one label is O(N), not O(N²).
-    index.entry(label).or_default().insert(row);
+fn insert_index_row(index: &mut MapM<DbString, RoaringBitmap>, label: DbString, row: u32) {
+    // Mutate the bitmap behind the persistent-map entry. `guard_mut` already
+    // owns the working snapshot, so bulk-loading one label remains O(N), not
+    // O(N²) from cloning the whole bitmap per row.
+    get_or_insert_default(index, label).insert(row);
 }
 
-fn remove_index_row(
-    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
-    label: &DbString,
-    row: u32,
-) {
-    // Mirror `insert_index_row`: mutate the bitmap behind the imbl entry
+fn remove_index_row(index: &mut MapM<DbString, RoaringBitmap>, label: &DbString, row: u32) {
+    // Mirror `insert_index_row`: mutate the bitmap behind the persistent entry
     // instead of cloning the whole RoaringBitmap for every row removed.
-    let now_empty = match index.get_mut(label) {
+    let now_empty = match index.get_mut_cow(label) {
         Some(bitmap) => {
             bitmap.remove(row);
             bitmap.is_empty()
@@ -437,7 +418,7 @@ fn remove_index_row(
         None => false,
     };
     if now_empty {
-        index.remove(label);
+        index.remove_cow(label);
     }
 }
 
