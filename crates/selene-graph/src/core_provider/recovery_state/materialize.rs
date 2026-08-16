@@ -48,7 +48,7 @@ pub(super) fn insert_node_row(
     // this real-row branch.
     graph
         .node_id_to_row
-        .insert(id, RowIndex::new(row_index as u32));
+        .insert_cow(id, RowIndex::new(row_index as u32));
     Ok(())
 }
 
@@ -83,7 +83,7 @@ pub(super) fn insert_edge_row(
     // insert_node_row).
     graph
         .edge_id_to_row
-        .insert(id, RowIndex::new(row_index as u32));
+        .insert_cow(id, RowIndex::new(row_index as u32));
     Ok(())
 }
 

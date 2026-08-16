@@ -99,7 +99,7 @@ fn corrupted_label_bitmap_reports_inconsistent_row_without_rebuild() {
     let mut graph = graph_with_one_indexed_node();
     graph
         .idx_label
-        .get_mut(&db_string("Person"))
+        .get_mut_cow(&db_string("Person"))
         .expect("label index exists")
         .insert(10);
 
@@ -166,8 +166,8 @@ fn property_index_coverage_reports_extra_composite_row_bucket() {
 #[test]
 fn adjacency_symmetry_reports_live_edge_missing_from_both_maps() {
     let mut graph = graph_with_one_edge();
-    graph.adjacency_out.clear();
-    graph.adjacency_in.clear();
+    graph.adjacency_out = Default::default();
+    graph.adjacency_in = Default::default();
 
     let result = verify_snapshot(&graph, false).expect("verification rows");
 
@@ -182,13 +182,13 @@ fn adjacency_symmetry_reports_label_drift_in_both_maps() {
     let target = NodeId::new(2);
     graph
         .adjacency_out
-        .get_mut(&source)
+        .get_mut_cow(&source)
         .expect("source adjacency exists")
         .edges[0]
         .label = wrong_label.clone();
     graph
         .adjacency_in
-        .get_mut(&target)
+        .get_mut_cow(&target)
         .expect("target adjacency exists")
         .edges[0]
         .label = wrong_label;

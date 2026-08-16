@@ -1758,6 +1758,27 @@ already mostly Arc-backed and does not dominate the commit floor.
 | `bound_type_validation/bound_commit_descriptor_insert` | 10k / 50k / 100k | 354 / 360 / 635 µs | 100 creates with bounded `STRING` and `BYTES` descriptors; post-B8 in-envelope coercion reuses shared storage. |
 | `bound_type_validation/bound_commit_descriptor_update` | 10k / 50k / 100k | 362 / 499 / 565 µs | 100 updates over bounded descriptor properties; post-B8 property diffs mutate values in place. |
 
+PR-local persistent-map migration A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench write_txn_lifecycle --filter 'write_txn_lifecycle/(graph_clone|create_only|delete_only)' --save-baseline imbl-retire-pre`
+and
+`scripts/run-benches.sh --profile full --bench write_txn_lifecycle --filter 'write_txn_lifecycle/(graph_clone|create_only|delete_only)' --baseline imbl-retire-pre`.
+The empty-commit control was repeated at 10k with
+`scripts/run-benches.sh --profile full --bench write_txn_lifecycle --filter 'write_txn_lifecycle/empty_commit/10000$' --save-baseline imbl-retire-empty-repeat`
+and the matching `--baseline imbl-retire-empty-repeat` invocation;
+its 16.22 / 16.41 µs medians were statistically unchanged.
+
+| Bench | Before | After | Median delta | Notes |
+|---|---:|---:|---:|---|
+| `write_txn_lifecycle/graph_clone/10000` | 1.093 µs | 1.066 µs | -2.40% | Small snapshot forks improve slightly. |
+| `write_txn_lifecycle/graph_clone/50000` | 10.336 µs | 11.497 µs | +11.23% | The chunked-tree clone microbenchmark pays a measurable mid-scale tradeoff. |
+| `write_txn_lifecycle/graph_clone/100000` | 23.614 µs | 24.746 µs | +4.79% | The large clone-only row regresses modestly while the empty-commit control stays flat. |
+| `write_txn_lifecycle/create_only/n100000/100` | 268.71 µs | 196.77 µs | -26.77% | Batched label and id-map mutations path-copy less state. |
+| `write_txn_lifecycle/create_only/n100000/1000` | 958.15 µs | 389.63 µs | -59.34% | The larger create batch amortizes chunked-tree updates. |
+| `write_txn_lifecycle/delete_only/n100000/100` | 509.75 µs | 155.21 µs | -69.55% | Batched persistent-map removals avoid repeated HAMT update overhead. |
+| `write_txn_lifecycle/delete_only/n100000/1000` | 3.600 ms | 487.13 µs | -86.47% | The largest delete batch is the strongest product-path gain. |
+
 PR-local B7 incident-edge revalidation A/B:
 
 Commands:
@@ -1811,10 +1832,10 @@ Commands:
 
 Deleting a node cascades over every incident edge. GRAPH-05 made adjacency
 removal **in place**: the deleted node's own `adjacency_out`/`adjacency_in`
-entries are dropped wholesale (O(1) each) and each incident edge clears only the
-neighbor side via `imbl::HashMap::get_mut` — no per-edge full-`SmallVec` clone.
-That turned a degree-`D` hub delete from O(D²) to O(D); the curve below is now
-linear (10× degree → ~9× time). This sweeps the **degree** axis (not node scale).
+entries are dropped wholesale and incident edges are grouped by neighbor for
+batched persistent-map updates. That avoids per-edge full-`SmallVec` clones and
+the old O(D²) cascade; the curve below is linear. This sweeps the **degree**
+axis (not node scale).
 
 | Bench | degree=100 | degree=1000 | degree=10000 | Notes |
 |---|---:|---:|---:|---|
@@ -1831,12 +1852,25 @@ and
 
 | Bench | Before | After | Notes |
 |---|---:|---:|---|
-| `graph_hub_delete/100` | 41.654 µs | 40.043 µs | Label and edge-label bitmap removals now mutate through `imbl::HashMap::get_mut` instead of cloning the whole bitmap per row. |
+| `graph_hub_delete/100` | 41.654 µs | 40.043 µs | At that historical baseline, label and edge-label bitmap removals began mutating through the persistent-map entry instead of cloning the whole bitmap per row. |
 | `graph_hub_delete/1000` | 323.69 µs | 292.50 µs | Degree-1000 hub delete improves about 9.6% in this same-run full A/B. |
 | `graph_hub_delete/10000` | 4.7949 ms | 3.5108 ms | The broad edge-label bitmap path is the main win: degree-10000 hub delete improves about 26.8%. |
 | `write_txn_lifecycle/delete_only/n10000/1` | 93.417 µs | 93.511 µs | Guard row: single labeled-node delete stays neutral. |
 | `write_txn_lifecycle/delete_only/n50000/100` | 381.39 µs | 342.29 µs | Mid-scale delete-only rows are historically noisy; this branch is modestly faster, not regressed. |
 | `write_txn_lifecycle/delete_only/n100000/1000` | 3.5656 ms | 3.4152 ms | Large batch delete-only guard improves about 4.2% in this run. |
+
+PR-local persistent-map adjacency A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench graph_hub_delete --save-baseline imbl-retire-pre`
+and
+`scripts/run-benches.sh --profile full --bench graph_hub_delete --baseline imbl-retire-pre`.
+
+| Bench | Before | After | Median delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_hub_delete/100` | 43.206 µs | 40.366 µs | -6.57% | Grouped neighbor cleanup offsets persistent-tree mutation overhead. |
+| `graph_hub_delete/1000` | 307.03 µs | 285.74 µs | -6.93% | The batched adjacency path stays linear at degree 1k. |
+| `graph_hub_delete/10000` | 3.655 ms | 3.105 ms | -15.05% | Sorted bulk key removal strengthens the high-degree path. |
 
 PR-local incident-edge collector A/B:
 

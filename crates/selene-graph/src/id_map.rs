@@ -1,18 +1,21 @@
 //! Id-keyed immutable maps for engine-assigned graph identifiers.
 
-use imbl::{GenericHashMap, shared_ptr::DefaultSharedPtr};
-use rustc_hash::FxBuildHasher;
+use immutable_chunkmap::map::MapM;
 
-/// Copy-on-write HAMT for engine-assigned `NodeId`/`EdgeId` keys.
-///
-/// HashDoS posture: these maps are keyed only by monotonically allocated,
-/// engine-assigned graph identifiers, never by attacker-chosen strings or
-/// property data. Keep user-visible keys such as labels and property names on
-/// their existing map types unless a separate design justifies otherwise.
-pub(crate) type EngineIdMap<K, V> = GenericHashMap<K, V, FxBuildHasher, DefaultSharedPtr>;
+/// Copy-on-write chunked tree for engine-assigned `NodeId`/`EdgeId` keys.
+pub(crate) type EngineIdMap<K, V> = MapM<K, V>;
 
-/// Construct an empty [`EngineIdMap`] using `FxBuildHasher`.
+/// Construct an empty [`EngineIdMap`].
 #[must_use]
-pub(crate) fn engine_id_map<K, V>() -> EngineIdMap<K, V> {
-    EngineIdMap::with_hasher(FxBuildHasher)
+pub(crate) fn engine_id_map<K: Clone + Ord, V: Clone>() -> EngineIdMap<K, V> {
+    EngineIdMap::new()
+}
+
+/// Return the value for `key`, inserting its default when absent.
+pub(crate) fn get_or_insert_default<K, V>(map: &mut MapM<K, V>, key: K) -> &mut V
+where
+    K: Clone + Ord,
+    V: Clone + Default,
+{
+    map.get_or_insert_cow(key, V::default)
 }

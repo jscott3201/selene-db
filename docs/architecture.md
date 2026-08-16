@@ -39,7 +39,7 @@ and is consumed via `[dev-dependencies]`.
 | Crate | Depends on | Owns |
 |---|---|---|
 | `selene-core` | none | Foundation types: `Value` (mandatory ISO scalar values plus numeric, temporal, reference, byte-string, vector, JSON, list, record, path, and extension variants), `DbString`, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Changeset`, GQLSTATUS table, ISO feature register. |
-| `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + imbl storage primitives, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
+| `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + immutable chunked persistent maps, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
 | `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`, D17). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
 | `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the D20 snapshot harness. Independent of `selene-gql`. |
 | `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait (D15), and its sole frozen production impl `BuiltinProcedureRegistry` — 49 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
@@ -171,7 +171,7 @@ read path. The primitives are codified by decision D7.
 |---|---|---|
 | `arc_swap::ArcSwap` | `SharedGraph` publishes each committed snapshot as `Arc<SeleneGraph>`. | Readers grab a pointer in a single relaxed load. No lock acquisition, no allocation, no poisoning. |
 | `parking_lot::RwLock` | Per-graph write lock; also wraps mutable index state inside providers. | parking_lot is non-reentrant, never poisons, and is materially faster than `std::sync::RwLock`. Lock poisoning is a non-feature for an in-process embedded engine: a panic during commit must abort the process, not leave readers staring at a `PoisonError`. |
-| `imbl` persistent collections | Copy-on-write maps and vectors inside `SeleneGraph` (label sets, property maps, adjacency). | Structural sharing means a new snapshot retains O(log n) overlap with its predecessor; a writer can publish without copying the entire graph. |
+| `immutable_chunkmap::MapM` | Copy-on-write ID, label, and adjacency maps inside `SeleneGraph`. | The Arc-backed chunked tree keeps clone O(1) and path-copies mutations, so a writer can publish without copying the entire map. |
 | `roaring::RoaringBitmap` | Label indexes, deleted-id sets, candidate selections. | Compact, cache-friendly representation for sparse `NodeId` sets. |
 | `triomphe::Arc` | Property-value reference counting in selected hot paths. | `triomphe::Arc` is non-`Weak`, single-word, and avoids the `std::sync::Arc` weak-count overhead where weak refs are not used. |
 
@@ -362,7 +362,8 @@ tenant-per-graph patterns without process-level coordination.
 Readers see exactly the snapshot they captured via `SharedGraph::read()`.
 Writers never mutate a snapshot in place; they construct a new
 `Arc<SeleneGraph>` and atomically swap it. This is the durability of
-`ArcSwap::store` plus the immutability of `imbl` collections.
+`ArcSwap::store` plus structurally shared persistent maps and Arc-backed row
+storage.
 
 ### D5 — Non-graph capabilities are externalized
 
@@ -383,8 +384,8 @@ payload }` variant indexed by `ExtensionTypeId`, not by adding variants.
 ### D7 — Concurrency primitives
 
 The concurrency stack is `ArcSwap` for snapshot publication, `parking_lot`
-locks for writer mutual exclusion and provider state, `imbl` for
-copy-on-write data structures, `RoaringBitmap` for label/id sets, and
+locks for writer mutual exclusion and provider state, `immutable-chunkmap` for
+copy-on-write maps, `RoaringBitmap` for label/id sets, and
 `triomphe::Arc` for selected single-word reference counts. `std::sync`
 locks are not used on the hot path because they poison on panic; an
 in-process engine treats poison as a non-feature.
@@ -401,10 +402,10 @@ crate that re-exports the others.
 
 ### D9 — Forbid unsafe
 
-`#![forbid(unsafe_code)]` is set on every workspace crate. Performance
-work happens through safe primitives (`SmallVec`, `roaring`, `imbl`,
-`rkyv` zero-copy decode) or through battle-tested upstream crates. The
-selene-db codebase contains no `unsafe` blocks of its own.
+`#![forbid(unsafe_code)]` is set on every workspace crate. Performance work
+happens through safe upstream APIs (`SmallVec`, `roaring`,
+`immutable-chunkmap`, `rkyv` zero-copy decode). The selene-db codebase contains
+no `unsafe` blocks of its own.
 
 ### D10 — `missing_docs = "deny"`
 
@@ -432,7 +433,7 @@ The WAL header and section table are framed by `selene-persist`.
 
 ### D14 — rkyv snapshots over sorted-vec intermediates
 
-Snapshots are written by lowering `imbl` collections into sorted `Vec`
+Snapshots are written by lowering persistent engine maps into sorted `Vec`
 intermediates and archiving with rkyv 0.8 (`pointer_width_64`,
 `unaligned`). Decoded archives are read zero-copy from a `Vec<u8>` buffer.
 The `unaligned` feature lets rkyv decode out of 1-byte-aligned byte

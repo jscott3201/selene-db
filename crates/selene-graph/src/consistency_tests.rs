@@ -11,6 +11,7 @@ use smallvec::smallvec;
 
 use crate::adjacency::AdjacencyEdge;
 use crate::graph::{CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph};
+use crate::id_map::get_or_insert_default;
 use crate::{CompositeTypedIndex, SharedGraph, TypedIndex, TypedIndexKind};
 
 fn label(name: &str) -> DbString {
@@ -61,7 +62,7 @@ fn stray_label_bitmap_row_is_caught() {
     let mut graph = consistent_graph();
     let person = label("consistency.person");
     // Insert a row index that no alive node carries.
-    graph.idx_label.entry(person).or_default().insert(999);
+    get_or_insert_default(&mut graph.idx_label, person).insert(999);
     let err = graph.assert_indexes_consistent().unwrap_err();
     assert!(err.contains("node label index"), "got: {err}");
 }
@@ -70,7 +71,7 @@ fn stray_label_bitmap_row_is_caught() {
 fn empty_label_bitmap_is_caught() {
     let mut graph = consistent_graph();
     let ghost = label("consistency.ghost");
-    graph.idx_label.insert(ghost, RoaringBitmap::new());
+    graph.idx_label.insert_cow(ghost, RoaringBitmap::new());
     let err = graph.assert_indexes_consistent().unwrap_err();
     assert!(err.contains("present-but-empty"), "got: {err}");
 }
@@ -79,7 +80,7 @@ fn empty_label_bitmap_is_caught() {
 fn missing_label_bitmap_key_is_caught() {
     let mut graph = consistent_graph();
     let person = label("consistency.person");
-    graph.idx_label.remove(&person);
+    graph.idx_label.remove_cow(&person);
     let err = graph.assert_indexes_consistent().unwrap_err();
     assert!(
         err.contains("missing from the maintained index"),
@@ -91,7 +92,7 @@ fn missing_label_bitmap_key_is_caught() {
 fn stray_edge_label_bitmap_row_is_caught() {
     let mut graph = consistent_graph();
     let knows = label("consistency.knows");
-    graph.idx_edge_label.entry(knows).or_default().insert(777);
+    get_or_insert_default(&mut graph.idx_edge_label, knows).insert(777);
     let err = graph.assert_indexes_consistent().unwrap_err();
     assert!(err.contains("edge label index"), "got: {err}");
 }
@@ -193,15 +194,11 @@ fn dangling_adjacency_to_missing_edge_is_caught() {
     let mut graph = consistent_graph();
     let knows = label("consistency.knows");
     // Add an adjacency entry for a node with an edge_id that is not alive.
-    graph
-        .adjacency_out
-        .entry(NodeId::new(1))
-        .or_default()
-        .add(AdjacencyEdge {
-            label: knows,
-            neighbor: NodeId::new(2),
-            edge_id: EdgeId::new(900),
-        });
+    get_or_insert_default(&mut graph.adjacency_out, NodeId::new(1)).add(AdjacencyEdge {
+        label: knows,
+        neighbor: NodeId::new(2),
+        edge_id: EdgeId::new(900),
+    });
     let err = graph.assert_indexes_consistent().unwrap_err();
     assert!(err.contains("adjacency"), "got: {err}");
 }
@@ -212,7 +209,7 @@ fn empty_adjacency_entry_is_caught() {
     // An isolated node with a present-but-empty outgoing entry.
     graph
         .adjacency_out
-        .insert(NodeId::new(2), crate::adjacency::AdjacencyEntry::new());
+        .insert_cow(NodeId::new(2), crate::adjacency::AdjacencyEntry::new());
     let err = graph.assert_indexes_consistent().unwrap_err();
     assert!(err.contains("present-but-empty"), "got: {err}");
 }

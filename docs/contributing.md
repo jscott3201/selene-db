@@ -306,7 +306,7 @@ for the full list. The most contribution-relevant decisions are:
 | D1 | Library only; no server, transport, or auth. |
 | D2 | Strict ISO GQL parser; no Cypher / SQL / SPARQL. |
 | D5 | Non-graph capabilities live in separate dedicated projects, not in `selene-graph`. |
-| D7 | Concurrency primitives: `ArcSwap`, `parking_lot`, `imbl`, `RoaringBitmap`, `triomphe`. |
+| D7 | Concurrency primitives: `ArcSwap`, `parking_lot`, `immutable-chunkmap`, `RoaringBitmap`, `triomphe`. |
 | D8 | Multi-crate workspace, no umbrella facade. |
 | D9 | `#![forbid(unsafe_code)]` workspace-wide. |
 | D10 | `missing_docs = "deny"` workspace-wide. |

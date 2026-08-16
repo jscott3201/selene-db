@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::ops::RangeBounds;
 use std::sync::Arc;
 
-use imbl::HashMap;
+use immutable_chunkmap::map::MapM;
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -66,9 +66,9 @@ pub struct SeleneGraph {
     /// Incoming adjacency keyed by target node.
     pub adjacency_in: EngineIdMap<NodeId, AdjacencyEntry>,
     /// Bitmap of node rows carrying each label.
-    pub idx_label: HashMap<DbString, RoaringBitmap>,
+    pub idx_label: MapM<DbString, RoaringBitmap>,
     /// Bitmap of edge rows carrying each edge label.
-    pub idx_edge_label: HashMap<DbString, RoaringBitmap>,
+    pub idx_edge_label: MapM<DbString, RoaringBitmap>,
     /// Per-`(label, property)` node value indexes. See spec 03 section 5.2.
     pub property_index: FxHashMap<(DbString, DbString), PropertyIndexEntry>,
     /// Per-`(edge label, property)` edge value indexes.
@@ -83,7 +83,8 @@ pub struct SeleneGraph {
     /// External `NodeId -> RowIndex` lookup (the inverse of
     /// [`NodeStore::row_to_id`]). Replaces the `id.get() - 1` arithmetic so the
     /// external id can stay stable while the row is remapped by compaction
-    /// (D22 / BRIEF-Item-4a). `imbl` for cheap copy-on-write snapshot clones.
+    /// (D22 / BRIEF-Item-4a). The persistent chunked tree keeps snapshot clones
+    /// cheap.
     pub node_id_to_row: EngineIdMap<NodeId, RowIndex>,
     /// External `EdgeId -> RowIndex` lookup (inverse of [`EdgeStore::row_to_id`]).
     pub edge_id_to_row: EngineIdMap<EdgeId, RowIndex>,
@@ -105,8 +106,8 @@ impl SeleneGraph {
             edge_store: EdgeStore::new(),
             adjacency_out: engine_id_map(),
             adjacency_in: engine_id_map(),
-            idx_label: HashMap::new(),
-            idx_edge_label: HashMap::new(),
+            idx_label: MapM::new(),
+            idx_edge_label: MapM::new(),
             property_index: FxHashMap::default(),
             edge_property_index: FxHashMap::default(),
             composite_property_index: FxHashMap::default(),

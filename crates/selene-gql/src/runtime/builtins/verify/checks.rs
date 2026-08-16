@@ -339,7 +339,7 @@ pub(super) fn check_roaring_bitmap_density(snapshot: &SeleneGraph) -> CheckResul
     let mut issues = 0_usize;
     let mut bitmaps = 0_usize;
 
-    for bitmap in snapshot.idx_label.values() {
+    for (_, bitmap) in &snapshot.idx_label {
         bitmaps += 1;
         for row in bitmap {
             if !live_node_row(snapshot, row) {
@@ -347,7 +347,7 @@ pub(super) fn check_roaring_bitmap_density(snapshot: &SeleneGraph) -> CheckResul
             }
         }
     }
-    for bitmap in snapshot.idx_edge_label.values() {
+    for (_, bitmap) in &snapshot.idx_edge_label {
         bitmaps += 1;
         for row in bitmap {
             if !live_edge_row(snapshot, row) {

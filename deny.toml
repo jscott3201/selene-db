@@ -6,9 +6,7 @@
 # Enforces:
 #   - rustls-only TLS posture (no native-tls, no openssl-sys, no openssl-src)
 #   - dual MIT OR Apache-2.0 licensing posture for the workspace; permissive
-#     license allow-list for transitive deps; MPL-2.0 explicitly allowed for
-#     `imbl` (decision D7 in CLAUDE.md — file-level copyleft, not infectious
-#     to selene-db's MIT/Apache license posture)
+#     license allow-list for transitive deps
 #   - crates.io as the only source for non-workspace deps; git deps must be
 #     pinned to a sha
 
@@ -48,12 +46,6 @@ allow = [
   # BSL-1.0: Boost Software License, permissive. Added for xxhash-rust's
   # xxh3 implementation used by WAL payload checksums in BRIEF-90.
   "BSL-1.0",
-  # MPL-2.0: file-level copyleft (NOT infectious to dependents). Allowed
-  # explicitly for imbl, the only mature complete persistent-collection
-  # library in the Rust ecosystem (decision D7). Selene-db itself remains
-  # dual MIT/Apache-2.0; only imbl's own files carry MPL-2.0 terms in any
-  # downstream redistribution.
-  "MPL-2.0",
 ]
 exceptions = []
 
@@ -75,11 +67,6 @@ deny = [
   { name = "security-framework" },
 ]
 skip = [
-  # Issue #1116: imbl 7.0.1 remains on wide 0.7 while selene-db's vector
-  # kernels use current wide 1.x. Keep the old transitive SIMD pair together
-  # until the persistent graph-map migration removes imbl.
-  { name = "wide", version = "0.7.33" },
-  { name = "safe_arch", version = "0.7.4" },
   # rkyv/serde derive infrastructure has moved to syn 3 while miette, pest,
   # tracing, and munge still use the maintained syn 2 line.
   { name = "syn", version = "2.0.119" },

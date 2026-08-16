@@ -1,12 +1,11 @@
 //! GRAPH-05: holistic hub-delete cascade.
 //!
 //! Deleting a degree-`D` node drops the hub's own adjacency entries wholesale
-//! and clears only the *neighbor* side of each incident edge in place (O(D),
-//! not the old O(D^2) clone-and-scan-per-edge). These tests pin the observable
-//! invariants of that path: every incident edge removed, the hub's entries
-//! gone, neighbors still alive with no dangling back-edge to the dead hub, and
-//! — the load-bearing guard — a neighbor's *unrelated* edges left untouched by
-//! the wholesale drop.
+//! and clears the *neighbor* sides through one grouped persistent-map update,
+//! not the old O(D^2) clone-and-scan-per-edge path. These tests pin the
+//! observable invariants: every incident edge removed, the hub's entries gone,
+//! neighbors still alive with no dangling back-edge to the dead hub, and — the
+//! load-bearing guard — a neighbor's *unrelated* edges left untouched.
 
 use selene_core::{GraphId, PropertyMap, db_string};
 
