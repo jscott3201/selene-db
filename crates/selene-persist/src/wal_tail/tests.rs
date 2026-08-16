@@ -39,6 +39,15 @@ fn seed(path: &std::path::Path, count: u64) -> Vec<u64> {
 }
 
 fn seed_with_principal(path: &std::path::Path, count: u64, principal: Option<&[u8]>) -> Vec<u64> {
+    seed_with_origin(path, count, principal, Origin::Local)
+}
+
+fn seed_with_origin(
+    path: &std::path::Path,
+    count: u64,
+    principal: Option<&[u8]>,
+    origin: Origin,
+) -> Vec<u64> {
     let mut writer = WalWriter::open(path, WalConfig::default()).unwrap();
     let mut starts = Vec::new();
     for sequence in 1..=count {
@@ -46,7 +55,7 @@ fn seed_with_principal(path: &std::path::Path, count: u64, principal: Option<&[u
         writer
             .append(
                 HlcTimestamp::new(sequence, 0),
-                Origin::Local,
+                origin,
                 principal.map(std::sync::Arc::from),
                 &changes(),
             )
@@ -54,6 +63,19 @@ fn seed_with_principal(path: &std::path::Path, count: u64, principal: Option<&[u
     }
     writer.flush().unwrap();
     starts
+}
+
+/// A replicated origin, which sets [`FLAG_REPLICATED_ORIGIN`] and writes a
+/// 16-byte provenance tail at the head of the extent.
+fn replicated() -> Origin {
+    Origin::Replicated {
+        source_node_id: NodeId::new(7),
+        source_seq: 42,
+    }
+}
+
+fn bytes_of(path: &std::path::Path) -> Vec<u8> {
+    fs::read(path).unwrap()
 }
 
 fn flip_bit(path: &std::path::Path, offset: u64) {
@@ -240,6 +262,107 @@ fn corrupt_principal_before_the_tail_refuses() {
     );
     assert_eq!(len_of(&path), before, "a refusal must not truncate");
     let _ = fs::remove_file(path);
+}
+
+/// The provenance tail is the one extent field with no local-origin producer,
+/// so every other seed in this file writes a zero-length one. It sits ahead of
+/// the principal in the extent and is covered by the extent checksum rather
+/// than the prefix checksum, which is a different branch from the header cases
+/// above.
+#[test]
+fn corrupt_replicated_provenance_before_the_tail_refuses() {
+    let path = temp_path("midlog-provenance");
+    let starts = seed_with_origin(&path, 5, Some(b"alice"), replicated());
+    // The extent opens with the 16-byte provenance tail; the principal follows.
+    flip_bit(&path, starts[1] + FIXED_PREFIX_FOR_TEST);
+    // Baseline taken AFTER the flip: the damaged file is what recovery must
+    // hand back untouched, corruption included, so the evidence survives.
+    let corrupted = bytes_of(&path);
+
+    let error = expect_open_err(
+        &path,
+        "corrupt provenance with frames after it is corruption, not a tail",
+    );
+    assert!(
+        matches!(
+            error,
+            PersistError::WalMidLogCorruption { offset, .. } if offset == starts[1]
+        ),
+        "expected a refusal naming frame 2, got {error:?}"
+    );
+    assert_eq!(
+        bytes_of(&path),
+        corrupted,
+        "a refusal must leave the file byte-identical, not merely the same length"
+    );
+    let _ = fs::remove_file(path);
+}
+
+/// The tail twin: the same damage in the LAST frame is an unacknowledged write
+/// and must be repaired, so the verdict tracks position rather than which field
+/// failed.
+#[test]
+fn corrupt_replicated_provenance_in_the_final_frame_is_repaired() {
+    let path = temp_path("final-provenance");
+    let starts = seed_with_origin(&path, 3, Some(b"alice"), replicated());
+    flip_bit(&path, starts[2] + FIXED_PREFIX_FOR_TEST);
+
+    let writer = WalWriter::open(&path, WalConfig::default())
+        .expect("corrupt provenance in the LAST frame is still a tail");
+    assert_eq!(writer.last_sequence(), 2);
+    assert_eq!(
+        writer.tail_repair().expect("repair").reason,
+        WalTailReason::CorruptFinalFrame
+    );
+    assert_eq!(len_of(&path), starts[2]);
+    let _ = fs::remove_file(path);
+}
+
+/// Every fixed-header field in a non-final frame must refuse, including the
+/// prefix checksum itself at offset 0.
+///
+/// The decode-level sweep in `entry_header` proves each field round-trips and
+/// is covered; this proves the coverage actually reaches the recovery verdict,
+/// which is the property #1114 asks about. A field that silently kept its
+/// meaning under a bit flip would let a damaged interior frame be classified as
+/// a torn tail and discard every committed frame after it.
+#[test]
+fn every_fixed_header_field_flip_before_the_tail_refuses() {
+    for (field_offset, field) in [
+        (0_u64, "prefix checksum"),
+        (4, "payload length"),
+        (8, "payload checksum"),
+        (12, "sequence"),
+        (20, "hlc seconds"),
+        (28, "hlc subseconds"),
+        (32, "flags"),
+        (33, "reserved"),
+        (34, "principal length"),
+        (36, "extent checksum"),
+    ] {
+        let path = temp_path(&format!("midlog-field-{field_offset}"));
+        let starts = seed_with_principal(&path, 5, Some(b"alice"));
+        flip_bit(&path, starts[1] + field_offset);
+        let corrupted = bytes_of(&path);
+
+        let error = expect_open_err(
+            &path,
+            &format!("a flipped {field} with four frames after it is not a torn tail"),
+        );
+        assert!(
+            matches!(
+                error,
+                PersistError::WalMidLogCorruption { offset, .. } if offset == starts[1]
+            ),
+            "flipping {field} must refuse naming frame 2, got {error:?}"
+        );
+        assert_eq!(
+            bytes_of(&path),
+            corrupted,
+            "a refusal on {field} must leave the file byte-identical"
+        );
+        let _ = fs::remove_file(path);
+    }
 }
 
 /// A short extending write leaves zeros. The prefix checksum of a zero prefix
