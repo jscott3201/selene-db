@@ -120,10 +120,65 @@ fn schema_kinds_from(kinds: &[TypedIndexKind]) -> SmallVec<[SchemaPropertyIndexK
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{GraphId, db_string};
+    use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
     use smallvec::smallvec;
 
     use crate::{GraphError, SharedGraph, TypedIndexKind};
+
+    /// Strict registration must still name a NaN component `"NaN"`.
+    ///
+    /// The rejection used to reach [`GraphError::IndexValueRejected`] through
+    /// `CompositeIndexValueError::Component`, whose `observed` the coercion
+    /// filled with that text. Splitting the NaN case out into its own variant
+    /// moved it onto a second path, and an operator reading
+    /// `expected F64, observed Float` instead of `observed NaN` would go
+    /// looking for a wrong-typed row that does not exist.
+    #[test]
+    fn strict_registration_names_a_nan_component_as_nan() {
+        let label = db_string("CompositeNaN").unwrap();
+        let score = db_string("composite.nan.score").unwrap();
+        let rank = db_string("composite.nan.rank").unwrap();
+
+        let shared = SharedGraph::new(GraphId::new(140_203));
+        {
+            let mut txn = shared.begin_write();
+            txn.mutator()
+                .create_node(
+                    LabelSet::single(label.clone()),
+                    PropertyMap::from_pairs([
+                        (score.clone(), Value::Float(f64::NAN)),
+                        (rank.clone(), Value::Int(1)),
+                    ])
+                    .unwrap(),
+                )
+                .unwrap();
+            txn.commit().unwrap();
+        }
+
+        let mut txn = shared.begin_write();
+        let err = txn
+            .mutator()
+            .create_composite_property_index_named(
+                label.clone(),
+                smallvec![score.clone(), rank],
+                smallvec![TypedIndexKind::F64, TypedIndexKind::I64],
+                None,
+            )
+            .expect_err("a NaN component is not keyable, so strict build rejects");
+
+        let GraphError::IndexValueRejected {
+            property,
+            expected_kind,
+            observed,
+            ..
+        } = err
+        else {
+            panic!("expected IndexValueRejected, got {err:?}");
+        };
+        assert_eq!(property, score, "the rejection names the offending column");
+        assert_eq!(expected_kind, TypedIndexKind::F64);
+        assert_eq!(observed, "NaN");
+    }
 
     #[test]
     fn create_composite_property_index_rejects_empty_property_list() {
