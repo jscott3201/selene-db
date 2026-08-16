@@ -761,7 +761,15 @@ failure. Match on that variant rather than on the cause: it is the only signal
 that says the log is still on disk and worth handing to offline recovery.
 A frame that fails with nothing after it — or a trailing run of zeros, which is
 what a short extending write leaves — is a tear, is discarded, and is reported
-through `WalWriter::tail_repair()`.
+through `WalWriter::tail_repair()` for a direct `selene-persist` caller or
+`SharedGraph::recovery_tail_repair()` for a recovered graph. Both carry the
+same `WalTailRepair { reason, offset, discarded_bytes }`.
+
+Reporting it is the point. Discarding an unacknowledged tail is correct, so
+recovery returns `Ok` and there is nothing to retry — which means a caller that
+does not ask has no way to distinguish a clean reopen from one that dropped a
+commit some client believed it had submitted. The report exists for
+reconciliation, not for error handling.
 
 Before this, both cases were truncated silently: a single flipped bit in a
 frame's length field in the middle of a log discarded every committed frame
