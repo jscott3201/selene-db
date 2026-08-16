@@ -294,3 +294,31 @@ fn default_warning_sink_keeps_null_skip_non_fatal() {
         )
         .expect("default sink discards warning");
 }
+
+/// An indeterminate commit outcome reaches the GQL surface as ISO `40003`.
+///
+/// `ExecutorError::GraphMutation` forwards the graph status through
+/// `GqlStatus::from_code(..).unwrap_or(IMPLEMENTATION_DEFINED_ERROR)`. That
+/// fallback is silent, so a graph-side code the GQL layer cannot parse would be
+/// laundered back into `5GQL0` and the distinction #1091 exists to make would
+/// vanish exactly where a GQL `COMMIT` caller reads it.
+///
+/// ISO/IEC 39075:2024 §8.4 GR 1)b) raises *transaction rollback* on a failed
+/// commit; §23.1 Table 8 subclass 003 is *statement completion unknown*, which
+/// is what the engine returns when it cannot honour GR 1)b)'s "are canceled".
+#[test]
+fn an_indeterminate_commit_surfaces_as_transaction_rollback_40003() {
+    let error = selene_gql::ExecutorError::GraphMutation {
+        source: selene_graph::GraphError::IndeterminateCommit {
+            reason: "commit thread is no longer running; the graph must be reopened".to_owned(),
+        },
+        span: SourceSpan::default(),
+    };
+
+    assert_eq!(error.gqlstatus().as_str(), "40003");
+    assert_eq!(
+        selene_core::gqlstatus_name("40003"),
+        Some("statement-completion-unknown"),
+        "the code must be registered, or diagnostics render it unnamed"
+    );
+}

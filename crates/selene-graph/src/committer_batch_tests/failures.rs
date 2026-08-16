@@ -83,8 +83,9 @@ fn t5_partial_batch_append_failure_errs_all_and_poisons() {
         .create_node(LabelSet::new(), PropertyMap::new())
         .unwrap();
     assert!(
-        matches!(txn.commit(), Err(GraphError::Durable { .. })),
-        "post-poison commit fails fast",
+        matches!(txn.commit(), Err(GraphError::IndeterminateCommit { .. })),
+        "post-poison commit fails fast, and as indeterminate: committer_dead \
+         cannot know whether this caller's record reached the WAL",
     );
 }
 
@@ -245,7 +246,7 @@ fn t5b_publish_tail_panic_acks_member_errs_rest_and_poisons() {
         .create_node(LabelSet::new(), PropertyMap::new())
         .unwrap();
     assert!(
-        matches!(txn.commit(), Err(GraphError::Durable { .. })),
-        "post-panic commit fails fast (engine poisoned)",
+        matches!(txn.commit(), Err(GraphError::IndeterminateCommit { .. })),
+        "post-panic commit fails fast (engine poisoned), as indeterminate",
     );
 }

@@ -394,10 +394,32 @@ impl Committer {
 }
 
 /// Error returned to every waiter when the committer thread is gone (panicked
-/// or shutting down). Maps to GQLSTATUS `5GQL0` like any durable failure.
+/// or shutting down).
+///
+/// [`GraphError::IndeterminateCommit`] (GQLSTATUS `40003`), not
+/// [`GraphError::Durable`]: a waiter reaching here may have had its record
+/// appended, or appended and fsynced, and cannot tell which. See that variant
+/// for why an unqualified rollback would be the dangerous lie.
 pub(crate) fn committer_dead() -> GraphError {
-    GraphError::Durable {
+    GraphError::IndeterminateCommit {
         reason: "commit thread is no longer running; the graph must be reopened".to_owned(),
+    }
+}
+
+/// Reclassify a poison-exit error as an indeterminate commit outcome.
+///
+/// The two poison paths that reply with their own error rather than
+/// [`committer_dead`] — a partial-batch append failure and a publish-tail panic
+/// — are both reached with bytes possibly already in the WAL, so the outcome is
+/// as unknown as any other member's. Their diagnostic text is preserved; only
+/// the classification changes.
+pub(crate) fn indeterminate(error: GraphError) -> GraphError {
+    match error {
+        // Already classified; do not nest the reason text.
+        indeterminate @ GraphError::IndeterminateCommit { .. } => indeterminate,
+        other => GraphError::IndeterminateCommit {
+            reason: other.to_string(),
+        },
     }
 }
 
@@ -485,9 +507,11 @@ fn run_committer(
                 BatchDrain::AppendFailed { appended } => {
                     // A Stage-1 append failed: the failed waiter was already
                     // Err'd inside drain_contiguous_batch; here we Err every
-                    // already-appended member (their unflushed bytes are correct
-                    // to lose on reopen), drain the buffer, and exit. Nothing in
-                    // the run was flushed or published.
+                    // already-appended member, drain the buffer, and exit.
+                    // Nothing in the run was flushed or published — but their
+                    // records ARE written, and a reopen replays them, so each
+                    // is acked with committer_dead's IndeterminateCommit rather
+                    // than a rollback that claims they did not happen.
                     crate::committer_batch::ack_appended_with_error(appended);
                     drain_buffer_with_error(&mut reorder);
                     return;
@@ -636,9 +660,17 @@ pub(crate) fn unwrap_protected<T>(
             // Open-risk #2 (split-brain): a panic between seal() and store()
             // can leave the live guard-Arc and the published snapshot
             // divergent for that commit. We cannot reconcile in-process; the
-            // engine is poisoned and a reopen (recovery from the durable WAL,
-            // which never saw the un-appended commit) restores consistency.
-            Err(GraphError::Durable {
+            // engine is poisoned and a reopen restores consistency — but what
+            // the reopen restores TO depends on where the panic landed. A panic
+            // in the publish tail is past the group flush, so that commit is
+            // fsynced and recovery replays it; a panic before the append leaves
+            // nothing. The caller cannot tell the two apart from here, so the
+            // outcome is indeterminate by construction.
+            //
+            // Built directly rather than through `indeterminate`, which
+            // composes the wrapped error's Display and would file a panic under
+            // "durable provider failed".
+            Err(GraphError::IndeterminateCommit {
                 reason: format!("commit thread panicked: {description}"),
             })
         }

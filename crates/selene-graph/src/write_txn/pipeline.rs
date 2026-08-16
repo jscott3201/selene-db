@@ -106,14 +106,26 @@ const _: fn() = || {
 /// A returned `Err` is a **post-seal** failure: `seal()` already wove this
 /// commit's mutation into `*shared` (and a later seal may have forked off it),
 /// so the live graph cannot be surgically rolled back. The committer poisons the
-/// engine, Errs this commit + every already-appended batch member (whose
-/// appended-but-unflushed bytes are correct to lose on reopen), and drains the
-/// buffer. The durable WAL never fsynced any of them, so a reopen heals.
+/// engine, Errs this commit + every already-appended batch member, and drains
+/// the buffer.
+///
+/// Those members' bytes are **not** discarded by a reopen. This comment used to
+/// claim they were "correct to lose on reopen" because the WAL never fsynced
+/// them, and that is true only of losing the page cache — a machine crash. A
+/// reopen is not a crash: under
+/// [`SyncPolicy::OnFlushOnly`](selene_persist::SyncPolicy) `append_record`
+/// hands a complete, checksum-valid frame to the kernel, recovery's tail repair
+/// truncates only a torn tail, and such a frame is not torn. So the members
+/// replay. That is why the committer reports
+/// [`GraphError::IndeterminateCommit`] rather than an unqualified rollback; see
+/// that variant for the ISO §8.4 GR 1)b) reading. Making the old claim true is
+/// a WAL-side change (a flushed-offset watermark truncated to on the poison
+/// exit), tracked separately.
 ///
 /// # Errors
 ///
 /// Returns [`GraphError::Durable`] if a durable provider's `write_commit`
-/// failed.
+/// failed. The committer reclassifies it before it reaches a waiter.
 pub(crate) fn append_sealed(
     sealed: SealedCommit,
     durable_providers: &[Arc<dyn DurableProvider>],

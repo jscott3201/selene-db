@@ -285,6 +285,70 @@ pub enum GraphError {
         reason: String,
     },
 
+    /// A commit reached the durable path and then failed, leaving its outcome
+    /// undetermined: the transition may or may not be present after the
+    /// mandated reopen.
+    ///
+    /// # Why this is not [`GraphError::Durable`]
+    ///
+    /// ISO/IEC 39075:2024 §8.4 `<commit command>` GR 1)b) says that when an
+    /// error prevents commitment, the transaction's changes "are canceled" and
+    /// *transaction rollback (40000)* is raised. A plain durable failure means
+    /// exactly that. This variant is the case where the engine cannot honour
+    /// the "are canceled" half, so reporting an unqualified rollback would be a
+    /// lie in the dangerous direction — a caller that reads `Err` as "this
+    /// transition did not happen" re-drives the write after the reopen and
+    /// double-applies it.
+    ///
+    /// §23.1 Table 8 supplies the honest spelling: class 40 subclass 003,
+    /// *statement completion unknown*, which is what
+    /// [`GraphError::gqlstatus`] returns here.
+    ///
+    /// # When it is raised
+    ///
+    /// Every commit error-acked on a committer poison exit, because in each
+    /// case the WAL bytes can outlive the failure:
+    ///
+    /// - a partial-batch append failure error-acks the run members appended
+    ///   before it, whose records are already written;
+    /// - a group-flush failure error-acks the whole run, and a failed `fsync`
+    ///   does not imply the data is absent from stable storage;
+    /// - a publish-tail panic after a *successful* group flush error-acks
+    ///   commits that are unambiguously durable and merely unpublished.
+    ///
+    /// The committer-managed WAL runs under
+    /// [`SyncPolicy::OnFlushOnly`](selene_persist::SyncPolicy), so an appended
+    /// record is a complete, checksum-valid frame in the page cache. Reopening
+    /// does not discard it — only losing the page cache does. Recovery's tail
+    /// repair truncates a torn tail, and such a frame is not torn.
+    ///
+    /// # This over-approximates, deliberately
+    ///
+    /// Some commits error-acked this way genuinely left nothing behind — an
+    /// append that failed on the first durable provider of a one-member run,
+    /// for instance, wrote no WAL record at all. They are reported as unknown
+    /// anyway, because the committer cannot tell them apart from the members
+    /// that did write: there is no flushed-offset watermark to compare against.
+    ///
+    /// Over-reporting costs a caller one needless read-back after the reopen.
+    /// Under-reporting causes a double-apply. Adding that watermark, and
+    /// truncating to it on the poison exit, would make the appended-not-flushed
+    /// cases genuinely canceled and let them report a definite `40000`; the
+    /// publish-tail-panic case is durable and stays `40003` regardless.
+    ///
+    /// # What a caller must do
+    ///
+    /// Treat the transition as unknown. Quiesce, drop the handle, reopen
+    /// through [`crate::SharedGraph::recover`], read back to determine whether
+    /// it landed, and only then decide whether to retry. Retrying blind
+    /// double-applies.
+    #[error("commit outcome is indeterminate; reopen and reconcile: {reason}")]
+    #[diagnostic(code(SLENE_G_029))]
+    IndeterminateCommit {
+        /// Where the commit stopped, for operator diagnosis.
+        reason: String,
+    },
+
     /// The commit was cancelled at the pre-WAL cut-line (BRIEF-117): the
     /// committer observed the cancellation token set before it appended the
     /// commit to the WAL, so nothing was persisted or published. Past the WAL
@@ -355,6 +419,12 @@ impl GraphError {
             Self::StoreAssignment(source) => source.exception.gqlstatus(),
             Self::Core(source) => source.gqlstatus(),
             Self::Durable { .. } | Self::ExistingStore { .. } => "5GQL0",
+            // ISO §23.1 Table 8: transaction rollback (40) subclass 003,
+            // "statement completion unknown". §8.4 GR 1)b) delegates the
+            // subclass to the implementation (IE008); this one is
+            // standard-defined rather than invented, and it is the only code in
+            // the table that says what actually happened.
+            Self::IndeterminateCommit { .. } => "40003",
             Self::Cancelled => "5GQL2",
             Self::Provider(_) | Self::Persist(_) => "5GQL0",
         }
@@ -461,6 +531,10 @@ mod tests {
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "0G003")]
     #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "5GQL0")]
+    #[case(
+        GraphError::IndeterminateCommit { reason: "group flush failed".to_owned() },
+        "40003"
+    )]
     #[case(GraphError::Cancelled, "5GQL2")]
     #[case(
         GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag DEMO".to_owned() }),

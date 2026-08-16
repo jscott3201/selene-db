@@ -21,5 +21,7 @@ use flush_helpers::*;
 mod caps;
 #[path = "committer_batch_wal_tests/flush_order.rs"]
 mod flush_order;
+#[path = "committer_batch_wal_tests/indeterminate.rs"]
+mod indeterminate;
 #[path = "committer_batch_wal_tests/recovery.rs"]
 mod recovery;

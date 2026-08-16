@@ -185,6 +185,55 @@ both predates checkpoint watermarks and can read the file to misinterpret one.
 Downgrading across a coordinated checkpoint was already unsupported; it is now
 unsupported for the simpler reason that downgrading at all is.
 
+## Commit outcomes
+
+A commit passes through five states. Only the first is a definite negative.
+
+| State | What happened | What the caller gets |
+|---|---|---|
+| Rejected | Validation or graph-type failure in `seal`; nothing written | A typed error. Definitely no effect. |
+| Appended | The record is in the WAL file, not fsynced | `IndeterminateCommit` if the run then fails |
+| Flushed | The group fsync returned `Ok`; the run is durable | `IndeterminateCommit` if publication then fails |
+| Published | The snapshot is visible to readers | — |
+| Acknowledged | `Ok(CommitOutcome)`, carrying `durable_at` | Success |
+
+**An `Err` past `seal` does not mean the transition did not happen.** ISO/IEC
+39075:2024 §8.4 `<commit command>` GR 1)b) says a failed commit's changes "are
+canceled"; selene-db cannot promise that once the record has been appended, so
+it reports the outcome as unknown rather than claiming a rollback it did not
+perform. The status is `40003` — *transaction rollback — statement completion
+unknown* (§23.1 Table 8), reached in Rust as
+`GraphError::IndeterminateCommit`.
+
+The reason the appended-but-unflushed state is not simply discarded: the
+committer-managed WAL runs under `SyncPolicy::OnFlushOnly`, so `append_record`
+hands the kernel one complete, checksum-valid frame. Recovery's tail repair
+truncates only a *torn* tail, and such a frame is not torn. Losing it requires
+losing the page cache — a machine crash. Poisoning the committer is not a
+crash; it requires you to drop the handle and reopen, and the bytes are still
+there.
+
+Three failures reach this state, and all three can leave WAL bytes behind:
+
+- a **partial append failure** inside a batched run error-acks the members
+  appended before it, whose records are already written;
+- a **group flush failure** error-acks the whole run, and a failed `fsync` does
+  not imply the data is absent from stable storage;
+- a **publish-tail panic after a successful group flush** error-acks commits
+  that are unambiguously durable and merely unpublished.
+
+### What to do on `IndeterminateCommit`
+
+1. Stop issuing writes on that handle — the committer is poisoned and every
+   later commit fails fast with the same status.
+2. Drop the handle and reopen through `SharedGraph::recover`.
+3. **Read back** to determine whether the transition landed.
+4. Only then decide whether to retry.
+
+Retrying without the read-back double-applies any commit that survived. If your
+writes are not naturally idempotent, carry an application-level identity so the
+re-drive after a reopen is safe. The engine does not supply one.
+
 ## Snapshot creation
 
 A snapshot is an `rkyv`-archived envelope of TLV-tagged sections. The file
