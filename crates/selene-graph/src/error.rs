@@ -322,6 +322,20 @@ pub enum GraphError {
     /// does not discard it — only losing the page cache does. Recovery's tail
     /// repair truncates a torn tail, and such a frame is not torn.
     ///
+    /// # This over-approximates, deliberately
+    ///
+    /// Some commits error-acked this way genuinely left nothing behind — an
+    /// append that failed on the first durable provider of a one-member run,
+    /// for instance, wrote no WAL record at all. They are reported as unknown
+    /// anyway, because the committer cannot tell them apart from the members
+    /// that did write: there is no flushed-offset watermark to compare against.
+    ///
+    /// Over-reporting costs a caller one needless read-back after the reopen.
+    /// Under-reporting causes a double-apply. Adding that watermark, and
+    /// truncating to it on the poison exit, would make the appended-not-flushed
+    /// cases genuinely canceled and let them report a definite `40000`; the
+    /// publish-tail-panic case is durable and stays `40003` regardless.
+    ///
     /// # What a caller must do
     ///
     /// Treat the transition as unknown. Quiesce, drop the handle, reopen
