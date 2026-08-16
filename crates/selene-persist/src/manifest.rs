@@ -54,7 +54,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::manifest_lock::ManifestEpochGuard;
-use crate::{PersistError, PersistResult};
+use crate::{PersistArtifact, PersistError, PersistResult};
 
 /// MANIFEST file magic.
 pub const MANIFEST_MAGIC: [u8; 4] = *b"SLMF";
@@ -166,6 +166,7 @@ impl Manifest {
         let format_version = u16::from_le_bytes([bytes[4], bytes[5]]);
         if format_version != MANIFEST_FORMAT_VERSION {
             return Err(PersistError::UnsupportedVersion {
+                artifact: PersistArtifact::Manifest,
                 major: format_version,
                 minor: 0,
             });
@@ -461,7 +462,11 @@ mod tests {
         bytes[4..6].copy_from_slice(&2_u16.to_le_bytes());
         assert!(matches!(
             Manifest::decode(&bytes),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 0 })
+            Err(PersistError::UnsupportedVersion {
+                artifact: PersistArtifact::Manifest,
+                major: 2,
+                minor: 0
+            })
         ));
     }
 

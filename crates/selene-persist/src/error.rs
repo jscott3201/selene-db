@@ -7,6 +7,36 @@ use crate::provider::RecoveryError;
 /// Result alias for persistence operations.
 pub type PersistResult<T> = Result<T, PersistError>;
 
+/// A separately versioned on-disk artifact within a persistence directory.
+///
+/// Each carries its own magic and format version and can be rejected
+/// independently, so an error that does not name one leaves an operator
+/// guessing which file to recreate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PersistArtifact {
+    /// The write-ahead log (`wal.log`) or one of its archives.
+    Wal,
+    /// A snapshot file (`snapshot.N.snap`).
+    Snapshot,
+    /// The `MANIFEST` epoch record.
+    Manifest,
+    /// The audit log (`audit.log`).
+    AuditLog,
+}
+
+impl std::fmt::Display for PersistArtifact {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Wal => "wal",
+            Self::Snapshot => "snapshot",
+            Self::Manifest => "MANIFEST",
+            Self::AuditLog => "audit log",
+        };
+        out.write_str(name)
+    }
+}
+
 /// Error type for WAL persistence operations.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
@@ -60,9 +90,15 @@ pub enum PersistError {
     },
 
     /// File-header version is unsupported.
-    #[error("wal version unsupported: {major}.{minor}")]
+    ///
+    /// A store holds four independently versioned artifacts, so the message
+    /// names which one is at fault. Without that, the only actionable part of
+    /// "recreate the store from source" — knowing what to look at — is missing.
+    #[error("{artifact} version unsupported: {major}.{minor}")]
     #[diagnostic(code(SLENE_P_008))]
     UnsupportedVersion {
+        /// Artifact whose header carried the version.
+        artifact: PersistArtifact,
         /// Major version read from disk.
         major: u16,
         /// Minor version read from disk.
@@ -214,6 +250,48 @@ pub enum PersistError {
         trailing_bytes: u64,
         /// The validation failure that triggered the refusal.
         source: Box<PersistError>,
+    },
+
+    /// An audit record failed validation with records after it.
+    ///
+    /// The audit twin of [`Self::WalMidLogCorruption`], and it exists for the
+    /// same reason: a record that fails validation is only a torn tail if
+    /// nothing follows it. Truncating at the first bad record discarded every
+    /// acknowledged record after it, on every recovery, and returned `Ok`.
+    #[error(
+        "audit corruption at offset {offset} is not a torn tail \
+         ({trailing_bytes} bytes follow it); the log was left intact"
+    )]
+    #[diagnostic(code(SLENE_P_047))]
+    AuditMidLogCorruption {
+        /// File offset where the failing record started.
+        offset: u64,
+        /// Bytes between the failing record's start and end of file.
+        trailing_bytes: u64,
+        /// The validation failure that triggered the refusal.
+        source: Box<PersistError>,
+    },
+
+    /// An audit record header failed its own integrity check.
+    ///
+    /// Raised before `payload_len` is used as a length or an offset, so a
+    /// flipped length cannot steer the scan to a bogus record boundary.
+    #[error("audit record header checksum mismatch at offset {offset}")]
+    #[diagnostic(code(SLENE_P_048))]
+    AuditHeaderChecksumMismatch {
+        /// File offset where the failing record started.
+        offset: u64,
+    },
+
+    /// An audit record's payload does not match its checksum.
+    ///
+    /// Distinct from [`Self::ChecksumMismatch`], which names a WAL sequence;
+    /// audit records have no sequence, so this names the file offset instead.
+    #[error("audit record payload checksum mismatch at offset {offset}")]
+    #[diagnostic(code(SLENE_P_049))]
+    AuditRecordChecksumMismatch {
+        /// File offset where the failing record started.
+        offset: u64,
     },
 
     /// Snapshot filename could not be parsed.
@@ -461,6 +539,9 @@ impl PersistError {
             | Self::WalHeaderChecksumMismatch { .. }
             | Self::WalFileHeaderChecksumMismatch
             | Self::WalMidLogCorruption { .. }
+            | Self::AuditMidLogCorruption { .. }
+            | Self::AuditHeaderChecksumMismatch { .. }
+            | Self::AuditRecordChecksumMismatch { .. }
             | Self::MalformedSnapshotFilename
             | Self::SectionMissing { .. }
             | Self::MalformedSectionLayout { .. }
@@ -499,7 +580,10 @@ mod tests {
     #[case(PersistError::PayloadTooLarge { len: 1, max: 0 }, "5GQL1")]
     #[case(PersistError::PrincipalTooLarge { len: 1, max: 0 }, "22G03")]
     #[case(PersistError::MagicMismatch { observed: *b"NOPE" }, "5GQL0")]
-    #[case(PersistError::UnsupportedVersion { major: 2, minor: 0 }, "08000")]
+    #[case(PersistError::UnsupportedVersion { artifact: PersistArtifact::Wal, major: 2, minor: 0 }, "08000")]
+    #[case(PersistError::AuditMidLogCorruption { offset: 8, trailing_bytes: 40, source: Box::new(PersistError::TruncatedFileHeader) }, "5GQL0")]
+    #[case(PersistError::AuditHeaderChecksumMismatch { offset: 8 }, "5GQL0")]
+    #[case(PersistError::AuditRecordChecksumMismatch { offset: 8 }, "5GQL0")]
     #[case(PersistError::ChecksumMismatch { sequence: 7 }, "5GQL0")]
     #[case(PersistError::NonMonotonicSequence { previous: 7, current: 7 }, "5GQL0")]
     #[case(PersistError::TruncatedFileHeader, "5GQL0")]

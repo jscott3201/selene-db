@@ -96,14 +96,50 @@ fn decode_all_rejects_corrupt_header() {
         AuditLog::decode_all(b"NOPExxxx"),
         Err(PersistError::MagicMismatch { .. })
     ));
-    // A garbage over-cap payload length in the first record is a torn tail, not
-    // a panic: the header validates, then the record scan bails to Ok(empty).
+    // A full-length record header of garbage is refused, not read as a torn
+    // tail. Under v1 the over-cap payload_len alone made this "the tail" and
+    // decode returned Ok(empty). A torn append cannot produce it: a partial
+    // header is short (caught by length) and a complete one carries a valid
+    // checksum, so garbage of exactly header length is damage.
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&AUDIT_MAGIC);
     bytes.extend_from_slice(&AUDIT_FORMAT_VERSION.to_le_bytes());
     bytes.extend_from_slice(&0_u16.to_le_bytes());
-    bytes.extend_from_slice(&[0xFF_u8; AUDIT_RECORD_HEADER_LEN]); // payload_len = huge
-    assert_eq!(AuditLog::decode_all(&bytes).unwrap(), Vec::new());
+    bytes.extend_from_slice(&[0xFF_u8; AUDIT_RECORD_HEADER_LEN]);
+    assert!(
+        matches!(
+            AuditLog::decode_all(&bytes),
+            Err(PersistError::AuditMidLogCorruption { offset: 8, .. })
+        ),
+        "a garbage full-length header is corruption, not a tail"
+    );
+}
+
+/// The zero fill a short extending write leaves is still a tail. This is the
+/// one case where a failed header checksum may be repaired, and it is why the
+/// classifier probes rather than refusing every unauthenticated header.
+#[test]
+fn zero_filled_tail_is_still_a_tail() {
+    let dir = temp_dir("zero-tail");
+    let path = log_path(&dir);
+    let mut log = AuditLog::open(&path).unwrap();
+    let kept = record(1, AUDIT_KIND_RESERVED_0, b"kept");
+    log.append(&kept).unwrap();
+    drop(log);
+
+    let durable = fs::metadata(&path).unwrap().len();
+    let mut bytes = fs::read(&path).unwrap();
+    bytes.extend_from_slice(&[0_u8; 64]);
+    fs::write(&path, &bytes).unwrap();
+
+    let _log = AuditLog::open(&path).unwrap();
+    assert_eq!(
+        fs::metadata(&path).unwrap().len(),
+        durable,
+        "the zero fill is discarded and the record survives"
+    );
+    assert_eq!(AuditLog::read_all(&path).unwrap(), vec![kept]);
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -163,7 +199,7 @@ fn open_truncates_torn_trailing_record() {
     {
         use std::io::Write;
         let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
-        f.write_all(&[0xAB; 10]).unwrap(); // shorter than a full 20-byte header
+        f.write_all(&[0xAB; 10]).unwrap(); // shorter than a full 24-byte header
     }
     // Re-open discards the torn tail and truncates back to the good record.
     let log = AuditLog::open(&path).unwrap();
@@ -305,7 +341,11 @@ fn corrupt_file_header_is_rejected() {
     fs::write(&path, &bytes).unwrap();
     assert!(matches!(
         AuditLog::read_all(&path),
-        Err(PersistError::UnsupportedVersion { major: 9, .. })
+        Err(PersistError::UnsupportedVersion {
+            artifact: PersistArtifact::AuditLog,
+            major: 9,
+            ..
+        })
     ));
 
     // Nonzero reserved.
@@ -462,5 +502,212 @@ fn prune_leaves_no_tmp_file() {
     .unwrap();
     assert!(!dir.join("audit.log.tmp").exists());
     assert!(path.exists());
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The #1110 defect, in the issue's own terms: 100 records, flip one bit in
+/// record 10's payload. v1 deleted records 10-100, fsynced the shortened file,
+/// and returned `Ok` — on every recovery, because `SharedGraph::recover`
+/// reopens the audit log unconditionally.
+#[test]
+fn interior_payload_corruption_refuses_and_preserves_the_log() {
+    let dir = temp_dir("interior-payload");
+    let path = log_path(&dir);
+    // Zero-padded so every record encodes to the same length, which is what
+    // lets the test compute record 10's offset instead of threading offsets out
+    // of the writer.
+    let records: Vec<AuditRecord> = (0..100)
+        .map(|index| {
+            record(
+                1_000 + index,
+                AUDIT_KIND_RESERVED_0,
+                format!("event-{index:03}").as_bytes(),
+            )
+        })
+        .collect();
+    {
+        let mut log = AuditLog::open(&path).unwrap();
+        for entry in &records {
+            log.append(entry).unwrap();
+        }
+    }
+
+    // Record 10's payload. Every record here encodes to the same length, so the
+    // offset is computable without threading offsets out of the writer.
+    let record_len = AUDIT_RECORD_HEADER_LEN + records[10].payload.len();
+    let payload_at = AUDIT_FILE_HEADER_LEN + 10 * record_len + AUDIT_RECORD_HEADER_LEN;
+    let mut bytes = fs::read(&path).unwrap();
+    bytes[payload_at] ^= 0b0000_0001;
+    fs::write(&path, &bytes).unwrap();
+    let corrupted = fs::read(&path).unwrap();
+
+    let expected_offset = (AUDIT_FILE_HEADER_LEN + 10 * record_len) as u64;
+    let error = AuditLog::open(&path).expect_err("interior damage must refuse");
+    let PersistError::AuditMidLogCorruption {
+        offset,
+        trailing_bytes,
+        source,
+    } = &error
+    else {
+        panic!("expected a refusal, got {error:?}");
+    };
+    assert_eq!(*offset, expected_offset);
+    assert_eq!(*trailing_bytes, corrupted.len() as u64 - expected_offset);
+    assert!(
+        matches!(**source, PersistError::AuditRecordChecksumMismatch { .. }),
+        "the refusal must carry the underlying cause, got {source:?}"
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        corrupted,
+        "a refusal must leave the file byte-identical: records 11-99 were \
+         acknowledged and must survive for offline recovery"
+    );
+
+    // And the readers must not quietly hand back the prefix either.
+    assert!(matches!(
+        AuditLog::read_all(&path),
+        Err(PersistError::AuditMidLogCorruption { .. })
+    ));
+    assert!(matches!(
+        AuditLog::decode_all(&corrupted),
+        Err(PersistError::AuditMidLogCorruption { .. })
+    ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The field that made the v1 scan unrecoverable: `payload_len` decides where a
+/// record ends, so a flip in it used to resynchronize the scan onto a bogus
+/// boundary. The header checksum now catches it before the value is used.
+#[test]
+fn interior_payload_len_corruption_refuses() {
+    let dir = temp_dir("interior-len");
+    let path = log_path(&dir);
+    {
+        let mut log = AuditLog::open(&path).unwrap();
+        for index in 0..5 {
+            log.append(&record(index, AUDIT_KIND_RESERVED_0, b"payload"))
+                .unwrap();
+        }
+    }
+
+    let record_len = AUDIT_RECORD_HEADER_LEN + b"payload".len();
+    let record_start = AUDIT_FILE_HEADER_LEN + record_len;
+    let mut bytes = fs::read(&path).unwrap();
+    // payload_len lives at record-header offset 16 under v2.
+    bytes[record_start + 16] ^= 0b0000_0001;
+    fs::write(&path, &bytes).unwrap();
+    let corrupted = fs::read(&path).unwrap();
+
+    let error = AuditLog::open(&path).expect_err("a flipped length must refuse");
+    let PersistError::AuditMidLogCorruption { offset, source, .. } = &error else {
+        panic!("expected a refusal, got {error:?}");
+    };
+    assert_eq!(*offset, record_start as u64);
+    assert!(
+        matches!(**source, PersistError::AuditHeaderChecksumMismatch { .. }),
+        "the length must fail integrity before it is used as an offset, got {source:?}"
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        corrupted,
+        "a refusal must not truncate"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// A recovery that refuses must keep refusing. v1's truncation was idempotent
+/// in the worst way: the second open saw a shorter, self-consistent file and
+/// reported success, so the loss became invisible one restart later.
+#[test]
+fn a_refused_open_stays_refused_across_reopens() {
+    let dir = temp_dir("refuse-idempotent");
+    let path = log_path(&dir);
+    {
+        let mut log = AuditLog::open(&path).unwrap();
+        for index in 0..4 {
+            log.append(&record(index, AUDIT_KIND_RESERVED_0, b"abcd"))
+                .unwrap();
+        }
+    }
+    let record_len = AUDIT_RECORD_HEADER_LEN + 4;
+    let mut bytes = fs::read(&path).unwrap();
+    bytes[AUDIT_FILE_HEADER_LEN + record_len + AUDIT_RECORD_HEADER_LEN] ^= 0xFF;
+    fs::write(&path, &bytes).unwrap();
+    let corrupted = fs::read(&path).unwrap();
+
+    for attempt in 0..3 {
+        assert!(
+            matches!(
+                AuditLog::open(&path),
+                Err(PersistError::AuditMidLogCorruption { .. })
+            ),
+            "attempt {attempt} must refuse"
+        );
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            corrupted,
+            "attempt {attempt} must not truncate"
+        );
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The final record is the one an interrupted append can damage, so it stays
+/// repairable. Without this the fix would brick every crash recovery.
+#[test]
+fn corrupt_final_record_is_still_repaired() {
+    let dir = temp_dir("final-record");
+    let path = log_path(&dir);
+    let kept = record(1, AUDIT_KIND_RESERVED_0, b"kept");
+    {
+        let mut log = AuditLog::open(&path).unwrap();
+        log.append(&kept).unwrap();
+        log.append(&record(2, AUDIT_KIND_RESERVED_0, b"torn"))
+            .unwrap();
+    }
+    let durable = (AUDIT_FILE_HEADER_LEN + AUDIT_RECORD_HEADER_LEN + kept.payload.len()) as u64;
+
+    let mut bytes = fs::read(&path).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0b0000_0001;
+    fs::write(&path, &bytes).unwrap();
+
+    let _log =
+        AuditLog::open(&path).expect("the last record has nothing after it, so it is a tail");
+    assert_eq!(fs::metadata(&path).unwrap().len(), durable);
+    assert_eq!(AuditLog::read_all(&path).unwrap(), vec![kept]);
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// A v1 log is rejected by version, and the message names the audit log rather
+/// than the WAL — the artifact discrimination this format bump makes reachable.
+#[test]
+fn a_v1_log_is_rejected_naming_the_audit_artifact() {
+    let dir = temp_dir("v1-reject");
+    let path = log_path(&dir);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&AUDIT_MAGIC);
+    bytes.extend_from_slice(&1_u16.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    fs::write(&path, &bytes).unwrap();
+
+    let error = AuditLog::open(&path).expect_err("a v1 log must be rejected");
+    assert!(
+        matches!(
+            error,
+            PersistError::UnsupportedVersion {
+                artifact: PersistArtifact::AuditLog,
+                major: 1,
+                ..
+            }
+        ),
+        "expected an audit-log version rejection, got {error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "audit log version unsupported: 1.0",
+        "the message must name the artifact an operator has to recreate"
+    );
     let _ = fs::remove_dir_all(dir);
 }

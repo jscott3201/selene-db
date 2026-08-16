@@ -2,7 +2,7 @@
 
 use std::io::{Read, Write};
 
-use crate::{PersistError, PersistResult};
+use crate::{PersistArtifact, PersistError, PersistResult};
 
 /// WAL file magic.
 pub const WAL_MAGIC: [u8; 4] = *b"SLDB";
@@ -160,7 +160,11 @@ fn unsupported_or_corrupt(
     major: u16,
     minor: u16,
 ) -> PersistError {
-    let unsupported = PersistError::UnsupportedVersion { major, minor };
+    let unsupported = PersistError::UnsupportedVersion {
+        artifact: PersistArtifact::Wal,
+        major,
+        minor,
+    };
     // A store too short to hold a v3 header cannot be a corrupted one.
     if reader
         .read_exact(&mut bytes[WAL_VERSION_PREFIX_LEN..])
@@ -240,7 +244,7 @@ mod tests {
         assert!(
             matches!(
                 observed,
-                Err(PersistError::UnsupportedVersion { major: m, minor: n }) if m == major && n == minor
+                Err(PersistError::UnsupportedVersion { artifact: PersistArtifact::Wal, major: m, minor: n }) if m == major && n == minor
             ),
             "expected UnsupportedVersion({major}, {minor}), got {observed:?}"
         );
@@ -283,7 +287,11 @@ mod tests {
         assert!(
             matches!(
                 observed,
-                Err(PersistError::UnsupportedVersion { major: 2, minor: 2 })
+                Err(PersistError::UnsupportedVersion {
+                    artifact: PersistArtifact::Wal,
+                    major: 2,
+                    minor: 2
+                })
             ),
             "a v1.2.0-v1.4.0 store must be diagnosed by version, got {observed:?}"
         );

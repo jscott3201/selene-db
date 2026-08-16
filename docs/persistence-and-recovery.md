@@ -610,9 +610,13 @@ let policy = AuditRetentionPolicy {
 let _outcome = log.prune(&policy, now_unix_nanos)?;
 ```
 
-`open` performs a torn-tail-truncating scan (a partial trailing record is
-dropped, not an error), mirroring the WAL's on-open posture. Recovery
-reattaches the audit log purely by file presence. Retention here is
+`open` repairs a genuine torn tail (a partial trailing record is dropped, not
+an error) and refuses interior damage with
+`PersistError::AuditMidLogCorruption`, mirroring the WAL's on-open posture.
+Recovery reattaches the audit log purely by file presence, so a refusal recurs
+on every recovery until an operator moves the damaged file aside — which is the
+intended outcome, because the alternative was discarding acknowledged records
+silently and reporting success. Retention here is
 independent of the snapshot/WAL `RetentionPolicy` (see [Backups](#backups)),
 so trimming audit history never affects graph recovery and vice versa.
 
@@ -631,17 +635,23 @@ another's stores despite the promise. The policy is now what the code does.
 
 Format identities shipped to date:
 
-| Release | WAL | Snapshot |
-|---|---:|---:|
-| v1.0.0 | 2.0 | 1.0 |
-| v1.1.0 | 2.0 | 1.1 |
-| v1.2.0 | 2.2 | 1.4 |
-| v1.3.0, v1.4.0 | 2.2 | 1.5 |
-| current | **3.0** | 1.5 |
+| Release | WAL | Snapshot | Audit log |
+|---|---:|---:|---:|
+| v1.0.0 | 2.0 | 1.0 | 1 |
+| v1.1.0 | 2.0 | 1.1 | 1 |
+| v1.2.0 | 2.2 | 1.4 | 1 |
+| v1.3.0, v1.4.0 | 2.2 | 1.5 | 1 |
+| current | **3.0** | 1.5 | **2** |
 
 WAL 3.0 brings the frame layout under integrity protection (see
 [WAL framing integrity](#wal-framing-integrity)); it is not readable by any
-released build, and no released build's WAL is readable by it.
+released build, and no released build's WAL is readable by it. Audit log v2
+does the same for the record header, for the same reason: the extent has to be
+trustworthy before a scan can tell a torn tail from interior damage.
+
+Because a store holds four independently versioned artifacts, the rejection
+names which one is at fault — `audit log version unsupported: 1.0` rather than
+a message that says `wal` regardless of the file it came from.
 
 Until 2.0.0 the project makes **no backward-compatibility guarantee** for
 persisted data. Format breaks ship in ordinary minor releases, called out as
@@ -691,11 +701,13 @@ without yet recovering it — there is no repair tool, and the entry stream stop
 at the first bad frame rather than skipping it, so the guarantee is "the file
 is still there, unmodified" rather than "the later frames are readable."
 
-The audit log keeps its own independent format and its own truncating scan.
-Damage in the middle of it still discards every record after the damage. That
-is the same defect in a second place, and closing it needs the audit format's
-own integrity fields — a separate change that does not require breaking the WAL
-again.
+The audit log keeps its own independent format, and it now applies the same
+rule. Audit format v2 adds a checksum over each 24-byte record header, which is
+what makes a record's declared extent trustworthy and therefore makes "does
+anything follow this record?" answerable — the same prerequisite WAL v3's prefix
+checksum supplies. A record that fails validation with records after it refuses
+with `PersistError::AuditMidLogCorruption` and leaves the file untouched; only a
+genuine final tear is repaired. v1 logs are rejected at open.
 
 Reserved bytes in the snapshot header (offsets 12–15) must be zero on disk;
 nonzero values are rejected as `ReservedBytesNonZero` to make accidental
