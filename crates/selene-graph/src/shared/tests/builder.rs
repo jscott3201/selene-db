@@ -35,7 +35,8 @@ fn durable_write_failure_rolls_back_in_memory_state() {
 
     assert!(matches!(
         txn.commit(),
-        Err(GraphError::Durable { reason }) if reason.contains("synthetic durable failure")
+        Err(GraphError::IndeterminateCommit { reason })
+            if reason.contains("synthetic durable failure")
     ));
     assert_eq!(shared.read().node_count(), 0);
 }

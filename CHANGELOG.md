@@ -89,6 +89,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A failed `commit()` no longer claims the transition did not happen.** Once a
+  commit reaches the durable path, the engine cannot honour ISO/IEC 39075:2024
+  §8.4 `<commit command>` GR 1)b)'s "any changes ... are canceled": the WAL
+  record may already be written, or written and fsynced, and a reopen replays
+  it. Every commit error-acked on a committer poison exit now returns the new
+  `GraphError::IndeterminateCommit` (GQLSTATUS `40003`, *transaction rollback —
+  statement completion unknown*, §23.1 Table 8) instead of `GraphError::Durable`
+  (`5GQL0`), which read as a definite negative. A caller must reopen and read
+  back before retrying; retrying blind double-applies. `docs/persistence-and-
+  recovery.md` gains a "Commit outcomes" section stating the contract.
+
+  **Downstream impact:** `GraphError` is `#[non_exhaustive]`, so the new variant
+  compiles additively — but code that matched `GraphError::Durable { .. }` to
+  detect a failed commit now falls through to its wildcard arm. Match
+  `GraphError::IndeterminateCommit` (or GQLSTATUS `40003`) instead, and treat it
+  as "unknown", not "failed".
+
+  The prior behaviour rested on three doc comments asserting that
+  appended-but-unflushed bytes are "correct to lose on reopen". That holds for
+  losing the page cache — a machine crash — but poisoning the committer requires
+  a reopen, not a crash. Regression tests now reopen a real WAL and show five
+  error-acked commits leaving two live nodes behind.
+
 - Composite property-index drift classification no longer distinguishes a
   rejected NaN from a rejected wrong variant by comparing a diagnostic string
   against the literal `"NaN"`. `CompositeIndexValueError` gained a

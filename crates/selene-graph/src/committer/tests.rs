@@ -190,8 +190,15 @@ fn committer_panic_poisons_and_fails_all_waiters_without_hanging() {
         .unwrap();
     let first = txn.commit();
     assert!(
-        matches!(first, Err(GraphError::Durable { .. })),
-        "the panicking commit reports a Durable error, got {first:?}"
+        matches!(first, Err(GraphError::IndeterminateCommit { .. })),
+        "a committer panic leaves the outcome unknown, not definitely rolled \
+         back: the panic may have landed past the group flush, so the commit \
+         may be fsynced and replay on reopen. Got {first:?}"
+    );
+    assert_eq!(
+        first.unwrap_err().gqlstatus(),
+        "40003",
+        "ISO 23.1 Table 8: transaction rollback - statement completion unknown"
     );
 
     // Subsequent commit fails fast (poisoned) — no hang.
@@ -203,7 +210,7 @@ fn committer_panic_poisons_and_fails_all_waiters_without_hanging() {
     let second = txn.commit();
     assert!(Instant::now() < deadline, "post-poison commit did not hang");
     assert!(
-        matches!(second, Err(GraphError::Durable { .. })),
+        matches!(second, Err(GraphError::IndeterminateCommit { .. })),
         "post-poison commit fails fast, got {second:?}"
     );
 }
@@ -260,8 +267,10 @@ fn returned_write_commit_err_poisons_so_failed_commit_never_leaks() {
         .unwrap();
     let first = txn.commit();
     assert!(
-        matches!(first, Err(GraphError::Durable { .. })),
-        "a returned write_commit Err surfaces as Durable, got {first:?}"
+        matches!(first, Err(GraphError::IndeterminateCommit { .. })),
+        "a returned write_commit Err surfaces as indeterminate: append_sealed \
+         walks the providers in order, so an earlier one may already hold the \
+         record. Got {first:?}"
     );
 
     // Not visible: the published snapshot never advanced past the failure.
@@ -279,7 +288,7 @@ fn returned_write_commit_err_poisons_so_failed_commit_never_leaks() {
     let second = txn.commit();
     assert!(Instant::now() < deadline, "post-poison commit did not hang");
     assert!(
-        matches!(second, Err(GraphError::Durable { .. })),
+        matches!(second, Err(GraphError::IndeterminateCommit { .. })),
         "post-poison commit fails fast (engine poisoned), got {second:?}"
     );
 

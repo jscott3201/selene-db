@@ -24,8 +24,14 @@
 //! visible → ack delivers `durable_at`. The flush strictly precedes both store
 //! and ack, so neither the published snapshot nor `durable_at` is observable
 //! before fsync (durable-before-visible). An appended-but-unflushed commit is
-//! never published alone, so it stays invisible **and** unacked, and on a crash
-//! its torn tail is truncated on reopen — exactly what durability permits.
+//! never published alone, so it stays invisible **and** unacked.
+//!
+//! On a **crash** its bytes are lost with the page cache — exactly what
+//! durability permits. On a **reopen** they are not: the frame is complete and
+//! checksum-valid, recovery's tail repair truncates only a torn tail, and the
+//! frame is not torn, so it replays. Poisoning the committer forces a reopen,
+//! not a crash, which is why every poison-exit ack carries
+//! [`GraphError::IndeterminateCommit`] instead of a rollback.
 //!
 //! # OFF == BRIEF 1
 //!
@@ -246,7 +252,11 @@ pub(crate) fn drain_contiguous_batch(
                         // into this waiter's CommitOutcome reply channel.
                         let error = match unwrap_protected(failed, poisoned) {
                             Ok(_appended) => unreachable!("append-failure arm is never Ok"),
-                            Err(error) => error,
+                            // Indeterminate, not Durable: `append_sealed` walks
+                            // the providers in order, so one may have taken the
+                            // record before the next refused, and the WAL
+                            // writer's own rollback is best-effort.
+                            Err(error) => crate::committer::indeterminate(error),
                         };
                         let _: Result<(), std::sync::mpsc::SendError<GraphResult<CommitOutcome>>> =
                             reply.send(Err(error));
@@ -338,7 +348,10 @@ pub(crate) fn flush_and_publish_batch(
             poisoned,
         );
         if let Some(reply) = reply {
-            let _ = reply.send(result);
+            // A panic here is past the group flush, so this member's record is
+            // fsynced and will replay. That is the sharpest case for `40003`:
+            // the commit is durable and only its publication was lost.
+            let _ = reply.send(result.map_err(crate::committer::indeterminate));
         }
         if poisoned.load(Ordering::Acquire) {
             // A publish-tail panic poisoned us. Every remaining member is

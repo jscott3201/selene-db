@@ -61,6 +61,8 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("25N02", "in-failed-transaction"),
     ("2D000", "invalid-transaction-termination"),
     ("2DN01", "session-closed"),
+    ("40000", "transaction-rollback"),
+    ("40003", "statement-completion-unknown"),
     ("42001", "invalid-syntax"),
     ("42002", "invalid-reference"),
     (
