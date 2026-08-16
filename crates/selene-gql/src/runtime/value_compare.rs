@@ -478,17 +478,12 @@ fn string_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
     })
 }
 
+/// The ISO numeric family; see [`Value::is_number`] for the grounding.
+///
+/// Kept as a local alias so this module reads the same as before while the
+/// definition lives in one place shared with index-drift classification.
 fn is_numeric(value: &Value) -> bool {
-    matches!(
-        value,
-        Value::Int(_)
-            | Value::Uint(_)
-            | Value::Int128(_)
-            | Value::Uint128(_)
-            | Value::Float(_)
-            | Value::Float32(_)
-            | Value::Decimal(_)
-    )
+    value.is_number()
 }
 
 fn float_is_nan(value: &Value) -> bool {
@@ -645,3 +640,7 @@ fn u128_representable_by_binary_float(value: u128, significand_bits: u32) -> boo
 #[cfg(test)]
 #[path = "value_compare_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "value_compare_family_tests.rs"]
+mod family_tests;

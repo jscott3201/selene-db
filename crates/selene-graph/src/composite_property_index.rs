@@ -150,16 +150,22 @@ pub(crate) struct LenientCompositeBuild {
 ///
 /// A composite tuple is all-or-nothing, so one unusable component drops the
 /// whole row. NaN is excluded for the same reason as the single-key path: it
-/// satisfies no equality or range predicate, so a scan omits the row too.
+/// satisfies no equality or range predicate, so a scan omits the row too. See
+/// [`crate::property_index`]'s `counts_as_drift` for why this stays an
+/// over-approximation over the remaining cases.
 ///
-/// [`CompositeIndexValueError`] has no NaN variant; a genuine NaN arrives as
-/// `Component` with `observed == "NaN"` and must be recognised by that string,
-/// not by the discriminant. `ArityMismatch` counts, because a row the index
-/// cannot key is a row the index is missing.
+/// `ArityMismatch` counts, because a row the index cannot key is a row the
+/// index is missing.
+///
+/// The match is exhaustive so a future [`CompositeIndexValueError`] variant is
+/// a compile error here rather than defaulting into either answer. Before
+/// `ComponentNaN` existed this read `observed != "NaN"`, recovering the
+/// distinction from a diagnostic string that nothing held stable.
 fn counts_as_drift(err: &CompositeIndexValueError) -> bool {
     match err {
-        CompositeIndexValueError::Component { observed, .. } => *observed != "NaN",
-        CompositeIndexValueError::ArityMismatch { .. } => true,
+        CompositeIndexValueError::Component { .. }
+        | CompositeIndexValueError::ArityMismatch { .. } => true,
+        CompositeIndexValueError::ComponentNaN { .. } => false,
     }
 }
 
@@ -296,8 +302,8 @@ fn remove_commit(
 }
 
 /// Commit-path branching for [`CompositeIndexValueError`]: parallel to the
-/// single-key helper in [`crate::property_index`]. `Component` (kind
-/// mismatch) AND `ArityMismatch` retain the commit-path semantics of
+/// single-key helper in [`crate::property_index`]. Every variant — kind
+/// mismatch, NaN, and `ArityMismatch` — retains the commit-path semantics of
 /// `warn_rejected` lenient skip. Build paths handle `ArityMismatch`
 /// separately via [`index_rejection`] under the strict policy.
 fn demote_or_promote(
@@ -309,6 +315,7 @@ fn demote_or_promote(
 ) -> GraphResult<()> {
     match err {
         CompositeIndexValueError::Component { .. }
+        | CompositeIndexValueError::ComponentNaN { .. }
         | CompositeIndexValueError::ArityMismatch { .. } => {
             warn_rejected(op, label, properties, row, &err);
             Ok(())
@@ -333,15 +340,39 @@ fn index_rejection(
             index,
             expected_kind,
             observed,
-        } => GraphError::IndexValueRejected {
-            property: properties
-                .get(index)
-                .cloned()
-                .unwrap_or_else(|| properties.first().cloned().unwrap_or_else(|| label.clone())),
-            label,
+        } => component_rejection(label, properties, index, expected_kind, observed),
+        CompositeIndexValueError::ComponentNaN {
+            index,
             expected_kind,
-            observed,
-        },
+        } => component_rejection(
+            label,
+            properties,
+            index,
+            expected_kind,
+            crate::typed_index::NAN_OBSERVED,
+        ),
+    }
+}
+
+/// Name the offending component and raise the shared rejection error.
+///
+/// Falls back to the first declared property, then the label, when `index` is
+/// out of range: a rejection must still name something a user can act on.
+fn component_rejection(
+    label: DbString,
+    properties: &[DbString],
+    index: usize,
+    expected_kind: TypedIndexKind,
+    observed: &'static str,
+) -> GraphError {
+    GraphError::IndexValueRejected {
+        property: properties
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| properties.first().cloned().unwrap_or_else(|| label.clone())),
+        label,
+        expected_kind,
+        observed,
     }
 }
 

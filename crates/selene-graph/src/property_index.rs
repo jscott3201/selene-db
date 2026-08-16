@@ -479,15 +479,6 @@ fn remove_commit(
 /// A kind mismatch does: the row is live and a scan comparing across variants
 /// may match it, so the index must stop answering until the row leaves.
 ///
-/// This deliberately over-approximates. Cross-variant equality only collapses
-/// within the numeric family, so a String stored under an I64 index could never
-/// have matched an I64-keyed predicate and omitting it already agreed with a
-/// scan. Counting it anyway costs a needless demotion to scan, which is safe;
-/// the opposite error is not. Narrowing this to numeric-kind against
-/// numeric-variant is a worthwhile follow-up, but it must land with tests that
-/// pin every collapsing pair, because an under-count silently restores the
-/// wrong-answer bug this exists to prevent.
-///
 /// NaN does not. NaN satisfies no equality or range predicate, so a scan omits
 /// the row too and index and scan already agree. Counting it would disable an
 /// index that needs no disabling.
@@ -495,6 +486,42 @@ fn remove_commit(
 /// `insert_commit` and `remove_commit` must apply this identically. An
 /// asymmetric filter drives the tally toward zero and re-promotes an index that
 /// is still missing rows.
+///
+/// # Why this stays an over-approximation
+///
+/// Cross-variant *equality* really does collapse only within the numeric
+/// family. ISO/IEC 39075:2024 §4.16.5.2 says "any two numbers are essentially
+/// comparable values"; every other family is narrower (§4.16.6.2 temporal
+/// instants only at the same most specific type, §4.16.6.3 durations only
+/// within one unit group, §4.4.2 NOTE 25 otherwise only identical values), and
+/// absent Feature GA04 "Universal comparison" — which
+/// `selene_core::feature_register` does not claim — §4.4.2 NOTE 26 leaves no
+/// further comparability. `selene-gql`'s `value_compare` implements exactly
+/// that: its only cross-variant arms are numeric, so a `String` skipped by an
+/// `I64` index is a definite `false` for any `I64`-keyed equality probe.
+///
+/// So narrowing this to `kind.is_numeric() && value.is_number()` is sound *for
+/// the equality probe alone*. It is not sound for the other two probes, and
+/// both failures are silent:
+///
+/// - **Range.** A non-comparable pair is a data exception
+///   (`ValuesNotComparable`, `eval_ordering`), not a `false`. Today the drifted
+///   index declines, the predicate stays a general filter, and `n.age > 10`
+///   over a column holding one `String` raises. Let the index survive and the
+///   `range_index_scan` rule fires instead; when its range probe then declines,
+///   `linear_rows_filtered_by_resolved_bounds` treats the incomparable row as a
+///   plain non-match. The query stops raising and starts succeeding.
+/// - **Prefix.** `STARTS WITH` against a non-string is a data exception too
+///   (`eval_string_predicate`), so a `String` index carrying one `Int` row has
+///   the same error-becomes-success flip.
+///
+/// Gating the probes separately does not rescue it either: the optimizer's
+/// single `IndexCatalog::typed_index` seam decides index-or-scan before it
+/// knows the predicate shape, so an equality-only completeness notion cannot
+/// reach the planner without making that seam predicate-aware. That is a
+/// broader design than a classifier tweak, so it stays queued rather than
+/// half-landed. Counting a non-collapsing mismatch costs a needless demotion to
+/// scan, which is safe; the opposite error is not.
 const fn counts_as_drift(err: &TypedIndexValueError) -> bool {
     matches!(err, TypedIndexValueError::KindMismatch { .. })
 }

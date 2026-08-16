@@ -187,6 +187,64 @@ impl Value {
     /// Number of known [`Value`] variants in this build.
     pub const VARIANT_COUNT: usize = Self::ALL.len();
 
+    /// Whether this value is a *number* in the ISO sense.
+    ///
+    /// ISO/IEC 39075:2024 §4.16.5.2 states that "any two numbers are
+    /// essentially comparable values", which makes the numeric types the one
+    /// family whose values compare across distinct variants. Every other family
+    /// is narrower: temporal instants are comparable only at "the same most
+    /// specific static value types" (§4.16.6.2), temporal durations only within
+    /// one unit group (§4.16.6.3), and otherwise only identical values are
+    /// essentially comparable (§4.4.2 NOTE 25). Absent Feature GA04, "Universal
+    /// comparison" — which this engine does not claim — §4.4.2 NOTE 26 leaves no
+    /// further comparability, so a cross-variant pair outside this family can
+    /// never compare equal.
+    ///
+    /// That is why this predicate is engine-wide rather than local to one
+    /// consumer: query evaluation and index-drift classification have to agree
+    /// on it exactly, and a second copy could only ever drift from the first.
+    ///
+    /// The match is written out rather than as a `matches!` of the numeric arms
+    /// because `#[non_exhaustive]` does not apply inside `selene-core`: a new
+    /// variant is a compile error here and has to be classified deliberately.
+    /// A catch-all would answer `false` for a new numeric variant, and a caller
+    /// that skips a row on the strength of that answer would silently omit it
+    /// from results it belongs in.
+    #[must_use]
+    pub const fn is_number(&self) -> bool {
+        match self {
+            Self::Int(_)
+            | Self::Uint(_)
+            | Self::Int128(_)
+            | Self::Uint128(_)
+            | Self::Float(_)
+            | Self::Float32(_)
+            | Self::Decimal(_) => true,
+            Self::Bool(_)
+            | Self::String(_)
+            | Self::Bytes(_)
+            | Self::List(_)
+            | Self::Record(_)
+            | Self::RecordTyped(_)
+            | Self::Path(_)
+            | Self::NodeRef(_)
+            | Self::EdgeRef(_)
+            | Self::GraphRef(_)
+            | Self::TableRef(_)
+            | Self::ZonedDateTime(_)
+            | Self::LocalDateTime(_)
+            | Self::Date(_)
+            | Self::ZonedTime(_)
+            | Self::LocalTime(_)
+            | Self::Duration(_)
+            | Self::Extended { .. }
+            | Self::Null
+            | Self::Uuid(_)
+            | Self::Vector(_)
+            | Self::Json(_) => false,
+        }
+    }
+
     /// Stable telemetry name for this value variant.
     ///
     /// This match is exhaustive in `selene-core`, so a future variant addition

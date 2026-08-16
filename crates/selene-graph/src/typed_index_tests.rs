@@ -15,6 +15,8 @@ fn row_index(index: &TypedIndex, value: &Value) -> RoaringBitmap {
 mod basics;
 #[path = "typed_index_tests/lookup.rs"]
 mod lookup;
+#[path = "typed_index_tests/numeric_family.rs"]
+mod numeric_family;
 #[path = "typed_index_tests/ranges.rs"]
 mod ranges;
 #[path = "typed_index_tests/strings.rs"]
