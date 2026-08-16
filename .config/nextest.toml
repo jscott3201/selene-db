@@ -8,6 +8,17 @@ slow-timeout = { period = "5s", terminate-after = 12 }
 # Absorb rare local timing noise in the known sleep-bearing concurrency tests.
 retries = 1
 
+# Same carve-out `profile.ci` has below, and for the same test. Without it the
+# documented local gate fails on a clean checkout: the parser stress test needs
+# ~122s on a cold build against this profile's 12 x 5s = 60s cap, so a developer
+# running the gate as written sees a timeout that looks like their own
+# regression. The two profiles keep separate budgets because the global caps
+# differ (12 vs 24 periods); only this one test needs the same absolute room in
+# both.
+[[profile.default.overrides]]
+filter = 'test(parsing_hostile_fold_then_dropping_is_safe)'
+slow-timeout = { period = "5s", terminate-after = 48 }
+
 [profile.ci]
 # CI runners are slower than local M-series machines on corpus-style tests.
 slow-timeout = { period = "5s", terminate-after = 24 }
