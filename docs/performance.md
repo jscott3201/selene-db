@@ -115,27 +115,58 @@ scripts/run-benches.sh --profile quick --layer criterion --filter graph_node_fet
 The major levers that affect throughput and latency, in roughly the order
 they come up in practice:
 
-### WAL `SyncPolicy`
+### Fsync policy
 
-Durability versus write throughput. The default `EveryN(1)` issues an
-`fsync` after every appended entry — durable per commit. `EveryN(N)` with
-`N > 1` opts into group commit, amortizing fsync across batches at the cost
-of up to `N-1` entries of recent durability. `OnFlushOnly` suppresses fsync
-entirely except on explicit `flush()`; do not use this in production.
+**Which knob applies depends on which path you are on, and the two are easy to
+confuse.**
 
-Measured impact at 100k WAL entries (single appends, no compression):
+*Live `SharedGraph`* — the committer owns fsync, and `with_wal` **discards** the
+`SyncPolicy` you pass, forcing `OnFlushOnly` so the committer's group flush is
+the single durability barrier. The knob that matters here is
+`CommitBatching`: `Off` is one fsync per commit; `On { max_commits, max_bytes }`
+coalesces a contiguous run of commits into one fsync, trading latency for
+throughput. Setting `SyncPolicy` on this path has no effect.
 
-| Policy           | Time      | Throughput            |
-| :--------------- | :-------- | :-------------------- |
-| `EveryN(1)`      | 588.9 ms  | ~170k entries/s       |
-| `OnFlushOnly`    | 108.6 ms  | ~920k entries/s       |
-| Batched (1000)   | 10.95 ms  | ~9.1M entries/s       |
+*Offline `WalWriter` tooling* — `SyncPolicy` means what it says. `EveryN(1)`
+fsyncs after every appended entry, `EveryN(N)` amortizes across N, and
+`OnFlushOnly` defers to an explicit `flush()`.
 
-Batching at the embedder layer (one `commit` per multi-`Change` transaction
-rather than one `commit` per `Change`) is the biggest single win.
+The numbers below are the raw-writer path, which is what the WAL benchmark
+measures; treat them as the shape of the fsync trade-off rather than as live
+commit latency.
+
+Measured on the raw writer at 10k changes, no compression (macOS, 10-core M5,
+2026-08-16). Every row is one `fsync` cadence over the same total work:
+
+```bash
+scripts/run-benches.sh --profile full --bench wal
+```
+
+| Entry shape             | Policy          | Time     | Throughput        |
+| :---------------------- | :-------------- | :------- | :---------------- |
+| 10k × 1 change          | `EveryN(1)`     | 35.97 s  | ~280 changes/s    |
+| 10k × 1 change          | `EveryN(10)`    | 3.668 s  | ~2.7k changes/s   |
+| 10k × 1 change          | `EveryN(100)`   | 475.8 ms | ~21k changes/s    |
+| 10k × 1 change          | `EveryN(1000)`  | 60.61 ms | ~165k changes/s   |
+| 10k × 1 change          | `OnFlushOnly`   | 17.18 ms | ~582k changes/s   |
+| 10 × 1000 changes       | `EveryN(1000)`  | 6.295 ms | ~1.6M changes/s   |
+
+The first five rows are `persist_wal_sync_sweep`; the last is
+`persist_wal_append_batch_1000`. **`EveryN(1)` is nearly four orders of
+magnitude off the bottom row.** An earlier revision of this table labelled its
+single row `EveryN(1)` while quoting a benchmark that runs `EveryN(1000)`;
+measured at 10k those two policies differ by ~590×, so that row understated
+per-entry fsync by about that much. Size durability budgets from this table.
+
+Two separate wins are visible and it is worth keeping them apart. Rows 1-5 are
+**fsync amortization**: the cost is syscall latency, not selene-db code. The
+last row adds **entry batching** — one `commit` per multi-`Change` transaction
+rather than one per `Change` — which is a further ~2.7× over `OnFlushOnly` at
+equal fsync count, from per-entry framing and checksum work avoided.
 
 See [persistence-and-recovery.md](persistence-and-recovery.md) for the full
-`SyncPolicy` semantics.
+`SyncPolicy` semantics and the append -> flush -> publish -> acknowledge
+commit ordering.
 
 ### Parallelization gating
 
@@ -283,7 +314,7 @@ A reproducible workload definition is straightforward:
 ```text
 Graph:        100k nodes, 300k edges, label-uniform.
 Indexes:      One typed index on `:Person.email`.
-Persistence:  WAL SyncPolicy::EveryN(1), snapshot at start.
+Persistence:  SharedGraph with_wal, CommitBatching::Off, snapshot at start.
 Query mix:    80% MATCH (n:Person {email: $e}) RETURN n
               20% MATCH (n:Person)-[:KNOWS]->(m) RETURN m LIMIT 10
 Hardware:     10-core M5, 16 GiB, macOS, rustc 1.95.0.

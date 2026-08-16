@@ -1943,18 +1943,34 @@ Bench bins: `wal`, `snapshot`, plus `graph_snapshot_roundtrip` (lives in the
 
 ### §4a WAL
 
+_§4a re-measured 2026-08-16 (same M5 box, rustc 1.97.1) via
+`scripts/run-benches.sh --profile full --bench wal`. The file-level
+2026-06-01 stamp still governs every other section._
+
 `scale` = WAL entries, not graph nodes. `_no_fsync` rows use
 `SyncPolicy::OnFlushOnly` (append/threshold/drop fsync suppressed; a caller
 `flush()` would still sync).
 
-| Bench | 10k | 50k | 100k | Notes |
-|---|---:|---:|---:|---|
-| `persist_wal_append_single` | 65.2 ms | 322.4 ms | 630.9 ms | Single-entry loop, `EveryN(1000)`. |
-| `persist_wal_append_single_no_fsync` | 11.5 ms | 55.7 ms | 111.2 ms | Donor-parity diagnostic, no append fsync. |
-| `persist_wal_append_batch_1000` | 6.49 ms | 9.57 ms | 12.58 ms | 1000-change entries — **50× faster than per-entry at 100k**. |
-| `persist_wal_append_batch_1000_no_fsync` | 2.04 ms | 5.04 ms | 8.28 ms | Batched, no flush in timed body. |
-| `persist_wal_replay` | 4.23 ms | 18.67 ms | 32.27 ms | Fixed-layout header + xxh3 + BufReader. |
-| `persist_wal_open_scan` | 161.75 µs | 760.79 µs | 1.5317 ms | Writer reopen validation scan after B16 buffered open-scan. |
+| Bench | 10k | 50k | 100k | 100k Δ | Notes |
+|---|---:|---:|---:|---:|---|
+| `persist_wal_append_single` | 58.49 ms | 295.5 ms | 604.7 ms | −4.2% | Single-entry loop, `EveryN(1000)`. |
+| `persist_wal_append_single_no_fsync` | 12.4 ms | 59.03 ms | 120.2 ms | **+8.1%** | Donor-parity diagnostic, no append fsync. |
+| `persist_wal_append_batch_1000` | 6.295 ms | 8.585 ms | 10.28 ms | −18.3% | 1000-change entries — **~59× faster than per-entry at 100k**. |
+| `persist_wal_append_batch_1000_no_fsync` | 2.239 ms | 3.997 ms | 6.092 ms | −26.4% | Batched, no flush in timed body. |
+| `persist_wal_replay` | 3.882 ms | 15.15 ms | 22.83 ms | −29.3% | Fixed-layout header + xxh3 + BufReader. |
+| `persist_wal_open_scan` | 233.79 µs | 1.21 ms | 2.228 ms | **+45.5%** | Writer reopen validation scan. |
+
+**The two regressions are the priced-in cost of WAL 3.0.** The window between
+the two measurements contains `bfb904c4` (#1108, "bring WAL framing under
+integrity protection"), which widened the entry prefix to 40 bytes and put a
+checksum on it. `append_single_no_fsync` pays that on every write and
+`open_scan` verifies it on every entry — at 100k, +0.7 ms over the scan is
+~7 ns/entry, the right order for an xxh3 over 40 bytes. Both are consistent
+with that single cause; neither was bisected, so treat the attribution as
+the leading explanation rather than a measured one.
+
+Replay moving the other way (−29.3%) is the same change paying for itself: a
+prefix checksum lets replay reject a bad entry without decoding its body.
 
 #### `persist_wal_open_scan` — writer reopen validation (B16)
 

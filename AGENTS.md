@@ -349,6 +349,7 @@ bash .github/scripts/check-no-rowid-arith.sh
 bash .github/scripts/check-no-version-locked-feature-error.sh
 bash .github/scripts/check-bench-invocation.sh
 bash .github/scripts/check-benchmarks-doc.sh .
+bash .github/scripts/check-doc-constants.sh
 bash .github/scripts/check-mimalloc-dev-dep.sh
 git diff --check
 ```
