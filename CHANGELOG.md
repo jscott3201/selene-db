@@ -47,6 +47,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- JSON values no longer change arbitrary-precision numbers into private
+  serde-json transport objects during postcard, WAL, or snapshot recovery when
+  a consumer enables serde-json's `arbitrary_precision` feature. Recovery now
+  preserves both decimal and oversized-integer number kinds without changing
+  the persisted JSON representation.
+
 - `ORDER BY` on a property access no longer runs and does nothing. `ORDER BY
   d.version DESC` parsed, planned, reached the executor, and returned rows in
   insertion order; only `ORDER BY <alias>` sorted. `OrderBy` runs after

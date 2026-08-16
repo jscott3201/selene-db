@@ -11,6 +11,33 @@ fn human_readable_serde_preserves_json_shape() {
 }
 
 #[test]
+fn parse_str_preserves_arbitrary_precision_number_kinds() {
+    let value = JsonValue::parse_str(r#"{"large":184467440737095516160,"rate":0.01}"#)
+        .expect("arbitrary-precision JSON parses");
+
+    assert!(value.as_serde()["large"].is_number());
+    assert!(value.as_serde()["rate"].is_number());
+    assert_eq!(
+        value.to_canonical_string(),
+        r#"{"large":184467440737095516160,"rate":0.01}"#
+    );
+}
+
+#[test]
+fn postcard_round_trip_preserves_arbitrary_precision_numbers() {
+    let serde_value: serde_json::Value =
+        serde_json::from_str(r#"{"large":184467440737095516160,"rate":0.01}"#)
+            .expect("consumer JSON parses");
+    let original = JsonValue::new(serde_value).expect("consumer JSON validates");
+    let bytes = postcard::to_allocvec(&original).expect("JSON serializes");
+    let recovered: JsonValue = postcard::from_bytes(&bytes).expect("JSON deserializes");
+
+    assert_eq!(recovered, original);
+    assert!(recovered.as_serde()["large"].is_number());
+    assert!(recovered.as_serde()["rate"].is_number());
+}
+
+#[test]
 fn parse_str_rejects_duplicate_object_keys() {
     let err = JsonValue::parse_str(r#"{"a":1,"nested":{"b":1,"b":2}}"#)
         .expect_err("duplicate JSON object key rejected");
