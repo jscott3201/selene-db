@@ -36,6 +36,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   source across a break — and carries the table of shipped format identities.
   Until 2.0.0 there is no backward-compatibility guarantee for persisted data.
 
+- **BREAKING (API): `Mutator::schema_change` no longer takes a `GraphId`.** The
+  emitted `Change::SchemaChanged` record is stamped from the live transaction
+  instead. The parameter was never validated against the live graph, and since
+  the caller-asserted-id enforcement landed, a durable record carrying a foreign
+  id makes the directory unrecoverable under *every* id because recovery refuses
+  it as cross-wired. Rejecting a mismatch would have left a parameter with
+  exactly one computable value, so it is gone and the bad state is
+  unrepresentable. Callers drop the first argument; every in-tree producer
+  already derived the id this way.
+
 ### Added
 
 - `PersistenceReadGuard` now provides a shared, cross-handle/process epoch
@@ -243,6 +253,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   archive from the header-only active WAL. Ahead-MANIFEST and invalid committed
   artifact states poison stale writers until reopen, preventing sequence reuse
   that recovery could otherwise filter.
+
+- Indexed float reads no longer disagree with an unindexed read about signed
+  zero. `-0.0` and `0.0` compare equal under GQL, but typed `F32`/`F64` index
+  keys were built from the raw bit pattern and ordered by `total_cmp`, which
+  files the two zeros under separate keys and sorts `-0.0` strictly below
+  `+0.0`. An indexed `= 0.0` returned only the rows that happened to store the
+  same sign, and an indexed `> -0.0` returned a `0.0` row that `0.0 > -0.0`
+  rejects. Every row stayed keyable throughout, so the drift tally could not
+  see it and `selene.verify` reported the index healthy.
+
+  Both key constructors now collapse `-0.0` onto `+0.0`. That is the single
+  coercion point behind reads, writes, range bounds, update maintenance,
+  composite components and verify, so equality, hashing, ordering and range
+  bounds become consistent together. Range semantics change with it: `> -0.0`
+  now excludes a `0.0` row, matching a scan.
 
 ### Security
 
