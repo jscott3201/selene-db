@@ -268,6 +268,39 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   artifact states poison stale writers until reopen, preventing sequence reuse
   that recovery could otherwise filter.
 
+- `ORDER BY EXISTS { ... }` now sorts instead of failing. A free outer reference
+  inside the subquery body — the `n` in
+  `RETURN n.name AS name ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }` — is a
+  binding variable reference *contained in* the sort key, because ISO
+  §5.3.2.1 defines containment transitively. Neither the analyzer nor the
+  planner saw it: both walked sort keys with a child walk that does not descend
+  into a subquery body. The planner therefore appended no carrier, and at
+  runtime the post-projection row had no `n`, so an analyzer-accepted query died
+  with an internal-invariant diagnostic (`subquery outer binding missing from
+  source row`).
+
+  Both halves now collect those references. The analyzer enforces §14.10 SR IV
+  over them, so under `DISTINCT` or an aggregate — where SR III case 3 makes
+  ORDER_REFS the return identifiers alone — the query is rejected with
+  `SortKeyReferenceNotInScope` rather than silently sorting by `NULL`. The
+  planner carries them per SR VIII. Variables the subquery body defines itself
+  are excluded, which §14.10 CR 4 names directly.
+
+- **`ORDER BY EXISTS { ... RETURN ... }` is now rejected.** ISO §14.10
+  SR 4)c)i)2)A)I forbids a `<nested query specification>` in a sort key, and the
+  fifth `<exists predicate>` alternative (§19.4) is exactly that — the other four
+  admit only a graph pattern or a match statement block. The check previously
+  matched only the `VALUE { ... }` spelling. The graph-pattern and match-block
+  forms remain legal: §19.4 SR 2/3 do rewrite them into a nested query
+  specification, but §5.3.2.4 applies a contained element's Syntax Rules "at the
+  same time as" its container's, so that rewrite does not feed SR I.
+
+- A sort key naming a variable that is bound nowhere now reports an undefined
+  reference instead of `SortKeyReferenceNotInScope`. SR IV is about a reference
+  that resolves but sits outside ORDER_REFS; a name that resolves to nothing is
+  a different and more actionable error, and the SR IV check previously ran
+  before the sort key was bound and so could not tell them apart.
+
 - The audit log no longer truncates from the first bad record to end of file.
   `read_one_record` reported a short read, an over-cap length and a checksum
   mismatch all as an undiscriminated end-of-log, `scan_durable_end` stopped

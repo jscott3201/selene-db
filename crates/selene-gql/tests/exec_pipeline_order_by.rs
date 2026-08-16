@@ -466,3 +466,137 @@ fn the_optimized_plan_fuses_top_k_and_still_trims_the_carrier() {
         "the trim must follow the fused TopK, not separate OrderBy from Limit"
     );
 }
+
+/// ISO §14.10 SR IV/VIII reach into an `EXISTS` body. §5.3.2.1 defines "contain"
+/// transitively, so the free `n` inside the subquery is a binding variable
+/// reference contained in the sort key, and SR VIII has to carry it past the
+/// projection. Without the carrier the runtime cannot find `n` in the
+/// post-projection row and raises an internal-invariant error for a query the
+/// analyzer accepted.
+///
+/// Fixture: Alice-KNOWS->Bob and Bob-KNOWS->Sensor, Cara has no outgoing edge.
+#[test]
+fn an_exists_sort_key_carries_its_free_outer_reference() {
+    let table = execute_read(
+        "MATCH (n:Person) RETURN n.name AS name \
+         ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() } DESC, n.name ASC",
+    );
+    let names = column_values(&table, "name")
+        .into_iter()
+        .map(|value| match value {
+            Value::String(text) => text.as_str().to_owned(),
+            other => panic!("expected a string name, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()],
+        "the two people with outgoing KNOWS sort ahead of the one without"
+    );
+}
+
+/// Carriers appended past the projected width, per ISO §14.10 SR VIII, which
+/// GR 1)b)ii then drops again.
+fn carrier_count(plan: &selene_gql::ExecutionPlan) -> usize {
+    let Some(projected) = plan.pipeline.iter().find_map(|op| match op {
+        selene_gql::PipelineOp::TrimOrderCarriers { projected_width } => Some(*projected_width),
+        _ => None,
+    }) else {
+        return 0;
+    };
+    let total = plan
+        .pipeline
+        .iter()
+        .find_map(|op| match op {
+            selene_gql::PipelineOp::Project(projects) => Some(projects.len()),
+            _ => None,
+        })
+        .expect("a trim implies a project");
+    total - projected
+}
+
+#[test]
+fn an_exists_sort_key_emits_exactly_one_carrier_and_does_not_widen_the_schema() {
+    let plan = exec_common::planned(
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }",
+    );
+    assert_eq!(
+        carrier_count(&plan),
+        1,
+        "only the free outer `n` is carried"
+    );
+    assert_eq!(
+        plan.pipeline
+            .iter()
+            .filter(|op| matches!(op, selene_gql::PipelineOp::TrimOrderCarriers { .. }))
+            .count(),
+        1,
+        "exactly one trim closes the carrier"
+    );
+    assert_eq!(
+        plan.output_schema.columns.len(),
+        1,
+        "the carrier must not widen the declared output schema"
+    );
+}
+
+/// The subtraction that matters: a variable the subquery pattern binds itself is
+/// not a reference to anything outside, so it gets no carrier. Presence-only
+/// collection would carry `m` here and widen the row for nothing.
+#[test]
+fn a_variable_bound_inside_the_exists_body_gets_no_carrier() {
+    // The body must *reference* its own variable, not merely declare it. A bare
+    // `(m:Person)` is a declaration and produces no reference at all, so it
+    // cannot tell a correct subtraction from a missing one; the `WHERE` is what
+    // makes `m` a reference whose declaration sits inside the sort key.
+    let plan = exec_common::planned(
+        "MATCH (n:Person) RETURN n.name AS name \
+         ORDER BY EXISTS { MATCH (n)-[:KNOWS]->(m:Person) WHERE m.age > 1 }",
+    );
+    assert_eq!(
+        carrier_count(&plan),
+        1,
+        "`n` is carried and `m` is not: m is defined inside the sort key, so it \
+         is not a reference to a discarded binding (ISO §14.10 CR 4)"
+    );
+
+    // And the same shape with no outer reference at all carries nothing.
+    let plan = exec_common::planned(
+        "MATCH (n:Person) RETURN n.name AS name \
+         ORDER BY EXISTS { MATCH (m:Person) WHERE m.age > 1 }",
+    );
+    assert_eq!(carrier_count(&plan), 0, "m alone is never carried");
+}
+
+/// An uncorrelated EXISTS reaches nothing outside itself, so it needs no carrier
+/// at all and must not emit a trim.
+#[test]
+fn an_uncorrelated_exists_sort_key_emits_no_carrier() {
+    let plan = exec_common::planned(
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { MATCH (x:Person) }",
+    );
+    assert_eq!(carrier_count(&plan), 0);
+    assert!(
+        !plan
+            .pipeline
+            .iter()
+            .any(|op| matches!(op, selene_gql::PipelineOp::TrimOrderCarriers { .. })),
+        "nothing to trim when nothing was carried"
+    );
+}
+
+/// The regression guard for the symptom #1112 reported: an analyzer-accepted
+/// sort key must not reach the user as an internal-invariant diagnostic.
+#[test]
+fn an_accepted_exists_sort_key_never_surfaces_an_implementation_defined_error() {
+    for source in [
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }",
+        "MATCH (n:Person) RETURN n.name AS name \
+         ORDER BY EXISTS { MATCH (n)-[:KNOWS]->(m:Person) } DESC, n.name",
+        "MATCH (n:Person) RETURN n.name AS name, n.score AS score \
+         ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }, score",
+    ] {
+        let table = execute_read(source);
+        assert_eq!(table.rows().len(), 3, "{source} returns every Person");
+    }
+}

@@ -102,7 +102,17 @@ pub(crate) fn lower_mutation(
             MutationTerminator::Return(clause) => {
                 // A data-modifying statement's RETURN has no ordering-and-page
                 // statement after it, so there is never a sort carrier here.
-                super::lower_return(clause, analyzed, &mut ops, &mut visible, None)?;
+                // No sort terms here, so no carrier is ever allocated; the
+                // counter is a formality.
+                let mut next_expr_id = super::next_expr_id(analyzed);
+                super::lower_return(
+                    clause,
+                    analyzed,
+                    &mut ops,
+                    &mut visible,
+                    None,
+                    &mut next_expr_id,
+                )?;
             }
             MutationTerminator::Finish(_) => visible.clear(),
         }
