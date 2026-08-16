@@ -475,7 +475,7 @@ Complexity: `O(V · d²)` worst case where `d` is the max undirected degree. Sui
 | `algo.louvain`             | `(projection_name: STRING, max_iter: INTEGER?)`                                                          | `node_id, community, level`                          |
 | `algo.triangle_count`      | `(projection_name: STRING, parallelism: INTEGER?)`                                                       | `node_id, triangle_count`                            |
 
-The table above is the canonical list of all 19 `algo.*` names; the live registry enumerates them (alongside the 49 `selene.*` platform built-ins, 68 total) through `BuiltinProcedureRegistry::iter_handles`, which backs `SHOW PROCEDURES`.
+The table above is the canonical list of all 19 `algo.*` names; the live registry enumerates them (alongside the 50 `selene.*` platform built-ins, 69 total) through `BuiltinProcedureRegistry::iter_handles`, which backs `SHOW PROCEDURES`.
 
 ### 7.1 Nullable arguments and defaults
 

@@ -62,6 +62,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`selene.property_index_stats` makes a demoted property index diagnosable.**
+  A typed index cannot key a value whose variant does not match its registered
+  kind, and an open graph accepts any variant. Since the #1099 fix a single
+  unkeyable live row makes the index decline *every* probe, so queries silently
+  fall back to a scan — correct, but invisible: the index stays registered,
+  `SHOW INDEXES` lists it unchanged, and `selene.verify` deliberately audits
+  through the drift-ignoring probe and so reported a clean bill of health. The
+  new graph-tier procedure yields `name`, `entity`, `label`, `properties`,
+  `kind`, `indexed_rows`, `drifted_rows`, and `answers_probes` for all three
+  families that carry drift (node single-property, edge single-property, and
+  composite). `selene.verify`'s coverage detail now carries the drift count as
+  well, while its status stays `ok` — a demoted index is not corrupt. The
+  platform built-in count moves from 49 to 50, and the total procedure count
+  from 68 to 69.
 - **`SharedGraph::recovery_tail_repair()` reports a torn WAL tail discarded
   during recovery.** `SharedGraph::recover` returning `Ok` never meant nothing
   was lost: a final frame that is short, corrupt, or zero-filled was never

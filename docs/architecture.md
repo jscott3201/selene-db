@@ -326,7 +326,7 @@ in `selene-gql`. It is the plan/execute seam: the planner resolves procedure
 signatures and the executor dispatches calls through a `&dyn
 ProcedureRegistry`. The trait has exactly one frozen production
 implementation — the concrete native `BuiltinProcedureRegistry`
-(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 68
+(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 69
 procedures at construction (the 49 `selene.*` platform built-ins plus the 19
 `algo.*` procedures) and reports a constant `registry_version()` of `0` so
 the CALL plan cache never invalidates. The injectable `&dyn` seam exists for
@@ -462,7 +462,7 @@ buffers, which is what the snapshot reader produces.
 
 `CALL` is dispatched through the `ProcedureRegistry` trait, whose sole
 production implementation, `BuiltinProcedureRegistry`, registers its full
-procedure set (68 procedures: 49 `selene.*` platform built-ins plus 19 `algo.*`
+procedure set (69 procedures: 50 `selene.*` platform built-ins plus 19 `algo.*`
 procedures) once at construction. The registry is frozen — nothing is added
 or removed after construction, and `registry_version()` is a constant `0` —
 which lets the analyzer and planner trust the registry and keep the CALL plan

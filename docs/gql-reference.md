@@ -741,6 +741,7 @@ procedure output.
 | `selene.rebuild_vector_indexes`, `selene.rebuild_recommended_vector_indexes` | Maintenance | Rebuild derived in-memory vector index state from primary graph values. |
 | `selene.create_text_index`, `selene.drop_text_index` | Mutation | Register or drop maintained BM25 text indexes. |
 | `selene.text_index_stats` | Graph | Text index memory and cardinality statistics. |
+| `selene.property_index_stats` | Graph | Property index drift and cardinality statistics; `answers_probes` is false while an index is demoted to a scan. |
 | `selene.text_search_nodes`, `selene.text_score_nodes`, `selene.text_score_nodes_batch`, `selene.text_score_candidate_state_expanded_batch` | Graph | Exact BM25 search plus node/edge-filtered and candidate-scoped text scoring. |
 | `selene.reciprocal_rank_fusion` | Graph | Fuse ranked node lists with Reciprocal Rank Fusion. |
 | `selene.json_contains_nodes`, `selene.json_path_*_nodes` | Graph | Exact JSON containment, path-existence, path-containment, and path-value search over node properties. |

@@ -22,11 +22,13 @@ use crate::typed_index::{TypedIndex, TypedIndexKind};
 use crate::vector_index::VectorIndex;
 
 mod index_entries;
+mod index_stats;
 
 pub use index_entries::{
     CompositePropertyIndexEntry, CompositePropertyIndexEntryRow, PropertyIndexEntry,
     TextIndexEntry, TextIndexEntryRow, VectorIndexEntry, VectorIndexEntryRow,
 };
+pub use index_stats::{IndexedEntity, PropertyIndexStatsRow};
 
 /// Snapshot metadata.
 #[derive(

@@ -113,7 +113,8 @@ epoch mutation.
   those tests and docs together when the surface changes.
 - Procedure tiers are load-bearing:
   - graph tier: read-only health, feature status, verify, vector search/score,
-    vector candidate-state discovery/composition, vector index stats, BM25 text
+    vector candidate-state discovery/composition, vector index stats, property
+    index drift/cardinality stats, BM25 text
     search/candidate scoring, and JSON candidate search;
   - mutation tier: property, vector, and text index create/drop;
   - maintenance tier: vector index rebuild and rebuild recommendation.

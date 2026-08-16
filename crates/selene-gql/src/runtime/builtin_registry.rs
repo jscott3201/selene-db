@@ -47,7 +47,7 @@
 //! `selene.text_score_candidate_state_nodes`,
 //! `selene.text_score_candidate_state_expanded_batch`,
 //! `selene.reciprocal_rank_fusion`) are registered here,
-//! bringing the total to 68;
+//! bringing the total to 69;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
@@ -107,8 +107,8 @@ impl BuiltinProcedureRegistry {
         let mut ordered = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 49 `selene.*`
-        // platform built-ins (handles 20..=68), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 50 `selene.*`
+        // platform built-ins (handles 20..=69), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
