@@ -54,6 +54,38 @@ fn write_wal_raw(dir: &Path, snapshot_seq: u64, ids: &[u64]) -> (PathBuf, Vec<us
     (path, payload_offsets)
 }
 
+/// The same interior-corruption refusal, but reached through snapshot-plus-WAL
+/// replay rather than the WAL-only path.
+///
+/// The two paths differ: with a snapshot the replay floor filters frames by
+/// sequence before they are decoded, so the guard that hard-fails on a corrupt
+/// interior frame is not obviously the same guard. A snapshot must not let a
+/// damaged frame past, and must not let the frames after it disappear.
+#[test]
+fn recover_corrupt_midstream_entry_hard_fails_with_a_snapshot_present() {
+    let dir = temp_dir("snapshot-midstream-checksum");
+    write_snapshot(&dir, 100, &[(*b"CORE", *b"META", b"meta".to_vec())]);
+    // Entries land at 101, 102, 103 — all above the snapshot's replay floor.
+    let (path, payload_offsets) = write_wal_raw(&dir, 100, &[1, 2, 3]);
+    let mut bytes = fs::read(&path).unwrap();
+    bytes[payload_offsets[1]] ^= 0xFF;
+    fs::write(&path, &bytes).unwrap();
+    let corrupted = fs::read(&path).unwrap();
+
+    let core = RecordingProvider::new(*b"CORE");
+    let err = recover(&dir, &registry(std::slice::from_ref(&core))).unwrap_err();
+    assert!(
+        matches!(err, PersistError::ChecksumMismatch { sequence: 102 }),
+        "expected ChecksumMismatch on entry 102, got {err:?}"
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        corrupted,
+        "a refusal must not rewrite the WAL"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
 #[test]
 fn recover_corrupt_midstream_entry_hard_fails() {
     // A torn TAIL silently truncates (tested elsewhere); a corrupt NON-FINAL
