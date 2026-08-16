@@ -258,7 +258,10 @@ fn signed_zero_ranges_agree_between_index_and_scan() {
             count(&mut Session::new(&unindexed), &query),
             "index and scan must agree on `{predicate}`"
         );
-        assert_eq!(indexed_rows, expected, "`{predicate}` selects {expected} rows");
+        assert_eq!(
+            indexed_rows, expected,
+            "`{predicate}` selects {expected} rows"
+        );
     }
 }
 
