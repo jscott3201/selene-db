@@ -587,7 +587,11 @@ mod tests {
         }
         assert!(matches!(
             WalReader::open(&path),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 2 })
+            Err(PersistError::UnsupportedVersion {
+                artifact: crate::PersistArtifact::Wal,
+                major: 2,
+                minor: 2
+            })
         ));
         let _ = fs::remove_file(path);
     }
@@ -604,7 +608,11 @@ mod tests {
         }
         assert!(matches!(
             WalReader::open(&path),
-            Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
+            Err(PersistError::UnsupportedVersion {
+                artifact: crate::PersistArtifact::Wal,
+                major: 1,
+                minor: 0
+            })
         ));
         let _ = fs::remove_file(path);
     }

@@ -41,7 +41,7 @@ pub use crate::entry_header::{
     COMPRESS_THRESHOLD, FLAG_CHECKPOINT_WATERMARK, FLAG_PAYLOAD_COMPRESSED, MAX_PRINCIPAL_BYTES,
     MAX_WAL_ENTRY_BYTES, WalEntryHeader,
 };
-pub use crate::error::{PersistError, PersistResult};
+pub use crate::error::{PersistArtifact, PersistError, PersistResult};
 pub use crate::file_header::{
     WAL_FILE_HEADER_LEN, WAL_MAGIC, WAL_VERSION_MAJOR, WAL_VERSION_MINOR, WalFileHeader,
 };

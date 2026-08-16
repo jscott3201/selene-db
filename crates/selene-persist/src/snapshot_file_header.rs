@@ -3,7 +3,7 @@
 use std::io::{Read, Write};
 
 use crate::section::MAX_SECTION_COUNT;
-use crate::{PersistError, PersistResult};
+use crate::{PersistArtifact, PersistError, PersistResult};
 
 /// Snapshot file magic.
 pub const SNAPSHOT_MAGIC: [u8; 4] = *b"SLSN";
@@ -137,6 +137,7 @@ impl SnapshotFileHeader {
         let version_minor = u16::from_le_bytes([header[6], header[7]]);
         if version_major != SNAPSHOT_VERSION_MAJOR || version_minor != SNAPSHOT_VERSION_MINOR {
             return Err(PersistError::UnsupportedVersion {
+                artifact: PersistArtifact::Snapshot,
                 major: version_major,
                 minor: version_minor,
             });
@@ -234,7 +235,11 @@ mod tests {
         // minor at its written value.
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 5 })
+            Err(PersistError::UnsupportedVersion {
+                artifact: PersistArtifact::Snapshot,
+                major: 2,
+                minor: 5
+            })
         ));
     }
 
@@ -253,7 +258,11 @@ mod tests {
         bytes[6..8].copy_from_slice(&0_u16.to_le_bytes());
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
+            Err(PersistError::UnsupportedVersion {
+                artifact: PersistArtifact::Snapshot,
+                major: 1,
+                minor: 0
+            })
         ));
     }
 
@@ -271,7 +280,11 @@ mod tests {
         bytes[6..8].copy_from_slice(&3_u16.to_le_bytes());
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 1, minor: 3 })
+            Err(PersistError::UnsupportedVersion {
+                artifact: PersistArtifact::Snapshot,
+                major: 1,
+                minor: 3
+            })
         ));
     }
 

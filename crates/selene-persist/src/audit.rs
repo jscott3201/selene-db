@@ -20,32 +20,50 @@
 //! lifecycle dependency. `kind` tags are reserved here (e.g.
 //! [`AUDIT_KIND_RESERVED_0`]); the meaning of the payload lives one layer up.
 //!
-//! # Format (`format_version = 1`)
+//! # Format (`format_version = 2`)
 //!
 //! ```text
 //! file header (hand-rolled LE, 8 bytes):
 //!   [0..4) magic = b"SLAU"
-//!   [4..6) format_version: u16 LE = 1
+//!   [4..6) format_version: u16 LE = 2
 //!   [6..8) reserved:       u16 LE = 0  (zero-checked on read)
 //! then zero or more append-only records, each:
-//!   fixed record header (LE, 20 bytes):
-//!     recorded_at_unix_nanos: u64 LE
-//!     kind:                   u16 LE
-//!     reserved:               u16 LE = 0
-//!     payload_len:            u32 LE   (<= MAX_AUDIT_PAYLOAD_BYTES)
-//!     checksum_lo:            u32 LE   (low 32 of xxh3_64(payload))
+//!   fixed record header (LE, 24 bytes):
+//!     [0..4)   header_checksum:        u32 LE (low 32 of xxh3_64 over [4..24))
+//!     [4..12)  recorded_at_unix_nanos: u64 LE
+//!     [12..14) kind:                   u16 LE
+//!     [14..16) reserved:               u16 LE = 0
+//!     [16..20) payload_len:            u32 LE (<= MAX_AUDIT_PAYLOAD_BYTES)
+//!     [20..24) payload_checksum_lo:    u32 LE (low 32 of xxh3_64(payload))
 //!   payload: payload_len opaque bytes
 //! ```
 //!
+//! The header checksum sits at offset 0 so its coverage is a suffix: no field
+//! has to be zeroed and no scratch copy is made to verify it. This mirrors the
+//! WAL v3 prefix checksum, for the same reason.
+//!
 //! # Crash safety
 //!
-//! Append is the only growth operation; a power loss can only tear the final
-//! record. [`AuditLog::open`] scans from the file header and truncates at the
-//! first short / over-cap / checksum-failed record, mirroring the WAL's
-//! torn-tail recovery (`writer::scan_existing`). [`AuditLog::prune`] rewrites
-//! the whole log via the write-tmp → fsync → atomic-rename → dir-fsync idiom
-//! ([`crate::manifest::Manifest::write_atomic`]'s pattern), so a crash mid-prune
-//! leaves the prior `audit.log` fully intact.
+//! Append is the only growth operation, so a power loss can only tear the
+//! *final* record. [`AuditLog::open`] scans from the file header and repairs a
+//! torn tail, but **refuses** a record that fails validation with records after
+//! it, leaving the file untouched
+//! ([`PersistError::AuditMidLogCorruption`]). v1 could not tell those apart —
+//! it truncated at the first bad record and fsynced the shortened file,
+//! discarding acknowledged records on every recovery — because `payload_len`
+//! was the only field saying where a record ended and nothing protected it.
+//!
+//! [`AuditLog::prune`] rewrites the whole log via the write-tmp → fsync →
+//! atomic-rename → dir-fsync idiom
+//! ([`crate::manifest::Manifest::write_atomic`]'s pattern), so a crash
+//! mid-prune leaves the prior `audit.log` fully intact.
+//!
+//! # Compatibility
+//!
+//! v1 logs are rejected at open with [`PersistError::UnsupportedVersion`]
+//! naming [`PersistArtifact::AuditLog`]. There is no dual decoder: the audit
+//! log is an events surface with its own retention, so the recovery path for a
+//! v1 file is to archive or discard it, not to migrate it.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -53,12 +71,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::manifest::sync_dir;
-use crate::{PersistError, PersistResult};
+use crate::{PersistArtifact, PersistError, PersistResult};
 
 /// Audit-log file magic.
 pub const AUDIT_MAGIC: [u8; 4] = *b"SLAU";
 /// Audit-log format version understood by this build.
-pub const AUDIT_FORMAT_VERSION: u16 = 1;
+pub const AUDIT_FORMAT_VERSION: u16 = 2;
 /// Conventional audit-log file name used by embedders.
 pub const DEFAULT_AUDIT_FILE_NAME: &str = "audit.log";
 /// Maximum opaque payload bytes per audit record (1 MiB).
@@ -70,7 +88,40 @@ pub const MAX_AUDIT_PAYLOAD_BYTES: usize = 1 << 20;
 pub const AUDIT_KIND_RESERVED_0: u16 = 1;
 
 const AUDIT_FILE_HEADER_LEN: usize = 8;
-const AUDIT_RECORD_HEADER_LEN: usize = 20;
+const AUDIT_RECORD_HEADER_LEN: usize = 24;
+/// Bytes the record-header checksum covers: everything after it.
+const HEADER_CHECKSUM_COVERAGE: std::ops::Range<usize> = 4..AUDIT_RECORD_HEADER_LEN;
+
+/// A decoded record header. The checksum is verified before this is produced,
+/// so every field here came from bytes the checksum covered.
+pub(crate) struct RecordHeader {
+    pub(crate) recorded_at_unix_nanos: u64,
+    pub(crate) kind: u16,
+    pub(crate) payload_len: usize,
+    pub(crate) payload_checksum_lo: u32,
+}
+
+fn header_checksum(bytes: &[u8; AUDIT_RECORD_HEADER_LEN]) -> u32 {
+    xxhash_rust::xxh3::xxh3_64(&bytes[HEADER_CHECKSUM_COVERAGE]) as u32
+}
+
+/// Verify the record header's own integrity, before any field is used as a
+/// length or an offset.
+pub(crate) fn verify_prefix_checksum(bytes: &[u8; AUDIT_RECORD_HEADER_LEN]) -> bool {
+    let stored = u32::from_le_bytes(bytes[0..4].try_into().expect("4 bytes"));
+    stored == header_checksum(bytes)
+}
+
+/// Decode an already-authenticated record header.
+pub(crate) fn decode_record_header(bytes: &[u8; AUDIT_RECORD_HEADER_LEN]) -> RecordHeader {
+    RecordHeader {
+        recorded_at_unix_nanos: u64::from_le_bytes(bytes[4..12].try_into().expect("8 bytes")),
+        kind: u16::from_le_bytes([bytes[12], bytes[13]]),
+        // bytes[14..16) reserved — covered by the checksum, ignored on read.
+        payload_len: u32::from_le_bytes(bytes[16..20].try_into().expect("4 bytes")) as usize,
+        payload_checksum_lo: u32::from_le_bytes(bytes[20..24].try_into().expect("4 bytes")),
+    }
+}
 
 /// One durable audit record.
 ///
@@ -126,14 +177,18 @@ pub struct AuditLog {
 }
 
 impl AuditLog {
-    /// Open (creating if absent) the audit log at `path`, truncating any torn
+    /// Open (creating if absent) the audit log at `path`, repairing a torn
     /// final record and positioning for append.
     ///
     /// # Errors
     ///
     /// Returns I/O errors, [`PersistError::MagicMismatch`] /
     /// [`PersistError::UnsupportedVersion`] / [`PersistError::ReservedBytesNonZero`]
-    /// for a corrupt file header.
+    /// for a corrupt file header, and
+    /// [`PersistError::AuditMidLogCorruption`] when a record fails validation
+    /// with records after it. The refusal leaves the file untouched, so the
+    /// surviving records and the evidence needed to recover them by other means
+    /// are still there on the next open.
     pub fn open(path: &Path) -> PersistResult<Self> {
         let mut file = OpenOptions::new()
             .read(true)
@@ -194,7 +249,10 @@ impl AuditLog {
     ///
     /// # Errors
     ///
-    /// Returns I/O / header-validation errors.
+    /// Returns I/O / header-validation errors, and
+    /// [`PersistError::AuditMidLogCorruption`] for interior damage. A reader
+    /// must not quietly return the prefix before the damage — that is the
+    /// shape that made the truncation on open look successful.
     pub fn read_all(path: &Path) -> PersistResult<Vec<AuditRecord>> {
         // Streams record-by-record over the file handle rather than slurping the
         // whole log into memory first: a long-lived log under unbounded retention
@@ -340,6 +398,7 @@ fn verify_file_header_bytes(bytes: &[u8]) -> PersistResult<()> {
     let version = u16::from_le_bytes([header[4], header[5]]);
     if version != AUDIT_FORMAT_VERSION {
         return Err(PersistError::UnsupportedVersion {
+            artifact: PersistArtifact::AuditLog,
             major: version,
             minor: 0,
         });
@@ -359,156 +418,20 @@ fn encode_record(record: &AuditRecord) -> PersistResult<Vec<u8>> {
     }
     let payload_len = record.payload.len() as u32;
     let checksum_lo = xxhash_rust::xxh3::xxh3_64(&record.payload) as u32;
+    let mut header = [0_u8; AUDIT_RECORD_HEADER_LEN];
+    header[4..12].copy_from_slice(&record.recorded_at_unix_nanos.to_le_bytes());
+    header[12..14].copy_from_slice(&record.kind.to_le_bytes());
+    // header[14..16) reserved, left zero and covered by the checksum.
+    header[16..20].copy_from_slice(&payload_len.to_le_bytes());
+    header[20..24].copy_from_slice(&checksum_lo.to_le_bytes());
+    // Written last: its coverage is the suffix it now authenticates.
+    let prefix = header_checksum(&header);
+    header[0..4].copy_from_slice(&prefix.to_le_bytes());
+
     let mut out = Vec::with_capacity(AUDIT_RECORD_HEADER_LEN + record.payload.len());
-    out.extend_from_slice(&record.recorded_at_unix_nanos.to_le_bytes());
-    out.extend_from_slice(&record.kind.to_le_bytes());
-    out.extend_from_slice(&0_u16.to_le_bytes()); // reserved
-    out.extend_from_slice(&payload_len.to_le_bytes());
-    out.extend_from_slice(&checksum_lo.to_le_bytes());
+    out.extend_from_slice(&header);
     out.extend_from_slice(&record.payload);
     Ok(out)
-}
-
-/// Scan from the file header to the first torn record; return the durable end
-/// offset (where the next append belongs).
-fn scan_durable_end(file: &mut File, file_len: u64) -> PersistResult<u64> {
-    let mut offset = AUDIT_FILE_HEADER_LEN as u64;
-    loop {
-        match read_one_record(file, offset, file_len)? {
-            Some((_, next)) => offset = next,
-            None => return Ok(offset),
-        }
-    }
-}
-
-/// Stream every durable record from the file, oldest first, stopping at the
-/// first torn record. Used by [`AuditLog::read_all`] — peak memory is the
-/// decoded records plus the single payload being read, not the whole file.
-fn read_records(file: &mut File, file_len: u64) -> PersistResult<Vec<AuditRecord>> {
-    let mut out = Vec::new();
-    let mut offset = AUDIT_FILE_HEADER_LEN as u64;
-    while let Some((record, next)) = read_one_record(file, offset, file_len)? {
-        out.push(record);
-        offset = next;
-    }
-    Ok(out)
-}
-
-/// Read the record at `offset`. Returns `Ok(Some((record, next_offset)))` for a
-/// good record, or `Ok(None)` at a clean end or the first torn record (short
-/// read, over-cap length, or checksum mismatch — all treated as the durable
-/// tail, never a hard error).
-///
-/// This no longer mirrors the WAL scan, and the difference is a known gap. The
-/// WAL distinguishes a torn tail from corruption by asking whether anything
-/// follows the failing frame (see `wal_tail`); the audit log has no such
-/// discriminator, so damage in the middle of it still truncates every record
-/// after the damage. Closing that needs the audit format's own integrity
-/// fields, which is a separate format change from WAL 3.0.
-fn read_one_record(
-    file: &mut File,
-    offset: u64,
-    file_len: u64,
-) -> PersistResult<Option<(AuditRecord, u64)>> {
-    if offset >= file_len {
-        return Ok(None);
-    }
-    if file_len - offset < AUDIT_RECORD_HEADER_LEN as u64 {
-        return Ok(None); // torn header
-    }
-    file.seek(SeekFrom::Start(offset))?;
-    let mut header = [0_u8; AUDIT_RECORD_HEADER_LEN];
-    if file.read_exact(&mut header).is_err() {
-        return Ok(None);
-    }
-    let recorded_at_unix_nanos = u64::from_le_bytes(header[0..8].try_into().expect("8 bytes"));
-    let kind = u16::from_le_bytes([header[8], header[9]]);
-    // header[10..12) reserved — tolerated on read (forward-compat).
-    let payload_len = u32::from_le_bytes(header[12..16].try_into().expect("4 bytes")) as usize;
-    let checksum_lo = u32::from_le_bytes(header[16..20].try_into().expect("4 bytes"));
-
-    if payload_len > MAX_AUDIT_PAYLOAD_BYTES {
-        return Ok(None); // garbage length: treat as torn tail
-    }
-    let payload_start = offset.saturating_add(AUDIT_RECORD_HEADER_LEN as u64);
-    let payload_end = payload_start.saturating_add(payload_len as u64);
-    if payload_end > file_len {
-        return Ok(None); // torn payload
-    }
-    let mut payload = vec![0_u8; payload_len];
-    if file.read_exact(&mut payload).is_err() {
-        return Ok(None);
-    }
-    if xxhash_rust::xxh3::xxh3_64(&payload) as u32 != checksum_lo {
-        return Ok(None); // checksum mismatch: torn / corrupt tail
-    }
-    Ok(Some((
-        AuditRecord {
-            recorded_at_unix_nanos,
-            kind,
-            payload,
-        },
-        payload_end,
-    )))
-}
-
-/// Scan every durable record from an in-memory slice (the slice twin of
-/// [`read_records`]), stopping at the first torn record.
-fn read_records_bytes(bytes: &[u8]) -> PersistResult<Vec<AuditRecord>> {
-    let mut out = Vec::new();
-    let mut offset = AUDIT_FILE_HEADER_LEN;
-    while let Some((record, next)) = read_one_record_bytes(bytes, offset)? {
-        out.push(record);
-        offset = next;
-    }
-    Ok(out)
-}
-
-/// Read the record at `offset` within `bytes` (the slice twin of
-/// [`read_one_record`], indexing the slice in place of `seek` + `read_exact`).
-///
-/// Returns `Ok(Some((record, next_offset)))` for a good record, or `Ok(None)` at
-/// a clean end or the first torn record (short read, over-cap length, or
-/// checksum mismatch) — every bound is checked against `bytes.len()` before the
-/// slice is taken, so the invariant "arbitrary bytes never panic" holds.
-fn read_one_record_bytes(
-    bytes: &[u8],
-    offset: usize,
-) -> PersistResult<Option<(AuditRecord, usize)>> {
-    let file_len = bytes.len();
-    if offset >= file_len {
-        return Ok(None);
-    }
-    if file_len - offset < AUDIT_RECORD_HEADER_LEN {
-        return Ok(None); // torn header
-    }
-    let header = &bytes[offset..offset + AUDIT_RECORD_HEADER_LEN];
-    let recorded_at_unix_nanos = u64::from_le_bytes(header[0..8].try_into().expect("8 bytes"));
-    let kind = u16::from_le_bytes([header[8], header[9]]);
-    // header[10..12) reserved — tolerated on read (forward-compat).
-    let payload_len = u32::from_le_bytes(header[12..16].try_into().expect("4 bytes")) as usize;
-    let checksum_lo = u32::from_le_bytes(header[16..20].try_into().expect("4 bytes"));
-
-    if payload_len > MAX_AUDIT_PAYLOAD_BYTES {
-        return Ok(None); // garbage length: treat as torn tail
-    }
-    let payload_start = offset + AUDIT_RECORD_HEADER_LEN;
-    let payload_end = match payload_start.checked_add(payload_len) {
-        Some(end) if end <= file_len => end,
-        _ => return Ok(None), // torn payload (or arithmetic overflow)
-    };
-    let payload = bytes[payload_start..payload_end].to_vec();
-    if xxhash_rust::xxh3::xxh3_64(&payload) as u32 != checksum_lo {
-        return Ok(None); // checksum mismatch: torn / corrupt tail
-    }
-    Ok(Some((
-        AuditRecord {
-            recorded_at_unix_nanos,
-            kind,
-            payload,
-        },
-        payload_end,
-    )))
 }
 
 /// Atomically rewrite `path` to hold exactly `records` (file header + each
@@ -550,6 +473,10 @@ fn rewrite_atomic(path: &Path, records: &[AuditRecord]) -> PersistResult<()> {
     }
     sync_dir(dir)
 }
+
+mod scan;
+
+use scan::{read_records, read_records_bytes, scan_durable_end};
 
 #[cfg(test)]
 mod tests;
