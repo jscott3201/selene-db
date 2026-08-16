@@ -17,8 +17,7 @@ use std::sync::Arc;
 use immutable_chunkmap::map::MapM;
 use roaring::RoaringBitmap;
 use selene_core::{
-    Change, DbString, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-    SchemaChange,
+    Change, DbString, EdgeId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
 };
 
 use crate::adjacency::AdjacencyEdge;
@@ -325,15 +324,21 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// (the typed catalog DDL methods on this `Mutator` — e.g. `create_node_type`
     /// — call those layers and then funnel here).
     ///
-    /// Why: this is the single, canonical funnel entry for a `SchemaChanged`
-    /// change record (hard rule 11 — every mutation routes through the one
-    /// `Mutator`). It is intentionally retained as a `pub` funnel surface even
-    /// though no GQL caller reaches it directly today: the catalog DDL methods
-    /// are the production producers, and keeping the low-level entry public means
-    /// any future schema-event producer routes through the same funnel rather
-    /// than re-implementing the write path. Tests and benches drive it directly
-    /// to exercise the raw funnel without the DDL validation layer on top.
-    pub fn schema_change(&mut self, graph: GraphId, change: SchemaChange) {
+    /// The emitted record is stamped with the live transaction's graph id. It
+    /// is not a caller parameter: since #1104 the id is load-bearing on the read
+    /// side, where a record carrying a foreign id makes the directory
+    /// unrecoverable under *every* id because recovery refuses it as
+    /// cross-wired. Deriving it here makes that state unrepresentable rather
+    /// than merely rejected.
+    ///
+    /// The catalog DDL methods are the production producers and push
+    /// [`Change::SchemaChanged`] directly rather than routing through here, so
+    /// this is a raw funnel rather than the only one. It stays `pub` so a future
+    /// schema-event producer has a low-level entry that already stamps identity
+    /// correctly instead of re-implementing the write path; tests and benches
+    /// drive it to exercise the funnel without the DDL validation layer on top.
+    pub fn schema_change(&mut self, change: SchemaChange) {
+        let graph = self.txn.read().graph_id();
         self.txn
             .changes
             .push(Change::SchemaChanged { graph, change });

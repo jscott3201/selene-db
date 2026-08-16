@@ -188,14 +188,11 @@ fn failed_commit_does_not_bump_schema_version() {
     )
     .unwrap();
     let mut txn = shared.begin_write();
-    txn.mutator().schema_change(
-        GraphId::new(108),
-        SchemaChange::GraphCreated {
-            id: GraphId::new(109),
-            name: db_string("failed.schema.commit").unwrap(),
-            graph_type: None,
-        },
-    );
+    txn.mutator().schema_change(SchemaChange::GraphCreated {
+        id: GraphId::new(109),
+        name: db_string("failed.schema.commit").unwrap(),
+        graph_type: None,
+    });
 
     assert!(matches!(
         txn.commit(),
