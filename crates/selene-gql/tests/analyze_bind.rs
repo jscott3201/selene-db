@@ -533,3 +533,67 @@ fn a_sort_key_containing_a_nested_query_specification_is_rejected() {
         );
     }
 }
+
+/// ISO §5.3.2.1 makes *contain* transitive, so SR I reaches a nested query
+/// specification at any depth — including one buried inside an `EXISTS` body
+/// whose own form is the legal graph-pattern spelling.
+///
+/// The sort key's own expression tree does not reach these: `for_each_child`
+/// yields nothing for a subquery node, by design. Every site below is a place a
+/// `ValueExpr` lives under a `MatchClause`, so each one is a way the body can
+/// smuggle a `VALUE { ... }` past a guard that only walks the key.
+#[test]
+fn a_nested_query_inside_an_exists_body_is_rejected() {
+    for source in [
+        // Clause-level WHERE — the spelling reported on the issue.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person) WHERE m.score > VALUE { MATCH (k) RETURN count(k) } }",
+        // Node inline property value.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person { score: VALUE { MATCH (k) RETURN count(k) } }) }",
+        // Node inline WHERE.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person WHERE m.score > VALUE { MATCH (k) RETURN count(k) }) }",
+        // Edge inline property value.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person)-[:KNOWS { since: VALUE { MATCH (k) RETURN count(k) } }]->() }",
+        // Edge inline WHERE.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person)-[e:KNOWS WHERE e.since > VALUE { MATCH (k) RETURN count(k) }]->() }",
+        // Two levels down: the inner EXISTS body is itself the legal pattern
+        // form, and the nested query sits inside *its* WHERE.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person) WHERE EXISTS { \
+         MATCH (p:Person) WHERE p.score > VALUE { MATCH (k) RETURN count(k) } } }",
+    ] {
+        let err = analyze_one(source)
+            .expect_err("SR I reaches a nested query specification inside an EXISTS body");
+        assert!(
+            matches!(err, AnalysisError::SortKeyContainsNestedQuery { .. }),
+            "{source} should reject with SortKeyContainsNestedQuery, got {err:?}"
+        );
+    }
+}
+
+/// The companion to the rejection above, and the reason it cannot be written as
+/// "an EXISTS body in a sort key is illegal".
+///
+/// #1112 settled that §19.4 SR 2/3's rewrite of the *pattern* forms does not
+/// feed §14.10 SR I (§5.3.2.4: an inner "effectively replaced by" rewrite does
+/// not feed an outer Syntax Rule). A guard that descends into EXISTS bodies has
+/// to descend looking for a nested query specification specifically, not reject
+/// on arrival.
+#[test]
+fn descending_into_an_exists_body_keeps_the_pattern_forms_legal() {
+    for source in [
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { MATCH (m:Person) }",
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person) WHERE m.score > 10 }",
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person { name: 'x' })-[:KNOWS]->() }",
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person) WHERE EXISTS { MATCH (p:Person) WHERE p.score > 10 } }",
+    ] {
+        analyze_one(source).unwrap_or_else(|err| panic!("{source} should analyze: {err}"));
+    }
+}
