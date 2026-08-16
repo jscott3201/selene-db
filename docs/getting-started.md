@@ -15,7 +15,7 @@ If you only want the 30-second version, skip to the [Hello-graph](#example-1-hel
 
 ## Prerequisites
 
-- **Rust 1.95.0 or later** (workspace `rust-version`). `rustup show` will confirm; `rustup update stable` if you are behind.
+- **Rust 1.97.1 or later** (workspace `rust-version`). `rustup show` will confirm; `rustup update stable` if you are behind.
 - **Edition 2024**. New projects you generate with `cargo new` on modern toolchains already use this; the example `Cargo.toml` snippets below set it explicitly.
 - **macOS or Linux**. Windows is currently out of scope.
 

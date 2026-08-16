@@ -10,7 +10,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = "0.4.13"
 selene-gql = { package = "selene-db-gql", path = "..", version = "1.4.0" }
 
 [[bin]]

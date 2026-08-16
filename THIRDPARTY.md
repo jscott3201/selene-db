@@ -233,7 +233,7 @@ Used by:
 ## Apache License 2.0 (Apache-2.0)
 
 Used by:
-- ar_archive_writer v0.5.1 — https://github.com/rust-lang/ar_archive_writer
+- ar_archive_writer v0.5.3 — https://github.com/rust-lang/ar_archive_writer
 
 ```
                                  Apache License
@@ -678,7 +678,7 @@ Used by:
 ## Apache License 2.0 (Apache-2.0)
 
 Used by:
-- insta v1.47.2 — https://github.com/mitsuhiko/insta
+- insta v1.48.0 — https://github.com/mitsuhiko/insta
 - similar v2.7.0 — https://github.com/mitsuhiko/similar
 
 ```
@@ -1130,7 +1130,7 @@ limitations under the License.
 ## Apache License 2.0 (Apache-2.0)
 
 Used by:
-- blake3 v1.8.5 — https://github.com/BLAKE3-team/BLAKE3
+- blake3 v1.8.6 — https://github.com/BLAKE3-team/BLAKE3
 - spirv v0.4.0+sdk-1.4.341.0 — https://github.com/gfx-rs/rspirv
 
 ```
@@ -1252,7 +1252,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## Boost Software License 1.0 (BSL-1.0)
 
 Used by:
-- xxhash-rust v0.8.15 — https://github.com/DoumanAsh/xxhash-rust
+- xxhash-rust v0.8.18 — https://github.com/DoumanAsh/xxhash-rust
 
 ```
 Boost Software License - Version 1.0 - August 17th, 2003
@@ -1283,138 +1283,6 @@ DEALINGS IN THE SOFTWARE.
 
 ---
 
-## Creative Commons Zero v1.0 Universal (CC0-1.0)
-
-Used by:
-- hexf-parse v0.2.1 — https://github.com/lifthrasiir/hexf
-
-```
-Creative Commons Legal Code
-
-CC0 1.0 Universal
-
-    CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE
-    LEGAL SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN
-    ATTORNEY-CLIENT RELATIONSHIP. CREATIVE COMMONS PROVIDES THIS
-    INFORMATION ON AN &quot;AS-IS&quot; BASIS. CREATIVE COMMONS MAKES NO WARRANTIES
-    REGARDING THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS
-    PROVIDED HEREUNDER, AND DISCLAIMS LIABILITY FOR DAMAGES RESULTING FROM
-    THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS PROVIDED
-    HEREUNDER.
-
-Statement of Purpose
-
-The laws of most jurisdictions throughout the world automatically confer
-exclusive Copyright and Related Rights (defined below) upon the creator
-and subsequent owner(s) (each and all, an &quot;owner&quot;) of an original work of
-authorship and/or a database (each, a &quot;Work&quot;).
-
-Certain owners wish to permanently relinquish those rights to a Work for
-the purpose of contributing to a commons of creative, cultural and
-scientific works (&quot;Commons&quot;) that the public can reliably and without fear
-of later claims of infringement build upon, modify, incorporate in other
-works, reuse and redistribute as freely as possible in any form whatsoever
-and for any purposes, including without limitation commercial purposes.
-These owners may contribute to the Commons to promote the ideal of a free
-culture and the further production of creative, cultural and scientific
-works, or to gain reputation or greater distribution for their Work in
-part through the use and efforts of others.
-
-For these and/or other purposes and motivations, and without any
-expectation of additional consideration or compensation, the person
-associating CC0 with a Work (the &quot;Affirmer&quot;), to the extent that he or she
-is an owner of Copyright and Related Rights in the Work, voluntarily
-elects to apply CC0 to the Work and publicly distribute the Work under its
-terms, with knowledge of his or her Copyright and Related Rights in the
-Work and the meaning and intended legal effect of CC0 on those rights.
-
-1. Copyright and Related Rights. A Work made available under CC0 may be
-protected by copyright and related or neighboring rights (&quot;Copyright and
-Related Rights&quot;). Copyright and Related Rights include, but are not
-limited to, the following:
-
-  i. the right to reproduce, adapt, distribute, perform, display,
-     communicate, and translate a Work;
- ii. moral rights retained by the original author(s) and/or performer(s);
-iii. publicity and privacy rights pertaining to a person&#x27;s image or
-     likeness depicted in a Work;
- iv. rights protecting against unfair competition in regards to a Work,
-     subject to the limitations in paragraph 4(a), below;
-  v. rights protecting the extraction, dissemination, use and reuse of data
-     in a Work;
- vi. database rights (such as those arising under Directive 96/9/EC of the
-     European Parliament and of the Council of 11 March 1996 on the legal
-     protection of databases, and under any national implementation
-     thereof, including any amended or successor version of such
-     directive); and
-vii. other similar, equivalent or corresponding rights throughout the
-     world based on applicable law or treaty, and any national
-     implementations thereof.
-
-2. Waiver. To the greatest extent permitted by, but not in contravention
-of, applicable law, Affirmer hereby overtly, fully, permanently,
-irrevocably and unconditionally waives, abandons, and surrenders all of
-Affirmer&#x27;s Copyright and Related Rights and associated claims and causes
-of action, whether now known or unknown (including existing as well as
-future claims and causes of action), in the Work (i) in all territories
-worldwide, (ii) for the maximum duration provided by applicable law or
-treaty (including future time extensions), (iii) in any current or future
-medium and for any number of copies, and (iv) for any purpose whatsoever,
-including without limitation commercial, advertising or promotional
-purposes (the &quot;Waiver&quot;). Affirmer makes the Waiver for the benefit of each
-member of the public at large and to the detriment of Affirmer&#x27;s heirs and
-successors, fully intending that such Waiver shall not be subject to
-revocation, rescission, cancellation, termination, or any other legal or
-equitable action to disrupt the quiet enjoyment of the Work by the public
-as contemplated by Affirmer&#x27;s express Statement of Purpose.
-
-3. Public License Fallback. Should any part of the Waiver for any reason
-be judged legally invalid or ineffective under applicable law, then the
-Waiver shall be preserved to the maximum extent permitted taking into
-account Affirmer&#x27;s express Statement of Purpose. In addition, to the
-extent the Waiver is so judged Affirmer hereby grants to each affected
-person a royalty-free, non transferable, non sublicensable, non exclusive,
-irrevocable and unconditional license to exercise Affirmer&#x27;s Copyright and
-Related Rights in the Work (i) in all territories worldwide, (ii) for the
-maximum duration provided by applicable law or treaty (including future
-time extensions), (iii) in any current or future medium and for any number
-of copies, and (iv) for any purpose whatsoever, including without
-limitation commercial, advertising or promotional purposes (the
-&quot;License&quot;). The License shall be deemed effective as of the date CC0 was
-applied by Affirmer to the Work. Should any part of the License for any
-reason be judged legally invalid or ineffective under applicable law, such
-partial invalidity or ineffectiveness shall not invalidate the remainder
-of the License, and in such case Affirmer hereby affirms that he or she
-will not (i) exercise any of his or her remaining Copyright and Related
-Rights in the Work or (ii) assert any associated claims and causes of
-action with respect to the Work, in either case contrary to Affirmer&#x27;s
-express Statement of Purpose.
-
-4. Limitations and Disclaimers.
-
- a. No trademark or patent rights held by Affirmer are waived, abandoned,
-    surrendered, licensed or otherwise affected by this document.
- b. Affirmer offers the Work as-is and makes no representations or
-    warranties of any kind concerning the Work, express, implied,
-    statutory or otherwise, including without limitation warranties of
-    title, merchantability, fitness for a particular purpose, non
-    infringement, or the absence of latent or other defects, accuracy, or
-    the present or absence of errors, whether or not discoverable, all to
-    the greatest extent permissible under applicable law.
- c. Affirmer disclaims responsibility for clearing rights of other persons
-    that may apply to the Work or any use thereof, including without
-    limitation any person&#x27;s Copyright and Related Rights in the Work.
-    Further, Affirmer disclaims responsibility for obtaining any necessary
-    consents, permissions or other rights required for any use of the
-    Work.
- d. Affirmer understands and acknowledges that Creative Commons is not a
-    party to this document and has no duty or obligation with respect to
-    this CC0 or use of the Work.
-
-```
-
----
-
 ## ISC License (ISC)
 
 Used by:
@@ -1433,44 +1301,6 @@ AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR 
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
 NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- sha2 v0.10.9 — https://github.com/RustCrypto/hashes
-
-```
-Copyright (c) 2006-2009 Graydon Hoare
-Copyright (c) 2009-2013 Mozilla Foundation
-Copyright (c) 2016 Artyom Pavlov
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
 
 ```
 
@@ -1517,19 +1347,19 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- cc v1.2.63 — https://github.com/rust-lang/cc-rs
+- cc v1.4.3 — https://github.com/rust-lang/cc-rs
 - cfg-if v1.0.4 — https://github.com/rust-lang/cfg-if
-- find-msvc-tools v0.1.9 — https://github.com/rust-lang/cc-rs
+- find-msvc-tools v0.1.11 — https://github.com/rust-lang/cc-rs
 - futures-timer v3.0.4 — https://github.com/async-rs/futures-timer
-- jobserver v0.1.34 — https://github.com/rust-lang/jobserver-rs
-- js-sys v0.3.99 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys
-- pkg-config v0.3.33 — https://github.com/rust-lang/pkg-config-rs
-- stacker v0.1.24 — https://github.com/rust-lang/stacker
-- wasm-bindgen-macro-support v0.2.122 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support
-- wasm-bindgen-macro v0.2.122 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro
-- wasm-bindgen-shared v0.2.122 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared
-- wasm-bindgen v0.2.122 — https://github.com/wasm-bindgen/wasm-bindgen
-- web-sys v0.3.99 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys
+- jobserver v0.1.35 — https://github.com/rust-lang/jobserver-rs
+- js-sys v0.3.104 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys
+- pkg-config v0.3.34 — https://github.com/rust-lang/pkg-config-rs
+- stacker v0.1.25 — https://github.com/rust-lang/stacker
+- wasm-bindgen-macro-support v0.2.127 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support
+- wasm-bindgen-macro v0.2.127 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro
+- wasm-bindgen-shared v0.2.127 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared
+- wasm-bindgen v0.2.127 — https://github.com/wasm-bindgen/wasm-bindgen
+- web-sys v0.3.104 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys
 
 ```
 Copyright (c) 2014 Alex Crichton
@@ -1673,13 +1503,13 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- bitflags v2.11.1 — https://github.com/bitflags/bitflags
-- glob v0.3.3 — https://github.com/rust-lang/glob
-- log v0.4.30 — https://github.com/rust-lang/log
+- bitflags v2.13.1 — https://github.com/bitflags/bitflags
+- glob v0.3.4 — https://github.com/rust-lang/glob
+- log v0.4.33 — https://github.com/rust-lang/log
 - num-traits v0.2.19 — https://github.com/rust-num/num-traits
-- regex-automata v0.4.14 — https://github.com/rust-lang/regex
-- regex-syntax v0.8.10 — https://github.com/rust-lang/regex
-- regex v1.12.3 — https://github.com/rust-lang/regex
+- regex-automata v0.4.18 — https://github.com/rust-lang/regex
+- regex-syntax v0.8.11 — https://github.com/rust-lang/regex
+- regex v1.13.1 — https://github.com/rust-lang/regex
 
 ```
 Copyright (c) 2014 The Rust Project Developers
@@ -1715,7 +1545,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- uuid v1.23.2 — https://github.com/uuid-rs/uuid
+- uuid v1.24.1 — https://github.com/uuid-rs/uuid
 
 ```
 Copyright (c) 2014 The Rust Project Developers
@@ -1788,7 +1618,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- either v1.16.0 — https://github.com/rayon-rs/either
+- either v1.17.0 — https://github.com/rayon-rs/either
 - itertools v0.13.0 — https://github.com/rust-itertools/itertools
 
 ```
@@ -1897,7 +1727,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- object v0.37.3 — https://github.com/gimli-rs/object
+- object v0.39.1 — https://github.com/gimli-rs/object
 
 ```
 Copyright (c) 2015 The Gimli Developers
@@ -1935,6 +1765,7 @@ DEALINGS IN THE SOFTWARE.
 Used by:
 - unicode-normalization v0.1.25 — https://github.com/unicode-rs/unicode-normalization
 - unicode-width v0.1.14 — https://github.com/unicode-rs/unicode-width
+- unicode-width v0.2.2 — https://github.com/unicode-rs/unicode-width
 
 ```
 Copyright (c) 2015 The Rust Project Developers
@@ -2066,10 +1897,10 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- futures-core v0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-macro v0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-task v0.3.32 — https://github.com/rust-lang/futures-rs
-- futures-util v0.3.32 — https://github.com/rust-lang/futures-rs
+- futures-core v0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-macro v0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-task v0.3.34 — https://github.com/rust-lang/futures-rs
+- futures-util v0.3.34 — https://github.com/rust-lang/futures-rs
 
 ```
 Copyright (c) 2016 Alex Crichton
@@ -2106,7 +1937,6 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- hashbrown v0.15.5 — https://github.com/rust-lang/hashbrown
 - hashbrown v0.16.1 — https://github.com/rust-lang/hashbrown
 - hashbrown v0.17.1 — https://github.com/rust-lang/hashbrown
 
@@ -2184,7 +2014,7 @@ Used by:
 - parking_lot v0.12.5 — https://github.com/Amanieu/parking_lot
 - parking_lot_core v0.9.12 — https://github.com/Amanieu/parking_lot
 - rustc_version v0.4.1 — https://github.com/djc/rustc-version-rs
-- thread_local v1.1.9 — https://github.com/Amanieu/thread_local-rs
+- thread_local v1.1.10 — https://github.com/Amanieu/thread_local-rs
 
 ```
 Copyright (c) 2016 The Rust Project Developers
@@ -2328,42 +2158,6 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- digest v0.10.7 — https://github.com/RustCrypto/traits
-
-```
-Copyright (c) 2017 Artyom Pavlov
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
 - redox_syscall v0.5.18 — https://gitlab.redox-os.org/redox-os/syscall
 
 ```
@@ -2432,7 +2226,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- arc-swap v1.9.1 — https://github.com/vorner/arc-swap
+- arc-swap v1.9.2 — https://github.com/vorner/arc-swap
 
 ```
 Copyright (c) 2017 arc-swap developers
@@ -2468,7 +2262,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- bytes v1.11.1 — https://github.com/tokio-rs/bytes
+- bytes v1.12.1 — https://github.com/tokio-rs/bytes
 
 ```
 Copyright (c) 2018 Carl Lerche
@@ -2576,46 +2370,10 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- smallvec v1.15.1 — https://github.com/servo/rust-smallvec
+- smallvec v1.15.2 — https://github.com/servo/rust-smallvec
 
 ```
 Copyright (c) 2018 The Servo Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- block-buffer v0.10.4 — https://github.com/RustCrypto/utils
-
-```
-Copyright (c) 2018-2019 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -2685,7 +2443,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- getrandom v0.4.2 — https://github.com/rust-random/getrandom
+- getrandom v0.4.3 — https://github.com/rust-random/getrandom
 
 ```
 Copyright (c) 2018-2026 The rust-random Project Developers
@@ -3074,7 +2832,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- pollster v0.4.0 — https://github.com/zesterer/pollster
+- pollster v1.0.1 — https://github.com/zesterer/pollster
 
 ```
 Copyright (c) 2020-2021 Joshua Barretto
@@ -3110,7 +2868,6 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- cpufeatures v0.2.17 — https://github.com/RustCrypto/utils
 - cpufeatures v0.3.0 — https://github.com/RustCrypto/utils
 
 ```
@@ -3169,42 +2926,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- crypto-common v0.1.7 — https://github.com/RustCrypto/traits
-
-```
-Copyright (c) 2021 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
 
 ```
 
@@ -3302,7 +3023,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- rapidhash v4.4.1 — https://github.com/hoxxep/rapidhash
+- rapidhash v4.5.1 — https://github.com/hoxxep/rapidhash
 
 ```
 Copyright (c) 2024 Liam Gray &lt;gmail@liamg.me&gt;
@@ -3332,7 +3053,7 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- bit-set v0.9.1 — https://github.com/contain-rs/bit-set
+- bit-set v0.10.0 — https://github.com/contain-rs/bit-set
 
 ```
 Copyright (c) 2026 The Rust Project Developers
@@ -3369,12 +3090,12 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 - anstyle v1.0.14 — https://github.com/rust-cli/anstyle.git
-- clap v4.6.1 — https://github.com/clap-rs/clap
-- clap_builder v4.6.0 — https://github.com/clap-rs/clap
+- clap v4.6.6 — https://github.com/clap-rs/clap
+- clap_builder v4.6.6 — https://github.com/clap-rs/clap
 - clap_lex v1.1.0 — https://github.com/clap-rs/clap
 - toml_datetime v1.1.1+spec-1.1.0 — https://github.com/toml-rs/toml
-- toml_edit v0.25.12+spec-1.1.0 — https://github.com/toml-rs/toml
-- toml_parser v1.1.2+spec-1.1.0 — https://github.com/toml-rs/toml
+- toml_edit v0.25.13+spec-1.1.0 — https://github.com/toml-rs/toml
+- toml_parser v1.1.3+spec-1.1.0 — https://github.com/toml-rs/toml
 
 ```
 Copyright (c) Individual contributors
@@ -3404,7 +3125,7 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- libc v0.2.186 — https://github.com/rust-lang/libc
+- libc v0.2.189 — https://github.com/rust-lang/libc
 
 ```
 Copyright (c) The Rust Project Developers
@@ -3440,7 +3161,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- arrayvec v0.7.6 — https://github.com/bluss/arrayvec
+- arrayvec v0.7.8 — https://github.com/bluss/arrayvec
 
 ```
 Copyright (c) Ulrik Sverdrup &quot;bluss&quot; 2015-2023
@@ -3476,7 +3197,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- rand v0.9.4 — https://github.com/rust-random/rand
+- rand v0.9.5 — https://github.com/rust-random/rand
 - rand_chacha v0.9.0 — https://github.com/rust-random/rand
 - rand_core v0.9.5 — https://github.com/rust-random/rand
 - rand_xorshift v0.4.0 — https://github.com/rust-random/rngs
@@ -3581,7 +3302,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- bytecheck_derive v0.8.2 — https://github.com/rkyv/bytecheck
+- bytecheck_derive v0.8.3 — https://github.com/rkyv/bytecheck
 
 ```
 Copyright 2020 David Koloski
@@ -3599,11 +3320,11 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 ## MIT License (MIT)
 
 Used by:
-- ptr_meta v0.3.1 — https://github.com/rkyv/ptr_meta
-- ptr_meta_derive v0.3.1 — https://github.com/rkyv/ptr_meta
-- rend v0.5.3 — https://github.com/djkoloski/rend
-- rkyv v0.8.16 — https://github.com/rkyv/rkyv
-- rkyv_derive v0.8.16 — https://github.com/rkyv/rkyv
+- ptr_meta v0.3.2 — https://github.com/rkyv/ptr_meta
+- ptr_meta_derive v0.3.2 — https://github.com/rkyv/ptr_meta
+- rend v0.5.4 — https://github.com/djkoloski/rend
+- rkyv v0.8.18 — https://github.com/rkyv/rkyv
+- rkyv_derive v0.8.18 — https://github.com/rkyv/rkyv
 
 ```
 Copyright 2021 David Koloski
@@ -3621,7 +3342,8 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 ## MIT License (MIT)
 
 Used by:
-- bytecheck v0.8.2 — https://github.com/rkyv/bytecheck
+- bytecheck v0.8.3 — https://github.com/rkyv/bytecheck
+- rancor v0.1.3 — https://github.com/rkyv/rancor
 
 ```
 Copyright 2023 David Koloski
@@ -3639,26 +3361,8 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 ## MIT License (MIT)
 
 Used by:
-- rancor v0.1.1 — https://github.com/rkyv/rancor
-
-```
-Copyright 2023 David Koloski
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the &quot;Software&quot;), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- zerocopy-derive v0.8.50 — https://github.com/google/zerocopy
-- zerocopy v0.8.50 — https://github.com/google/zerocopy
+- zerocopy-derive v0.8.56 — https://github.com/google/zerocopy
+- zerocopy v0.8.56 — https://github.com/google/zerocopy
 
 ```
 Copyright 2023 The Fuchsia Authors
@@ -3714,7 +3418,7 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 ## MIT License (MIT)
 
 Used by:
-- psm v0.1.31 — https://github.com/rust-lang/stacker/
+- psm v0.1.32 — https://github.com/rust-lang/stacker/
 
 ```
 Copyright © 2018, Simonas Kazlauskas
@@ -3741,7 +3445,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 ## MIT License (MIT)
 
 Used by:
-- lru v0.16.4 — https://github.com/jeromefroe/lru-rs.git
+- lru v0.18.2 — https://github.com/jeromefroe/lru-rs.git
 
 ```
 MIT License
@@ -3772,7 +3476,7 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- rust_decimal v1.42.0 — https://github.com/paupino/rust-decimal
+- rust_decimal v1.42.1 — https://github.com/paupino/rust-decimal
 
 ```
 MIT License
@@ -3868,8 +3572,8 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- bytemuck v1.25.0 — https://github.com/Lokathor/bytemuck
-- bytemuck_derive v1.10.2 — https://github.com/Lokathor/bytemuck
+- bytemuck v1.25.2 — https://github.com/Lokathor/bytemuck
+- bytemuck_derive v1.12.0 — https://github.com/Lokathor/bytemuck
 
 ```
 MIT License
@@ -3889,7 +3593,7 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 ## MIT License (MIT)
 
 Used by:
-- triomphe v0.1.15 — https://github.com/Manishearth/triomphe
+- triomphe v0.1.16 — https://github.com/Manishearth/triomphe
 
 ```
 MIT License
@@ -3959,7 +3663,39 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- cfg_aliases v0.2.1 — https://github.com/katharostech/cfg_aliases
+- wide v1.6.1 — https://github.com/Lokathor/wide
+
+```
+MIT License
+
+Copyright (c) 2020 Daniel &quot;Lokathor&quot; Gee
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
+- cfg_aliases v0.2.2 — https://github.com/katharostech/cfg_aliases
 
 ```
 MIT License
@@ -4044,6 +3780,7 @@ SOFTWARE.
 
 Used by:
 - safe_arch v0.7.4 — https://github.com/Lokathor/safe_arch
+- safe_arch v1.2.0 — https://github.com/Lokathor/safe_arch
 
 ```
 MIT License
@@ -4095,7 +3832,7 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- archery v1.2.2 — https://github.com/orium/archery
+- archery v1.2.3 — https://github.com/orium/archery
 
 ```
 MIT License
@@ -4127,14 +3864,15 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- naga v29.0.3 — https://github.com/gfx-rs/wgpu
-- wgpu-core-deps-apple v29.0.3 — https://github.com/gfx-rs/wgpu
-- wgpu-core-deps-windows-linux-android v29.0.3 — https://github.com/gfx-rs/wgpu
-- wgpu-core v29.0.3 — https://github.com/gfx-rs/wgpu
-- wgpu-hal v29.0.3 — https://github.com/gfx-rs/wgpu
-- wgpu-naga-bridge v29.0.3 — https://github.com/gfx-rs/wgpu
-- wgpu-types v29.0.3 — https://github.com/gfx-rs/wgpu
-- wgpu v29.0.3 — https://github.com/gfx-rs/wgpu
+- naga-types v30.0.0 — https://github.com/gfx-rs/wgpu
+- naga v30.0.0 — https://github.com/gfx-rs/wgpu
+- wgpu-core-deps-apple v30.0.0 — https://github.com/gfx-rs/wgpu
+- wgpu-core-deps-windows-linux-android v30.0.0 — https://github.com/gfx-rs/wgpu
+- wgpu-core v30.0.0 — https://github.com/gfx-rs/wgpu
+- wgpu-hal v30.0.0 — https://github.com/gfx-rs/wgpu
+- wgpu-naga-bridge v30.0.0 — https://github.com/gfx-rs/wgpu
+- wgpu-types v30.0.0 — https://github.com/gfx-rs/wgpu
+- wgpu v30.0.0 — https://github.com/gfx-rs/wgpu
 
 ```
 MIT License
@@ -4174,10 +3912,9 @@ Used by:
 - selene-db-testing v1.4.0 — https://github.com/jscott3201/selene-db
 - anes v0.1.6 — https://github.com/zrzka/anes-rs
 - block2 v0.6.2 — https://github.com/madsmtm/objc2
-- gpu-descriptor-types v0.2.0 — https://github.com/zakarumych/gpu-descriptor
-- gpu-descriptor v0.3.2 — https://github.com/zakarumych/gpu-descriptor
 - libm v0.2.16 — https://github.com/rust-lang/compiler-builtins
 - objc2-core-foundation v0.3.2 — https://github.com/madsmtm/objc2
+- objc2-core-graphics v0.3.2 — https://github.com/madsmtm/objc2
 - objc2-encode v4.1.0 — https://github.com/madsmtm/objc2
 - objc2-foundation v0.3.2 — https://github.com/madsmtm/objc2
 - objc2-metal v0.3.2 — https://github.com/madsmtm/objc2
@@ -4190,7 +3927,6 @@ Used by:
 - r-efi v5.3.0 — https://github.com/r-efi/r-efi
 - r-efi v6.0.0 — https://github.com/r-efi/r-efi
 - relative-path v1.9.3 — https://github.com/udoprog/relative-path
-- wasip3 v0.4.0+wasi-0.3.0-rc-2026-01-06 — https://github.com/bytecodealliance/wasi-rs
 - wide v0.7.33 — https://github.com/Lokathor/wide
 - winapi-i686-pc-windows-gnu v0.4.0 — https://github.com/retep998/winapi-rs
 - winapi-x86_64-pc-windows-gnu v0.4.0 — https://github.com/retep998/winapi-rs
@@ -4325,7 +4061,7 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- roaring v0.11.4 — https://github.com/RoaringBitmap/roaring-rs
+- roaring v0.11.5 — https://github.com/RoaringBitmap/roaring-rs
 
 ```
 MIT License
@@ -4356,7 +4092,7 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- rustc-hash v2.1.2 — https://github.com/rust-lang/rustc-hash
+- rustc-hash v2.1.3 — https://github.com/rust-lang/rustc-hash
 
 ```
 Permission is hereby granted, free of charge, to any
@@ -4389,36 +4125,36 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- fastrand v2.4.1 — https://github.com/smol-rs/fastrand
+- fastrand v2.5.0 — https://github.com/smol-rs/fastrand
 - itoa v1.0.18 — https://github.com/dtolnay/itoa
 - linux-raw-sys v0.12.1 — https://github.com/sunfishcode/linux-raw-sys
 - once_cell v1.21.4 — https://github.com/matklad/once_cell
-- pest v2.8.6 — https://github.com/pest-parser/pest
-- pest_derive v2.8.6 — https://github.com/pest-parser/pest
-- pest_generator v2.8.6 — https://github.com/pest-parser/pest
-- pest_meta v2.8.6 — https://github.com/pest-parser/pest
+- pest v2.9.0 — https://github.com/pest-parser/pest
+- pest_derive v2.9.0 — https://github.com/pest-parser/pest
+- pest_generator v2.9.0 — https://github.com/pest-parser/pest
+- pest_meta v2.9.0 — https://github.com/pest-parser/pest
 - pin-project-lite v0.2.17 — https://github.com/taiki-e/pin-project-lite
 - portable-atomic-util v0.2.7 — https://github.com/taiki-e/portable-atomic-util
-- portable-atomic v1.13.1 — https://github.com/taiki-e/portable-atomic
+- portable-atomic v1.15.0 — https://github.com/taiki-e/portable-atomic
 - proc-macro-crate v3.5.0 — https://github.com/bkchr/proc-macro-crate
-- proc-macro2 v1.0.106 — https://github.com/dtolnay/proc-macro2
-- quote v1.0.45 — https://github.com/dtolnay/quote
+- proc-macro2 v1.0.107 — https://github.com/dtolnay/proc-macro2
+- quote v1.0.47 — https://github.com/dtolnay/quote
 - rustc-hash v1.1.0 — https://github.com/rust-lang-nursery/rustc-hash
 - rustix v1.1.4 — https://github.com/bytecodealliance/rustix
-- rustversion v1.0.22 — https://github.com/dtolnay/rustversion
+- rustversion v1.0.23 — https://github.com/dtolnay/rustversion
 - semver v1.0.28 — https://github.com/dtolnay/semver
-- serde v1.0.228 — https://github.com/serde-rs/serde
-- serde_core v1.0.228 — https://github.com/serde-rs/serde
-- serde_derive v1.0.228 — https://github.com/serde-rs/serde
-- serde_json v1.0.150 — https://github.com/serde-rs/json
-- syn v2.0.117 — https://github.com/dtolnay/syn
-- thiserror-impl v2.0.18 — https://github.com/dtolnay/thiserror
-- thiserror v2.0.18 — https://github.com/dtolnay/thiserror
+- serde v1.0.229 — https://github.com/serde-rs/serde
+- serde_core v1.0.229 — https://github.com/serde-rs/serde
+- serde_derive v1.0.229 — https://github.com/serde-rs/serde
+- serde_json v1.0.151 — https://github.com/serde-rs/json
+- syn v2.0.119 — https://github.com/dtolnay/syn
+- syn v3.0.3 — https://github.com/dtolnay/syn
+- thiserror-impl v2.0.20 — https://github.com/dtolnay/thiserror
+- thiserror v2.0.20 — https://github.com/dtolnay/thiserror
 - unicode-ident v1.0.24 — https://github.com/dtolnay/unicode-ident
-- wasip2 v1.0.3+wasi-0.2.9 — https://github.com/bytecodealliance/wasi-rs
-- wit-bindgen v0.51.0 — https://github.com/bytecodealliance/wit-bindgen
+- wasip2 v1.0.4+wasi-0.2.12 — https://github.com/bytecodealliance/wasi-rs
 - wit-bindgen v0.57.1 — https://github.com/bytecodealliance/wit-bindgen
-- zmij v1.0.21 — https://github.com/dtolnay/zmij
+- zmij v1.0.23 — https://github.com/dtolnay/zmij
 
 ```
 Permission is hereby granted, free of charge, to any
@@ -4486,7 +4222,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- winnow v1.0.3 — https://github.com/winnow-rs/winnow
+- winnow v1.0.4 — https://github.com/winnow-rs/winnow
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining
@@ -4571,7 +4307,7 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- tinyvec v1.11.0 — https://github.com/Lokathor/tinyvec
+- tinyvec v1.12.0 — https://github.com/Lokathor/tinyvec
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the &quot;Software&quot;), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
@@ -4587,7 +4323,7 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 ## MIT License (MIT)
 
 Used by:
-- android_system_properties v0.1.5 — https://github.com/nical/android_system_properties
+- android_system_properties v0.1.6 — https://github.com/nical/android_system_properties
 
 ```
 The MIT License (MIT)
@@ -4618,44 +4354,13 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- typenum v1.20.1 — https://github.com/paholg/typenum
-
-```
-The MIT License (MIT)
-
-Copyright (c) 2014 Paho Lurie-Gregg
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the &quot;Software&quot;), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- aho-corasick v1.1.4 — https://github.com/BurntSushi/aho-corasick
+- aho-corasick v1.1.5 — https://github.com/BurntSushi/aho-corasick
 - byteorder v1.5.0 — https://github.com/BurntSushi/byteorder
+- jiff-core v0.1.0 — https://github.com/BurntSushi/jiff
 - jiff-tzdb-platform v0.1.3 — https://github.com/BurntSushi/jiff
-- jiff-tzdb v0.1.6 — https://github.com/BurntSushi/jiff
-- jiff v0.2.28 — https://github.com/BurntSushi/jiff
-- memchr v2.8.1 — https://github.com/BurntSushi/memchr
+- jiff-tzdb v0.1.8 — https://github.com/BurntSushi/jiff
+- jiff v0.2.35 — https://github.com/BurntSushi/jiff
+- memchr v2.8.3 — https://github.com/BurntSushi/memchr
 - ucd-trie v0.1.7 — https://github.com/BurntSushi/ucd-generate
 - walkdir v2.5.0 — https://github.com/BurntSushi/walkdir
 
@@ -4754,7 +4459,7 @@ THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- console v0.16.3 — https://github.com/console-rs/console
+- console v0.16.4 — https://github.com/console-rs/console
 
 ```
 The MIT License (MIT)
@@ -4818,9 +4523,9 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- crossbeam-deque v0.8.6 — https://github.com/crossbeam-rs/crossbeam
+- crossbeam-deque v0.8.7 — https://github.com/crossbeam-rs/crossbeam
 - crossbeam-epoch v0.9.20 — https://github.com/crossbeam-rs/crossbeam
-- crossbeam-utils v0.8.21 — https://github.com/crossbeam-rs/crossbeam
+- crossbeam-utils v0.8.22 — https://github.com/crossbeam-rs/crossbeam
 
 ```
 The MIT License (MIT)
@@ -4971,37 +4676,6 @@ SOFTWARE.
 
 ---
 
-## MIT License (MIT)
-
-Used by:
-- generic-array v0.14.7 — https://github.com/fizyk20/generic-array.git
-
-```
-The MIT License (MIT)
-
-Copyright (c) 2015 Bartłomiej Kamiński
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the &quot;Software&quot;), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
----
-
 ## MIT No Attribution (MIT-0)
 
 Used by:
@@ -5032,7 +4706,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 Used by:
 - bitmaps v3.2.1 — https://github.com/bodil/bitmaps
 - imbl-sized-chunks v0.1.3 — https://github.com/jneem/imbl-sized-chunks
-- imbl v7.0.0 — https://github.com/jneem/imbl
+- imbl v7.0.1 — https://github.com/jneem/imbl
 
 ```
 Mozilla Public License Version 2.0
@@ -5448,7 +5122,6 @@ authorization of the copyright holder.
 ## zlib License (Zlib)
 
 Used by:
-- foldhash v0.1.5 — https://github.com/orlp/foldhash
 - foldhash v0.2.0 — https://github.com/orlp/foldhash
 
 ```

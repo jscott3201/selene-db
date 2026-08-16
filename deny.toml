@@ -75,24 +75,14 @@ deny = [
   { name = "security-framework" },
 ]
 skip = [
-  # BRIEF-05: getrandom 0.3 (proptest/rand) and 0.4 (uuid/insta) carry
-  # target-specific WASI helpers that currently resolve to two wit-bindgen lines.
-  { name = "wit-bindgen", version = "0.51.0" },
-  # BRIEF-07: imbl 7.0's persistent HashMap pulls rand_core/getrandom 0.3
-  # for its internal randomized state, while uuid/tempfile currently pull
-  # getrandom 0.4. Both are live maintained lines; allow the older line until
-  # the upstream ecosystem converges.
-  { name = "getrandom", version = "0.3.4" },
-  # Same getrandom 0.3/0.4 split through WASI support crates.
-  { name = "r-efi", version = "5.3.0" },
-  # BRIEF-43: jsonschema 0.46 pulls referencing 0.46, which remains on
-  # hashbrown 0.16 while rkyv/proc-macro tooling have moved to 0.17. Both
-  # lines are maintained; allow the resolver line until upstream converges.
-  { name = "hashbrown", version = "0.16.1" },
-  # BRIEF-16: pest_derive 2.8 builds through sha2/cpufeatures 0.2 while
-  # blake3 1.8 uses cpufeatures 0.3. Both lines are maintained and target-gated;
-  # keep the older build-time line until upstream converges.
-  { name = "cpufeatures", version = "0.2.17" },
+  # Issue #1116: imbl 7.0.1 remains on wide 0.7 while selene-db's vector
+  # kernels use current wide 1.x. Keep the old transitive SIMD pair together
+  # until the persistent graph-map migration removes imbl.
+  { name = "wide", version = "0.7.33" },
+  { name = "safe_arch", version = "0.7.4" },
+  # rkyv/serde derive infrastructure has moved to syn 3 while miette, pest,
+  # tracing, and munge still use the maintained syn 2 line.
+  { name = "syn", version = "2.0.119" },
 ]
 skip-tree = []
 

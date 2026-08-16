@@ -1,0 +1,8 @@
+[advisories]
+# rust_decimal 1.42.1 declares an optional rkyv 0.7 compatibility feature.
+# Selene-db enables only rust_decimal's std and serde features, so rkyv 0.7 is
+# present in Cargo.lock but absent from the all-features target graph. The
+# active rkyv requirement is pinned at 0.8.18, after the 0.8.17 fix. Keep this
+# exception only while rust_decimal's published metadata retains the lock-only
+# compatibility edge. Tracked by https://github.com/jscott3201/selene-db/issues/1116.
+ignore = ["RUSTSEC-2026-0235"]
