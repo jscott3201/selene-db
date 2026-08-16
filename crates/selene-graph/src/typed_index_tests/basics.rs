@@ -61,18 +61,58 @@ fn not_nan_rejects_nan() {
 }
 
 #[test]
-fn not_nan_preserves_zero_sign_as_distinct_keys() {
-    assert_ne!(NotNanF32::new(0.0).unwrap(), NotNanF32::new(-0.0).unwrap());
-    assert_ne!(NotNanF64::new(0.0).unwrap(), NotNanF64::new(-0.0).unwrap());
+fn not_nan_collapses_signed_zero_to_one_key() {
+    assert_eq!(NotNanF32::new(0.0).unwrap(), NotNanF32::new(-0.0).unwrap());
+    assert_eq!(NotNanF64::new(0.0).unwrap(), NotNanF64::new(-0.0).unwrap());
+
+    assert_eq!(
+        NotNanF32::new(-0.0).unwrap().get().to_bits(),
+        0.0_f32.to_bits()
+    );
+    assert_eq!(
+        NotNanF64::new(-0.0).unwrap().get().to_bits(),
+        0.0_f64.to_bits()
+    );
+}
+
+#[test]
+fn not_nan_signed_zero_hashes_and_orders_as_one_key() {
+    fn digest<T: Hash>(value: T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    assert_eq!(
+        digest(NotNanF32::new(-0.0).unwrap()),
+        digest(NotNanF32::new(0.0).unwrap())
+    );
+    assert_eq!(
+        digest(NotNanF64::new(-0.0).unwrap()),
+        digest(NotNanF64::new(0.0).unwrap())
+    );
+
+    assert_eq!(
+        NotNanF32::new(-0.0)
+            .unwrap()
+            .cmp(&NotNanF32::new(0.0).unwrap()),
+        std::cmp::Ordering::Equal
+    );
+    assert_eq!(
+        NotNanF64::new(-0.0)
+            .unwrap()
+            .cmp(&NotNanF64::new(0.0).unwrap()),
+        std::cmp::Ordering::Equal
+    );
 }
 
 #[test]
 fn not_nan_total_order_matches_total_cmp() {
-    let values = [f64::NEG_INFINITY, -1.0, -0.0, 0.0, 1.0, f64::INFINITY]
+    let values = [f64::NEG_INFINITY, -1.0, 0.0, 1.0, f64::INFINITY]
         .map(|value| NotNanF64::new(value).unwrap());
     assert!(values.windows(2).all(|pair| pair[0] < pair[1]));
 
-    let values = [f32::NEG_INFINITY, -1.0, -0.0, 0.0, 1.0, f32::INFINITY]
+    let values = [f32::NEG_INFINITY, -1.0, 0.0, 1.0, f32::INFINITY]
         .map(|value| NotNanF32::new(value).unwrap());
     assert!(values.windows(2).all(|pair| pair[0] < pair[1]));
 }

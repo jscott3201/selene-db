@@ -14,7 +14,7 @@ use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
-use selene_graph::SharedGraph;
+use selene_graph::{SharedGraph, TypedIndexKind};
 
 fn db_string(value: &str) -> DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")
@@ -229,6 +229,44 @@ fn verify_reports_ok_for_a_consistent_graph() {
     assert!(
         statuses.iter().all(|status| status == "ok"),
         "a freshly inserted graph must verify clean: {statuses:?}"
+    );
+}
+
+/// Deep verify re-derives each row's expected key through the same float key
+/// constructors the index used, so collapsing `-0.0` onto `+0.0` has to leave
+/// both sides agreeing. A collapse applied on only one side would surface here
+/// as a corrupt index on data that is in fact consistent.
+#[test]
+fn verify_reports_ok_for_a_float_index_holding_both_signed_zeros() {
+    let graph = graph(330_006);
+    let registry = BuiltinProcedureRegistry::new();
+    {
+        let mut session = Session::new(&graph);
+        session
+            .execute_source(
+                "INSERT (:Reading { level: -0.0e0 }) INSERT (:Reading { level: 0.0e0 })",
+                &registry,
+            )
+            .expect("seed inserts");
+    }
+    graph
+        .create_property_index(
+            db_string("Reading"),
+            db_string("level"),
+            TypedIndexKind::F64,
+        )
+        .expect("float index builds over both signed zeros");
+
+    let mut session = Session::new(&graph);
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.verify(true) YIELD check, status, detail",
+        &registry,
+    );
+    let statuses = string_column(&table, "status");
+    assert!(
+        statuses.iter().all(|status| status == "ok"),
+        "a float index keying both signed zeros is consistent: {statuses:?}"
     );
 }
 

@@ -529,6 +529,46 @@ mod tests {
         assert_eq!(index.distinct_keys(), 1);
     }
 
+    /// Composite components coerce through `NotNanF32`/`NotNanF64` directly
+    /// rather than through `typed_key`, so signed-zero collapsing has to live in
+    /// the key constructors to reach tuples at all.
+    #[test]
+    fn float_components_collapse_signed_zero() {
+        assert_eq!(
+            component_from_value(TypedIndexKind::F64, &Value::Float(-0.0))
+                .expect("f64 component coerces"),
+            component_from_value(TypedIndexKind::F64, &Value::Float(0.0))
+                .expect("f64 component coerces")
+        );
+        assert_eq!(
+            component_from_value(TypedIndexKind::F32, &Value::Float32(-0.0))
+                .expect("f32 component coerces"),
+            component_from_value(TypedIndexKind::F32, &Value::Float32(0.0))
+                .expect("f32 component coerces")
+        );
+
+        let mut index =
+            CompositeTypedIndex::new(smallvec![TypedIndexKind::String, TypedIndexKind::F64]);
+        let site = Value::String(db_string("composite.signed-zero.site").unwrap());
+        let negative = Value::Float(-0.0);
+        let positive = Value::Float(0.0);
+
+        index.insert(&[&site, &negative], 0).unwrap();
+        index.insert(&[&site, &positive], 1).unwrap();
+        assert_eq!(
+            index.distinct_keys(),
+            1,
+            "both signed zeros share one composite bucket"
+        );
+
+        let stored: Vec<&Value> = vec![&site, &negative];
+        let probe: Vec<&Value> = vec![&site, &positive];
+        assert!(
+            index.values_share_key(&stored, &probe),
+            "flipping the sign of a zero component does not move the tuple's key"
+        );
+    }
+
     #[test]
     fn values_share_key_returns_false_for_distinct_strings() {
         let index =
