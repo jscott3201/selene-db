@@ -498,88 +498,122 @@ Construct graph labels, property keys, aliases, and string values through
 
 `selene-persist` is graph-blind. It knows about `Change` payloads and `ProviderTag` keys; it does not know about node row layouts or label indexes.
 
-### 7.1 Opening the WAL
+### 7.1 The canonical path: `with_wal`
+
+Build the graph with a WAL and the engine owns durability end to end:
 
 ```rust
 use std::path::Path;
-use selene_persist::{SyncPolicy, WalConfig, WalWriter};
+use selene_core::GraphId;
+use selene_graph::{CommitBatching, DEFAULT_WAL_FILE_NAME, SharedGraph, WalConfig};
 
-let wal_dir = Path::new("/var/lib/myapp/graph-1");
-std::fs::create_dir_all(wal_dir)?;
+let dir = Path::new("/var/lib/myapp/graph-1");
+std::fs::create_dir_all(dir)?;
 
-let config = WalConfig {
-    sync_policy: SyncPolicy::EveryN(1), // durability-by-default
-    snapshot_seq: 0,                    // freshly initialized
-};
-let mut wal = WalWriter::open(&wal_dir.join("wal.log"), config)?;
-```
-
-The writer holds an exclusive OS-level file lock — a second `WalWriter::open` on the same path returns `PersistError::WriterLockHeld`.
-
-`SyncPolicy::EveryN(N)` fsyncs after every N appends. `SyncPolicy::OnFlushOnly` is an explicit opt-in for benchmark parity and offline replication paths.
-
-### 7.2 The `on_change` hook
-
-Wiring the WAL into a `SharedGraph` is by registering an `IndexProvider`. The provider's `on_change(&Change)` is called once per commit per change, in registration order, while the write lock is still held.
-
-Here is the canonical pattern: a thin `IndexProvider` whose entire job is to relay every change into the WAL.
-
-```rust
-use std::sync::{Arc, Mutex};
-use selene_core::Change;
-use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
-use selene_core::{HlcTimestamp, Origin};
-use selene_persist::WalWriter;
-
-pub struct WalSinkProvider {
-    writer: Mutex<WalWriter>,
-}
-
-impl IndexProvider for WalSinkProvider {
-    fn as_any(&self) -> &dyn std::any::Any { self }
-
-    fn provider_tag(&self) -> ProviderTag {
-        ProviderTag(*b"WALS")  // app-chosen 4-byte tag
-    }
-
-    fn read_section(&self, _sub: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
-        Ok(())  // this provider owns no snapshot bytes
-    }
-
-    fn write_section(&self, _sub: SubTag) -> Result<Vec<u8>, ProviderError> {
-        Ok(Vec::new())
-    }
-
-    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
-        let mut writer = self.writer.lock().unwrap();
-        writer
-            .append(
-                HlcTimestamp::now(),  // your HLC source
-                Origin::Local,
-                None,
-                std::slice::from_ref(change),
-            )
-            .map_err(|err| ProviderError::InvalidPayload {
-                reason: format!("wal append: {err}"),
-            })?;
-        Ok(())
-    }
-
-    fn declared_sub_tags(&self) -> &[SubTag] { &[] }
-}
-```
-
-Register it at graph construction:
-
-```rust
 let graph = SharedGraph::builder(GraphId::new(1))
-    .with_provider(Arc::new(WalSinkProvider { writer: Mutex::new(wal) }))
+    .with_wal(dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())?
+    .with_commit_batching(CommitBatching::Off)
     .build()?;
 ```
 
-Now every committed change flows into the WAL atomically with the snapshot publish.
+The full create → commit → close → reopen round trip is a **compiled and
+executed doctest** on `selene_graph::SharedGraph`, so it cannot drift away from
+the API the way this excerpt could. Read it with `cargo doc --open -p
+selene-db-graph`, or run it with `cargo test -p selene-db-graph --doc`.
 
-### 7.3 Writing snapshots
+`with_wal` registers the WAL as a **commit-critical durable provider**, not an
+`IndexProvider`. That distinction is the whole point of this section: the two
+hooks run at different times and have different failure semantics.
+
+Reopening an existing directory is `SharedGraph::recover(dir, graph_id)`, never
+`with_wal` — attaching to a directory that already holds a committed store is
+refused with `GraphError::ExistingStore`, because attaching does not replay.
+
+### 7.2 What the commit actually guarantees
+
+Every commit runs **append → flush → publish → acknowledge**, in that order, on
+a single per-graph committer thread:
+
+1. **Append** — the entry is written to the WAL.
+2. **Flush** — one `fsync` per run, the durability barrier.
+3. **Publish** — the new snapshot enters the `ArcSwap`, becoming visible to
+   readers.
+4. **Acknowledge** — `commit()` returns `Ok(CommitOutcome)` carrying
+   `durable_at`.
+
+The barrier sits before publication, so **no reader ever observes a commit that
+is not already durable**, and no caller is told "committed" before the fsync.
+
+Two consequences worth internalising:
+
+- **`with_wal` overrides `WalConfig.sync_policy` to `OnFlushOnly`.** Whatever
+  you pass is discarded. The committer is the sole fsync caller; a
+  per-append policy would double-sync and break the group barrier.
+- **`CommitBatching`, not `SyncPolicy`, controls fsync grouping.**
+  `CommitBatching::Off` is one fsync per commit. `CommitBatching::On { .. }`
+  coalesces a contiguous run into one fsync, trading latency for throughput.
+
+#### Do not use an `IndexProvider` to write the WAL
+
+Earlier revisions of this guide showed a `WalSinkProvider` — an `IndexProvider`
+relaying each `Change` into a `WalWriter` — and called it the canonical
+durability pattern. **It is not, and it never provided the atomicity that text
+claimed.** If you have that pattern in your codebase, replace it with
+`with_wal`.
+
+`IndexProvider::on_change` fan-out runs **after** publication, and callback
+errors and panics are logged and swallowed. So the pattern:
+
+- writes one WAL entry per `Change` rather than one per commit, inflating the
+  log and losing the transaction boundary;
+- reports a successful commit even when the WAL write failed, because the
+  fan-out cannot fail a commit that has already been published;
+- provides no barrier, so a reader can observe a commit whose WAL entry does
+  not exist.
+
+`IndexProvider` is for derived in-memory state that can be rebuilt from the
+graph. Durability is `DurableProvider`, and `with_wal` registers it for you.
+
+#### Low-level `WalWriter` is for offline tooling
+
+`WalWriter::open` remains public for offline replication, inspection, and
+repair tools that own their own sequencing on a quiesced directory. It holds an
+exclusive OS-level file lock, so a second open on the same path returns
+`PersistError::WriterLockHeld` — including against a live `SharedGraph`. Do not
+point one at a directory a `SharedGraph` has open.
+
+For that path only, `SyncPolicy` means what it says: `EveryN(N)` fsyncs after
+every N appends, `OnFlushOnly` defers to an explicit `flush()`.
+
+### 7.3 Durable failures require reopen, not retry
+
+A commit that fails **after** it reaches the durable path returns
+`GraphError::IndeterminateOutcome` (GQLSTATUS `40003`, *transaction rollback —
+statement completion unknown*) and poisons the committer.
+
+`Err` here does **not** mean the transition did not happen. The WAL record may
+already be written, or written and fsynced, and a reopen replays it. Retrying
+blind double-applies.
+
+```rust
+match txn.commit() {
+    Ok(outcome) => { /* durable at outcome.durable_at */ }
+    Err(error) if error.requires_reopen() => {
+        // Quiesce, drop the handle, SharedGraph::recover, read back to see
+        // whether it landed, and only then decide whether to retry.
+    }
+    Err(error) => { /* definite rejection; the handle is still usable */ }
+}
+```
+
+`GraphError::requires_reopen()` is the supported test — prefer it to matching a
+variant. It covers checkpoint failures too. Once poisoned, every later commit,
+compaction, and checkpoint on that handle fails the same way.
+
+See `docs/persistence-and-recovery.md` for the full commit/checkpoint outcome
+contract.
+
+### 7.4 Writing snapshots
 
 Snapshots are atomic envelopes containing zero or more **sections** keyed by `(provider, sub)` tag pair. The engine-owned graph state lives under the `CORE` provider (`META`, `NODE`, `EDGE`, `SCMA` sub-tags); extension providers own their own sections under their own provider tags.
 
@@ -616,7 +650,7 @@ let snapshot_path = builder.finalize()?;
 
 In practice, the `CoreProvider` (from `selene-graph`) and any extension providers all implement `IndexProvider::write_section`; you iterate `declared_sub_tags()` on each and feed the bytes into `SnapshotBuilder::add_section`.
 
-### 7.4 Two-step recovery
+### 7.5 Two-step recovery
 
 ```rust
 use std::sync::Arc;
@@ -803,7 +837,24 @@ A failed auto-commit transaction rolls back automatically — `execute_statement
 
 ### 10.3 Recovering from persistence errors
 
-WAL append errors truncate the file back to the last fully-committed offset; the embedder can retry the append after addressing the I/O cause. Snapshot finalize errors leave the temp file; clean up at startup. Recovery errors that classify as `PersistError::ChecksumMismatch` or `WalSnapshotMismatch` indicate corruption — surface to the operator.
+**Live `SharedGraph` writes.** Test `GraphError::requires_reopen()` first. When
+it is true the committer is poisoned and the outcome is unknown: quiesce, drop
+the handle, reopen with `SharedGraph::recover`, read back to establish whether
+the work landed, and only then decide whether to retry. Retrying blind
+double-applies. When it is false the failure was definite and the handle is
+still usable, so an ordinary retry is safe. This applies to `checkpoint` as well
+as `commit`.
+
+**Offline `WalWriter` tooling.** WAL append errors truncate the file back to the
+last fully-committed offset, so the embedder can retry the append after
+addressing the I/O cause. Snapshot finalize errors leave the temp file; clean up
+at startup.
+
+**Recovery.** Errors classifying as `PersistError::ChecksumMismatch` or
+`WalSnapshotMismatch` indicate corruption — surface to the operator.
+`PersistError::WalMidLogCorruption` means the damage is not a torn tail and
+recovery refused rather than silently truncating; the store needs operator
+attention, not a retry.
 
 ## 11. Embedding patterns
 

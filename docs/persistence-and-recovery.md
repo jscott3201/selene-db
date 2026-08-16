@@ -96,7 +96,8 @@ entry carries:
 - A monotonic 64-bit sequence number assigned by the writer.
 - An HLC timestamp (`HlcTimestamp`).
 - An origin (`Origin::Local`, or `Origin::Replicated { source_node_id, source_seq }`).
-- An optional principal (audit-trail actor; capped at 254 bytes).
+- An optional principal (audit-trail actor), capped at
+  `selene_persist::MAX_PRINCIPAL_BYTES`.
 - The encoded `Change` payload, with an xxh3 checksum and an optional
   zstd-compressed body when the encoded payload crosses the compression
   threshold.
@@ -263,7 +264,8 @@ A snapshot is an `rkyv`-archived envelope of TLV-tagged sections. The file
 header (32 bytes) carries:
 
 - 4-byte magic `SLSN`.
-- 2-byte major version (currently `1`), 2-byte minor version (currently `0`).
+- 2-byte major version and 2-byte minor version
+  (`selene_persist::SNAPSHOT_VERSION_MAJOR` / `SNAPSHOT_VERSION_MINOR`).
 - 2-byte flags (currently the per-section compression toggle).
 - 2-byte section count.
 - 4 reserved bytes (must be zero).

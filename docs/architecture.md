@@ -181,19 +181,31 @@ read path. The primitives are codified by decision D7.
    `RwLock`. Only one writer can hold this lock per graph.
 2. The returned `WriteTxn<'g>` exposes a `Mutator` whose methods append
    `Change`s into a transaction-local buffer.
-3. On `WriteTxn::commit` (or `commit_with_principal`), the mutator clones
-   the current snapshot's persistent data structures, applies the
-   `Change` list, and constructs a new `Arc<SeleneGraph>`.
-4. The new snapshot is published via `ArcSwap::store`. Readers in flight
-   continue against the old snapshot until they drop their `Arc`. New
+3. On `WriteTxn::commit` (or `commit_with_principal`), the **seal** half runs
+   on the calling thread under the held lock: the mutator clones the current
+   snapshot's persistent data structures, applies the `Change` list, and
+   constructs a new `Arc<SeleneGraph>`. `seal` then **releases the write
+   lock** and hands an owned, `Send` bundle to the committer.
+4. The **publish tail** runs on the single per-graph committer thread, which is
+   the sole writer of the `ArcSwap` cell. It stamps the HLC and **appends** the
+   entry to the WAL.
+5. One **group flush** (`fsync`) covers the whole contiguous run. This is the
+   durability barrier.
+6. Only then is the new snapshot **published** via `ArcSwap::store`. Readers in
+   flight continue against the old snapshot until they drop their `Arc`; new
    readers see the new snapshot on their next `read()`.
-5. The mutator hands `&[Change]` plus principal bytes to the WAL writer
-   (`selene-persist::WalWriter`) which appends a framed entry under the
-   configured `SyncPolicy`.
-6. Registered `IndexProvider`s are notified via `on_change(&Change)`. The
+7. Registered `IndexProvider`s are notified via `on_change(&Change)`. The
    re-entry contract (see `IndexProvider` rustdoc) forbids same-graph
    `begin_write` calls from inside `on_change`.
-7. The write lock drops at the end of the commit boundary.
+8. The commit is **acknowledged** — `commit()` returns `Ok(CommitOutcome)`.
+
+The ordering in steps 4-6 is load-bearing: the fsync precedes publication, so
+no reader can observe a commit that is not already durable, and no caller is
+told "committed" before the barrier. That barrier is the R1 fsync-before-publish
+guarantee introduced in v1.2 (BRIEF 2); this document described the earlier
+publish-then-append order until it was corrected. See
+`docs/persistence-and-recovery.md` for the outcome contract, including why a
+failure past step 4 reports an *indeterminate* outcome rather than a rollback.
 
 ### How a reader holds a snapshot
 
@@ -204,11 +216,18 @@ the writer cannot mutate the structures the reader sees.
 
 ### Why locks don't poison
 
-selene-db never propagates a `LockResult` to user code. parking_lot locks
-do not poison on panic; on a panic during commit, the process aborts (the
-panic itself surfaces). Readers cannot observe an in-progress write because
-they never look at the writer's transaction buffer; they only observe the
-last fully-published `ArcSwap` cell.
+selene-db never propagates a `LockResult` to user code, and parking_lot locks
+do not poison on panic. Readers cannot observe an in-progress write because
+they never look at the writer's transaction buffer; they only observe the last
+fully-published `ArcSwap` cell.
+
+A panic on the committer thread does not abort the process. It is caught at the
+committer's `catch_unwind` boundary, which **poisons the engine**: the panicking
+commit and every later one fail with `GraphError::IndeterminateOutcome`, and the
+graph must be reopened through recovery. That is a different mechanism from lock
+poisoning — the locks are fine; the *engine* is the thing declared unusable,
+because a panic between seal and publish can leave the live graph and the
+published snapshot divergent with no in-process way to reconcile them.
 
 ---
 

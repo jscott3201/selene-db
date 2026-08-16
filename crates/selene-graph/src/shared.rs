@@ -33,6 +33,77 @@ use crate::write_txn::WriteTxn;
 /// sole-publisher discipline is what preserves D10 strict-serializability once
 /// `seal()` drops the write lock early — it is load-bearing and NOT
 /// type-enforced (a second committer or ArcSwap writer would silently break it).
+///
+/// # Canonical durable round trip
+///
+/// [`SharedGraph::builder`] + [`with_wal`](SharedGraphBuilder::with_wal) is the
+/// only supported way to make a graph durable, and [`SharedGraph::recover`] is
+/// the only way to reopen one. An [`IndexProvider`] is *not* a durability seam:
+/// its fanout runs after publication and its errors are logged and swallowed,
+/// so a WAL written from a provider callback can report a successful commit for
+/// data that never reached the disk.
+///
+/// This example is a doctest so the recipe cannot rot the way a prose one can:
+/// it is compiled and run by `cargo test --doc`, and it uses only the public
+/// surface an embedder outside the workspace can reach.
+///
+/// ```
+/// use std::fs;
+///
+/// use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
+/// use selene_graph::{DEFAULT_WAL_FILE_NAME, SharedGraph, WalConfig};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let dir = std::env::temp_dir().join(format!(
+///     "selene-doc-canonical-persistence-{}",
+///     std::process::id()
+/// ));
+/// let _ = fs::remove_dir_all(&dir);
+/// fs::create_dir_all(&dir)?;
+/// let graph_id = GraphId::new(1);
+///
+/// // Create. `with_wal` takes the WAL *file* path, and refuses a directory
+/// // that already holds a store — building is not reopening.
+/// let shared = SharedGraph::builder(graph_id)
+///     .with_wal(dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())?
+///     .build()?;
+///
+/// // Commit. `commit()` returns only after the committer has appended the
+/// // entry, fsynced it, and published the new snapshot: append -> flush ->
+/// // publish -> acknowledge. An `Ok` here means the write is durable.
+/// let mut txn = shared.begin_write();
+/// {
+///     let mut mutator = txn.mutator();
+///     mutator.create_node(
+///         LabelSet::single(db_string("Memory")?),
+///         PropertyMap::from_pairs([(db_string("kind")?, Value::Int(1))])?,
+///     )?;
+/// }
+/// txn.commit()?;
+///
+/// // Close. Dropping joins the committer thread once every outstanding
+/// // transaction handle is gone.
+/// drop(shared);
+///
+/// // Reopen. Recovery replays the WAL over the newest published snapshot.
+/// let recovered = SharedGraph::recover(&dir, graph_id)?;
+/// assert_eq!(recovered.read().node_count(), 1);
+/// drop(recovered);
+///
+/// # fs::remove_dir_all(&dir)?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # After a durable failure, reopen — do not retry
+///
+/// A durable error raised after the commit is sealed leaves the outcome
+/// genuinely unknown: the entry may or may not have reached the disk. The
+/// committer poisons the graph and every later call fails, so a retry loop on
+/// the same handle can only spin. Test
+/// [`GraphError::requires_reopen`](crate::GraphError::requires_reopen) and go
+/// back through [`SharedGraph::recover`], which re-reads the durable state and
+/// tells you which side of the commit point the store actually landed on.
 pub struct SharedGraph {
     shared: Arc<RwLock<Arc<SeleneGraph>>>,
     snapshot: Arc<ArcSwap<SeleneGraph>>,
