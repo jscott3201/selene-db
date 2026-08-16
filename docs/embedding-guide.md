@@ -344,14 +344,16 @@ Emits `Change::EdgeDeleted`.
 ### 5.7 Schema change
 
 ```rust
-use selene_core::{GraphId, SchemaChange};
+use selene_core::SchemaChange;
 
 let mut tx = graph.begin_write();
-tx.mutator().schema_change(GraphId::new(1), my_schema_change);
+tx.mutator().schema_change(my_schema_change);
 tx.commit()?;
 ```
 
 Appends `Change::SchemaChanged` to the WAL stream. Catalog graph mutation and closed-graph validation are run at commit time when a `bound_type` is present.
+
+The record is stamped with this graph's own id, which the mutator reads from the live transaction. Recovery refuses a directory whose WAL carries a foreign graph id, so this is not a value an embedder supplies.
 
 ## 6. Running GQL
 
