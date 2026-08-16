@@ -28,6 +28,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   16 to 24; the `origin_tag` byte becomes a flag bit, and undefined flag bits
   are now rejected at both append and read.
 
+- **BREAKING (on-disk format): the audit-log format version is now 2.** `audit.log`
+  files written by v1.0.0-v1.4.0 are rejected at open with
+  `PersistError::UnsupportedVersion`. There is no dual decoder and no migrator;
+  the audit log is an events surface with its own retention, so the recovery
+  path for a v1 file is to archive or discard it. The record header grows from
+  20 to 24 bytes to carry a checksum over its own framing fields.
+
+- **`PersistError::UnsupportedVersion` now names the artifact that failed.** A
+  store holds four independently versioned artifacts, but the message read
+  `wal version unsupported` whichever one raised it — so an operator told to
+  recreate the store could not tell which file was at fault. It now reports,
+  for example, `audit log version unsupported: 1.0`. The variant carries a new
+  `artifact: PersistArtifact` field.
+
 - **The documented 1.x read-side compatibility guarantee is retracted.** It was
   never enforced: both the WAL and the snapshot readers gate on an exact
   `(major, minor)` match, so several released minor versions already could not
@@ -253,6 +267,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   archive from the header-only active WAL. Ahead-MANIFEST and invalid committed
   artifact states poison stale writers until reopen, preventing sequence reuse
   that recovery could otherwise filter.
+
+- The audit log no longer truncates from the first bad record to end of file.
+  `read_one_record` reported a short read, an over-cap length and a checksum
+  mismatch all as an undiscriminated end-of-log, `scan_durable_end` stopped
+  there, and `AuditLog::open` called `set_len` and fsynced the shortened file
+  before returning `Ok`. Flipping one bit in record 10 of 100 deleted records
+  10-100, and because `SharedGraph::recover` reopens the audit log by file
+  presence, the loss recurred on every recovery and looked like success.
+
+  This is the defect the WAL fix closed, and it could not be ported directly.
+  The WAL's rule — a frame that fails validation is a torn tail only if nothing
+  follows it — rests on the v3 prefix checksum making a frame's declared extent
+  trustworthy. The audit format had no counterpart: `payload_len` was the only
+  field saying where a record ended and nothing protected it, so the question
+  was unanswerable exactly when it mattered. Format v2 adds a checksum over the
+  record header, which supplies that prerequisite.
+
+  Interior damage now refuses with `PersistError::AuditMidLogCorruption` and
+  leaves the file byte-identical, preserving both the surviving records and the
+  evidence needed to recover them by other means. Only a genuine final tear is
+  repaired. `AuditLog::read_all` and `AuditLog::decode_all` refuse as well
+  rather than silently returning the prefix before the damage.
 
 - Indexed float reads no longer disagree with an unindexed read about signed
   zero. `-0.0` and `0.0` compare equal under GQL, but typed `F32`/`F64` index
