@@ -214,13 +214,13 @@ impl<'g> WriteTxn<'g> {
     ///
     /// Returns the GG02 / validation error from `seal` — a definite rejection,
     /// nothing was written — or, once the commit has reached the durable path,
-    /// [`GraphError::IndeterminateCommit`].
+    /// [`GraphError::IndeterminateOutcome`].
     ///
     /// **An `Err` from this method does not mean "the transition did not
     /// happen."** Past `seal` the engine cannot promise ISO §8.4 GR 1)b)'s "any
     /// changes ... are canceled": the WAL bytes may already be written, or
     /// written and fsynced, and a reopen replays them. Treat
-    /// [`GraphError::IndeterminateCommit`] as an outcome of unknown durability
+    /// [`GraphError::IndeterminateOutcome`] as an outcome of unknown durability
     /// — quiesce, reopen through [`crate::SharedGraph::recover`], read back to
     /// see whether it landed, and only then decide whether to retry. Retrying
     /// blind double-applies. See that variant for the full contract.

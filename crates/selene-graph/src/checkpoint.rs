@@ -113,10 +113,14 @@ pub(crate) fn execute(
                 poison_committer,
             }
         }
+        // Built as the indeterminate outcome directly rather than left for
+        // `publish_solo` to reclassify: a panic here has no source error whose
+        // text is worth composing, and the variant's own message already tells
+        // the caller to reopen and reconcile.
         Err(payload) => CheckpointExecution {
-            result: Err(GraphError::Durable {
+            result: Err(GraphError::IndeterminateOutcome {
                 reason: format!(
-                    "checkpoint WAL watermark/rotation panicked: {}; the graph must be reopened",
+                    "checkpoint WAL watermark/rotation panicked: {}",
                     crate::panic_payload::describe(&payload)
                 ),
             }),

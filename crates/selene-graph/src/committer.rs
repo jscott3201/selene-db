@@ -396,12 +396,12 @@ impl Committer {
 /// Error returned to every waiter when the committer thread is gone (panicked
 /// or shutting down).
 ///
-/// [`GraphError::IndeterminateCommit`] (GQLSTATUS `40003`), not
+/// [`GraphError::IndeterminateOutcome`] (GQLSTATUS `40003`), not
 /// [`GraphError::Durable`]: a waiter reaching here may have had its record
 /// appended, or appended and fsynced, and cannot tell which. See that variant
 /// for why an unqualified rollback would be the dangerous lie.
 pub(crate) fn committer_dead() -> GraphError {
-    GraphError::IndeterminateCommit {
+    GraphError::IndeterminateOutcome {
         reason: "commit thread is no longer running; the graph must be reopened".to_owned(),
     }
 }
@@ -416,8 +416,8 @@ pub(crate) fn committer_dead() -> GraphError {
 pub(crate) fn indeterminate(error: GraphError) -> GraphError {
     match error {
         // Already classified; do not nest the reason text.
-        indeterminate @ GraphError::IndeterminateCommit { .. } => indeterminate,
-        other => GraphError::IndeterminateCommit {
+        indeterminate @ GraphError::IndeterminateOutcome { .. } => indeterminate,
+        other => GraphError::IndeterminateOutcome {
             reason: other.to_string(),
         },
     }
@@ -510,7 +510,7 @@ fn run_committer(
                     // already-appended member, drain the buffer, and exit.
                     // Nothing in the run was flushed or published — but their
                     // records ARE written, and a reopen replays them, so each
-                    // is acked with committer_dead's IndeterminateCommit rather
+                    // is acked with committer_dead's IndeterminateOutcome rather
                     // than a rollback that claims they did not happen.
                     crate::committer_batch::ack_appended_with_error(appended);
                     drain_buffer_with_error(&mut reorder);
@@ -562,10 +562,19 @@ fn publish_solo(
         } => {
             let execution =
                 crate::checkpoint::execute(&handles.core, &handles.providers, generation, config);
-            if execution.poison_committer {
+            let result = if execution.poison_committer {
                 poisoned.store(true, Ordering::Release);
-            }
-            let _ = reply.send(execution.result);
+                // The poison bit used to stop here, so the caller received the
+                // raw rotation error — an ordinary-looking `Persist(Io(..))` —
+                // while the handle it holds is dead. Reclassify so the failure
+                // says so, exactly as the commit path does. Every LATER submit
+                // already answered `committer_dead()`; this makes the call that
+                // caused the poison agree with the ones that follow it.
+                execution.result.map_err(indeterminate)
+            } else {
+                execution.result
+            };
+            let _ = reply.send(result);
         }
         Work::Commit { .. } => {
             unreachable!("publish_solo is never called with Work::Commit");
@@ -648,7 +657,13 @@ pub(crate) fn unwrap_protected<T>(
                 error = %error,
                 "selene-graph: commit failed after seal; engine poisoned, reopen required",
             );
-            Err(error)
+            // Reclassified HERE, at the point that sets the poison bit, rather
+            // than at each reply site. Poisoning and handing back a raw error is
+            // the defect #1087 was filed for, and it happened because the
+            // checkpoint arm set the bit and forgot to reclassify. Doing it at
+            // the choke point makes that combination unexpressible for every
+            // caller that poisons through this function.
+            Err(indeterminate(error))
         }
         Err(payload) => {
             poisoned.store(true, Ordering::Release);
@@ -670,7 +685,7 @@ pub(crate) fn unwrap_protected<T>(
             // Built directly rather than through `indeterminate`, which
             // composes the wrapped error's Display and would file a panic under
             // "durable provider failed".
-            Err(GraphError::IndeterminateCommit {
+            Err(GraphError::IndeterminateOutcome {
                 reason: format!("commit thread panicked: {description}"),
             })
         }

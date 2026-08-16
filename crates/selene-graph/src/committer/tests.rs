@@ -190,7 +190,7 @@ fn committer_panic_poisons_and_fails_all_waiters_without_hanging() {
         .unwrap();
     let first = txn.commit();
     assert!(
-        matches!(first, Err(GraphError::IndeterminateCommit { .. })),
+        matches!(first, Err(GraphError::IndeterminateOutcome { .. })),
         "a committer panic leaves the outcome unknown, not definitely rolled \
          back: the panic may have landed past the group flush, so the commit \
          may be fsynced and replay on reopen. Got {first:?}"
@@ -210,7 +210,7 @@ fn committer_panic_poisons_and_fails_all_waiters_without_hanging() {
     let second = txn.commit();
     assert!(Instant::now() < deadline, "post-poison commit did not hang");
     assert!(
-        matches!(second, Err(GraphError::IndeterminateCommit { .. })),
+        matches!(second, Err(GraphError::IndeterminateOutcome { .. })),
         "post-poison commit fails fast, got {second:?}"
     );
 }
@@ -267,10 +267,12 @@ fn returned_write_commit_err_poisons_so_failed_commit_never_leaks() {
         .unwrap();
     let first = txn.commit();
     assert!(
-        matches!(first, Err(GraphError::IndeterminateCommit { .. })),
+        matches!(first, Err(GraphError::IndeterminateOutcome { .. })),
         "a returned write_commit Err surfaces as indeterminate: append_sealed \
          walks the providers in order, so an earlier one may already hold the \
-         record. Got {first:?}"
+         record. Got {first:?}. This is also the choke-point test -- nothing at \
+         the reply site wraps this error, so it is `unwrap_protected` \
+         reclassifying as it sets the poison bit."
     );
 
     // Not visible: the published snapshot never advanced past the failure.
@@ -288,7 +290,7 @@ fn returned_write_commit_err_poisons_so_failed_commit_never_leaks() {
     let second = txn.commit();
     assert!(Instant::now() < deadline, "post-poison commit did not hang");
     assert!(
-        matches!(second, Err(GraphError::IndeterminateCommit { .. })),
+        matches!(second, Err(GraphError::IndeterminateOutcome { .. })),
         "post-poison commit fails fast (engine poisoned), got {second:?}"
     );
 

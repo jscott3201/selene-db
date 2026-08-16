@@ -185,15 +185,15 @@ both predates checkpoint watermarks and can read the file to misinterpret one.
 Downgrading across a coordinated checkpoint was already unsupported; it is now
 unsupported for the simpler reason that downgrading at all is.
 
-## Commit outcomes
+## Commit and checkpoint outcomes
 
 A commit passes through five states. Only the first is a definite negative.
 
 | State | What happened | What the caller gets |
 |---|---|---|
 | Rejected | Validation or graph-type failure in `seal`; nothing written | A typed error. Definitely no effect. |
-| Appended | The record is in the WAL file, not fsynced | `IndeterminateCommit` if the run then fails |
-| Flushed | The group fsync returned `Ok`; the run is durable | `IndeterminateCommit` if publication then fails |
+| Appended | The record is in the WAL file, not fsynced | `IndeterminateOutcome` if the run then fails |
+| Flushed | The group fsync returned `Ok`; the run is durable | `IndeterminateOutcome` if publication then fails |
 | Published | The snapshot is visible to readers | — |
 | Acknowledged | `Ok(CommitOutcome)`, carrying `durable_at` | Success |
 
@@ -203,7 +203,7 @@ canceled"; selene-db cannot promise that once the record has been appended, so
 it reports the outcome as unknown rather than claiming a rollback it did not
 perform. The status is `40003` — *transaction rollback — statement completion
 unknown* (§23.1 Table 8), reached in Rust as
-`GraphError::IndeterminateCommit`.
+`GraphError::IndeterminateOutcome`.
 
 The reason the appended-but-unflushed state is not simply discarded: the
 committer-managed WAL runs under `SyncPolicy::OnFlushOnly`, so `append_record`
@@ -222,10 +222,33 @@ Three failures reach this state, and all three can leave WAL bytes behind:
 - a **publish-tail panic after a successful group flush** error-acks commits
   that are unambiguously durable and merely unpublished.
 
-### What to do on `IndeterminateCommit`
+### Checkpoint failures
 
-1. Stop issuing writes on that handle — the committer is poisoned and every
-   later commit fails fast with the same status.
+A checkpoint splits the same way, and reports it the same way.
+
+*Retryable* — preparation failures: no owned WAL, a non-default WAL filename, a
+provider that cannot encode the ordered generation, or a panic inside
+preparation. These happen before the MANIFEST protocol begins and consume no
+WAL sequence. A verified artifact collision, where the target snapshot already
+exists with identical bytes, is also retryable: it leaves the active epoch
+unchanged and the writer usable.
+
+*Requires reopen* — anything else once the watermark/rotation phase starts. The
+watermark record has already consumed a physical sequence by then, so the
+engine cannot prove which side of the MANIFEST commit point it reached and the
+new epoch may or may not be published. These arrive as `IndeterminateOutcome`
+with the source rotation error preserved in the reason.
+
+**Test `GraphError::requires_reopen()` rather than matching a variant.** Which
+failures poison the committer is an engine-internal judgement, and both classes
+were previously indistinguishable at the call site — a rotation-phase
+`Io(AlreadyExists)` looked exactly like a retryable preparation failure while
+the handle it came from was already dead.
+
+### What to do on `IndeterminateOutcome`
+
+1. Stop issuing work on that handle — the committer is poisoned, and every
+   later commit, compaction, or checkpoint fails fast with the same status.
 2. Drop the handle and reopen through `SharedGraph::recover`.
 3. **Read back** to determine whether the transition landed.
 4. Only then decide whether to retry.

@@ -196,7 +196,7 @@ fn failed_commit_does_not_bump_schema_version() {
 
     assert!(matches!(
         txn.commit(),
-        Err(GraphError::IndeterminateCommit { reason })
+        Err(GraphError::IndeterminateOutcome { reason })
             if reason.contains("synthetic durable failure")
     ));
     assert_eq!(shared.schema_version(), 0);

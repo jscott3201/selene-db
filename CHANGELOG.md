@@ -89,12 +89,27 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A checkpoint failure that poisoned the committer now says so.**
+  `SharedGraph::checkpoint` returned the raw rotation error — an
+  ordinary-looking `Persist(Io(..))` — for failures that had already killed the
+  handle, so an embedder could not tell a retryable preparation failure from one
+  requiring reopen. Poisoning failures now return
+  `GraphError::IndeterminateOutcome` with the source error text preserved, and
+  `GraphError::requires_reopen()` is the supported test for the condition in
+  preference to matching a variant. Preparation failures and the verified
+  artifact-collision case stay their own typed errors and stay retryable.
+
+  This also removes an inconsistency: a *second* checkpoint on a poisoned handle
+  already reported the indeterminate outcome through the committer's poison
+  gate. Only the call that caused the poison behaved differently.
+
 - **A failed `commit()` no longer claims the transition did not happen.** Once a
   commit reaches the durable path, the engine cannot honour ISO/IEC 39075:2024
   §8.4 `<commit command>` GR 1)b)'s "any changes ... are canceled": the WAL
   record may already be written, or written and fsynced, and a reopen replays
   it. Every commit error-acked on a committer poison exit now returns the new
-  `GraphError::IndeterminateCommit` (GQLSTATUS `40003`, *transaction rollback —
+  `GraphError::IndeterminateOutcome` (named for the operation-neutral condition,
+  because checkpoints report it too) (GQLSTATUS `40003`, *transaction rollback —
   statement completion unknown*, §23.1 Table 8) instead of `GraphError::Durable`
   (`5GQL0`), which read as a definite negative. A caller must reopen and read
   back before retrying; retrying blind double-applies. `docs/persistence-and-
@@ -103,7 +118,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   **Downstream impact:** `GraphError` is `#[non_exhaustive]`, so the new variant
   compiles additively — but code that matched `GraphError::Durable { .. }` to
   detect a failed commit now falls through to its wildcard arm. Match
-  `GraphError::IndeterminateCommit` (or GQLSTATUS `40003`) instead, and treat it
+  `GraphError::IndeterminateOutcome` (or GQLSTATUS `40003`) instead, and treat it
   as "unknown", not "failed".
 
   The prior behaviour rested on three doc comments asserting that
