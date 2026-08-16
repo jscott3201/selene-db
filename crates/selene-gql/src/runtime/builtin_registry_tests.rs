@@ -595,7 +595,7 @@ fn handles_are_unique_and_one_based() {
         .map(|(_, metadata)| metadata.handle.raw())
         .collect();
     handles.sort_unstable();
-    assert_eq!(handles, (1..=68).collect::<Vec<_>>());
+    assert_eq!(handles, (1..=69).collect::<Vec<_>>());
 }
 
 #[test]

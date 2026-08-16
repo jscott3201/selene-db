@@ -4,7 +4,7 @@ mod aggregate;
 mod call;
 mod call_subquery;
 mod catalog;
-mod catalog_index;
+pub(crate) mod catalog_index;
 mod chain;
 mod distinct;
 mod explain;

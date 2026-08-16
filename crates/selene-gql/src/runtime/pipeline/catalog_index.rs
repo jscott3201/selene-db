@@ -204,7 +204,7 @@ fn gql_type_to_index_kind(
     }
 }
 
-pub(super) fn render_index_name(
+pub(crate) fn render_index_name(
     label: DbString,
     property: DbString,
     explicit: Option<DbString>,
@@ -214,7 +214,7 @@ pub(super) fn render_index_name(
         .unwrap_or_else(|| render_auto_index_name(label, property))
 }
 
-pub(super) fn render_composite_index_name(
+pub(crate) fn render_composite_index_name(
     label: DbString,
     properties: &[DbString],
     explicit: Option<DbString>,
@@ -296,7 +296,7 @@ fn same_property_set(lhs: &[DbString], rhs: &[DbString]) -> bool {
     lhs == rhs
 }
 
-pub(super) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
+pub(crate) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
     match kind {
         TypedIndexKind::Bool => "bool",
         TypedIndexKind::I64 => "i64",

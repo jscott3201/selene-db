@@ -96,12 +96,12 @@ For local engine development, keep the `package = "selene-db-*"` aliases and
 replace only the `version = "1.4.0"` fields with
 `path = "path/to/selene-db/crates/<crate>"`.
 
-selene-db is a single native engine — there is no extension/procedure-pack model and nothing to load at runtime. `CALL` is served by the one frozen native `BuiltinProcedureRegistry` (`selene-gql/src/runtime/builtin_registry.rs`), constructed with `BuiltinProcedureRegistry::new()`. It registers exactly 68 procedures, fixed at construction:
+selene-db is a single native engine — there is no extension/procedure-pack model and nothing to load at runtime. `CALL` is served by the one frozen native `BuiltinProcedureRegistry` (`selene-gql/src/runtime/builtin_registry.rs`), constructed with `BuiltinProcedureRegistry::new()`. It registers exactly 69 procedures, fixed at construction:
 
 - 49 platform built-ins covering health, feature reporting, verification, compaction stats, scalar/vector/text index management, graph reachability, vector search and scoring, BM25 scoring, JSON candidate production, Reciprocal Rank Fusion, and maintenance;
 - 19 `algo.*` procedures (projection lifecycle, PageRank, betweenness, label propagation, Louvain, triangle count, WCC, SCC, topological sort, articulation points, bridges, Dijkstra, SSSP, APSP), binding `CALL algo.*` directly over the `selene-algorithms` native API.
 
-`BuiltinProcedureRegistry` implements `selene_gql::ProcedureRegistry`; pass `&registry` everywhere the pipeline asks for `&dyn ProcedureRegistry` (see §6). The `CALL` grammar is plain ISO `CALL` (IW010), unchanged. `SHOW PROCEDURES` enumerates all 68:
+`BuiltinProcedureRegistry` implements `selene_gql::ProcedureRegistry`; pass `&registry` everywhere the pipeline asks for `&dyn ProcedureRegistry` (see §6). The `CALL` grammar is plain ISO `CALL` (IW010), unchanged. `SHOW PROCEDURES` enumerates all 69:
 
 ```rust
 use selene_gql::{BuiltinProcedureRegistry, Session};
@@ -820,7 +820,7 @@ Trade-offs:
 
 Use only when tenants are administratively trusted (e.g. departments inside one org) and graphs are tiny.
 
-The procedure surface is the same for every tenant: the frozen native `BuiltinProcedureRegistry` registers a fixed set of 68 procedures (49 platform built-ins plus 19 `algo.*`) at construction. There is no per-tenant procedure surface to configure — selene-db is a single native engine with no loadable extensions. If a tenant must not be allowed to `CALL` a given procedure, gate it in the embedder's authorization wrapper (§8), not by handing out a different registry.
+The procedure surface is the same for every tenant: the frozen native `BuiltinProcedureRegistry` registers a fixed set of 69 procedures (50 platform built-ins plus 19 `algo.*`) at construction. There is no per-tenant procedure surface to configure — selene-db is a single native engine with no loadable extensions. If a tenant must not be allowed to `CALL` a given procedure, gate it in the embedder's authorization wrapper (§8), not by handing out a different registry.
 
 ## 10. Error handling
 

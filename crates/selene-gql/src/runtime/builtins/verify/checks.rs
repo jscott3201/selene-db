@@ -138,10 +138,23 @@ pub(super) fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResu
     if indexed_rows != expected_rows {
         issues += indexed_rows.abs_diff(expected_rows) as usize;
     }
+    // Drift is counted into the detail but never into `issues` (#1102). A
+    // demoted index is not corrupt — it declines every probe and callers fall
+    // back to a scan, so queries still return the same rows — and this is a
+    // corruption audit. Reporting it as an issue would make `selene.verify`
+    // cry wolf on a graph behaving exactly as designed. Reporting it nowhere
+    // was the other failure: the audit then actively confirmed health for an
+    // index answering nothing from its own bitmaps. `selene.property_index_stats`
+    // is the surface for acting on this; the detail here is so an operator
+    // already running verify is not told a half-truth.
+    let drifted_rows = snapshot
+        .iter_property_index_stats()
+        .fold(0_u64, |total, row| total.saturating_add(row.drifted_rows));
     CheckResult::new(
         issues,
         format!(
-            "indexed property rows={indexed_rows}; expected property rows={expected_rows}; issues={issues}"
+            "indexed property rows={indexed_rows}; expected property rows={expected_rows}; \
+             drifted rows={drifted_rows}; issues={issues}"
         ),
     )
 }
