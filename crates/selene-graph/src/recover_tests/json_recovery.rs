@@ -15,6 +15,12 @@ fn json_value() -> Value {
     )
 }
 
+fn arbitrary_precision_json_value() -> Value {
+    let value = serde_json::from_str(r#"{"large":184467440737095516160,"rate":0.01}"#)
+        .expect("consumer arbitrary-precision JSON parses");
+    Value::Json(JsonValue::new(value).expect("consumer JSON validates"))
+}
+
 #[test]
 fn recover_snapshot_preserves_json_property() {
     let dir = temp_dir("snapshot-json");
@@ -63,6 +69,55 @@ fn recover_wal_only_replays_json_property() {
         snapshot.node_properties(NodeId::new(1)).unwrap(),
         "recover.wal.json",
         &json_value(),
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_wal_only_preserves_arbitrary_precision_json_numbers() {
+    let dir = temp_dir("wal-arbitrary-precision-json");
+    let expected = arbitrary_precision_json_value();
+    append_wal(
+        &dir,
+        0,
+        &[Change::NodeCreated {
+            id: NodeId::new(1),
+            labels: LabelSet::single(db_string("recover.wal.precise-json.node").unwrap()),
+            properties: prop("recover.wal.precise-json", expected.clone()),
+        }],
+    );
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(51)).unwrap();
+    let snapshot = recovered.read();
+    expect_prop(
+        snapshot.node_properties(NodeId::new(1)).unwrap(),
+        "recover.wal.precise-json",
+        &expected,
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_snapshot_preserves_arbitrary_precision_json_numbers() {
+    let dir = temp_dir("snapshot-arbitrary-precision-json");
+    let expected = arbitrary_precision_json_value();
+    let shared = SharedGraph::builder(GraphId::new(52)).build().unwrap();
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node(
+            LabelSet::single(db_string("recover.snapshot.precise-json.node").unwrap()),
+            prop("recover.snapshot.precise-json", expected.clone()),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+    write_snapshot(&dir, &shared, 1);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(52)).unwrap();
+    let snapshot = recovered.read();
+    expect_prop(
+        snapshot.node_properties(NodeId::new(1)).unwrap(),
+        "recover.snapshot.precise-json",
+        &expected,
     );
     let _ = fs::remove_dir_all(dir);
 }

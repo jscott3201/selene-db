@@ -47,7 +47,8 @@ mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 selene-testing = { package = "selene-db-testing", path = "../selene-testing" }
-serde_json.workspace = true
+# Keep WAL/snapshot recovery covered under consumer feature unification.
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
 
 [[bench]]
 name = "single_graph"

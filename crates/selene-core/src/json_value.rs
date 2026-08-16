@@ -10,6 +10,14 @@ use crate::{
     CoreError, CoreResult, DbString, db_string::MAX_DB_STRING_BYTES, json_patch::apply_json_patch,
 };
 
+/// Map-key token used by serde-json's arbitrary-precision number transport.
+///
+/// With that feature unified into a consumer build, `Deserializer::deserialize_any`
+/// presents a numeric lexeme as a one-entry map instead of calling a numeric
+/// visitor method. Recognizing the token keeps the dependency feature from
+/// changing a JSON number into an object during strict parsing.
+const SERDE_JSON_ARBITRARY_PRECISION_NUMBER_TOKEN: &str = "$serde_json::private::Number";
+
 /// Selector used by JSON path-existence helpers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JsonPathSelector {
@@ -458,6 +466,16 @@ impl<'de> Visitor<'de> for StrictJsonValueVisitor<'_> {
     {
         let mut values = SerdeJsonMap::new();
         while let Some(key) = map.next_key::<String>()? {
+            if values.is_empty() && key == SERDE_JSON_ARBITRARY_PRECISION_NUMBER_TOKEN {
+                let lexeme = map.next_value::<String>()?;
+                let number = lexeme.parse().map_err(A::Error::custom)?;
+                if map.next_key::<String>()?.is_some() {
+                    return Err(A::Error::custom(
+                        "arbitrary-precision JSON number transport has trailing fields",
+                    ));
+                }
+                return Ok(SerdeJsonValue::Number(number));
+            }
             self.seed.validate_string_len(key.len())?;
             match values.entry(key) {
                 SerdeJsonMapEntry::Vacant(entry) => {
