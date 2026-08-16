@@ -81,7 +81,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   replay; required properties, descriptor changes, inline indexes, and
   key-label changes remain rejected.
 
+- `Value::is_number` and `TypedIndexKind::is_numeric` name the ISO numeric
+  family — the one family whose values compare across distinct variants
+  (§4.16.5.2), absent Feature GA04. Both are exhaustive matches, so a future
+  variant or index kind must be classified deliberately rather than defaulting
+  to "not a number".
+
 ### Fixed
+
+- Composite property-index drift classification no longer distinguishes a
+  rejected NaN from a rejected wrong variant by comparing a diagnostic string
+  against the literal `"NaN"`. `CompositeIndexValueError` gained a
+  `ComponentNaN` variant (additive; the enum is `#[non_exhaustive]`) so the
+  distinction is a discriminant. The two are classified oppositely — a NaN row
+  is one a scan omits as well, a kind-mismatched row is not — so rewording one
+  diagnostic could previously have disabled indexes that need no disabling.
 
 - JSON values no longer change arbitrary-precision numbers into private
   serde-json transport objects during postcard, WAL, or snapshot recovery when

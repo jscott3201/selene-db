@@ -8,6 +8,17 @@ use selene_core::{DbString, DurationOrderKey, Value, duration_order_key};
 
 use super::{NotNanError, NotNanF32, NotNanF64, TypedIndexKind};
 
+/// Diagnostic spelling of a rejected NaN in `observed` positions.
+///
+/// One constant rather than a literal per site: the composite path used to
+/// recover "this was a NaN, not a kind mismatch" by comparing `observed`
+/// against this text, so the two spellings had to agree for a correctness
+/// classifier to work. That classifier is now a discriminant test
+/// (`CompositeIndexValueError::ComponentNaN`) and this text is purely
+/// diagnostic, but keeping one definition keeps the two paths' messages
+/// identical.
+pub(crate) const NAN_OBSERVED: &str = "NaN";
+
 /// Internal value-admission error for index mutation.
 #[derive(Debug)]
 pub(crate) enum TypedIndexValueError {
@@ -39,7 +50,7 @@ impl TypedIndexValueError {
     pub(crate) fn observed(&self) -> &'static str {
         match self {
             Self::KindMismatch { observed, .. } => observed,
-            Self::NaN { .. } => "NaN",
+            Self::NaN { .. } => NAN_OBSERVED,
         }
     }
 }

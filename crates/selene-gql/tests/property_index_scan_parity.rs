@@ -190,6 +190,128 @@ fn repairing_the_drifted_row_re_enables_the_index() {
     );
 }
 
+/// A graph whose indexed column drifted to a value of *another comparability
+/// family*: an `I64` index over a column that later took a `STRING`.
+///
+/// The suite above drifts within the numeric family, where the omitted row can
+/// genuinely be matched by an index-keyed predicate. This is the other case —
+/// ISO/IEC 39075:2024 §4.16.5.2 makes numbers the only family that compares
+/// across variants, so no `I64`-keyed *equality* probe could ever have matched
+/// this row.
+fn cross_family_drifted_graph(id: u64, indexed: bool) -> SharedGraph {
+    let graph = SharedGraph::new(GraphId::new(id));
+    {
+        let mut session = Session::new(&graph);
+        exec(&mut session, "INSERT (:Reading { level: 3 })");
+    }
+    if indexed {
+        graph
+            .create_property_index(
+                db_string("Reading"),
+                db_string("level"),
+                TypedIndexKind::I64,
+            )
+            .expect("index builds over the clean column");
+    }
+    {
+        let mut session = Session::new(&graph);
+        exec(&mut session, "INSERT (:Reading { level: 'high' })");
+    }
+    graph
+}
+
+/// The GQLSTATUS a statement fails with.
+fn status(graph: &SharedGraph, source: &str) -> String {
+    Session::new(graph)
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect_err("statement errors")
+        .gqlstatus()
+        .as_str()
+        .to_owned()
+}
+
+#[test]
+fn equality_over_cross_family_drift_agrees_with_a_scan() {
+    let indexed = cross_family_drifted_graph(90_120, true);
+    let unindexed = cross_family_drifted_graph(90_121, false);
+
+    let query = "MATCH (n:Reading) WHERE n.level = 3 RETURN n";
+    let indexed_rows = count(&mut Session::new(&indexed), query);
+
+    assert_eq!(indexed_rows, count(&mut Session::new(&unindexed), query));
+    assert_eq!(
+        indexed_rows, 1,
+        "`'high' = 3` is a definite false, so only the Int row matches"
+    );
+}
+
+/// The reason index-drift classification stays an over-approximation instead of
+/// narrowing to the numeric family.
+///
+/// Equality above shows the tempting half: the drifted row cannot be matched by
+/// an `I64`-keyed probe, so letting the index keep answering would return the
+/// same rows. Ordering is the half that forbids it. A non-comparable pair is a
+/// `22G04` data exception, not a false, so the drifted row is not merely
+/// invisible to a range predicate — it makes the whole statement fail. An index
+/// that survived the drift would let `range_index_scan` fire, and its declined
+/// range probe falls back to `linear_rows_filtered_by_resolved_bounds`, which
+/// treats an incomparable row as a plain non-match. The statement would stop
+/// raising and start succeeding.
+///
+/// See `selene_graph::property_index`'s `counts_as_drift` for the full finding.
+#[test]
+fn a_range_predicate_over_cross_family_drift_still_raises() {
+    let indexed = cross_family_drifted_graph(90_122, true);
+    let unindexed = cross_family_drifted_graph(90_123, false);
+
+    let query = "MATCH (n:Reading) WHERE n.level > 2 RETURN n";
+
+    assert_eq!(
+        status(&indexed, query),
+        "22G04",
+        "an index must not turn a values-not-comparable failure into rows"
+    );
+    assert_eq!(
+        status(&unindexed, query),
+        "22G04",
+        "the scan this must stay identical to raises the same status"
+    );
+}
+
+/// The prefix probe's version of the same carve-out, held latent.
+///
+/// `STARTS WITH` against a non-string is a `22G03` data exception, so a `STRING`
+/// index carrying one `Int` row would flip the same way as the range case above
+/// if it kept answering. It cannot today: no optimizer rule routes `STARTS
+/// WITH` to `TypedIndex::lookup_prefix`, so the predicate always reaches the
+/// evaluator and always raises whatever the drift classifier decides. Narrowing
+/// `counts_as_drift` leaves this test passing for that reason alone — it pins
+/// the status a future prefix-scan rule has to preserve, not the classifier.
+#[test]
+fn starts_with_over_cross_family_drift_still_raises() {
+    let build = |id: u64, indexed: bool| {
+        let graph = SharedGraph::new(GraphId::new(id));
+        {
+            let mut session = Session::new(&graph);
+            exec(&mut session, "INSERT (:Doc { name: 'alpha' })");
+        }
+        if indexed {
+            graph
+                .create_property_index(db_string("Doc"), db_string("name"), TypedIndexKind::String)
+                .expect("index builds over the clean column");
+        }
+        {
+            let mut session = Session::new(&graph);
+            exec(&mut session, "INSERT (:Doc { name: 5 })");
+        }
+        graph
+    };
+
+    let query = "MATCH (n:Doc) WHERE n.name STARTS WITH 'a' RETURN n";
+    assert_eq!(status(&build(90_124, true), query), "22G03");
+    assert_eq!(status(&build(90_125, false), query), "22G03");
+}
+
 /// A graph holding one `-0.0` row and one `0.0` row, with an F64 index over the
 /// column. Both rows are keyable, so this is not a completeness problem: the
 /// index answers, and the question is only whether it answers the same rows a
