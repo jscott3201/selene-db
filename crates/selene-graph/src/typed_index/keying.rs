@@ -128,6 +128,17 @@ pub(crate) fn observed_value_kind(value: &Value) -> &'static str {
     value.variant_name()
 }
 
+/// Compare two raw values bit-exactly for floats, by value otherwise.
+///
+/// Reached only when at least one side cannot be coerced to the index's kind,
+/// so neither side is keyable and the comparison decides whether maintenance
+/// may be skipped. It stays bit-exact — and so reports the two signed zeros as
+/// different — deliberately: the only cost is a redundant remove+insert, and
+/// both halves re-coerce through [`typed_key`], which agrees on the outcome.
+///
+/// Canonicalising here instead of in the key constructors would invert that
+/// safety. It would report `-0.0` and `0.0` as the same raw value and skip
+/// maintenance while the key underneath still moved.
 pub(super) fn raw_value_same(lhs: &Value, rhs: &Value) -> bool {
     match (lhs, rhs) {
         (Value::Float(lhs), Value::Float(rhs)) => lhs.to_bits() == rhs.to_bits(),

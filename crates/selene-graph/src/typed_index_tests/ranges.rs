@@ -1,3 +1,5 @@
+use std::ops::Bound;
+
 use jiff::civil::time;
 
 use super::*;
@@ -5,18 +7,71 @@ use super::*;
 #[test]
 fn f32_range_scan_uses_total_float_order() {
     let mut index = TypedIndex::new(TypedIndexKind::F32);
-    for (row, value) in [(0, -1.0_f32), (1, -0.0_f32), (2, 0.0_f32), (3, 1.0_f32)] {
+    for (row, value) in [
+        (0, f32::NEG_INFINITY),
+        (1, -1.0_f32),
+        (2, 0.0_f32),
+        (3, 1.0_f32),
+    ] {
         index.insert(&Value::Float32(value), row).unwrap();
     }
 
     let result = index
-        .lookup_range(Value::Float32(-0.0_f32)..=Value::Float32(1.0_f32))
+        .lookup_range(Value::Float32(-1.0_f32)..=Value::Float32(1.0_f32))
         .expect("f32 range kind matches");
 
     assert!(!result.contains(0));
     assert!(result.contains(1));
     assert!(result.contains(2));
     assert!(result.contains(3));
+}
+
+/// Both signed zeros key together, so a bound written with either sign selects
+/// the same rows a scan would. `total_cmp` alone would sort `-0.0` below `0.0`
+/// and let `> -0.0` return a `0.0` row that `0.0 > -0.0` rejects.
+#[test]
+fn float_range_bounds_ignore_the_sign_of_zero() {
+    let mut index = TypedIndex::new(TypedIndexKind::F64);
+    for (row, value) in [(0, -1.0_f64), (1, -0.0_f64), (2, 0.0_f64), (3, 1.0_f64)] {
+        index.insert(&Value::Float(value), row).unwrap();
+    }
+
+    for bound in [-0.0_f64, 0.0_f64] {
+        let exclusive = index
+            .lookup_range((
+                Bound::Excluded(Value::Float(bound)),
+                Bound::Unbounded::<Value>,
+            ))
+            .expect("f64 range kind matches");
+        assert!(!exclusive.contains(1), "-0.0 row excluded by > {bound}");
+        assert!(!exclusive.contains(2), "0.0 row excluded by > {bound}");
+        assert!(exclusive.contains(3), "1.0 row retained by > {bound}");
+
+        let inclusive = index
+            .lookup_range((
+                Bound::Included(Value::Float(bound)),
+                Bound::Unbounded::<Value>,
+            ))
+            .expect("f64 range kind matches");
+        assert!(!inclusive.contains(0), "-1.0 row excluded by >= {bound}");
+        assert!(inclusive.contains(1), "-0.0 row retained by >= {bound}");
+        assert!(inclusive.contains(2), "0.0 row retained by >= {bound}");
+    }
+}
+
+#[test]
+fn signed_zeros_share_one_equality_key() {
+    let mut index = TypedIndex::new(TypedIndexKind::F64);
+    index.insert(&Value::Float(-0.0), 1).unwrap();
+    index.insert(&Value::Float(0.0), 2).unwrap();
+
+    for probe in [-0.0_f64, 0.0_f64] {
+        let hits = index
+            .lookup_eq(&Value::Float(probe))
+            .expect("f64 equality kind matches");
+        assert_eq!(hits.len(), 2, "= {probe} returns both signed-zero rows");
+        assert!(hits.contains(1) && hits.contains(2));
+    }
 }
 
 #[test]
