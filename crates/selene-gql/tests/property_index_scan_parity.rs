@@ -278,11 +278,15 @@ fn a_range_predicate_over_cross_family_drift_still_raises() {
     );
 }
 
-/// The prefix probe's version of the same carve-out.
+/// The prefix probe's version of the same carve-out, held latent.
 ///
 /// `STARTS WITH` against a non-string is a `22G03` data exception, so a `STRING`
-/// index carrying one `Int` row has the identical error-becomes-success flip if
-/// it is allowed to keep answering.
+/// index carrying one `Int` row would flip the same way as the range case above
+/// if it kept answering. It cannot today: no optimizer rule routes `STARTS
+/// WITH` to `TypedIndex::lookup_prefix`, so the predicate always reaches the
+/// evaluator and always raises whatever the drift classifier decides. Narrowing
+/// `counts_as_drift` leaves this test passing for that reason alone — it pins
+/// the status a future prefix-scan rule has to preserve, not the classifier.
 #[test]
 fn starts_with_over_cross_family_drift_still_raises() {
     let build = |id: u64, indexed: bool| {

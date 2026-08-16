@@ -501,27 +501,32 @@ fn remove_commit(
 /// `I64` index is a definite `false` for any `I64`-keyed equality probe.
 ///
 /// So narrowing this to `kind.is_numeric() && value.is_number()` is sound *for
-/// the equality probe alone*. It is not sound for the other two probes, and
-/// both failures are silent:
+/// the equality probe alone*. Range is where it breaks, and the failure is
+/// silent: a non-comparable pair is a data exception (`ValuesNotComparable`,
+/// `eval_ordering`), not a `false`. Today the drifted index declines, the
+/// predicate stays a general filter, and `n.level > 2` over a column holding
+/// one `String` raises `22G04`. Let the index survive and the
+/// `range_index_scan` rule fires instead; when its range probe then declines,
+/// `linear_rows_filtered_by_resolved_bounds` treats the incomparable row as a
+/// plain non-match. The statement stops raising and starts returning rows —
+/// which is what applying the narrowing to this function actually does to
+/// `a_range_predicate_over_cross_family_drift_still_raises` in
+/// `selene-gql/tests/property_index_scan_parity.rs`.
 ///
-/// - **Range.** A non-comparable pair is a data exception
-///   (`ValuesNotComparable`, `eval_ordering`), not a `false`. Today the drifted
-///   index declines, the predicate stays a general filter, and `n.age > 10`
-///   over a column holding one `String` raises. Let the index survive and the
-///   `range_index_scan` rule fires instead; when its range probe then declines,
-///   `linear_rows_filtered_by_resolved_bounds` treats the incomparable row as a
-///   plain non-match. The query stops raising and starts succeeding.
-/// - **Prefix.** `STARTS WITH` against a non-string is a data exception too
-///   (`eval_string_predicate`), so a `String` index carrying one `Int` row has
-///   the same error-becomes-success flip.
+/// The prefix probe carries the same hazard latently rather than actually.
+/// `STARTS WITH` against a non-string is a `22G03` data exception, so a
+/// `String` index carrying one `Int` row would flip the same way — but at HEAD
+/// no optimizer rule routes `STARTS WITH` to [`TypedIndex::lookup_prefix`], so
+/// that predicate always reaches the evaluator and always raises. Wiring a
+/// prefix-scan rule to `IndexCatalog::typed_index` makes the hazard real.
 ///
-/// Gating the probes separately does not rescue it either: the optimizer's
-/// single `IndexCatalog::typed_index` seam decides index-or-scan before it
-/// knows the predicate shape, so an equality-only completeness notion cannot
-/// reach the planner without making that seam predicate-aware. That is a
-/// broader design than a classifier tweak, so it stays queued rather than
-/// half-landed. Counting a non-collapsing mismatch costs a needless demotion to
-/// scan, which is safe; the opposite error is not.
+/// Gating the probes separately does not rescue any of this: that single seam
+/// decides index-or-scan before it knows the predicate shape, so an
+/// equality-only completeness notion cannot reach the planner without making
+/// the seam predicate-aware. That is a broader design than a classifier tweak,
+/// so it stays queued rather than half-landed. Counting a non-collapsing
+/// mismatch costs a needless demotion to scan, which is safe; the opposite
+/// error is not.
 const fn counts_as_drift(err: &TypedIndexValueError) -> bool {
     matches!(err, TypedIndexValueError::KindMismatch { .. })
 }
