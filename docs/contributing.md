@@ -50,12 +50,12 @@ The workspace pins a single stable Rust release:
 ```toml
 # rust-toolchain.toml
 [toolchain]
-channel = "1.95.0"
+channel = "1.97.1"
 components = ["rustfmt", "clippy"]
 profile = "default"
 ```
 
-`Cargo.toml` sets `rust-version = "1.95.0"` and `edition = "2024"`. Use
+`Cargo.toml` sets `rust-version = "1.97.1"` and `edition = "2024"`. Use
 the pinned toolchain locally. `rustup` picks up `rust-toolchain.toml`
 automatically when you `cd` into the workspace.
 

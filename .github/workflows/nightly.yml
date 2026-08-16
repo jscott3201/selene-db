@@ -50,8 +50,8 @@ jobs:
     name: clippy (macos-latest)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -65,8 +65,8 @@ jobs:
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
@@ -86,11 +86,11 @@ jobs:
     name: cargo-audit (advisory-db drift)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cargo/advisory-db
           key: advisory-db-${{ runner.os }}-${{ github.run_id }}
@@ -103,7 +103,7 @@ jobs:
     # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -112,7 +112,7 @@ jobs:
       # Cache key is content-addressed (corpus seed source) so we get cache HITs
       # across runs instead of the prior `${{ github.run_id }}` shape which
       # never hit the exact key.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: crates/selene-gql/fuzz/corpus
           key: gql-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-testing/corpus/positive/**/*.gql', 'crates/selene-gql/fuzz/fuzz_targets/**') }}
@@ -167,13 +167,13 @@ jobs:
     # minutes. The cached corpus carries discovered inputs forward across nights.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: crates/selene-persist/fuzz/corpus
           key: persist-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-persist/fuzz/fuzz_targets/**') }}

@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The workspace toolchain and minimum supported Rust version are now 1.97.1.
+  Direct crates, standalone fuzz-workspace manifests, and CI action dependencies
+  have moved to their current stable releases; this includes the fixed `rkyv`
+  0.8.18 and `lru` 0.18.2 lines, `wide` 1.6.1 for native vector kernels, and
+  `wgpu` 30.0.0 for the opt-in GPU benchmark prototype.
+
 - **BREAKING (on-disk format): the WAL format version is now 3.0.** Stores
   written by v1.0.0-v1.4.0 (WAL 2.0 or 2.2) are rejected at open with
   `PersistError::UnsupportedVersion` before any artifact is read further or
