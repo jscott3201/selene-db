@@ -62,6 +62,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`SharedGraph::recovery_tail_repair()` reports a torn WAL tail discarded
+  during recovery.** `SharedGraph::recover` returning `Ok` never meant nothing
+  was lost: a final frame that is short, corrupt, or zero-filled was never
+  acknowledged, so discarding exactly it is correct crash recovery, but a commit
+  a client believed it had submitted may have been in it. `WalWriter::tail_repair()`
+  reported that to direct `selene-persist` callers only; `recover` owns its
+  writer internally and returns `GraphResult<Self>` with nowhere to put an
+  outcome, so through the documented recovery entry point the only trace was a
+  `tracing::warn!` an embedder with no subscriber never sees. All four `recover*`
+  variants now stamp the repair, and `WalTailRepair` / `WalTailReason` are
+  re-exported from `selene-graph`. It is a report, not an error — recovery
+  succeeded either way, and the use is reconciliation.
 - `PersistenceReadGuard` now provides a shared, cross-handle/process epoch
   transaction for online recovery and backup-style artifact reads. Guarded
   readers can re-read the authoritative MANIFEST and pin its snapshot, active

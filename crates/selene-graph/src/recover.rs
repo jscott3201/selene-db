@@ -200,7 +200,12 @@ impl SharedGraph {
         } else {
             None
         };
-        Self::from_graph_with_core_and_durables(
+        // Read before the writer moves into the committer's durable state; this
+        // is the only point where recovery still owns it. Reporting the repair
+        // is why it is read at all — `Ok` here otherwise looks identical to a
+        // reopen that lost an unacknowledged commit (#1109).
+        let recovery_tail_repair = writer.tail_repair();
+        let mut shared = Self::from_graph_with_core_and_durables(
             graph,
             providers,
             Vec::new(),
@@ -208,7 +213,9 @@ impl SharedGraph {
             audit_log,
             // Recovery uses the BRIEF-1-equivalent policy: one fsync per commit.
             crate::committer_batch::CommitBatching::Off,
-        )
+        )?;
+        shared.recovery_tail_repair = recovery_tail_repair;
+        Ok(shared)
     }
 }
 

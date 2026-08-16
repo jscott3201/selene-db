@@ -65,6 +65,9 @@ mod text_recovery;
 #[path = "recover_tests/serialization.rs"]
 mod serialization;
 
+#[path = "recover_tests/tail_repair_report.rs"]
+mod tail_repair_report;
+
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

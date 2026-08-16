@@ -118,6 +118,13 @@ pub struct SharedGraph {
     /// Dropped last via [`SharedGraph`]'s implicit drop order, which joins the
     /// thread once every outstanding [`WriteTxn`] submit handle is gone.
     committer: crate::committer::CommitterThread,
+    /// Torn WAL tail discarded while recovering this graph, if any.
+    ///
+    /// Set only by [`SharedGraph::recover`] and its variants; always `None` for
+    /// a graph built through [`SharedGraphBuilder`], which refuses a directory
+    /// that already holds a store and so has no tail to repair. See
+    /// [`SharedGraph::recovery_tail_repair`].
+    pub(crate) recovery_tail_repair: Option<selene_persist::WalTailRepair>,
 }
 
 impl SharedGraph {
@@ -336,7 +343,32 @@ impl SharedGraph {
             providers,
             durable_providers,
             committer,
+            // Recovery is the only path that can repair a tail, and it stamps
+            // this after construction.
+            recovery_tail_repair: None,
         })
+    }
+
+    /// The torn WAL tail discarded while recovering this graph, if any.
+    ///
+    /// `Ok` from [`SharedGraph::recover`] does not mean nothing was lost. A WAL
+    /// whose final frame is short, corrupt, or zero-filled was never
+    /// acknowledged to any caller, so discarding exactly it is correct crash
+    /// recovery — but a commit that a client believed had been submitted may
+    /// have been in it. Recovery previously reported that only through a
+    /// `tracing::warn!`, which an embedder with no subscriber never sees.
+    ///
+    /// `None` means the WAL was intact, and it is also what every non-recovery
+    /// construction path returns: a builder-created graph refuses a directory
+    /// that already holds a store, so it has no tail to repair. Callers that
+    /// need to distinguish "nothing lost" from "not a recovered graph" should
+    /// track which constructor they used.
+    ///
+    /// The value describes this graph's reopen and does not change as the graph
+    /// runs. It is a report, not an error: recovery succeeded either way.
+    #[must_use]
+    pub fn recovery_tail_repair(&self) -> Option<selene_persist::WalTailRepair> {
+        self.recovery_tail_repair
     }
 
     /// Load the current immutable snapshot without taking the write lock.

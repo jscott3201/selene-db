@@ -685,6 +685,39 @@ or MANIFEST publication while the shared guard is held.
 
 Both `IndexProvider` and `RecoveryProvider` exist because `selene-graph` and `selene-persist` are separately layered (D8). Most providers implement both traits with thin shims so that the same derived state is written at snapshot time and re-read at recovery time.
 
+#### A successful recovery can still have dropped a commit
+
+`SharedGraph::recover` returning `Ok` does not mean nothing was lost. If the
+process died mid-append, the WAL's final frame can be short, corrupt, or
+zero-filled. That frame was never acknowledged to any caller, so discarding
+exactly it is correct crash recovery — but a commit a client believed it had
+submitted may have been inside it.
+
+Recovery reports what it discarded:
+
+```rust
+let graph = SharedGraph::recover(dir, graph_id)?;
+if let Some(repair) = graph.recovery_tail_repair() {
+    // reason: ShortFrame | CorruptFinalFrame | ZeroFilledTail
+    tracing::warn!(
+        ?repair.reason,
+        offset = repair.offset,
+        discarded_bytes = repair.discarded_bytes,
+        "recovery discarded an unacknowledged WAL tail",
+    );
+}
+```
+
+`None` means the WAL was intact. It is also what a graph built through
+`SharedGraph::builder` returns, since building refuses a directory that already
+holds a store and so has no tail to repair — if you need to tell those apart,
+track which constructor you used. The value describes this reopen and does not
+change as the graph runs.
+
+This is a report, not an error: recovery succeeded either way, and there is
+nothing to retry. Its use is reconciliation — deciding whether to re-drive
+in-flight work whose acknowledgement you never received.
+
 ## 8. Principals and authorization
 
 Per ISO/IEC 39075:2024 Clause 4, the spec calls out `IW011` (external procedures), `ID001` (principal identity), `IW002` (authentication), `ID003` (authorization privileges) as **implementation-defined**. selene-db declares these in the feature register as **embedder responsibilities** — the engine itself has no principal table, no role catalog, no `GRANT` syntax.

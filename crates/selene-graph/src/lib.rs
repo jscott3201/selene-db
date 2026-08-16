@@ -94,6 +94,7 @@ pub use selene_core::JsonPathSelector;
 pub use selene_core::{HnswIndexConfig, IvfIndexConfig};
 pub use selene_persist::{
     DEFAULT_WAL_FILE_NAME, SectionCompression, SyncPolicy, WalConfig, WalRotationOutcome,
+    WalTailReason, WalTailRepair,
 };
 pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
