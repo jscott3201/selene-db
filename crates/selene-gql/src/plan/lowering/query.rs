@@ -30,6 +30,9 @@ pub(super) fn lower_query_pipeline(
     // follow a RETURN, so emitting the trim once the tail is exhausted is that
     // position.
     let mut pending_trim: Option<usize> = None;
+    // Plan-owned ids for carriers the analyzer never minted a cell for; seeded
+    // past every analyzer id so the two spaces cannot collide.
+    let mut next_expr_id = super::next_expr_id(analyzed);
     while index < tail.len() {
         match &tail[index] {
             PipelineStatement::Match(clause) => {
@@ -135,7 +138,14 @@ pub(super) fn lower_query_pipeline(
                     Some(PipelineStatement::Sorting(terms)) => Some(terms.as_slice()),
                     _ => None,
                 };
-                pending_trim = lower_return(clause, analyzed, &mut ops, &mut visible, sort_terms)?;
+                pending_trim = lower_return(
+                    clause,
+                    analyzed,
+                    &mut ops,
+                    &mut visible,
+                    sort_terms,
+                    &mut next_expr_id,
+                )?;
             }
             PipelineStatement::With(clause) => {
                 lower_with(clause, analyzed, &mut ops, &mut visible)?;
@@ -165,7 +175,7 @@ pub(super) fn lower_query_pipeline(
         impl_defined_caps: ImplDefinedCaps::default(),
         expr_ids: analyzed.expr_ids.clone(),
         subqueries: Default::default(),
-        next_expr_id: super::next_expr_id(analyzed),
+        next_expr_id,
         next_pipeline_op_id,
     })
 }
@@ -278,23 +288,86 @@ fn body_column(
 /// whole sort key — so `ORDER BY d.version` carries the node `d`, and
 /// `ORDER BY d.version + 0` carries it too without any special handling of the
 /// expression around it.
-fn sort_key_variables(terms: &[crate::OrderTerm]) -> Vec<&crate::ValueExpr> {
-    let mut found: Vec<&crate::ValueExpr> = Vec::new();
+/// A reference a sort key makes that SR VIII may have to carry.
+enum CarrierRef<'a> {
+    /// A `<binding variable reference>` written in the sort key itself. The
+    /// analyzer typed it, so the ordinary projection path applies.
+    Node(&'a crate::ValueExpr),
+    /// A free outer reference inside a subquery body. There is no `Variable`
+    /// node to point at, so the carrier is built from the binding's own
+    /// declaration.
+    Binding {
+        binding: crate::analyze::BindingId,
+        name: selene_core::DbString,
+        span: SourceSpan,
+    },
+}
+
+impl CarrierRef<'_> {
+    fn name(&self) -> Option<&selene_core::DbString> {
+        match self {
+            Self::Node(crate::ValueExpr::Variable { name, .. }) | Self::Binding { name, .. } => {
+                Some(name)
+            }
+            Self::Node(_) => None,
+        }
+    }
+}
+
+/// Collect the references a sort key makes, in first-seen order and deduplicated
+/// by name.
+///
+/// A subquery body is a `MatchClause` / `QueryPipeline`, not a `ValueExpr`
+/// child, so `for_each_child` walks straight past it and a plain `Variable`
+/// sweep sees nothing inside an `EXISTS`. Its free outer references are
+/// nonetheless `<binding variable reference>`s *contained in* the sort key —
+/// ISO §5.3.2.1 defines "contain" transitively — so SR IV covers them and
+/// SR VIII has to carry them.
+fn sort_key_variables<'a>(
+    terms: &'a [crate::OrderTerm],
+    analyzed: &AnalyzedStatement,
+) -> Result<Vec<CarrierRef<'a>>, PlannerError> {
+    let mut found: Vec<CarrierRef<'a>> = Vec::new();
     for term in terms {
         let mut pending = vec![&term.expr];
         while let Some(expr) = pending.pop() {
-            if let crate::ValueExpr::Variable { name, .. } = expr {
-                let seen = found.iter().any(|other| {
-                    matches!(other, crate::ValueExpr::Variable { name: other, .. } if other == name)
+            let candidates: Vec<CarrierRef<'a>> = match expr {
+                crate::ValueExpr::Variable { .. } => vec![CarrierRef::Node(expr)],
+                crate::ValueExpr::Exists { body, span, .. } => {
+                    let uses = match body {
+                        crate::ExistsBody::Match(pattern) => {
+                            expr::outer_binding_uses_in_match(pattern, *span, analyzed)?
+                        }
+                        crate::ExistsBody::Query(pipeline) => expr::outer_binding_uses_in_span(
+                            pipeline.span,
+                            pipeline.span,
+                            analyzed,
+                        )?,
+                    };
+                    uses.into_iter()
+                        .map(|(binding, name, span)| CarrierRef::Binding {
+                            binding,
+                            name,
+                            span,
+                        })
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
+            for candidate in candidates {
+                let duplicate = candidate.name().is_some_and(|name| {
+                    found
+                        .iter()
+                        .any(|other| other.name().is_some_and(|seen| seen == name))
                 });
-                if !seen {
-                    found.push(expr);
+                if !duplicate {
+                    found.push(candidate);
                 }
             }
             expr.for_each_child(&mut |child| pending.push(child));
         }
     }
-    found
+    Ok(found)
 }
 
 /// Build the carrier projections that keep a discarded binding alive across the
@@ -320,24 +393,57 @@ fn carrier_projects(
     sort_terms: Option<&[crate::OrderTerm]>,
     projects: &[ProjectExpr],
     analyzed: &AnalyzedStatement,
+    next_expr_id: &mut crate::ExprId,
 ) -> Result<Vec<ProjectExpr>, PlannerError> {
     let Some(terms) = sort_terms else {
         return Ok(Vec::new());
     };
     let mut carriers = Vec::new();
-    for variable in sort_key_variables(terms) {
-        let crate::ValueExpr::Variable { name, .. } = variable else {
+    for carrier in sort_key_variables(terms, analyzed)? {
+        let Some(name) = carrier.name().cloned() else {
             continue;
         };
         // A return alias wins over an incoming column of the same name: SR VIII
         // appends only for references RETURN_IDENTIFIERS does not already cover.
         if projects
             .iter()
-            .any(|project| project.alias.as_ref() == Some(name))
+            .any(|project| project.alias.as_ref() == Some(&name))
         {
             continue;
         }
-        carriers.push(expr::project_expr(variable, Some(name.clone()), analyzed)?);
+        carriers.push(match carrier {
+            CarrierRef::Node(variable) => expr::project_expr(variable, Some(name), analyzed)?,
+            CarrierRef::Binding {
+                binding,
+                name,
+                span,
+            } => {
+                // The reference lives in a subquery body, so the analyzer never
+                // minted an expression cell for it. Take the type from the
+                // binding's declaration and allocate a plan-owned id: the
+                // executor resolves a `Variable` by name against the row schema
+                // (`runtime::evaluator::lookup_variable`), so the id is metadata
+                // here rather than a lookup key.
+                let declaration = analyzed
+                    .scopes
+                    .declaration(binding)
+                    .ok_or(PlannerError::BindingResolutionLost { binding, span })?;
+                let expr_id = *next_expr_id;
+                *next_expr_id = crate::ExprId::new(expr_id.get().saturating_add(1));
+                ProjectExpr {
+                    expr: crate::ValueExpr::Variable {
+                        name: name.clone(),
+                        span,
+                    },
+                    expr_id,
+                    ty: declaration.ty().clone(),
+                    declared_type: None,
+                    alias: Some(name),
+                    binding_refs: vec![binding],
+                    span,
+                }
+            }
+        });
     }
     Ok(carriers)
 }
@@ -348,6 +454,7 @@ pub(super) fn lower_return(
     ops: &mut Vec<PipelineOp>,
     visible: &mut Vec<BindingTableColumn>,
     sort_terms: Option<&[crate::OrderTerm]>,
+    next_expr_id: &mut crate::ExprId,
 ) -> Result<Option<usize>, PlannerError> {
     let aggregate_rewrite = aggregate::push_grouping(
         &clause.group_by,
@@ -371,7 +478,7 @@ pub(super) fn lower_return(
         let mut projects =
             aggregate::project_items(&clause.items, analyzed, &aggregate_rewrite.names_by_expr_id)?;
         *visible = projects_to_columns(&projects);
-        let carriers = carrier_projects(sort_terms, &projects, analyzed)?;
+        let carriers = carrier_projects(sort_terms, &projects, analyzed, next_expr_id)?;
         if !carriers.is_empty() {
             // `visible` stays the projected width, so the carriers are invisible
             // to output_schema; the trim op is what makes the runtime table

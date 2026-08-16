@@ -622,16 +622,12 @@ fn order_refs(clause: &ReturnClause) -> OrderRefs {
 
 /// Collect binding-variable names referenced directly by an expression.
 ///
-/// `for_each_child` does not descend into `EXISTS` or a value subquery. A value
-/// subquery is a `<nested query specification>`, which SR I rejects outright, so
-/// that half costs nothing. `EXISTS` is only partly covered: SR I catches its
-/// `EXISTS { <query specification> }` form but not the `<graph pattern>` /
-/// `<match statement block>` forms, so a *free* outer reference inside
-/// `ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }` is a genuine SR IV reference
-/// that this function misses. Closing that needs scope-aware collection, to tell
-/// a free outer reference from a variable the subquery pattern binds itself.
-/// Tracked separately; today such a sort key fails in the subquery seeder rather
-/// than being caught here.
+/// `for_each_child` does not descend into `EXISTS` or a value subquery, so this
+/// sees only references written at the top level of `expr`. That is the right
+/// reach for its one remaining caller — building ORDER_REFS from `GROUP BY`
+/// keys, where SR III case 2 asks for the references the keys themselves make.
+///
+/// It is deliberately NOT what enforces SR IV; see [`sort_key_outer_references`].
 fn collect_variable_names(expr: &ValueExpr, out: &mut Vec<selene_core::DbString>) {
     let mut pending = vec![expr];
     while let Some(expr) = pending.pop() {
@@ -662,6 +658,14 @@ fn bind_sorting(
                 span: term.expr.span(),
             });
         }
+        // Bind before the SR IV check, not after. A sort key's references are
+        // only enumerable once they are resolved, and that is what lets one rule
+        // cover both a reference written in the key and a free outer reference
+        // inside a subquery body. Binding cannot pre-empt the SR IV diagnostic:
+        // the sort key is bound in a scope that still sees the pre-projection
+        // row — that is what makes `ORDER BY n.score` legal without DISTINCT —
+        // so resolution succeeds either way and SR IV is what decides.
+        expr::bind_value_expr(ctx, &term.expr)?;
         if let Some(OrderRefs::Closed(allowed)) = return_context.map(|context| &context.order_refs)
         {
             // ISO §14.10 SR IV: every binding-variable reference in a sort key
@@ -669,8 +673,7 @@ fn bind_sorting(
             // pre-projection row is gone, so a reference outside the set could
             // only ever evaluate to NULL — which is a sort that silently does
             // nothing, the exact failure this rule exists to prevent.
-            let mut referenced = Vec::new();
-            collect_variable_names(&term.expr, &mut referenced);
+            let referenced = sort_key_outer_references(ctx, term.expr.span());
             if let Some(name) = referenced.into_iter().find(|name| !allowed.contains(name)) {
                 return Err(AnalysisError::SortKeyReferenceNotInScope {
                     name: name.as_str().to_owned(),
@@ -678,15 +681,71 @@ fn bind_sorting(
                 });
             }
         }
-        expr::bind_value_expr(ctx, &term.expr)?;
     }
     Ok(())
 }
 
+/// The names a sort key references that it does not itself bind.
+///
+/// ISO §5.3.2.1 makes "contain" transitive, so SR IV reaches a
+/// `<binding variable reference>` anywhere inside the sort key — including one
+/// inside an `EXISTS` body, which is a genuine reference to an outer binding
+/// rather than something the subquery defines.
+///
+/// The declaration-span test is what separates the two. In
+/// `ORDER BY EXISTS { MATCH (n)-[:KNOWS]->(m) }`, `n` resolves to a declaration
+/// in the enclosing MATCH and so is subject to SR IV, while `m` is declared
+/// inside the sort key and is not a reference to anything discarded. §14.10
+/// CR 4 names that distinction directly, exempting a binding variable "defined
+/// by an intervening BNF non-terminal instance simply contained in the
+/// `<sort key>`".
+fn sort_key_outer_references(
+    ctx: &BindContext<'_>,
+    term_span: SourceSpan,
+) -> Vec<selene_core::DbString> {
+    let mut names = Vec::new();
+    for reference in binding_refs_in_span(ctx, term_span) {
+        let declared_inside = ctx
+            .scopes
+            .declaration(reference.binding)
+            .is_some_and(|declaration| span_contains(term_span, declaration.span()));
+        if !declared_inside && !names.contains(&reference.name) {
+            names.push(reference.name.clone());
+        }
+    }
+    names
+}
+
+/// ISO §14.10 SR 4)c)i)2)A)I: no sort key may contain a
+/// `<nested query specification>`.
+///
+/// Two spellings reach it. `VALUE { ... }` is a `<value query expression>`
+/// (§20.6), whose BNF is `VALUE <nested query specification>`. And the fifth
+/// `<exists predicate>` alternative (§19.4) *is* a `<nested query
+/// specification>` — the other four admit only a `<graph pattern>` or a
+/// `<match statement block>`, neither of which can contain a RETURN, so a body
+/// the parser resolved to a query pipeline is that alternative.
+///
+/// Those other four forms stay legal here. §19.4 SR 2/3 do rewrite them into a
+/// nested query specification, but §5.3.2.4 applies the Syntax Rules of a
+/// contained element "at the same time as" those of its container — contrast
+/// the General Rules, which it applies contained-first — so that rewrite feeds
+/// §19.4's own later rules, not this one. This rule sees the syntax as written.
+///
+/// Known gap: a `VALUE { ... }` buried inside an `EXISTS` body is contained in
+/// the sort key and so violates SR I too, but detecting it means walking the
+/// body's own expressions rather than only the sort key's.
 fn sort_key_contains_nested_query(expr: &ValueExpr) -> bool {
     let mut pending = vec![expr];
     while let Some(expr) = pending.pop() {
-        if matches!(expr, ValueExpr::ValueSubquery { .. }) {
+        if matches!(
+            expr,
+            ValueExpr::ValueSubquery { .. }
+                | ValueExpr::Exists {
+                    body: crate::ExistsBody::Query(_),
+                    ..
+                }
+        ) {
             return true;
         }
         push_value_expr_children(expr, &mut pending);

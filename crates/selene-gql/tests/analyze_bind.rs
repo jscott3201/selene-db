@@ -390,8 +390,9 @@ fn order_by_rejects_a_discarded_binding_under_distinct_or_aggregation() {
         "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY n.score",
         // An aggregate return item with no GROUP BY: likewise.
         "MATCH (n:Person) RETURN count(*) AS c ORDER BY n.score",
-        // GROUP BY: ORDER_REFS adds the grouping keys, and `n` is not one.
-        "FOR x IN [1, 2] RETURN x AS x GROUP BY x ORDER BY y",
+        // GROUP BY: ORDER_REFS adds the bindings the grouping keys reference,
+        // and `e` is not one of them.
+        "MATCH (n:Person)-[e:KNOWS]->() RETURN count(*) AS c GROUP BY n.tenant ORDER BY e.score",
         // SR IV applies to every sort key, not just the first: the leading term
         // is in scope and only the second one escapes it.
         "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY name, n.score",
@@ -405,6 +406,24 @@ fn order_by_rejects_a_discarded_binding_under_distinct_or_aggregation() {
         );
         assert_eq!(err.gqlstatus().as_str(), "42001");
     }
+}
+
+/// A sort key naming a variable that is bound nowhere is an undefined
+/// reference, not an SR IV violation.
+///
+/// SR IV is about a reference that *resolves* but is outside ORDER_REFS. This
+/// one resolves to nothing, and saying so — with "declare the variable before
+/// this reference" — is the more actionable diagnostic. It used to report
+/// `SortKeyReferenceNotInScope`, because the SR IV check ran before the sort key
+/// was bound and so could not tell the two apart.
+#[test]
+fn a_sort_key_naming_an_unbound_variable_is_an_undefined_reference() {
+    let err = analyze_one("FOR x IN [1, 2] RETURN x AS x GROUP BY x ORDER BY y")
+        .expect_err("y is bound nowhere");
+    assert!(
+        matches!(err, AnalysisError::UndefinedReference { .. }),
+        "expected an undefined reference for a name that does not exist, got {err:?}"
+    );
 }
 
 #[test]
@@ -441,5 +460,76 @@ fn order_by_accepts_any_incoming_binding_under_return_star() {
     ] {
         analyze_one(source)
             .unwrap_or_else(|err| panic!("{source} keeps every incoming column, got {err:?}"));
+    }
+}
+
+/// ISO §14.10 SR IV reaches into an `EXISTS` body. §5.3.2.1 makes "contain"
+/// transitive, so the free outer `n` is a binding variable reference contained
+/// in the sort key; under DISTINCT or an aggregate, SR III case 3 makes
+/// ORDER_REFS the return identifiers alone, so `n` is outside it.
+#[test]
+fn an_exists_sort_key_with_a_free_outer_reference_is_rejected_under_distinct() {
+    for source in [
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name \
+         ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }",
+        "MATCH (n:Person) RETURN count(*) AS c ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }",
+    ] {
+        let err = analyze_one(source)
+            .expect_err("a projection that discards the row cannot be ordered by it");
+        assert!(
+            matches!(&err, AnalysisError::SortKeyReferenceNotInScope { name, .. } if name == "n"),
+            "{source} should reject naming n, got {err:?}"
+        );
+        assert_eq!(err.gqlstatus().as_str(), "42001");
+    }
+}
+
+/// The converse, and the reason the rejection has to subtract subquery-defined
+/// variables rather than reject on any name it sees. §14.10 CR 4 exempts a
+/// binding "defined by an intervening BNF non-terminal instance simply
+/// contained in the <sort key>".
+#[test]
+fn an_exists_sort_key_binding_only_its_own_variables_is_accepted_under_distinct() {
+    for source in [
+        // Nothing in the body refers outward, so ORDER_REFS is not consulted.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY EXISTS { MATCH (x:Person) }",
+        // `m` is defined inside the sort key; only `n` would be a reference, and
+        // here the body does not mention it.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name \
+         ORDER BY EXISTS { MATCH (m:Person)-[:KNOWS]->() }",
+    ] {
+        analyze_one(source).unwrap_or_else(|err| panic!("{source} should analyze: {err}"));
+    }
+}
+
+/// Without DISTINCT or aggregation, SR III case 1 puts every incoming column in
+/// ORDER_REFS, so the same correlated sort key is legal and gets carried.
+#[test]
+fn a_correlated_exists_sort_key_is_accepted_without_distinct() {
+    analyze_one(
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }",
+    )
+    .expect("SR III case 1 admits every incoming column");
+}
+
+/// ISO §14.10 SR 4)c)i)2)A)I: no sort key may contain a
+/// `<nested query specification>`. The fifth `<exists predicate>` alternative
+/// (§19.4) is exactly that, so an EXISTS body carrying a RETURN is rejected
+/// while the graph-pattern and match-block forms are not.
+#[test]
+fn a_sort_key_containing_a_nested_query_specification_is_rejected() {
+    for source in [
+        // The EXISTS nested-query-specification form.
+        "MATCH (n:Person) RETURN n.name AS name \
+         ORDER BY EXISTS { MATCH (n)-[:KNOWS]->(m) RETURN m }",
+        // The pre-existing VALUE spelling, which is `VALUE <nested query
+        // specification>` per §20.6.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY VALUE { MATCH (m:Person) RETURN m.name }",
+    ] {
+        let err = analyze_one(source).expect_err("SR I rejects a nested query specification");
+        assert!(
+            matches!(err, AnalysisError::SortKeyContainsNestedQuery { .. }),
+            "{source} should reject with SortKeyContainsNestedQuery, got {err:?}"
+        );
     }
 }
