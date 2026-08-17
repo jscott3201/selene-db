@@ -12,16 +12,16 @@ refreshed on a manual cadence and committed to the repository.
 
 ## Headline numbers
 
-The most recent measurements (Apple M5, 10 cores, 16 GiB, rustc 1.95.0):
+The most recent measurements (Apple M5, 10 cores, 16 GiB, rustc 1.97.1):
 
 | Workload                                  | Result          | Notes                                              |
 | :---------------------------------------- | :-------------- | :------------------------------------------------- |
-| Node fetch (`graph_node_fetch`)           | **2.10 ns**     | Flat across 10k / 50k / 100k; columnar fetch.      |
-| Typed index point lookup                  | **4.53 ns**     | Flat across scales; tri-state `Cow<RoaringBitmap>` |
-| Semantic analyze (m5c corpus)             | **5.32 µs**     | Strict ISO GQL analysis on the representative corpus. |
-| Betweenness centrality (100k nodes, parallel) | **110.2 ms**    | 2.40× speedup over sequential at 100k.             |
-| WAL append (single, batched x1000)        | **10.95 ms / 100k entries** | Group-commit dominates; 54× faster than per-entry. |
-| Full recovery (snapshot + 100k WAL)       | **24.75 ms**    | Snapshot reconciliation + WAL v2 replay.           |
+| Node fetch (`graph_node_fetch`)           | **7.42 ns**     | Near-flat across 10k / 50k / 100k (6.18 → 7.42 ns); columnar fetch. |
+| Typed index point lookup                  | **11.92 ns**    | Flat across scales; tri-state `Cow<RoaringBitmap>` |
+| Semantic analyze (m5c corpus)             | **21.98 µs**    | Strict ISO GQL analysis on the representative corpus (`gql_analyze_corpus/m5c`). |
+| Betweenness centrality (100k nodes, parallel) | **101.7 ms**    | 2.6× speedup over sequential at 100k.              |
+| WAL append (single, batched x1000)        | **10.28 ms / 100k entries** | Group-commit dominates; ~59× faster than per-entry. |
+| Full recovery (snapshot + 100k WAL)       | **16.31 ms**    | Snapshot reconciliation + WAL 3.0 replay.          |
 
 These are wall-clock medians from criterion 0.8. They do **not** include
 client-side serialization, network round-trips, or any layer that
@@ -197,19 +197,24 @@ parallelization is a tuning knob, not a default.
 ## Read performance
 
 The two read paths that dominate query latency are node fetch and typed
-index point lookup. Both are measured flat across scales:
+index point lookup. Re-measured 2026-08-16 with
+`scripts/run-benches.sh --profile full --bench single_graph`:
 
 | Path                       | 10k     | 50k     | 100k    | Shape                                            |
 | :------------------------- | :------ | :------ | :------ | :----------------------------------------------- |
-| `graph_node_fetch`         | 2.10 ns | 2.11 ns | 2.09 ns | O(1); columnar fetch by `NodeId`.                |
-| `graph_typed_index_point`  | 4.53 ns | 4.44 ns | 4.67 ns | Flat-curve via tri-state `Cow<'_, RoaringBitmap>` lookup; an `FxHashMap` keyed by typed-value handles. |
-| `graph_label_index_lookup` | 5.20 ns | 4.24 ns | 4.30 ns | `DbString`-keyed hash lookup against the label index. |
+| `graph_node_fetch`         | 6.18 ns | 7.17 ns | 7.42 ns | O(1); columnar fetch by `NodeId`.                |
+| `graph_typed_index_point`  | 11.89 ns | 11.95 ns | 11.92 ns | Flat-curve via tri-state `Cow<'_, RoaringBitmap>` lookup; an `FxHashMap` keyed by typed-value handles. |
+| `graph_label_index_lookup` | 11.24 ns | 10.90 ns | 11.06 ns | `DbString`-keyed hash lookup against the label index. Regressed ~37–44% vs the 2026-06-01 baseline; see the `BENCHMARKS.md` §2 note. |
 
 These are honest measured numbers — the node fetch is two cache-line probes
 plus a `RoaringBitmap` membership check on the live bitmap; the typed
 index lookup is an `FxHashMap` lookup plus the same membership check. They
-are the floor `selene-db` operates at, and they do not regress with graph
-size.
+are the floor `selene-db` operates at.
+
+Both index lookups are flat across scales. Node fetch is *near*-flat: it rises
+about 20% from 10k to 100k (6.18 → 7.42 ns), which is cache behaviour over a
+larger row store rather than an algorithmic term — the lookup itself stays
+O(1).
 
 Range scans and composite lookups scale sub-linearly (see the
 `graph_typed_index_range` and `graph_composite_index_proxy` rows in
@@ -218,15 +223,19 @@ Range scans and composite lookups scale sub-linearly (see the
 ## Write performance
 
 The write path is dominated by the WAL append and the commit-time index
-maintenance. Measurements (100k-node fixture):
+maintenance. Every row below is measured at the **100k-node fixture**, on the
+hardware described in `BENCHMARKS.md`, re-measured 2026-08-16 with
+`scripts/run-benches.sh --profile full --bench bulk_mutation` and
+`--bench wal`. `BENCHMARKS.md` is the baseline of record; this table is a
+summary of it and must not be edited independently.
 
-| Workload                                  | Time      | Notes                                              |
-| :---------------------------------------- | :-------- | :------------------------------------------------- |
-| `graph_edge_create_cascade`               | 343.5 µs  | Mutation + commit body; teardown excluded.          |
-| `graph_mutation_commit_batch` (batch=10)  | 360.8 µs  | Three-clone cascade replaced with one COW clone at first mutation. |
-| `graph_mutation_commit_batch` (batch=100) | 434.0 µs  | Batching wins at higher cardinality.                |
-| `graph_mutation_commit_batch` (batch=1000)| 761.9 µs  | Per-Change amortization plateaus around batch=1000. |
-| `persist_wal_append_batch_1000`           | 10.95 ms / 100k | 54× faster than per-entry at 100k.            |
+| Workload                                  | Time @100k | Notes                                              |
+| :---------------------------------------- | :--------- | :------------------------------------------------- |
+| `graph_edge_create_cascade`               | 1.417 ms   | Mutation + commit body; teardown excluded.          |
+| `graph_mutation_commit_batch` (batch=10)  | 127.8 µs   | Three-clone cascade replaced with one COW clone at first mutation. |
+| `graph_mutation_commit_batch` (batch=100) | 187.2 µs   | Batching wins at higher cardinality.                |
+| `graph_mutation_commit_batch` (batch=1000)| 521.9 µs   | Per-Change amortization plateaus around batch=1000. |
+| `persist_wal_append_batch_1000`           | 10.28 ms   | ~59× faster than per-entry at 100k (604.7 ms).      |
 
 The commit path is **flat-curve**: in-place mutation against the
 `Arc<SeleneGraph>` write lock with one COW clone at first mutation,
@@ -241,31 +250,35 @@ group-commit WAL fsync.
 
 ## Graph algorithm performance
 
-The graph algorithm library parallelizes through `rayon`. Numbers from the
-100k-node fixture (~3 edges/node for pagerank/betweenness/apsp; ~6
-edges/node for triangle_count/louvain):
+The graph algorithm library parallelizes through `rayon`. Rows below are the
+`BENCHMARKS.md` §6a values verbatim; §6a is the baseline of record and carries
+the **2026-06-01** file stamp, so unlike the write-path table above these were
+not re-measured on 2026-08-16. Scale is the node count except for APSP, where
+it is the **source count** (~3 edges/node for pagerank/betweenness/apsp; ~6
+edges/node for triangle_count/louvain).
 
 | Algorithm        | Scale | Sequential | Parallel (`Auto`) | Speedup |
 | :--------------- | :---- | :--------- | :---------------- | :------ |
-| PageRank         | 100k  | 2.94 ms    | 4.49 ms           | 0.65×   |
-| Betweenness      | 100k  | 264.7 ms   | 110.2 ms          | 2.40×   |
-| Triangle count   | 100k  | 10.33 ms   | 8.86 ms           | 1.17×   |
-| APSP (200 src)   | 200   | 1.52 ms    | 466.1 µs          | 3.27×   |
-| APSP (1k src)    | 1000  | 34.54 ms   | 8.46 ms           | 4.08×   |
-| Louvain          | 100k  | 55.43 ms   | n/a               | sequential-only |
+| PageRank         | 100k  | 1.058 ms   | 1.050 ms          | 1.01×   |
+| Betweenness      | 100k  | 266.1 ms   | 101.7 ms          | 2.6×    |
+| Triangle count   | 100k  | 6.345 ms   | 4.888 ms          | 1.30×   |
+| APSP (200 src)   | 200   | 621.8 µs   | 306.5 µs          | 2.03×   |
+| APSP (1k src)    | 1000  | 17.17 ms   | 5.576 ms          | 3.1×    |
+| Louvain          | 100k  | 18.57 ms   | n/a               | sequential-only |
 
 Notable points:
 
-- **PageRank parallel is slower** on the sparse bench graph (~3 edges/node)
-  at every measured scale. The per-iteration work is small (3·N FP
-  multiplications + accumulator); rayon's thread-coordination cost
-  outweighs the parallelism gain. On denser graphs (≥ 10 edges/node)
-  parallel pagerank pays off; the API exposes both modes deliberately.
+- **`Auto` no longer picks the parallel PageRank kernel at all.** Rayon
+  overhead lost at every measured scale on the sparse bench graph
+  (~3 edges/node) — the per-iteration work is small (3·N FP multiplications
+  + accumulator) — so `Auto` now routes to the sequential kernel and the two
+  columns are the same measurement to within noise. An explicit `Threads(n)`
+  still opts into the parallel kernel for caller-forced experiments.
 - **Betweenness parallel scales strongly**: per-source SSSP is independent
   work, so the parallelism budget is well spent.
-- **APSP parallel scales near-linearly** up to the core count; the 4.08×
-  speedup at 1k sources on 10 cores is the strongest parallel win in the
-  workspace.
+- **APSP parallel scales with source count**, reaching 3.1× at 1k sources on
+  10 cores. It is not the workspace's single strongest parallel win —
+  betweenness reaches 3.3× `Auto` at 10k (see §6a).
 - **Louvain is sequential-only** today — the modularity-optimization
   iteration carries cross-vertex dependencies that the current
   implementation does not parallelize safely.
