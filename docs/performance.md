@@ -204,7 +204,13 @@ index point lookup. Re-measured 2026-08-16 with
 | :------------------------- | :------ | :------ | :------ | :----------------------------------------------- |
 | `graph_node_fetch`         | 6.18 ns | 7.17 ns | 7.42 ns | O(1); columnar fetch by `NodeId`.                |
 | `graph_typed_index_point`  | 11.89 ns | 11.95 ns | 11.92 ns | Flat-curve via tri-state `Cow<'_, RoaringBitmap>` lookup; an `FxHashMap` keyed by typed-value handles. |
-| `graph_label_index_lookup` | 11.24 ns | 10.90 ns | 11.06 ns | `DbString`-keyed hash lookup against the label index. Regressed ~37–44% vs the 2026-06-01 baseline; see the `BENCHMARKS.md` §2 note. |
+| `graph_label_index_lookup` | 11.24 ns | 10.90 ns | 11.06 ns | Ordered-map lookup against the label index. |
+
+All three rows regressed at #1118 (`imbl` → `immutable-chunkmap`) by 8–81%,
+`p = 0.00`, bisected — see the `BENCHMARKS.md` §2 note and
+[#1137](https://github.com/jscott3201/selene-db/issues/1137). Against the older
+2026-06-01 baseline two of them still net out as improvements, because gains
+earlier in the cycle offset the regression.
 
 These are honest measured numbers — the node fetch is two cache-line probes
 plus a `RoaringBitmap` membership check on the live bitmap; the typed

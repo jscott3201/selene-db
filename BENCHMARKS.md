@@ -339,24 +339,46 @@ _Re-measured 2026-08-16 (same M5 box, rustc 1.97.1): the `bulk_mutation` rows vi
 Those rows are current; every other row in §2 still carries the file-level
 2026-06-01 stamp._
 
-**⚠ `graph_label_index_lookup` regressed and nothing had recorded it.** It is
-**+43.6% at 10k and +36.7% at 100k** (7.83 → 11.24 ns, 8.09 → 11.06 ns) while
-its two neighbours on the same fixture moved the other way — `graph_node_fetch`
-−17.8% and `graph_typed_index_point` −21.9%. That divergence is the signal: a
-machine or toolchain effect would have moved all three together.
+**⚠ #1118 regressed every read hot path here — bisected, `p = 0.00`. See #1137.**
 
-The leading suspect is #1118, which moved the **label** maps (along with graph
-id and adjacency) from `imbl` HAMTs to the `immutable-chunkmap` chunked tree.
-A label lookup is exactly a probe into one of those maps, and ~3 ns on an ~8 ns
-operation is the right order for a tree-descent-vs-HAMT change. **This was not
-bisected** — no A/B was run against the pre-#1118 commit, and #1118's own
-recorded A/B covered `write_txn_lifecycle` and `graph_mixed_workload`, not this
-row. Treat the attribution as the leading hypothesis and the regression itself
-as measured fact.
+Read the three rows above against 2026-06-01 and they look mixed:
+`graph_label_index_lookup` +43.6% at 10k / +36.7% at 100k, but
+`graph_node_fetch` −17.8% and `graph_typed_index_point` −21.9%. Those net
+figures are correct, and they are also **misleading** — which is the lesson
+worth keeping from this row.
 
-It is ~3 ns on a nanosecond-scale operation, so nothing about it is
-release-blocking; it matters because label lookup sits under label-filtered
-scans on a read-heavy engine, and because it went unnoticed through a merged PR.
+An A/B across the #1118 boundary — `cee7ef6c` (#1117, already rustc 1.97.1) vs
+`33e03cc2` (#1118), toolchain held constant, and #1118 touched no bench or
+fixture file — shows all nine comparisons regressing:
+
+| Bench | pre-#1118 | post-#1118 | change |
+|---|---:|---:|---:|
+| `graph_node_fetch` 10k/50k/100k | 4.37 / 4.87 / 5.10 ns | 6.62 / 7.54 / 7.94 ns | **+51.5 / +54.9 / +55.8%** |
+| `graph_label_index_lookup` | 6.28 / 8.48 / 6.68 ns | 11.25 / 11.42 / 12.10 ns | **+79.0 / +34.6 / +81.2%** |
+| `graph_typed_index_point` | 11.80 / 11.88 / 11.91 ns | 13.22 / 13.18 / 12.84 ns | **+12.1 / +10.9 / +7.8%** |
+
+Commands: `scripts/run-benches.sh --profile full --bench single_graph --filter 'graph_(node_fetch|typed_index_point|label_index_lookup)' --save-baseline pre1118`
+at `cee7ef6c`, then the matching `--baseline pre1118` at `33e03cc2`.
+
+**A stale baseline hid a 55% regression behind a −17.8% net.**
+`graph_node_fetch` went 8.22 → ~4.4 ns between 2026-06-01 and #1117, and #1118
+then gave back half that gain. Measured only against the old baseline the row
+reads as an improvement. This is the concrete argument for section-level
+re-stamping over one ageing file-level date: a net delta spanning many commits
+cannot distinguish "never regressed" from "regressed after improving more."
+
+Severity grades with how each map changed, which is partial mechanism:
+string-keyed `MapM` (`idx_label` — `DbString` comparisons down a **sorted**
+chunked tree, replacing a one-hash `imbl::HashMap` probe) +35–81%;
+integer-keyed `MapM` (`node_id_to_row`) +52–56%; `FxHashMap`, which #1118 never
+migrated (`property_index`, behind `graph_typed_index_point`) +8–12%. **That
+last row is unexplained** — it regressed without its map changing, so some of
+the cost is a secondary layout/cache effect rather than the probe itself.
+
+Not release-blocking at single-digit nanoseconds, and #1118's write wins are
+real and large (`delete_only/n100000/1000` −86%). The point is that the trade
+was never priced: #1118's recorded A/B measured write rows only, so a read cost
+on a ~60%-read engine landed unweighed.
 
 **The prediction this section made was half right, and the miss is the
 informative half.** It said the `PropertyMap`-clone-heavy rows
