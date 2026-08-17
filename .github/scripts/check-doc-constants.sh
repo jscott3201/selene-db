@@ -41,12 +41,30 @@ if [[ -n "$referenced" ]]; then
   done <<< "$referenced"
 fi
 
-# Stale literals that were wrong in the docs before #1086. Re-introducing one
-# means someone copied a value back in instead of naming the constant.
-if grep -rn 'capped at 254 bytes' "${docs_glob[@]}" >/dev/null 2>&1; then
-  echo "ERROR: the 254-byte principal cap is stale (source uses MAX_PRINCIPAL_BYTES). Reference the constant by name." >&2
-  status=1
-fi
+# Retired literals: values that were wrong in the docs and have been corrected.
+# Re-introducing one means someone copied a stale value back in. Each entry is
+# `pattern<TAB>explanation`; add a line when you correct a doc claim that a
+# reader would have no way to spot as stale on its own.
+#
+# These are deliberately specific strings, not general number matching. A check
+# that asserted "every number in performance.md appears in BENCHMARKS.md" was
+# tried and rejected: it passes by coincidence (an unrelated `4.53 ns` elsewhere
+# in the baseline satisfied a stale read-path row) and so provides false
+# assurance rather than a guarantee.
+retired_literals=(
+  $'capped at 254 bytes\tthe 254-byte principal cap is stale (source uses MAX_PRINCIPAL_BYTES); reference the constant by name'
+  $'WAL v2 replay\tthe WAL format is 3.0 as of #1108; a doc claiming v2 replay predates it'
+  $'54× faster than per-entry\tthe batched-append ratio is ~59× against the re-measured 604.7 ms per-entry row'
+)
+
+for entry in "${retired_literals[@]}"; do
+  pattern="${entry%%$'\t'*}"
+  explanation="${entry#*$'\t'}"
+  if grep -rnF -- "$pattern" "${docs_glob[@]}" >/dev/null 2>&1; then
+    echo "ERROR: retired literal '${pattern}' is back in docs/ — ${explanation}." >&2
+    status=1
+  fi
+done
 
 if [[ $status -eq 0 ]]; then
   count=$(echo "$referenced" | grep -c . || true)

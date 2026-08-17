@@ -328,11 +328,48 @@ object-map entry API so unique keys require one map lookup.
 
 Bench bins: `single_graph`, `vector_index_rebuild`, `vector_pq`,
 `vector_ivf_pq`, `vector_turbo_projection`, `vector_turbo_churn`, `vector_ivf_pressure`, `vector_mixed_workload`,
-`bulk_mutation`, `concurrent_read`, `bfs`, `text_search_bm25`. The medians below predate CORE-06 (measured at the 128 B `Value`
-layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
-(`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten at
-the next full re-baseline. `graph_node_fetch` returns a column ref (no `Value`
-clone) and is unaffected. `graph_exact_vector_scan/*` is the native graph-level
+`bulk_mutation`, `concurrent_read`, `bfs`, `text_search_bm25`. Most medians below
+predate CORE-06 (measured at the 128 B `Value` layout). `graph_node_fetch`
+returns a column ref (no `Value` clone) and is unaffected.
+
+_Re-measured 2026-08-16 (same M5 box, rustc 1.97.1): the `bulk_mutation` rows via
+`--bench bulk_mutation`, and `graph_node_fetch` / `graph_label_index_lookup` /
+`graph_typed_index_point` via
+`--bench single_graph --filter 'graph_(node_fetch|typed_index_point|label_index_lookup)'`.
+Those rows are current; every other row in §2 still carries the file-level
+2026-06-01 stamp._
+
+**⚠ `graph_label_index_lookup` regressed and nothing had recorded it.** It is
+**+43.6% at 10k and +36.7% at 100k** (7.83 → 11.24 ns, 8.09 → 11.06 ns) while
+its two neighbours on the same fixture moved the other way — `graph_node_fetch`
+−17.8% and `graph_typed_index_point` −21.9%. That divergence is the signal: a
+machine or toolchain effect would have moved all three together.
+
+The leading suspect is #1118, which moved the **label** maps (along with graph
+id and adjacency) from `imbl` HAMTs to the `immutable-chunkmap` chunked tree.
+A label lookup is exactly a probe into one of those maps, and ~3 ns on an ~8 ns
+operation is the right order for a tree-descent-vs-HAMT change. **This was not
+bisected** — no A/B was run against the pre-#1118 commit, and #1118's own
+recorded A/B covered `write_txn_lifecycle` and `graph_mixed_workload`, not this
+row. Treat the attribution as the leading hypothesis and the regression itself
+as measured fact.
+
+It is ~3 ns on a nanosecond-scale operation, so nothing about it is
+release-blocking; it matters because label lookup sits under label-filtered
+scans on a read-heavy engine, and because it went unnoticed through a merged PR.
+
+**The prediction this section made was half right, and the miss is the
+informative half.** It said the `PropertyMap`-clone-heavy rows
+(`graph_edge_create_cascade`, `graph_mutation_commit_batch`) would both tighten
+once `Value` shrank 128 B → 32 B. `graph_mutation_commit_batch` did, hard
+(−57% to −71%). `graph_edge_create_cascade` did **not** — it moved −0.1% /
++1.5% / −4.3% across 10k/50k/100k, which is no change of the predicted kind.
+So `Value` width was not that row's dominant term; adjacency insertion is, and
+it is unaffected by payload width. (These are point-estimate deltas against the
+2026-06-01 medians, not a Criterion `--baseline` comparison, so they carry no
+p-value.) Treat the
+remaining "will tighten at the next re-baseline" expectations in this file as
+hypotheses, not scheduled wins. `graph_exact_vector_scan/*` is the native graph-level
 exact-vector oracle: label-filtered row scan plus the core vector metric
 kernels, returning stable node ids. Large exact scans use threshold-gated Rayon
 for both unindexed label rows and flat-index row sets; cancellation/deadline
@@ -678,15 +715,15 @@ and
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `graph_node_fetch` | 8.22 ns | 8.79 ns | 9.02 ns | Near-flat O(1) columnar fetch. |
-| `graph_label_index_lookup` | 7.83 ns | 7.88 ns | 8.09 ns | Flat; `DbString`-keyed hash lookup. |
-| `graph_typed_index_point` | 15.25 ns | 15.05 ns | 15.26 ns | Flat tri-state `lookup_eq`. |
+| `graph_node_fetch` | 6.18 ns | 7.17 ns | 7.42 ns | Near-flat O(1) columnar fetch. Re-measured 2026-08-16; 100k **−17.8%**. |
+| `graph_label_index_lookup` | 11.24 ns | 10.90 ns | 11.06 ns | Flat; `DbString`-keyed hash lookup. Re-measured 2026-08-16; **10k +43.6%, 100k +36.7% — a regression, see below**. |
+| `graph_typed_index_point` | 11.89 ns | 11.95 ns | 11.92 ns | Flat tri-state `lookup_eq`. Re-measured 2026-08-16; 100k **−21.9%**. |
 | `graph_typed_index_range` | 7.05 µs | 37.89 µs | 55.74 µs | Sub-linear range scan. |
 | `graph_composite_index_proxy` | 82.8 ns | 177.1 ns | 313.9 ns | Linear. |
-| `graph_edge_create_cascade` | 362.9 µs | 747.4 µs | 1.481 ms | Mutation + commit body; teardown excluded. |
-| `graph_mutation_commit_batch` (10) | 336.7 µs | 307.6 µs | 446.9 µs | Batched commit, 10 ops. |
-| `graph_mutation_commit_batch` (100) | 408.2 µs | 420.8 µs | 552.7 µs | Batched commit, 100 ops. |
-| `graph_mutation_commit_batch` (1000) | 952.4 µs | 1.053 ms | 1.226 ms | Batched commit, 1000 ops. |
+| `graph_edge_create_cascade` | 362.5 µs | 758.9 µs | 1.417 ms | Mutation + commit body; teardown excluded. Re-measured 2026-08-16; 100k −4.3% — see the CORE-06 note above. |
+| `graph_mutation_commit_batch` (10) | 84.01 µs | 104.5 µs | 127.8 µs | Batched commit, 10 ops. Re-measured 2026-08-16; **100k −71.4%**. |
+| `graph_mutation_commit_batch` (100) | 118.8 µs | 156.5 µs | 187.2 µs | Batched commit, 100 ops. Re-measured 2026-08-16; **100k −66.1%**. |
+| `graph_mutation_commit_batch` (1000) | 437.3 µs | 479.4 µs | 521.9 µs | Batched commit, 1000 ops. Re-measured 2026-08-16; **100k −57.4%**. |
 | `graph_concurrent_reads` | 74.6 µs | 71.7 µs | 71.8 µs | Legacy row: 10 scoped threads with one snapshot read each; dominated by spawn/join. |
 | `graph_snapshot_read_loops/single_thread` | 334.14 µs | 336.52 µs | 337.36 µs | 100k snapshot reads per sample, about 3.34-3.37 ns/read; scale-flat. |
 | `graph_snapshot_read_loops/parallel_threads8` | 15.508 ms | 11.209 ms | 10.955 ms | 8 threads x 20k reads per sample, about 69-97 ns/read including scoped thread setup and contention. |
@@ -1705,13 +1742,30 @@ Bench bins: `write_txn_lifecycle`, `provider_fanout`, `bound_type_validation`,
 
 ### §3a Write-pipeline microbenches
 
+_The `write_txn_lifecycle` rows in the table below were re-measured 2026-08-16
+(same M5 box, rustc 1.97.1) via `scripts/run-benches.sh --profile full --bench
+write_txn_lifecycle`. Every other row in §3a still carries the file-level
+2026-06-01 stamp._
+
 `write_txn_lifecycle` create/delete rows below show the **batch axis at the 100k
 fixture** (the headline scale); `empty_commit` shows the scale axis.
 
 The `graph_clone` / `begin_rollback` rows are commit-floor attribution
 instruments: the committer handoff has no direct row (`seal` is
 crate-private), so derive it as `empty_commit − graph_clone −
-begin_rollback`. Current B26 attribution was measured with
+begin_rollback`. From the 2026-08-16 same-run medians (12.25 / 35.14 / 50.12 µs
+`empty_commit`, 1.106 / 11.43 / 24.6 µs `graph_clone`, 14 ns `begin_rollback`),
+the derived handoff is **~11.1 / ~23.7 / ~25.5 µs**.
+
+**The E3 conclusion still holds, but only below 100k.** The handoff outweighs
+the snapshot clone 10:1 at 10k and 2:1 at 50k, so it remains the term to attack
+for the empty-commit floor. At 100k it no longer dominates: ~25.5 µs of handoff
+against 24.6 µs of clone is a near-even split, because #1118's chunked-tree
+clone costs slightly more at the largest scale (see the persistent-map A/B
+below) while the handoff barely moved. Any future B26-style work should state
+which scale it targets rather than citing one handoff figure.
+
+The prior attribution was measured with
 `scripts/run-benches.sh --profile full --bench write_txn_lifecycle --save-baseline pre`:
 same-run `empty_commit` medians were 12.10 / 37.99 / 47.53 µs, giving a
 derived handoff of ~11.0 / ~27.5 / ~23.9 µs. A local
@@ -1726,13 +1780,13 @@ already mostly Arc-backed and does not dominate the commit floor.
 
 | Bench | Variant | Median | Notes |
 |---|---|---:|---|
-| `write_txn_lifecycle/empty_commit` | 10k / 50k / 100k | 12.10 / 37.99 / 47.53 µs | Empty-transaction commit floor. |
-| `write_txn_lifecycle/graph_clone` | 10k / 50k / 100k | 1.10 / 10.52 / 23.58 µs | One full `SeleneGraph` clone + drop — the snapshot fork `seal`'s first `guard_mut` pays. |
-| `write_txn_lifecycle/indexed_empty_commit` | 10k / 50k / 100k | 21.86 / 32.71 / 38.91 µs | No-edge typed/composite/vector/text indexed fixture; measured with `--filter write_txn_lifecycle/indexed`. |
-| `write_txn_lifecycle/indexed_graph_clone` | 10k / 50k / 100k | 0.190 / 2.01 / 5.21 µs | Index-rich clone attribution row; populated indexes are Arc-backed enough that registry clone is not the dominant term. |
-| `write_txn_lifecycle/begin_rollback` | 10k / 50k / 100k | 15.8 ns (flat) | Write-lock + allocator + `WriteTxn` build, no snapshot fork, no handoff. |
-| `write_txn_lifecycle/create_only` @100k | batch 1 / 10 / 100 / 1000 | 342 µs / 360 µs / 469 µs / 1.18 ms | Isolated node create + commit. |
-| `write_txn_lifecycle/delete_only` @100k | batch 1 / 10 / 100 / 1000 | 224 / 232 / 312 / 745 µs | Fixture seed excluded from timed body. |
+| `write_txn_lifecycle/empty_commit` | 10k / 50k / 100k | 12.25 / 35.14 / 50.12 µs | Empty-transaction commit floor. Re-measured 2026-08-16; 100k +5.4%. |
+| `write_txn_lifecycle/graph_clone` | 10k / 50k / 100k | 1.11 / 11.43 / 24.60 µs | One full `SeleneGraph` clone + drop — the snapshot fork `seal`'s first `guard_mut` pays. Re-measured 2026-08-16; 100k +4.3%, the priced-in #1118 chunked-tree tradeoff. |
+| `write_txn_lifecycle/indexed_empty_commit` | 10k / 50k / 100k | 11.28 / 32.41 / 37.42 µs | No-edge typed/composite/vector/text indexed fixture; measured with `--filter write_txn_lifecycle/indexed`. Re-measured 2026-08-16; **10k −48.4%**. |
+| `write_txn_lifecycle/indexed_graph_clone` | 10k / 50k / 100k | 0.199 / 2.24 / 5.42 µs | Index-rich clone attribution row; populated indexes are Arc-backed enough that registry clone is not the dominant term. Re-measured 2026-08-16; flat. |
+| `write_txn_lifecycle/begin_rollback` | 10k / 50k / 100k | 14.0 ns (flat) | Write-lock + allocator + `WriteTxn` build, no snapshot fork, no handoff. Re-measured 2026-08-16; still flat across scales. |
+| `write_txn_lifecycle/create_only` @100k | batch 1 / 10 / 100 / 1000 | 140 / 144 / 180 / 356 µs | Isolated node create + commit. Re-measured 2026-08-16; **−59% / −60% / −62% / −70%**. |
+| `write_txn_lifecycle/delete_only` @100k | batch 1 / 10 / 100 / 1000 | 125 / 130 / 153 / 493 µs | Fixture seed excluded from timed body. Re-measured 2026-08-16; **−44% / −44% / −51% / −34%**. |
 | `provider_fanout/core_only` | providers=core | 258.7 µs | Commit-notification baseline. |
 | `provider_fanout/extra_k1` / `k4` / `k16` | extra providers | 223.8 / 225.6 / 227.6 µs | No-op provider fanout — flat (notification is cheap). |
 | `provider_fanout/extra_k4_with_error_one` | extra=4 + error | 227.4 µs | Error-path notification scaling. |
@@ -1929,12 +1983,39 @@ On `full`/`stress`, each WAL-backed arm also prints an **untimed**
 `[concurrent_writers percentiles] … p50/p99/p999` line to stderr (the
 tail-latency story the mean sample can't show).
 
+_Re-measured 2026-08-16 (same M5 box, rustc 1.97.1) via
+`scripts/run-benches.sh --profile full --bench concurrent_writers`._
+
 | Bench | threads=1 | threads=8 | threads=32 | Notes |
 |---|---:|---:|---:|---|
-| `concurrent_writers/threads{N}` | 332 ms | 304 ms | 305 ms | In-memory; 1000 commits, 10 updates each. |
-| `concurrent_writers/threads{N}_with_readers8` | 726 ms | 641 ms | 651 ms | Same load + 8 snapshot readers. |
-| `concurrent_writers/wal_threads{N}_batchOFF` | 4.71 s | 3.86 s | 3.83 s | Real WAL, one `fsync`/commit. |
-| `concurrent_writers/wal_threads{N}_batchON` | 4.57 s | 953 ms | **269 ms** | Group commit — **14× over batchOFF at 32 threads**; ≈ batchOFF at 1 thread (nothing to coalesce). |
+| `concurrent_writers/threads{N}` | 102.8 ms | 389.3 ms | 372.2 ms | In-memory; 1000 commits, 10 updates each. **Shape changed — see below.** |
+| `concurrent_writers/threads{N}_with_readers8` | 171.3 ms | 319.3 ms | 305.5 ms | Same load + 8 snapshot readers. −76% / −50% / −53%. |
+| `concurrent_writers/wal_threads{N}_batchOFF` | 4.023 s | 3.905 s | 3.857 s | Real WAL, one `fsync`/commit. Flat, as expected — `fsync` latency is the term. |
+| `concurrent_writers/wal_threads{N}_batchON` | 3.800 s | 889.3 ms | **243.7 ms** | Group commit — **15.8× over batchOFF at 32 threads** (was 14×); ≈ batchOFF at 1 thread (nothing to coalesce). |
+
+**The in-memory row is no longer flat, and that is the headline.** It used to
+read 332 / 304 / 305 ms across 1 / 8 / 32 threads — near-flat, which said
+single-committer queueing cost about the same however many writers queued. It
+now reads 102.8 / 389.3 / 372.2 ms: the single-writer case got **3.2× faster**
+while 8 and 32 writers got **~25% slower**.
+
+Both halves point at the same place. Per-commit work genuinely fell this cycle
+— `write_txn_lifecycle/create_only` is down 59–70% and `graph_mutation_commit_batch`
+down 57–71% over the same window — so the uncontended writer finishes far
+sooner. With the per-commit term that much cheaper, what remains at 8+ writers
+is contention on the single committer, and it is now the dominant cost rather
+than a rounding error on top of commit work. The crossover between "commit cost
+dominates" and "queueing dominates" has moved down; it now sits between 1 and 2
+writers on this fixture.
+
+**Neither direction was bisected**, so treat the mechanism as the leading
+explanation rather than a measured attribution. The `_with_readers8` row
+improving 50–76% across the board while the writer-only row regresses is the
+part that most deserves a follow-up: it says lock-free reads under contention
+got cheaper at the same time writer queueing got more expensive.
+
+The WAL axis is unaffected in shape — `fsync` latency still dominates it, group
+commit still coalesces, and the 32-thread group-commit win got slightly better.
 
 ## §4 selene-persist — WAL & snapshot
 
@@ -2153,13 +2234,22 @@ Append + explicit `flush()` across sync policies. The fsync-frequent policies
 selene-db code, and balloon to tens of seconds at 100k — they are **capped at
 ≤10k** so a full sweep is not dominated by one durability cell.
 
+_The **10k column** was re-measured 2026-08-16 alongside the rest of §4a; the 1k
+and 100k columns still carry the file-level 2026-06-01 stamp. #1132 measured
+this sweep and published it in `docs/performance.md` without recording it here,
+so the two documents disagreed by 5–10% on identical rows until this update._
+
 | Bench | 1k | 10k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `persist_wal_sync_sweep/every1` | 3.74 s | 39.5 s | n/a (capped) | `EveryN(1)` — fsync per entry. |
-| `persist_wal_sync_sweep/every10` | 378 ms | 3.99 s | n/a (capped) | `EveryN(10)`. |
-| `persist_wal_sync_sweep/every100` | 47.5 ms | 479 ms | n/a (capped) | `EveryN(100)`. |
-| `persist_wal_sync_sweep/every1000` | 7.79 ms | 65.9 ms | 655 ms | `EveryN(1000)`. |
-| `persist_wal_sync_sweep/on_flush_only` | 7.60 ms | 15.8 ms | 113 ms | `OnFlushOnly` + caller flush. |
+| `persist_wal_sync_sweep/every1` | 3.74 s | 35.97 s | n/a (capped) | `EveryN(1)` — fsync per entry. |
+| `persist_wal_sync_sweep/every10` | 378 ms | 3.668 s | n/a (capped) | `EveryN(10)`. |
+| `persist_wal_sync_sweep/every100` | 47.5 ms | 475.8 ms | n/a (capped) | `EveryN(100)`. |
+| `persist_wal_sync_sweep/every1000` | 7.79 ms | 60.61 ms | 655 ms | `EveryN(1000)`. |
+| `persist_wal_sync_sweep/on_flush_only` | 7.60 ms | 17.18 ms | 113 ms | `OnFlushOnly` + caller flush. |
+
+`EveryN(1)` to `OnFlushOnly` at 10k is a **~2,090× spread**, which is the single
+widest policy-choice consequence in the engine. `docs/performance.md` carries
+the same table with a changes/s column.
 
 ### §4b Snapshot
 
@@ -2168,18 +2258,25 @@ body hash) over synthetic byte payloads. The uncompressed companion rows isolate
 raw framing/body-hash cost with `SectionCompression::None`. `scale` drives section
 bytes.
 
-Write rows below were refreshed/added with
-`scripts/run-benches.sh --profile full --bench snapshot --filter 'persist_snapshot_(write|read|uncompressed_write|uncompressed_read)'`.
-Read rows were refreshed with
+_All five rows in the table below were re-measured 2026-08-16 (same M5 box,
+rustc 1.97.1) via `scripts/run-benches.sh --profile full --bench snapshot`, at
+the profile's default sample size of 30. Deltas quoted in the Notes column are
+point-estimate deltas against the prior medians, not Criterion `--baseline`
+comparisons, so they carry no p-value. The PR-local A/B tables further down
+retain their own original commands and sample sizes._
+
+The rows were previously refreshed/added with
+`scripts/run-benches.sh --profile full --bench snapshot --filter 'persist_snapshot_(write|read|uncompressed_write|uncompressed_read)'`,
+and the read rows with
 `scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)'`.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `persist_snapshot_write` | 379.1 µs | 524.4 µs | 717.5 µs | Five independently-compressed sections over highly-compressible synthetic bytes. |
-| `persist_snapshot_read` | 295.3 µs | 462.3 µs | 654.9 µs | Snapshot read-and-apply for compressed sections. |
-| `persist_snapshot_uncompressed_write` | 683.1 µs | 1.91 ms | 3.67 ms | Five uncompressed sections; exposes raw envelope write, body hash, and payload I/O cost. |
-| `persist_snapshot_uncompressed_read` | 412.4 µs | 1.72 ms | 3.41 ms | Snapshot read-and-apply for uncompressed sections. |
-| `persist_full_recovery` | 3.01 ms | 11.28 ms | 20.75 ms | Snapshot reconcile + WAL replay. |
+| `persist_snapshot_write` | 371.6 µs | 523.3 µs | 640.5 µs | Five independently-compressed sections over highly-compressible synthetic bytes. 100k −10.7%. |
+| `persist_snapshot_read` | 297.3 µs | 469.7 µs | 659.1 µs | Snapshot read-and-apply for compressed sections. Flat (100k +0.6%). |
+| `persist_snapshot_uncompressed_write` | 723.6 µs | 2.11 ms | 3.55 ms | Five uncompressed sections; exposes raw envelope write, body hash, and payload I/O cost. 100k −3.2%. |
+| `persist_snapshot_uncompressed_read` | 410.5 µs | 1.67 ms | 3.26 ms | Snapshot read-and-apply for uncompressed sections. 100k −4.4%. |
+| `persist_full_recovery` | 2.41 ms | 9.17 ms | 16.31 ms | Snapshot reconcile + WAL replay. **100k −21.4%** — the only row here that moved materially, and the WAL half explains it: §4a measured `persist_wal_replay` at −29.3% over the same window. The snapshot container rows are synthetic-byte framing work and are correctly insensitive to WAL 3.0. |
 
 PR-local snapshot compression scheduling A/B:
 
@@ -2224,14 +2321,24 @@ rebuild). Self-validating: asserts node/edge counts survive the roundtrip once
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `graph_snapshot_roundtrip/encode` | 2.13 ms | 15.05 ms | 31.64 ms | rkyv encode of all `CORE/*` sections. |
-| `graph_snapshot_roundtrip/decode` | 14.55 ms | 86.57 ms | 173.76 ms | Positional recovery + `finish_recovery`; duplicate-id validation is fused with row conversion. |
-| `graph_snapshot_roundtrip/roundtrip` | 18.66 ms | 104.85 ms | 219.89 ms | End-to-end (≈ encode + decode). |
+| `graph_snapshot_roundtrip/encode` | 2.11 ms | 14.58 ms | 31.42 ms | rkyv encode of all `CORE/*` sections. Re-measured 2026-08-16; 100k −0.7%. |
+| `graph_snapshot_roundtrip/decode` | 13.22 ms | 86.26 ms | 177.10 ms | Positional recovery + `finish_recovery`; duplicate-id validation is fused with row conversion. Re-measured 2026-08-16; 100k +1.9%. |
+| `graph_snapshot_roundtrip/roundtrip` | 17.24 ms | 102.20 ms | 208.60 ms | End-to-end (≈ encode + decode). Re-measured 2026-08-16; 100k −5.1%. |
 
-Encode/roundtrip rows above were refreshed with
-`scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip`.
-Decode rows were refreshed with
-`scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
+_Re-measured 2026-08-16 (same M5 box, rustc 1.97.1) via
+`scripts/run-benches.sh --profile full --bench graph_snapshot_roundtrip`. **The
+sample size changed:** the prior rows used `--sample-size 10
+--measurement-time 1` and these use the `full` profile default of 30, so the
+new rows are the better-conditioned estimate and the small deltas below should
+not be read as movement. The rkyv graph encode/decode path took no format
+change this cycle, and these rows agreeing to within a few percent is the
+expected result._
+
+The prior rows were refreshed with
+`scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip`
+(encode/roundtrip) and
+`scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`
+(decode).
 
 PR-local fused duplicate-id validation A/B:
 
