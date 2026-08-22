@@ -1309,6 +1309,43 @@ THIS SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
+- cfg_aliases v0.2.2 — https://github.com/katharostech/cfg_aliases
+
+```
+# 3rd Party Notices
+
+The &#x60;cfg_aliases!&#x60; macro uses a lot of the code from [&#x60;tectonic_cfg_support::target_cfg!&#x60;] macro which is under the following license:
+
+[&#x60;tectonic_cfg_support::target_cfg!&#x60;]: https://github.com/tectonic-typesetting/tectonic/blob/f2439b936470ad27bdf92882064bc4702ee01899/cfg_support/src/lib.rs#L166
+
+    tectonic_cfg_support is licensed under the MIT License.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the “Software”), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+---
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
 - lazy_static v1.5.0 — https://github.com/rust-lang-nursery/lazy-static.rs
 - rayon-core v1.13.0 — https://github.com/rayon-rs/rayon
 - rayon v1.12.0 — https://github.com/rayon-rs/rayon
@@ -3853,12 +3890,12 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- selene-db-algorithms v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-core v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-gql v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-graph v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-persist v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-testing v1.4.0 — https://github.com/jscott3201/selene-db
+- selene-db-algorithms v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-core v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-gql v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-graph v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-persist v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-testing v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - anes v0.1.6 — https://github.com/zrzka/anes-rs
 - block2 v0.6.2 — https://github.com/madsmtm/objc2
 - libm v0.2.16 — https://github.com/rust-lang/compiler-builtins
@@ -4294,6 +4331,38 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
+- tracing-core v0.1.36 — https://github.com/tokio-rs/tracing
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2014 Mathijs van de Nes
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ```
 

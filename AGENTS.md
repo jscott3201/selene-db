@@ -32,6 +32,11 @@ single native engine:
 Read the current `Cargo.toml` / `rust-toolchain.toml` for versions. The workspace
 uses Rust edition 2024 and a pinned stable toolchain.
 
+The [2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md) is
+the version-policy source of truth. The 1.x line receives no maintenance or
+migration support. Treat `2.0.0-alpha.1` as a source coordinate unless its
+crates.io publication has been verified.
+
 ## Hard Rules
 
 1. Preserve strict ISO GQL at the language boundary. Do not add SQL, Cypher,

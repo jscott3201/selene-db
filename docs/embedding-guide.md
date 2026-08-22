@@ -35,8 +35,9 @@ The engine's job ends at the public crate APIs. Everything outside the in-proces
 
 `selene-db` is a multi-crate workspace with no umbrella crate (D8). Pull in
 only what you need. The public packages are published to crates.io under the
-`selene-db-*` namespace; examples below use `package = ...` aliases so the
-Rust crate names remain `selene_core`, `selene_graph`, and so on.
+`selene-db-*` namespace. The examples use the current source coordinate,
+`2.0.0-alpha.1`, which may not yet be published. Use `package = ...` aliases so
+the Rust crate names remain `selene_core`, `selene_graph`, and so on.
 
 The crate set is layered so transitive footprint stays small:
 
@@ -52,8 +53,8 @@ The crate set is layered so transitive footprint stays small:
 
 ```toml
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.4.0" }
-selene-graph = { package = "selene-db-graph", version = "1.4.0" }
+selene-core = { package = "selene-db-core", version = "2.0.0-alpha.1" }
+selene-graph = { package = "selene-db-graph", version = "2.0.0-alpha.1" }
 ```
 
 Use this when you only need the in-memory property graph: nodes, edges, label/property indexes, the `Mutator` write funnel. No parser, no executor, no disk.
@@ -62,9 +63,9 @@ Use this when you only need the in-memory property graph: nodes, edges, label/pr
 
 ```toml
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.4.0" }
-selene-graph = { package = "selene-db-graph", version = "1.4.0" }
-selene-gql = { package = "selene-db-gql", version = "1.4.0" }
+selene-core = { package = "selene-db-core", version = "2.0.0-alpha.1" }
+selene-graph = { package = "selene-db-graph", version = "2.0.0-alpha.1" }
+selene-gql = { package = "selene-db-gql", version = "2.0.0-alpha.1" }
 ```
 
 Adds the Pest grammar, AST, semantic analyzer, planner, optimizer, and row-at-a-time executor. You can now `parse → analyze → plan → execute_statement`. `CALL` is still off (`EmptyProcedureRegistry` always returns `None`).
@@ -73,10 +74,10 @@ Adds the Pest grammar, AST, semantic analyzer, planner, optimizer, and row-at-a-
 
 ```toml
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.4.0" }
-selene-graph = { package = "selene-db-graph", version = "1.4.0" }
-selene-gql = { package = "selene-db-gql", version = "1.4.0" }
-selene-persist = { package = "selene-db-persist", version = "1.4.0" }
+selene-core = { package = "selene-db-core", version = "2.0.0-alpha.1" }
+selene-graph = { package = "selene-db-graph", version = "2.0.0-alpha.1" }
+selene-gql = { package = "selene-db-gql", version = "2.0.0-alpha.1" }
+selene-persist = { package = "selene-db-persist", version = "2.0.0-alpha.1" }
 ```
 
 Adds the WAL writer (`SLDB` magic), the snapshot writer (`SLSN` magic), and the two-step recovery driver. `selene-persist` is graph-blind: it takes `&[Change]` slices and routes them by provider tag.
@@ -85,16 +86,17 @@ Adds the WAL writer (`SLDB` magic), the snapshot writer (`SLSN` magic), and the 
 
 ```toml
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.4.0" }
-selene-graph = { package = "selene-db-graph", version = "1.4.0" }
-selene-gql = { package = "selene-db-gql", version = "1.4.0" }
-selene-persist = { package = "selene-db-persist", version = "1.4.0" }
-selene-algorithms = { package = "selene-db-algorithms", version = "1.4.0" }
+selene-core = { package = "selene-db-core", version = "2.0.0-alpha.1" }
+selene-graph = { package = "selene-db-graph", version = "2.0.0-alpha.1" }
+selene-gql = { package = "selene-db-gql", version = "2.0.0-alpha.1" }
+selene-persist = { package = "selene-db-persist", version = "2.0.0-alpha.1" }
+selene-algorithms = { package = "selene-db-algorithms", version = "2.0.0-alpha.1" }
 ```
 
 For local engine development, keep the `package = "selene-db-*"` aliases and
-replace only the `version = "1.4.0"` fields with
-`path = "path/to/selene-db/crates/<crate>"`.
+add `path = "path/to/selene-db/crates/<crate>"` alongside each version. The
+[version policy](v2/eol-and-version-policy.md) defines the alpha and 1.x support
+posture.
 
 selene-db is a single native engine — there is no extension/procedure-pack model and nothing to load at runtime. `CALL` is served by the one frozen native `BuiltinProcedureRegistry` (`selene-gql/src/runtime/builtin_registry.rs`), constructed with `BuiltinProcedureRegistry::new()`. It registers exactly 69 procedures, fixed at construction:
 

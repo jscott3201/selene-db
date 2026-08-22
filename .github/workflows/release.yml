@@ -19,7 +19,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     tags:
-      - 'v*.*.*'
+      - 'v2.*.*'
   workflow_dispatch:
 
 concurrency:
@@ -37,6 +37,13 @@ permissions:
   pull-requests: read
 
 jobs:
+  release-policy:
+    name: release tag policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash .github/scripts/check-release-tag.test.sh
+
   fmt:
     name: fmt
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
@@ -239,7 +246,8 @@ jobs:
 
   publish-crates:
     name: publish crates.io
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'jscott3201/selene-db'
+    needs: release-policy
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v2.') && github.repository == 'jscott3201/selene-db'
     runs-on: ubuntu-latest
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -250,19 +258,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
-            echo "CARGO_REGISTRY_TOKEN secret is required for crates.io publishing." >&2
-            exit 1
-          fi
-
-          version="${GITHUB_REF_NAME#v}"
           workspace_version="$(awk -F' = ' '
             $0 == "[workspace.package]" { in_workspace = 1; next }
             /^\[/ && in_workspace { exit }
             in_workspace && $1 == "version" { gsub(/"/, "", $2); print $2; exit }
           ' Cargo.toml)"
-          if [ "$workspace_version" != "$version" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match workspace version $workspace_version." >&2
+          bash .github/scripts/check-release-tag.sh "$GITHUB_REF_NAME" "$workspace_version"
+          version="${GITHUB_REF_NAME#v}"
+
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "CARGO_REGISTRY_TOKEN secret is required for crates.io publishing." >&2
             exit 1
           fi
 
@@ -308,7 +313,7 @@ jobs:
   github-release:
     name: GitHub release
     needs: publish-crates
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'jscott3201/selene-db'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v2.') && github.repository == 'jscott3201/selene-db'
     runs-on: ubuntu-latest
     permissions:
       contents: write

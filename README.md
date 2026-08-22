@@ -15,6 +15,14 @@ workloads. Non-standard capabilities are exposed through implementation-defined
 values, indexes, and `CALL selene.*` / `CALL algo.*` procedures, not by adding
 SQL, Cypher, SPARQL, or ad hoc grammar.
 
+## Release Status
+
+The active source line is `2.0.0-alpha.1`. The 1.x line is end of life: it
+receives no fixes, security patches, compatibility work, new releases, or data
+migration support. The alpha coordinate may not yet be published; use path
+dependencies from a source checkout when it is unavailable on crates.io. See
+the [2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md).
+
 ## What Is Here
 
 | Area | Current surface |
@@ -54,15 +62,16 @@ selene-core -> selene-graph -> selene-algorithms -> selene-gql
 
 ## Quickstart
 
-Starting with v1.2.0, the public packages are published to crates.io under the
-`selene-db-*` namespace. Depend on the layers your application uses while
-keeping the Rust crate names stable:
+Released public packages use the `selene-db-*` namespace on crates.io. The
+example below follows the current source coordinate; confirm the alpha is
+published before using it as a registry dependency. Keep the Rust crate names
+stable with package aliases:
 
 ```toml
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.4.0" }
-selene-graph = { package = "selene-db-graph", version = "1.4.0" }
-selene-gql = { package = "selene-db-gql", version = "1.4.0" }
+selene-core = { package = "selene-db-core", version = "2.0.0-alpha.1" }
+selene-graph = { package = "selene-db-graph", version = "2.0.0-alpha.1" }
+selene-gql = { package = "selene-db-gql", version = "2.0.0-alpha.1" }
 ```
 
 Create a graph, write through the mutation funnel, and query with GQL:

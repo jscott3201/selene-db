@@ -727,10 +727,12 @@ Because a store holds four independently versioned artifacts, the rejection
 names which one is at fault — `audit log version unsupported: 1.0` rather than
 a message that says `wal` regardless of the file it came from.
 
-Until 2.0.0 the project makes **no backward-compatibility guarantee** for
-persisted data. Format breaks ship in ordinary minor releases, called out as
-BREAKING in the changelog. Plan upgrades as recreate-from-source, and take a
-backup of the source data — not of the store — before upgrading.
+The 2.0 line will not open or migrate stores written by 1.x. Persisted data
+written by an alpha build has no compatibility guarantee across later alpha
+builds. Plan upgrades as recreate-from-source, and take a backup of the source
+data — not of the store — before upgrading. This policy does not claim that all
+future 2.0 format work is present in the current engine; see the
+[2.0 version policy](v2/eol-and-version-policy.md).
 
 - **Writers always emit the current version**. There is no flag to write a
   prior format.

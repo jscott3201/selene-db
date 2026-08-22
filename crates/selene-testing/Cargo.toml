@@ -19,9 +19,9 @@ default = []
 workspace = true
 
 [dependencies]
-selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.4.0" }
-selene-gql = { package = "selene-db-gql", path = "../selene-gql", version = "1.4.0" }
-selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "1.4.0" }
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "2.0.0-alpha.1" }
+selene-gql = { package = "selene-db-gql", path = "../selene-gql", version = "2.0.0-alpha.1" }
+selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "2.0.0-alpha.1" }
 serde_json.workspace = true
 thiserror.workspace = true
 

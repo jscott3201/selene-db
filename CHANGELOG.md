@@ -8,6 +8,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The workspace and every Selene path-version constraint now use the
+  `2.0.0-alpha.1` source coordinate. The 1.x line is end of life and receives
+  no fixes, security patches, compatibility work, new releases, persisted-data
+  readers, or migration support. The alpha coordinate does not assert crates.io
+  publication; see the
+  [2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md).
+
 - Graph ID, label, and adjacency maps now use the maintained
   `immutable-chunkmap` Arc-backed chunked tree. Snapshot clones retain
   structural sharing while the archived `bitmaps` and duplicate `wide` 0.7
@@ -42,13 +49,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for example, `audit log version unsupported: 1.0`. The variant carries a new
   `artifact: PersistArtifact` field.
 
-- **The documented 1.x read-side compatibility guarantee is retracted.** It was
+- **The documented 1.x read-side compatibility guarantee is retracted and the
+  former 1.x policy is superseded.** The compatibility claim was
   never enforced: both the WAL and the snapshot readers gate on an exact
   `(major, minor)` match, so several released minor versions already could not
   open one another's stores. `docs/persistence-and-recovery.md` now states the
   policy the code implements — exactly one supported format, recreate from
   source across a break — and carries the table of shipped format identities.
-  Until 2.0.0 there is no backward-compatibility guarantee for persisted data.
+  The 2.0 line will not open or migrate 1.x stores, and alpha persisted data has
+  no compatibility promise across later alpha builds.
 
 - **BREAKING (API): `Mutator::schema_change` no longer takes a `GraphId`.** The
   emitted `Change::SchemaChanged` record is stamped from the live transaction
@@ -2068,13 +2077,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.0] — 2026-05-16
 
-First stable release. selene-db is now usable as a Rust dependency for
-embedding a property graph engine that targets ISO/IEC 39075:2024 (GQL)
-conformance. The public API surface across `selene-core`,
-`selene-graph`, `selene-persist`, `selene-gql`, and `selene-pack` is
-considered stable: subsequent 1.x releases will maintain
-backwards-compatible additions and reserve breaking changes for major
-version bumps.
+First stable release. At release time, selene-db was presented as a Rust
+dependency for embedding a property graph engine that targets ISO/IEC
+39075:2024 (GQL) conformance. The public API surface across `selene-core`,
+`selene-graph`, `selene-persist`, `selene-gql`, and `selene-pack` was declared
+stable, with a stated plan to keep subsequent 1.x additions backward
+compatible. That policy was later retracted and is superseded by the
+[2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md).
 
 ### Highlights
 
@@ -2213,9 +2222,10 @@ This release introduces a full user-facing documentation set under
 The README is now focused on evaluation and orientation; depth lives in
 the documentation pages above.
 
-### Stability guarantees
+### Stability guarantees recorded at v1.0.0 (superseded)
 
-The following surfaces are stable starting with 1.0.0:
+The v1.0.0 release declared the following surfaces stable. These historical
+claims do not create current 1.x support or compatibility obligations:
 
 - Public types and traits in `selene-core` (`Value`, `IStr`,
   `PropertyMap`, `LabelSet`, `Change`, `Codec`).
@@ -2240,10 +2250,10 @@ The following surfaces are stable starting with 1.0.0:
 | macOS (Apple Silicon, Intel) | Primary development target |
 | Windows | Out of scope |
 
-### Known deferrals (post-1.0.0)
+### Known deferrals recorded at v1.0.0 (superseded)
 
-The following items are intentionally deferred and tracked for future
-1.x releases:
+The v1.0.0 release listed the following items as future 1.x work. This is a
+historical list, not a current commitment:
 
 - Louvain parallelization (currently sequential).
 - Edge-index planner support (typed/composite indexes for edges
