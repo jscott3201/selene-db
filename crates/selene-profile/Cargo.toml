@@ -1,0 +1,29 @@
+[package]
+name = "selene-db-profile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Canonical GQL profile model and generated registry for selene-db."
+publish = false
+
+[lib]
+name = "selene_profile"
+
+[[bin]]
+name = "selene-profile"
+path = "src/bin/selene-profile.rs"
+
+[dependencies]
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

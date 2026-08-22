@@ -197,7 +197,7 @@ Turn the 2.0 operating model into repository automation: practical Rust checks o
 ## M00-PR04 — Capture the Executable 1.x Baseline and 2.0 Deletion Inventory
 
 - **Owner:** M00
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / L
 - **Dependencies:** M00-PR03
 - **Issues:** None

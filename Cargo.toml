@@ -9,6 +9,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/selene-profile",
     "crates/selene-core",
     "crates/selene-graph",
     "crates/selene-persist",
@@ -84,6 +85,7 @@ wide = "1.6.1"
 # matches the rustc / syn / serde recursion pattern.
 stacker = "0.1.25"
 selene-persist = { package = "selene-db-persist", path = "crates/selene-persist", version = "2.0.0-alpha.1" }
+selene-profile = { package = "selene-db-profile", path = "crates/selene-profile", version = "2.0.0-alpha.1" }
 
 # Dev dependencies.
 criterion = "0.8.2"

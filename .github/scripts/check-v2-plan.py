@@ -302,8 +302,12 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
         for field in ("scope", "non_goals", "acceptance", "tests", "review_focus", "stop_conditions", "bridge"):
             if not pr[field]:
                 check.fail(f"{pr_id}: {field} contract is empty")
-    if prs["M00-PR03"]["status"] != "Merged":
-        check.fail(f"M00-PR03: prerequisite status must be Merged, got {prs['M00-PR03']['status']}")
+    for prerequisite in ("M00-PR03", "M00-PR04"):
+        if prs[prerequisite]["status"] != "Merged":
+            check.fail(
+                f"{prerequisite}: prerequisite status must be Merged, "
+                f"got {prs[prerequisite]['status']}"
+            )
 
 
 def anchors(text: str) -> set[str]:

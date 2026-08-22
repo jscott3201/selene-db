@@ -3895,6 +3895,7 @@ Used by:
 - selene-db-gql v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - selene-db-graph v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - selene-db-persist v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-profile v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - selene-db-testing v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - anes v0.1.6 — https://github.com/zrzka/anes-rs
 - block2 v0.6.2 — https://github.com/madsmtm/objc2

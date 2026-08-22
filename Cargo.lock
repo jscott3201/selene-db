@@ -1847,6 +1847,7 @@ dependencies = [
  "rkyv 0.8.18",
  "rstest",
  "rust_decimal",
+ "selene-db-profile",
  "serde",
  "serde_json",
  "smallvec",
@@ -1947,6 +1948,17 @@ dependencies = [
  "uuid",
  "xxhash-rust",
  "zstd",
+]
+
+[[package]]
+name = "selene-db-profile"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
