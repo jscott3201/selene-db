@@ -161,6 +161,32 @@ def duplicates(values: Iterable[Any]) -> set[Any]:
     return repeated
 
 
+def check_dependency_cycles(check: Check, dependencies: dict[str, list[str]]) -> None:
+    state = {identity: 0 for identity in dependencies}
+    stack: list[str] = []
+
+    def visit(identity: str) -> bool:
+        state[identity] = 1
+        stack.append(identity)
+        for dependency in sorted(dependencies[identity]):
+            if dependency not in dependencies:
+                continue
+            if state[dependency] == 1:
+                cycle_start = stack.index(dependency)
+                cycle = stack[cycle_start:] + [dependency]
+                check.fail(f"dependency cycle: {' -> '.join(cycle)}")
+                return True
+            if state[dependency] == 0 and visit(dependency):
+                return True
+        stack.pop()
+        state[identity] = 2
+        return False
+
+    for identity in sorted(dependencies):
+        if state[identity] == 0 and visit(identity):
+            return
+
+
 def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
     meta = plan["meta"]
     collections = {
@@ -236,24 +262,11 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
             if issue not in issues:
                 check.fail(f"{pr_id}: references unknown issue #{issue}")
 
-    visiting: set[str] = set()
-    visited: set[str] = set()
-
-    def visit(pr_id: str, chain: list[str]) -> None:
-        if pr_id in visited:
-            return
-        if pr_id in visiting:
-            check.fail(f"work-item dependency cycle: {' -> '.join(chain + [pr_id])}")
-            return
-        visiting.add(pr_id)
-        for dependency in prs[pr_id]["dependencies"]:
-            if dependency in prs:
-                visit(dependency, chain + [pr_id])
-        visiting.remove(pr_id)
-        visited.add(pr_id)
-
-    for pr_id in prs:
-        visit(pr_id, [])
+    dependency_graph = {
+        identity: record["dependencies"]
+        for identity, record in [*milestones.items(), *prs.items()]
+    }
+    check_dependency_cycles(check, dependency_graph)
 
     issue_references: dict[int, list[str]] = {number: [] for number in issues}
     for pr_id, pr in prs.items():
@@ -276,6 +289,17 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
 
 def anchors(text: str) -> set[str]:
     return set(ANCHOR_RE.findall(text))
+
+
+def anchor_section(text: str, identity: str) -> str | None:
+    matches = list(ANCHOR_RE.finditer(text))
+    matching_indexes = [index for index, match in enumerate(matches) if match.group(1) == identity]
+    if len(matching_indexes) != 1:
+        return None
+    index = matching_indexes[0]
+    start = matches[index].end()
+    end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+    return text[start:end]
 
 
 def check_plan_targets(check: Check, plan: dict[str, Any]) -> None:
@@ -428,12 +452,19 @@ def check_projections(check: Check, plan: dict[str, Any], write: bool) -> None:
 
     decision_text = check.read_text(DECISIONS)
     for decision in plan["decisions"]:
-        if decision["decision"] not in decision_text:
-            check.fail(f"{DECISIONS}: decision text differs for {decision['id']}")
+        identity = decision["id"].lower()
+        section = anchor_section(decision_text, identity)
+        if section is not None and decision["decision"] not in section:
+            check.fail(f"{DECISIONS}: {identity!r} section does not contain its decision body")
     issue_text = check.read_text(ISSUES)
     for issue in plan["issues"]:
-        if issue["owner"] not in issue_text or f"#{issue['number']}" not in issue_text:
-            check.fail(f"{ISSUES}: missing issue ownership projection for #{issue['number']}")
+        identity = f"issue-{issue['number']}"
+        section = anchor_section(issue_text, identity)
+        if section is not None:
+            expected = (f"#{issue['number']}", issue["owner"])
+            missing = [value for value in expected if value not in section]
+            if missing:
+                check.fail(f"{ISSUES}: {identity!r} section is missing {', '.join(repr(value) for value in missing)}")
 
 
 def check_repository_policy(check: Check) -> None:
