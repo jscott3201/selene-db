@@ -31,6 +31,7 @@ env:
   RUST_BACKTRACE: short
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 permissions:
   contents: read
@@ -42,6 +43,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-release-tag.test.sh
 
   fmt:
@@ -50,6 +53,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt
@@ -61,6 +66,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-repository-home.sh .
 
   v2-plan-contract:
@@ -69,6 +76,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: verify checkout provenance
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
       - run: python3 -B .github/scripts/check-v2-plan.py --root .
       - run: python3 -B .github/scripts/check-v2-plan.test.py
 
@@ -82,6 +93,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy
@@ -102,6 +115,8 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -119,6 +134,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --all-features --exclude-dev
@@ -133,6 +150,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
@@ -149,6 +168,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -163,6 +184,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-file-size.sh
 
   no-secret-scan:
@@ -171,6 +194,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-no-secrets.sh
 
   bench-invocation-lint:
@@ -179,6 +204,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-bench-invocation.sh .
       - run: bash .github/scripts/check-bench-invocation.test.sh
       - run: bash .github/scripts/check-mimalloc-dev-dep.sh .
@@ -193,6 +220,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -233,6 +262,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -264,6 +295,8 @@ jobs:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@1.97.1
       - name: publish public crates
         run: |
@@ -334,6 +367,8 @@ jobs:
       TARGET_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: create or update release
         run: |
           set -euo pipefail

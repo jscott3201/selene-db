@@ -21,6 +21,12 @@ WORK_ITEMS_HIGH = pathlib.Path("docs/v2/roadmap/work-items-05-10.md")
 DECISIONS = pathlib.Path("docs/v2/decisions/finalized.md")
 ISSUES = pathlib.Path("docs/v2/issue-ownership.md")
 PULL_REQUEST_TEMPLATE = pathlib.Path(".github/pull_request_template.md")
+VALIDATION_WORKFLOWS = (
+    pathlib.Path(".github/workflows/ci.yml"),
+    pathlib.Path(".github/workflows/release.yml"),
+)
+EXACT_REVISION_EXPRESSION = "${{ github.event.pull_request.head.sha || github.sha }}"
+PROVENANCE_COMMAND = 'run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"'
 EXPECTED_ISSUES = {1088, 1092, 1093, 1094, 1097, 1128, 1137}
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 ANCHOR_RE = re.compile(r'<a\s+id=["\']([^"\']+)["\']\s*></a>', re.IGNORECASE)
@@ -550,6 +556,51 @@ def check_repository_policy(check: Check) -> None:
             check.fail(f"{path.relative_to(check.root)}: local-only source name {forbidden!r} is forbidden")
 
 
+def workflow_job(text: str, job_id: str) -> str | None:
+    lines = text.splitlines()
+    marker = f"  {job_id}:"
+    try:
+        start = lines.index(marker)
+    except ValueError:
+        return None
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:", lines[index]):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def check_validation_workflows(check: Check) -> None:
+    required_provenance = {
+        pathlib.Path(".github/workflows/ci.yml"): ("rust-compile-and-test", "v2-plan-contract"),
+        pathlib.Path(".github/workflows/release.yml"): ("v2-plan-contract",),
+    }
+    for path in VALIDATION_WORKFLOWS:
+        text = check.read_text(path)
+        lines = text.splitlines()
+        expected_env = f"  EXPECTED_REVISION: {EXACT_REVISION_EXPRESSION}"
+        if lines.count(expected_env) != 1:
+            check.fail(f"{path}: EXPECTED_REVISION must select the pull-request head with github.sha fallback")
+        checkout_count = 0
+        for index, line in enumerate(lines):
+            if line.strip() != "- uses: actions/checkout@v7":
+                continue
+            checkout_count += 1
+            indent = line[: len(line) - len(line.lstrip())]
+            expected = [f"{indent}  with:", f"{indent}    ref: {EXACT_REVISION_EXPRESSION}"]
+            if lines[index + 1:index + 3] != expected:
+                check.fail(f"{path}:{index + 1}: checkout must select the exact event revision")
+        if checkout_count == 0:
+            check.fail(f"{path}: no actions/checkout@v7 steps found")
+        for job_id in required_provenance[path]:
+            job = workflow_job(text, job_id)
+            if job is None:
+                check.fail(f"{path}: required job {job_id!r} is missing")
+            elif job.count(PROVENANCE_COMMAND) != 1:
+                check.fail(f"{path}: job {job_id!r} must assert checkout provenance")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=pathlib.Path, required=True, help="repository root")
@@ -571,6 +622,7 @@ def main() -> int:
             check_plan_targets(check, plan)
     check_markdown_links(check)
     check_repository_policy(check)
+    check_validation_workflows(check)
     if check.errors:
         print("v2 plan validation failed:", file=sys.stderr)
         for error in check.errors:

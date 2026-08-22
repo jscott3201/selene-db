@@ -36,6 +36,7 @@ env:
   RUST_BACKTRACE: short
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 permissions:
   contents: read
@@ -52,6 +53,8 @@ jobs:
       deps: ${{ steps.filter.outputs.deps }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - id: filter
         uses: dorny/paths-filter@v4
         with:
@@ -71,6 +74,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt
@@ -84,6 +89,10 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: verify checkout provenance
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -99,6 +108,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: verify checkout provenance
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
       - run: python3 -B .github/scripts/check-v2-plan.py --root .
       - run: python3 -B .github/scripts/check-v2-plan.test.py
 
@@ -108,6 +121,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-file-size.sh
 
   no-secret-scan:
@@ -116,6 +131,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-no-secrets.sh
 
   repository-home:
@@ -124,6 +141,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-repository-home.sh .
 
   rowid-arith-gate:
@@ -132,6 +151,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-no-rowid-arith.sh
 
   version-locked-feature-error-gate:
@@ -140,6 +161,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-no-version-locked-feature-error.sh
 
   doc-constants-gate:
@@ -148,6 +171,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-doc-constants.sh .
       - run: bash .github/scripts/check-doc-constants.test.sh
 
@@ -157,6 +182,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-bench-invocation.sh .
       - run: bash .github/scripts/check-bench-invocation.test.sh
       - run: bash .github/scripts/check-mimalloc-dev-dep.sh .
@@ -175,6 +202,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --all-features --exclude-dev
@@ -193,6 +222,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2

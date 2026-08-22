@@ -16,6 +16,12 @@ from typing import Any
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CHECKER = ROOT / ".github" / "scripts" / "check-v2-plan.py"
 PLAN = pathlib.Path("docs/v2/roadmap/plan.json")
+CI_WORKFLOW = pathlib.Path(".github/workflows/ci.yml")
+EXACT_REVISION_EXPRESSION = "${{ github.event.pull_request.head.sha || github.sha }}"
+PROVENANCE_STEP = (
+    '      - name: verify checkout provenance\n'
+    '        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"\n'
+)
 
 
 class PlanContractTests(unittest.TestCase):
@@ -178,6 +184,24 @@ class PlanContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assert_failure(self.run_validator(), "superseded role policy remains")
+
+    def test_workflow_checkout_without_exact_ref_fails(self) -> None:
+        workflow = self.root / CI_WORKFLOW
+        text = workflow.read_text(encoding="utf-8")
+        text = text.replace(
+            f"          ref: {EXACT_REVISION_EXPRESSION}",
+            "          ref: ${{ github.sha }}",
+            1,
+        )
+        workflow.write_text(text, encoding="utf-8")
+        self.assert_failure(self.run_validator(), "checkout must select the exact event revision")
+
+    def test_workflow_required_provenance_assertion_fails(self) -> None:
+        workflow = self.root / CI_WORKFLOW
+        text = workflow.read_text(encoding="utf-8")
+        self.assertIn(PROVENANCE_STEP, text)
+        workflow.write_text(text.replace(PROVENANCE_STEP, "", 1), encoding="utf-8")
+        self.assert_failure(self.run_validator(), "job 'rust-compile-and-test' must assert checkout provenance")
 
 
 if __name__ == "__main__":
