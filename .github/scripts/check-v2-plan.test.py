@@ -33,6 +33,9 @@ class PlanContractTests(unittest.TestCase):
         shutil.copy2(ROOT / "AGENTS.md", self.root / "AGENTS.md")
         shutil.copy2(ROOT / "README.md", self.root / "README.md")
         shutil.copy2(ROOT / ".gitignore", self.root / ".gitignore")
+        (self.root / "scripts").mkdir()
+        shutil.copy2(ROOT / "scripts" / "v2_baseline.py", self.root / "scripts" / "v2_baseline.py")
+        shutil.copy2(ROOT / "scripts" / "v2-baseline.sh", self.root / "scripts" / "v2-baseline.sh")
         subprocess.run(
             ["git", "init", "--quiet"],
             cwd=self.root,
@@ -97,8 +100,20 @@ class PlanContractTests(unittest.TestCase):
         self.assert_failure(result, "dependency cycle: M00 -> M00-PR03 -> M00")
 
     def test_merged_item_with_unmerged_dependency_fails(self) -> None:
-        result = self.mutate_plan(lambda plan: plan["pull_requests"][3].update(status="Merged"))
+        def break_dependency(plan: dict[str, Any]) -> None:
+            plan["pull_requests"][2]["status"] = "Unmerged"
+            plan["pull_requests"][3]["status"] = "Merged"
+
+        result = self.mutate_plan(break_dependency)
         self.assert_failure(result, "M00-PR04: merged work item has unmerged dependencies: ['M00-PR03']")
+
+    def test_stale_baseline_pr_status_fails(self) -> None:
+        result = self.mutate_plan(
+            lambda plan: next(item for item in plan["pull_requests"] if item["id"] == "M00-PR03").update(
+                status="Unmerged"
+            )
+        )
+        self.assert_failure(result, "M00-PR03: prerequisite status must be Merged")
 
     def test_missing_markdown_target_fails(self) -> None:
         result = self.mutate_plan(
@@ -110,6 +125,20 @@ class PlanContractTests(unittest.TestCase):
         projection = self.root / "docs" / "v2" / "roadmap" / "work-items-00-04.md"
         projection.write_text(projection.read_text(encoding="utf-8") + "\n", encoding="utf-8")
         self.assert_failure(self.run_validator(), "projection is stale")
+
+    def test_corrupt_baseline_report_hash_fails(self) -> None:
+        manifest_path = self.root / "docs" / "v2" / "baseline" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["reports"][0]["sha256"] = "0" * 64
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self.assert_failure(self.run_validator(), "executable baseline: report hash mismatch")
+
+    def test_corrupt_baseline_schema_fails(self) -> None:
+        schema_path = self.root / "docs" / "v2" / "baseline" / "manifest.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        del schema["additionalProperties"]
+        schema_path.write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self.assert_failure(self.run_validator(), "manifest schema differs from the helper's closed schema")
 
     def test_duplicate_and_mismatched_issue_ownership_fail(self) -> None:
         with self.subTest("duplicate reference"):
