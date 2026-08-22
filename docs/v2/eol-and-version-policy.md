@@ -4,6 +4,10 @@ Selene development uses one package line: `2.0.0-alpha.1`. The 1.x line is
 end of life. Its source remains available for inspection, but availability is
 not maintenance or support.
 
+The named archive branch and tag are **pending owner-only** actions. They were
+absent when the tracked 2.0 program was installed. Verify both refs before
+relying on them.
+
 ## Branch, tag, version, and support matrix
 
 | Surface | Role | Policy |
@@ -13,8 +17,8 @@ not maintenance or support.
 | `2.0.0-alpha.1` | Current source coordinate | Identifies the workspace source. It does not assert that the packages have been published to crates.io. |
 | `v2.<minor>.<patch>[-prerelease][+build]` | Release tags | Eligible for release automation only when the tag is valid SemVer, has major version 2, and exactly matches the workspace version. |
 | Existing `v1.*` tags | Historical release tags | Remain available as history. No new v1 tag or release is permitted. |
-| `archive/1.x-final` | Locked source archive | The owner creates it after this policy lands, at exact commit `b8782bec34ff0b815b62711ac7e33cac09d8ea71`. It is not a patch branch. |
-| `archive-v1-eol-2026-08-21` | Non-release archive tag | Marks the same exact commit. Release automation must not run for it. |
+| `archive/1.x-final` | Pending owner-only source archive | The owner creates it at exact commit `b8782bec34ff0b815b62711ac7e33cac09d8ea71`. It is not a patch branch. |
+| `archive-v1-eol-2026-08-21` | Pending owner-only non-release tag | The owner creates it at the same exact commit. Release automation must not run for it. |
 
 The release workflow's coarse trigger is `v2.*.*`. The authoritative check is
 `.github/scripts/check-release-tag.sh`, which rejects v1, archive, malformed,

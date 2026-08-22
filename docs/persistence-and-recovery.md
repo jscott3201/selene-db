@@ -5,6 +5,10 @@ graph and how the engine reconstructs that state after a restart. It is aimed
 at engineers operating `selene-db` in production: configuring durability,
 sizing recovery windows, and taking backups.
 
+This is the current `c5c0a985` format and behavior reference. It does not
+describe format 2 as implemented. [D-019 and M09](v2/README.md) own the future
+2.0-only format, anchored directory authority, and cutover.
+
 The persistence subsystem lives entirely inside the
 [`selene-persist`](../crates/selene-persist) crate. It owns two on-disk
 formats — a write-ahead log and a snapshot envelope — and a recovery
@@ -867,7 +871,7 @@ recoverable or loud, never silent. The expected failure modes:
 | Torn write at WAL tail                 | Per-entry xxh3 checksum mismatch, oversized payload/principal lengths, or truncated body. | The on-open scan in `WalWriter::open` truncates the file to the last fully-committed entry. Logged at WARN. |
 | Snapshot file truncated                | Header short read.                         | `PersistError::TruncatedSnapshotHeader`; recovery refuses to fall back silently. |
 | Snapshot body corruption               | blake3-128 body hash mismatch.             | `PersistError::BodyHashMismatch`. Hard failure — the snapshot is unusable. |
-| Unsupported snapshot or WAL version    | Magic + version check on open.             | `PersistError::UnsupportedVersion`. The embedder must run a migration. |
+| Unsupported snapshot or WAL version    | Magic + version check on open.             | `PersistError::UnsupportedVersion`. Recreate the store from source; no migration is shipped. |
 | Reserved bytes set in snapshot header  | Read-time reserved-byte audit.             | `PersistError::ReservedBytesNonZero`.                  |
 | Duplicate provider tag in registry     | `ProviderRegistry::register`.              | `PersistError::DuplicateProviderTag` at startup.       |
 | Snapshot section for unknown provider  | Recovery routes by tag.                    | `PersistError::UnknownProvider`. The embedder forgot to register a provider. |

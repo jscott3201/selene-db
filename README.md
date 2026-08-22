@@ -22,6 +22,9 @@ receives no fixes, security patches, compatibility work, new releases, or data
 migration support. The alpha coordinate may not yet be published; use path
 dependencies from a source checkout when it is unavailable on crates.io. See
 the [2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md).
+The [tracked 2.0 program](docs/v2/README.md) owns finalized decisions,
+milestones, work-item contracts, review roles, issue ownership, and
+evidence-gated conformance wording.
 
 ## What Is Here
 
@@ -40,7 +43,9 @@ the [2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md).
 
 ## Workspace Crates
 
-There is no umbrella facade crate. Use the layers directly.
+At the `c5c0a985` baseline there is no umbrella facade crate; use the six
+current layers directly. The 2.0 roadmap adds the future `selene-db` facade and
+catalog in M02. They are not present in this source yet.
 
 | Crate | Owns |
 |---|---|
@@ -446,9 +451,12 @@ allocator policy.
 
 ## ISO GQL Posture
 
-`selene-db` targets ISO/IEC 39075:2024 minimum conformance plus a curated set of
-optional features. `selene-core::feature_register` is the source of truth for
-optional feature status.
+The current engine is GQL-oriented and implements selected ISO/IEC 39075:2024
+syntax and semantics plus namespaced extensions. The current
+`selene-core::feature_register` reports implementation inventory; it is not a
+formal 2.0 conformance claim. M01 will establish the generated profile and
+evidence authority. See the
+[2.0 conformance policy](docs/v2/conformance-policy.md).
 
 Important boundaries:
 
@@ -524,6 +532,7 @@ current local evidence.
 
 ## Project Docs
 
+- [2.0 Program](docs/v2/README.md)
 - [Getting Started](docs/getting-started.md)
 - [Embedding Guide](docs/embedding-guide.md)
 - [GQL Reference](docs/gql-reference.md)
