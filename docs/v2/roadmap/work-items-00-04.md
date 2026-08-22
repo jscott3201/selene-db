@@ -134,7 +134,7 @@ Install the approved architecture decisions, master milestone map, PR review pro
 ## M00-PR03 — Enforce the 2.0 PR, Review, and CI Operating Model
 
 - **Owner:** M00
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / M
 - **Dependencies:** M00-PR02
 - **Issues:** None

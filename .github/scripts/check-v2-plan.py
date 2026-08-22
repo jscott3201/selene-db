@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import pathlib
 import re
@@ -25,6 +26,7 @@ VALIDATION_WORKFLOWS = (
     pathlib.Path(".github/workflows/ci.yml"),
     pathlib.Path(".github/workflows/release.yml"),
 )
+BASELINE_HELPER = pathlib.Path("scripts/v2_baseline.py")
 EXACT_REVISION_EXPRESSION = "${{ github.event.pull_request.head.sha || github.sha }}"
 PROVENANCE_COMMAND = 'run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"'
 EXPECTED_ISSUES = {1088, 1092, 1093, 1094, 1097, 1128, 1137}
@@ -300,6 +302,8 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
         for field in ("scope", "non_goals", "acceptance", "tests", "review_focus", "stop_conditions", "bridge"):
             if not pr[field]:
                 check.fail(f"{pr_id}: {field} contract is empty")
+    if prs["M00-PR03"]["status"] != "Merged":
+        check.fail(f"M00-PR03: prerequisite status must be Merged, got {prs['M00-PR03']['status']}")
 
 
 def anchors(text: str) -> set[str]:
@@ -601,6 +605,27 @@ def check_validation_workflows(check: Check) -> None:
                 check.fail(f"{path}: job {job_id!r} must assert checkout provenance")
 
 
+def check_executable_baseline(check: Check) -> None:
+    helper_path = check.root / BASELINE_HELPER
+    if not helper_path.is_file():
+        check.fail(f"{BASELINE_HELPER}: executable baseline validator is missing")
+        return
+    spec = importlib.util.spec_from_file_location("selene_v2_baseline_validator", helper_path)
+    if spec is None or spec.loader is None:
+        check.fail(f"{BASELINE_HELPER}: executable baseline validator cannot be loaded")
+        return
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+        errors = module.validate_tracked_baseline(check.root)
+    except Exception as error:  # noqa: BLE001 - validator failures belong in one report.
+        check.fail(f"{BASELINE_HELPER}: executable baseline validator failed: {error}")
+        return
+    for error in errors:
+        check.fail(f"executable baseline: {error}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=pathlib.Path, required=True, help="repository root")
@@ -623,6 +648,7 @@ def main() -> int:
     check_markdown_links(check)
     check_repository_policy(check)
     check_validation_workflows(check)
+    check_executable_baseline(check)
     if check.errors:
         print("v2 plan validation failed:", file=sys.stderr)
         for error in check.errors:

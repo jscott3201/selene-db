@@ -52,13 +52,14 @@ repository or issue evidence.
 - [2.0 line and 1.x end-of-life policy](eol-and-version-policy.md)
 - [Conformance and claim policy](conformance-policy.md)
 - [Source snapshot and assumptions](source-snapshot-and-assumptions.md)
+- [Executable final-1.x baseline](baseline/README.md)
 - [Risk register](risk-register.md)
 - [Issue ownership](issue-ownership.md)
 - [Review protocol](review-protocol.md)
 - [Operating guide](operating-guide.md)
 - [Post-GA backlog](post-ga-backlog.md)
 
-M00-PR03 adds CI wiring, compile-lane changes, validator failure fixtures, the
+M00-PR03 added CI wiring, compile-lane changes, validator failure fixtures, the
 PR handoff template, corrected role policy, and deterministic tool pins.
 
 From the repository root:
