@@ -19,7 +19,7 @@ members = [
 exclude = ["_spec", "crates/selene-gql/fuzz", "crates/selene-persist/fuzz"]
 
 [workspace.package]
-version = "1.4.0"
+version = "2.0.0-alpha.1"
 edition = "2024"
 rust-version = "1.97.1"
 authors = ["selene-db contributors"]
@@ -83,7 +83,7 @@ wide = "1.6.1"
 # `bind_value_expr` against the OS default thread stack (2 MB on macOS);
 # matches the rustc / syn / serde recursion pattern.
 stacker = "0.1.25"
-selene-persist = { package = "selene-db-persist", path = "crates/selene-persist", version = "1.4.0" }
+selene-persist = { package = "selene-db-persist", path = "crates/selene-persist", version = "2.0.0-alpha.1" }
 
 # Dev dependencies.
 criterion = "0.8.2"

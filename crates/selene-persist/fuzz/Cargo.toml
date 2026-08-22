@@ -1,6 +1,6 @@
 [package]
 name = "selene-db-persist-fuzz"
-version = "1.4.0"
+version = "2.0.0-alpha.1"
 publish = false
 edition = "2024"
 
@@ -11,7 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
-selene-persist = { package = "selene-db-persist", path = "..", version = "1.4.0" }
+selene-persist = { package = "selene-db-persist", path = "..", version = "2.0.0-alpha.1" }
 # Same version the workspace already uses. `decode_wal` has to author frames
 # whose checksums are correct, or WAL 3.0's integrity checks make the target
 # unreachable past its first frame.

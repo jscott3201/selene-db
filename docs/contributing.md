@@ -12,6 +12,11 @@ workspace crates as dependencies and run the engine in-process. That
 posture, combined with strict ISO/IEC 39075:2024 GQL conformance, shapes
 the contribution rules below.
 
+All package and release work follows the
+[2.0 line and 1.x end-of-life policy](v2/eol-and-version-policy.md). Do not add
+1.x fixes, compatibility shims, persisted-store readers, migrators, releases,
+or tags. The alpha version in source is not proof of crates.io publication.
+
 ---
 
 ## 1. Engineering posture

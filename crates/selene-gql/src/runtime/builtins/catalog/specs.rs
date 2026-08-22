@@ -8,10 +8,10 @@ pub(in crate::runtime) struct BuiltinSpec {
     pub(in crate::runtime) name: &'static [&'static str],
     /// Human-readable summary used by `SHOW PROCEDURES`.
     pub(in crate::runtime) description: &'static str,
-    /// First release tag that shipped this procedure. Carried on the
-    /// signature and surfaced through `SHOW PROCEDURES`; downstream consumers
-    /// gate on it, so the claim must match release history, not the cycle the
-    /// entry was authored in.
+    /// Earliest release coordinate for this procedure. Published procedures
+    /// match their first tag; unreleased procedures name the intended release.
+    /// The signature exposes this through `SHOW PROCEDURES` for downstream
+    /// version gates.
     pub(in crate::runtime) since_version: &'static str,
     /// Dispatch kind.
     pub(in crate::runtime) kind: BuiltinKind,
@@ -86,7 +86,7 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 50] = [
     BuiltinSpec {
         name: &["selene", "property_index_stats"],
         description: "Report property index drift and cardinality statistics.",
-        since_version: "1.5.0",
+        since_version: "2.0.0-alpha.1",
         kind: BuiltinKind::PropertyIndexStats,
     },
     BuiltinSpec {

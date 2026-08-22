@@ -10,9 +10,9 @@
 //!   `drop_index` existed at the v1.1.0 tag; the next 41 `selene.*`
 //!   built-ins ship first in v1.2.0, the P1 BM25 candidate-state procedures
 //!   ship first in v1.3.0, `selene.reachable_nodes` ships first in v1.4.0, and
-//!   `selene.property_index_stats` ships first in v1.5.0 (the cycle in
-//!   progress — it is claimed against the tag that will carry it, which is
-//!   what a downstream consumer gates on).
+//!   `selene.property_index_stats` is assigned to v2.0.0-alpha.1, the first
+//!   intended release coordinate for that unreleased procedure. There will be
+//!   no v1.5.0 release.
 //! - `git show v1.0.0:crates/selene-algorithms-pack/src/registry.rs`
 //!   registered all 19 `algo.*` procedures, so that surface has been
 //!   available since v1.0.0 (native in-tree since v1.1.0).
@@ -65,7 +65,7 @@ fn expected_since_version(rendered: &str) -> &'static str {
         "selene.feature_status" | "selene.verify" => "1.1.0",
         "selene.text_score_candidate_state" | "selene.text_score_candidate_state_nodes" => "1.3.0",
         "selene.reachable_nodes" => "1.4.0",
-        "selene.property_index_stats" => "1.5.0",
+        "selene.property_index_stats" => "2.0.0-alpha.1",
         _ => "1.2.0",
     }
 }
@@ -74,7 +74,7 @@ fn expected_since_version(rendered: &str) -> &'static str {
 fn registry_since_version_matches_release_history() {
     let registry = BuiltinProcedureRegistry::new();
     // Buckets index the pinned release partition:
-    // ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"].
+    // ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "2.0.0-alpha.1"].
     let mut buckets = [0_usize; 6];
     let mut algo = 0_usize;
     let mut selene = 0_usize;
@@ -101,7 +101,7 @@ fn registry_since_version_matches_release_history() {
             "1.2.0" => buckets[2] += 1,
             "1.3.0" => buckets[3] += 1,
             "1.4.0" => buckets[4] += 1,
-            "1.5.0" => buckets[5] += 1,
+            "2.0.0-alpha.1" => buckets[5] += 1,
             other => panic!("unexpected since_version bucket {other}"),
         }
     }
@@ -110,8 +110,8 @@ fn registry_since_version_matches_release_history() {
     // v1.0.0; `feature_status`/`verify` shipped in v1.1.0; 41 built-ins ship
     // first in v1.2.0; the two BM25 candidate-state procedures ship first in
     // v1.3.0; reachable_nodes ships first in v1.4.0; and
-    // property_index_stats ships first in v1.5.0. A new or re-versioned
-    // procedure must extend this partition explicitly.
+    // property_index_stats is assigned to v2.0.0-alpha.1. A new or
+    // re-versioned procedure must extend this partition explicitly.
     assert_eq!(algo, 19);
     assert_eq!(selene, 50);
     assert_eq!(buckets, [22, 2, 41, 2, 1, 1]);

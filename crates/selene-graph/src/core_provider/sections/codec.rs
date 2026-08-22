@@ -20,7 +20,7 @@ pub(in crate::core_provider) fn ensure_section_within_cap(
 ) -> Result<(), crate::ProviderError> {
     if len > MAX_SECTION_PAYLOAD_BYTES {
         return Err(inconsistent(format!(
-            "{section} core section exceeds 1 GiB cap; multi-section split is a future v1.x hardening"
+            "{section} core section exceeds 1 GiB cap; multi-section payloads are not supported"
         )));
     }
     Ok(())

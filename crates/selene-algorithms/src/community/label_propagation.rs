@@ -8,8 +8,8 @@
 //! iteration. Tie-break is smallest label ID (spec 16 §E30). Converges when
 //! no labels change in an iteration, or `max_iter` reached.
 //!
-//! State arrays sized by live-node count via `RowIndex` (§E26). Unit weights
-//! only — donor pattern; weighted variants deferred to v1.x per §E25 / §J Q5.
+//! State arrays sized by live-node count via `RowIndex` (§E26). Only unit
+//! weights are implemented; weighted variants are not supported.
 
 use selene_core::{CancellationChecker, NodeId};
 

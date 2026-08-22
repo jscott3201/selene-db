@@ -49,20 +49,16 @@ fn column_strings(table: &BindingTable, name: &str) -> Vec<String> {
 }
 
 fn semver_like(value: &str) -> bool {
-    let mut parts = value.split('.');
-    let Some(major) = parts.next() else {
-        return false;
-    };
-    let Some(minor) = parts.next() else {
-        return false;
-    };
-    let Some(patch) = parts.next() else {
-        return false;
-    };
-    parts.next().is_none()
-        && major.parse::<u64>().is_ok()
-        && minor.parse::<u64>().is_ok()
-        && patch.parse::<u64>().is_ok()
+    semver::Version::parse(value).is_ok()
+}
+
+#[test]
+fn semver_like_accepts_prereleases_and_rejects_invalid_versions() {
+    assert!(semver_like("2.0.0-alpha.1"));
+    assert!(semver_like("2.0.0-rc.1+build.5"));
+    assert!(!semver_like("2.0"));
+    assert!(!semver_like("2.00.0"));
+    assert!(!semver_like("2.0.0-alpha.01"));
 }
 
 #[test]

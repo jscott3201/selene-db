@@ -3853,12 +3853,12 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- selene-db-algorithms v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-core v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-gql v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-graph v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-persist v1.4.0 — https://github.com/jscott3201/selene-db
-- selene-db-testing v1.4.0 — https://github.com/jscott3201/selene-db
+- selene-db-algorithms v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-core v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-gql v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-graph v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-persist v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-testing v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - anes v0.1.6 — https://github.com/zrzka/anes-rs
 - block2 v0.6.2 — https://github.com/madsmtm/objc2
 - libm v0.2.16 — https://github.com/rust-lang/compiler-builtins

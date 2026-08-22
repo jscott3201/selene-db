@@ -1,6 +1,6 @@
 [package]
 name = "selene-db-gql-fuzz"
-version = "1.4.0"
+version = "2.0.0-alpha.1"
 publish = false
 edition = "2024"
 
@@ -11,7 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4.13"
-selene-gql = { package = "selene-db-gql", path = "..", version = "1.4.0" }
+selene-gql = { package = "selene-db-gql", path = "..", version = "2.0.0-alpha.1" }
 
 [[bin]]
 name = "parse_gql"

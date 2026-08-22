@@ -25,8 +25,10 @@ You do not need a database server, a container, or a wire client. `selene-db` is
 
 ## Adding selene-db to a Cargo project
 
-The public packages are published to crates.io under the `selene-db-*`
-namespace. Keep the Rust crate names stable with `package = ...` aliases:
+Released packages use the `selene-db-*` namespace on crates.io. These examples
+use the current source coordinate, `2.0.0-alpha.1`; confirm that the alpha is
+published before resolving it from the registry. Keep the Rust crate names
+stable with `package = ...` aliases:
 
 ```bash
 cargo new my-graph-app
@@ -42,22 +44,24 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.4.0" }
-selene-graph = { package = "selene-db-graph", version = "1.4.0" }
-selene-gql = { package = "selene-db-gql", version = "1.4.0" }
+selene-core = { package = "selene-db-core", version = "2.0.0-alpha.1" }
+selene-graph = { package = "selene-db-graph", version = "2.0.0-alpha.1" }
+selene-gql = { package = "selene-db-gql", version = "2.0.0-alpha.1" }
 ```
 
 For on-disk persistence, add `selene-persist`. For graph algorithms — PageRank, betweenness, Louvain, and the rest, reachable both as a native Rust API and via `CALL algo.*` — add `selene-algorithms`:
 
 ```toml
-selene-persist = { package = "selene-db-persist", version = "1.4.0" }
-selene-algorithms = { package = "selene-db-algorithms", version = "1.4.0" }
+selene-persist = { package = "selene-db-persist", version = "2.0.0-alpha.1" }
+selene-algorithms = { package = "selene-db-algorithms", version = "2.0.0-alpha.1" }
 ```
 
 When developing against a local checkout, first clone the repository with
-`git clone https://github.com/jscott3201/selene-db.git`, then replace the
-`version` entries above with `path = "path/to/selene-db/crates/<crate>"`
-while keeping the `package = "selene-db-*"` aliases.
+`git clone https://github.com/jscott3201/selene-db.git`, then add each entry's
+`path = "path/to/selene-db/crates/<crate>"` alongside its version
+while keeping the `package = "selene-db-*"` aliases. See the
+[version policy](v2/eol-and-version-policy.md) for the alpha and 1.x support
+posture.
 
 Run `cargo build` once to confirm the dependency graph resolves before moving on.
 

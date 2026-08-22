@@ -14,7 +14,7 @@ autobenches = false
 name = "selene_persist"
 
 [dependencies]
-selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.4.0" }
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "2.0.0-alpha.1" }
 thiserror.workspace = true
 miette.workspace = true
 serde.workspace = true
