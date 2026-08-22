@@ -50,10 +50,19 @@ The six-crate, no-facade, row-executor workspace described below is the current
 future `selene-db` facade and catalog, M06 replaces row execution, and M09 adds
 format 2. Do not claim those targets exist before their owning work items merge.
 
-Agents never merge 2.0 work. An implementation agent opens a non-draft PR and
-stops; the assistant returns PASS, FIX, or REPLAN. The repository owner alone
-merges after PASS and green required checks. Agents also do not self-approve,
-react, tag, release, publish, or alter branch protection.
+The implementer edits repository files and runs tests only. It does not stage,
+commit, push, create or update a PR, submit review output, or merge. The
+orchestrator owns commits, pushes, non-draft PR creation and updates,
+consolidated independent-review comments, and eligible authorized merges. An
+independent read-only reviewer pair reviews the exact head without adopting the
+implementer or orchestrator's conclusions.
+
+The orchestrator may merge only when the final reviewed head is unchanged,
+required exact-head checks are green, final review is Blocker/Major-clean,
+repository policy and branch protection permit the merge, scope and worktree
+state are clean, and the user has given explicit authorization. A changed
+head voids PASS. This role split does not authorize self-approval, auto-merge,
+release, publication, tagging, reactions, or branch-protection changes.
 
 Every 2.0 handoff includes:
 
@@ -455,9 +464,9 @@ specific PR needs that stress point.
 
 - `development` is the integration trunk.
 - Release PRs go from `development` to `main`.
-- PRs to `development` run the cheap CI gate: formatting, file-size, secret
-  scan, row-id arithmetic, version-locked feature errors, benchmark invocation
-  and docs checks, plus dependency gates when manifests changed.
+- Non-draft PRs to `development` run formatting and repository-policy checks,
+  a workspace all-features compile/nextest lane, and the 2.0 plan contract;
+  dependency gates remain conditional on manifest changes.
 - PRs to `main` run the full release workflow: clippy, nextest, doctests, deny,
   audit, third-party attribution, macOS validation, and fuzz.
 - `.githooks/pre-commit` mirrors cheap local checks.
@@ -477,13 +486,15 @@ bench(algorithms): add graph retrieval pressure rows
 docs(workflow): refresh agent instructions
 ```
 
-Use GitHub connector tools when available for permitted read-only state checks,
-PR creation, and CI polling. If a permitted operation is unavailable, use `gh`
-and request network escalation when sandboxing blocks it. Agents never merge
-2.0 PRs or add review reactions; after the required handoff they stop for the
-PASS/FIX/REPLAN protocol.
+Use GitHub connector tools when available for permitted read-only state checks
+and CI polling. The implementer returns the tested worktree and handoff without
+Git or GitHub mutations. The orchestrator performs the permitted commit, push,
+non-draft PR, consolidated review-comment, and eligible merge operations. If a
+permitted orchestrator operation is unavailable, use `gh` and request network
+escalation when sandboxing blocks it.
 
-After every merged PR in this long-running goal workflow:
+After every merged PR in this long-running goal workflow, the orchestrator or
+repository owner runs:
 
 ```bash
 git switch development

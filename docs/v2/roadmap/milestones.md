@@ -254,4 +254,4 @@ Bring algorithms, vectors, text, JSON, and procedures back through the new facad
 - The selected profile is implication-closed, all mandatory and claimed feature evidence is green, and Annex B/extension disclosures are generated.
 - Public API, examples, rustdoc, error handling, release notes, package metadata, and crates.io dry runs are coherent.
 - Full CI, fuzz, mutation, crash matrix, benchmark guard set, and cross-platform release workflows pass at the release candidate SHA.
-- A final assistant review returns PASS before merge/tag/publish.
+- A final independent reviewer pair returns Blocker/Major-clean PASS on the unchanged exact head before an authorized merge; tag and publication remain separately controlled.

@@ -2408,7 +2408,7 @@ Complete rule evidence, feature implication closure, implementation-defined/exte
 - Annex B applicable records have final values/evidence and no IA001 or other mapping mismatch.
 - Generated declaration includes SHA/profile hash/test result hash/tool version and is reproducible on a clean checkout.
 - README/release notes cannot claim more than the generated declaration.
-- Assistant review verifies at least a sample of each major clause/evidence category before PASS.
+- The independent reviewer pair verifies at least a sample of each major clause/evidence category before PASS.
 
 ### Tests and gates
 
@@ -2511,7 +2511,7 @@ Make the 2.0 facade, errors, rustdoc, examples, package metadata, architecture d
 - **Issues:** None
 - **Commit scope:** `release`
 
-Produce a clean release candidate SHA, execute the complete cross-platform correctness/durability/conformance/performance/security gate, obtain assistant PASS, and only then merge/tag/publish 2.0.
+Produce a clean release candidate SHA, execute the complete cross-platform correctness/durability/conformance/performance/security gate, obtain independent exact-head PASS, and only then perform separately authorized merge, tag, and publication actions.
 
 ### Scope
 
@@ -2519,23 +2519,23 @@ Produce a clean release candidate SHA, execute the complete cross-platform corre
 - Run Linux/macOS full build, clippy, nextest, doctest, rustdoc, deny, audit, license/notice, secret/file-size/row/version/doc/bench checks.
 - Run complete parser/persistence/plan fuzz, selected mutation suites, generated crash matrix, conformance claim gate, public API/package dry runs, and benchmark guard set.
 - Generate release evidence bundle with SHA/toolchains/commands/results/hashes/profile/conformance/format/API/benchmark/crash summaries.
-- Open the final development→main non-draft release PR and stop for assistant review; do not merge/tag/publish autonomously.
-- After PASS and owner merge, create the approved semver tag and verify crates publish in dependency order plus facade.
+- Return the final development→main release handoff to the orchestrator, which owns the non-draft PR and any eligible authorized merge.
+- After exact-head PASS and authorized merge, the repository owner performs the separately authorized semver tag/publication actions and verifies dependency order plus facade.
 
 ### Non-goals
 
 - No new product feature.
 - No benchmark tuning without a regression/root-cause PR.
 - No bypassing failed fuzz/mutation/crash/conformance gates.
-- No automatic merge/tag/publish by OpenCode agent.
+- No self-approval, auto-merge, or implicit tag/publication authority.
 
 ### Acceptance evidence
 
 - Every required gate is green or a formally accepted non-blocking exception is recorded in release evidence and does not undermine correctness/conformance claim.
 - Crash matrix, fuzz, mutation, and conformance artifacts are tied to the exact candidate SHA.
 - Benchmark guards show no unexplained regression versus accepted 2.0 section baselines.
-- Assistant review verdict is PASS with no unresolved FIX/REPLAN items.
-- Release PR is merged by the owner/reviewer, then tag/publish succeeds in dry-run and actual workflows.
+- The independent review pair returns PASS on the unchanged exact head with no unresolved Blocker/Major findings.
+- The orchestrator merges only after every eligibility condition and explicit user authorization; separately authorized tag/publication then succeeds in dry-run and actual workflows.
 - Published packages, docs, and generated conformance declaration report the same version/profile/SHA lineage.
 
 ### Tests and gates
@@ -2552,13 +2552,13 @@ Produce a clean release candidate SHA, execute the complete cross-platform corre
 - No scope creep or bypass.
 - Evidence tied to exact SHA.
 - Conformance wording and format/API freeze.
-- Owner-controlled merge/tag/publish.
+- Orchestrator merge eligibility and separately controlled tag/publication.
 
 ### Stop conditions
 
 - Any unexplained correctness, crash, fuzz, mutation, conformance, security, or material performance failure.
 - Candidate changes after evidence without rerun.
-- Assistant verdict is FIX or REPLAN.
+- The final independent verdict is FIX or REPLAN.
 - Publish workflow/tag classification is not proven.
 
 ### Bridge and deletion

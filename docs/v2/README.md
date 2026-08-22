@@ -58,9 +58,8 @@ repository or issue evidence.
 - [Operating guide](operating-guide.md)
 - [Post-GA backlog](post-ga-backlog.md)
 
-M00-PR03 owns CI wiring, compile-lane changes, validator failure fixtures, PR
-template enforcement, and deterministic `cargo-about` pinning. This package
-installs only the positive validator foundation.
+M00-PR03 adds CI wiring, compile-lane changes, validator failure fixtures, the
+PR handoff template, corrected role policy, and deterministic tool pins.
 
 From the repository root:
 

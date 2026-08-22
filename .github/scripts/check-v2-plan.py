@@ -20,9 +20,17 @@ WORK_ITEMS_LOW = pathlib.Path("docs/v2/roadmap/work-items-00-04.md")
 WORK_ITEMS_HIGH = pathlib.Path("docs/v2/roadmap/work-items-05-10.md")
 DECISIONS = pathlib.Path("docs/v2/decisions/finalized.md")
 ISSUES = pathlib.Path("docs/v2/issue-ownership.md")
+PULL_REQUEST_TEMPLATE = pathlib.Path(".github/pull_request_template.md")
+VALIDATION_WORKFLOWS = (
+    pathlib.Path(".github/workflows/ci.yml"),
+    pathlib.Path(".github/workflows/release.yml"),
+)
+EXACT_REVISION_EXPRESSION = "${{ github.event.pull_request.head.sha || github.sha }}"
+PROVENANCE_COMMAND = 'run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"'
 EXPECTED_ISSUES = {1088, 1092, 1093, 1094, 1097, 1128, 1137}
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 ANCHOR_RE = re.compile(r'<a\s+id=["\']([^"\']+)["\']\s*></a>', re.IGNORECASE)
+LOCAL_DIRECTORY_RE = re.compile(r"(?<![A-Za-z0-9/])(_[A-Za-z0-9][A-Za-z0-9_-]*)/")
 
 
 class Check:
@@ -262,10 +270,13 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
             if issue not in issues:
                 check.fail(f"{pr_id}: references unknown issue #{issue}")
 
-    dependency_graph = {
-        identity: record["dependencies"]
-        for identity, record in [*milestones.items(), *prs.items()]
-    }
+    dependency_graph = {identity: record["dependencies"] for identity, record in milestones.items()}
+    dependency_graph.update(
+        {
+            identity: [*record["dependencies"], record["milestone"]]
+            for identity, record in prs.items()
+        }
+    )
     check_dependency_cycles(check, dependency_graph)
 
     issue_references: dict[int, list[str]] = {number: [] for number in issues}
@@ -277,11 +288,15 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
         if owners != [issue["owner"]]:
             check.fail(f"issue #{number}: owner={issue['owner']} work-item references={owners}")
 
-    if prs.get("M00-PR01", {}).get("status") != "Merged":
-        check.fail("M00-PR01 must record merged state")
-    if prs.get("M00-PR02", {}).get("status") == "Merged":
-        check.fail("M00-PR02 must not claim merged in this installation")
     for pr_id, pr in prs.items():
+        if pr["status"] == "Merged":
+            unmerged = [
+                dependency
+                for dependency in pr["dependencies"]
+                if dependency in prs and prs[dependency]["status"] != "Merged"
+            ]
+            if unmerged:
+                check.fail(f"{pr_id}: merged work item has unmerged dependencies: {unmerged}")
         for field in ("scope", "non_goals", "acceptance", "tests", "review_focus", "stop_conditions", "bridge"):
             if not pr[field]:
                 check.fail(f"{pr_id}: {field} contract is empty")
@@ -323,7 +338,11 @@ def check_plan_targets(check: Check, plan: dict[str, Any]) -> None:
             check.fail(f"{identity}: missing file target: {reference}")
             continue
         ignored = subprocess.run(
-            ["git", "check-ignore", "--quiet", "--", path_text], cwd=check.root, check=False
+            ["git", "check-ignore", "--quiet", "--", path_text],
+            cwd=check.root,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         ).returncode
         if ignored == 0:
             check.fail(f"{identity}: file target is ignored rather than trackable: {reference}")
@@ -475,8 +494,30 @@ def check_repository_policy(check: Check) -> None:
     for path, text in (("README.md", readme), ("AGENTS.md", agents)):
         if "docs/v2/README.md" not in text:
             check.fail(f"{path}: missing link to docs/v2/README.md")
-    if "Agents never merge 2.0 work" not in agents or re.search(r"repository owner alone\s+merges", agents) is None:
-        check.fail("AGENTS.md: missing no-agent-merge and owner-only merge rules")
+    role_requirements = {
+        "implementer edits repository files and runs tests only": "implementer edit/test-only boundary",
+        "orchestrator owns commits, pushes, non-draft pr creation and updates": "orchestrator Git/GitHub ownership",
+        "independent read-only reviewer pair": "independent reviewer pair",
+        "required exact-head checks are green": "exact-head required checks",
+        "final review is blocker/major-clean": "Blocker/Major-clean review",
+        "repository policy and branch protection permit the merge": "repository merge permission",
+        "scope and worktree state are clean": "clean scope and worktree",
+        "user has given explicit authorization": "explicit merge authorization",
+        "a changed head voids pass": "changed-head invalidation",
+        "does not authorize self-approval, auto-merge": "self-approval and auto-merge prohibition",
+        "branch-protection changes": "branch-protection mutation prohibition",
+    }
+    agents_lower = re.sub(r"\s+", " ", agents.lower())
+    for text, label in role_requirements.items():
+        if text not in agents_lower:
+            check.fail(f"AGENTS.md: missing corrected {label}")
+    for obsolete in (
+        "agents never merge 2.0 work",
+        "repository owner alone merges",
+        "implementation agent opens a non-draft pr",
+    ):
+        if obsolete in agents_lower:
+            check.fail(f"AGENTS.md: superseded role policy remains: {obsolete!r}")
     handoff_fields = [
         "Plan ID:", "PR URL:", "Base SHA / Head SHA / commits:", "Outcome delivered:",
         "Files/subsystems changed:", "Public API and persisted/profile changes:",
@@ -486,14 +527,78 @@ def check_repository_policy(check: Check) -> None:
     for field in handoff_fields:
         if field not in agents:
             check.fail(f"AGENTS.md: missing required handoff field {field!r}")
+    template = check.read_text(PULL_REQUEST_TEMPLATE)
+    template_fields = [
+        "Plan ID", "Base / head / commits", "Objective", "Scope", "Non-goals",
+        "Deviations / replan", "Public API / persisted / profile changes",
+        "Commands and results", "Skipped validation", "Benchmark / fuzz / crash disposition",
+        "Temporary bridges / deletion owner", "Risks / follow-ups", "Reviewer questions",
+        "Role and merge-eligibility confirmations",
+    ]
+    for field in template_fields:
+        if field not in template:
+            check.fail(f"{PULL_REQUEST_TEMPLATE}: missing required field {field!r}")
     pending = "pending owner-only"
     if pending not in v2_readme.lower() or pending not in eol.lower():
         check.fail("archive state must be described as pending owner-only in v2 README and EOL policy")
-    for forbidden in ("_spec", "_plan", "_goalslogs"):
-        for path in sorted((check.root / "docs" / "v2").rglob("*")):
-            text = path.read_text(encoding="utf-8") if path.is_file() and path.suffix in {".md", ".json"} else ""
-            if re.search(rf"(?<![A-Za-z0-9]){re.escape(forbidden)}(?:/)?\b", text):
-                check.fail(f"{path.relative_to(check.root)}: local-only source name {forbidden!r} is forbidden")
+    local_working_dirs = set(re.findall(r"(?m)^- `(_[A-Za-z0-9_-]+)/`", agents))
+    if not local_working_dirs:
+        check.fail("AGENTS.md: no top-level local-only underscore directories declared")
+    for path in sorted((check.root / "docs" / "v2").rglob("*")):
+        text = path.read_text(encoding="utf-8") if path.is_file() and path.suffix in {".md", ".json"} else ""
+        referenced_dirs = set(LOCAL_DIRECTORY_RE.findall(text))
+        referenced_dirs.update(
+            forbidden
+            for forbidden in local_working_dirs
+            if re.search(rf"(?<![A-Za-z0-9/]){re.escape(forbidden)}(?:/)?\b", text)
+        )
+        for forbidden in sorted(referenced_dirs):
+            check.fail(f"{path.relative_to(check.root)}: local-only source name {forbidden!r} is forbidden")
+
+
+def workflow_job(text: str, job_id: str) -> str | None:
+    lines = text.splitlines()
+    marker = f"  {job_id}:"
+    try:
+        start = lines.index(marker)
+    except ValueError:
+        return None
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:", lines[index]):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def check_validation_workflows(check: Check) -> None:
+    required_provenance = {
+        pathlib.Path(".github/workflows/ci.yml"): ("rust-compile-and-test", "v2-plan-contract"),
+        pathlib.Path(".github/workflows/release.yml"): ("v2-plan-contract",),
+    }
+    for path in VALIDATION_WORKFLOWS:
+        text = check.read_text(path)
+        lines = text.splitlines()
+        expected_env = f"  EXPECTED_REVISION: {EXACT_REVISION_EXPRESSION}"
+        if lines.count(expected_env) != 1:
+            check.fail(f"{path}: EXPECTED_REVISION must select the pull-request head with github.sha fallback")
+        checkout_count = 0
+        for index, line in enumerate(lines):
+            if line.strip() != "- uses: actions/checkout@v7":
+                continue
+            checkout_count += 1
+            indent = line[: len(line) - len(line.lstrip())]
+            expected = [f"{indent}  with:", f"{indent}    ref: {EXACT_REVISION_EXPRESSION}"]
+            if lines[index + 1:index + 3] != expected:
+                check.fail(f"{path}:{index + 1}: checkout must select the exact event revision")
+        if checkout_count == 0:
+            check.fail(f"{path}: no actions/checkout@v7 steps found")
+        for job_id in required_provenance[path]:
+            job = workflow_job(text, job_id)
+            if job is None:
+                check.fail(f"{path}: required job {job_id!r} is missing")
+            elif job.count(PROVENANCE_COMMAND) != 1:
+                check.fail(f"{path}: job {job_id!r} must assert checkout provenance")
 
 
 def parse_args() -> argparse.Namespace:
@@ -517,6 +622,7 @@ def main() -> int:
             check_plan_targets(check, plan)
     check_markdown_links(check)
     check_repository_policy(check)
+    check_validation_workflows(check)
     if check.errors:
         print("v2 plan validation failed:", file=sys.stderr)
         for error in check.errors:

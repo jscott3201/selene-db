@@ -73,9 +73,10 @@ automatically when you `cd` into the workspace.
 | `cargo` | Build, test, lint. | Always. |
 | `rustfmt` | Formatting. | Always (installed by `rust-toolchain.toml`). |
 | `clippy` | Lints. | Always (installed by `rust-toolchain.toml`). |
+| `cargo-nextest` 0.9.143 | Workspace test runner used by CI. | Before handing off code changes. |
 | `cargo-deny` | License / ban / source allow-list. | Locally before opening a PR (CI also runs it). |
 | `cargo-audit` | Vulnerability advisories. | Locally before opening a PR (CI also runs it). |
-| `cargo-about` | `THIRDPARTY.md` generation. | After dependency changes; CI gates drift. |
+| `cargo-about` 0.9.2 | `THIRDPARTY.md` generation. | After dependency changes; CI gates drift and tool-version mismatches. |
 
 ### Optional tools
 
@@ -86,7 +87,9 @@ automatically when you `cd` into the workspace.
 Install the cargo helpers:
 
 ```bash
-cargo install cargo-deny cargo-audit cargo-about
+cargo install cargo-nextest --version 0.9.143 --locked
+cargo install cargo-about --version 0.9.2 --locked --features cli
+cargo install cargo-deny cargo-audit
 # Nightly + cargo-fuzz are only needed for local fuzz runs.
 rustup toolchain install nightly
 cargo install cargo-fuzz
@@ -122,9 +125,10 @@ The full test suite runs across the workspace:
 cargo test --workspace --all-features
 ```
 
-The c5 development-PR workflow does not compile Rust. Run the tests required by
-the owning work item locally; the release workflow supplies the comprehensive
-Linux/macOS gate. M00-PR03 owns the future development compile/test lane.
+Every non-draft development PR runs all-features workspace `cargo check` and
+the CI-profile nextest suite on Linux. Run the owning work item's focused and
+risk gates locally before handoff; release PRs add the comprehensive
+Linux/macOS, clippy, doctest, audit, attribution, and fuzz coverage.
 
 Per-crate test runs are fine for tight iteration:
 
@@ -192,7 +196,8 @@ with a comment that explains why.
 
 Install the project-managed hooks once with `scripts/install-hooks.sh`.
 `.githooks/pre-commit` mirrors cheap development-PR checks, while
-`.githooks/pre-push` runs workspace clippy.
+`.githooks/pre-push` runs workspace clippy. Workspace nextest also runs in the
+development CI lane rather than in the push hook.
 
 ---
 
@@ -200,8 +205,8 @@ Install the project-managed hooks once with `scripts/install-hooks.sh`.
 
 The development workflow lives at
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). It runs on non-draft
-PRs to `development` and on manual dispatch. At the c5 baseline it is a cheap
-gate; M00-PR03 owns the future compile/test lane and 2.0 plan wiring.
+PRs to `development` and on manual dispatch. Rust compilation/tests and the 2.0
+plan contract are unconditional; dependency gates remain path-conditional.
 
 | Gate | What it checks |
 | :--- | :--- |
@@ -209,12 +214,23 @@ gate; M00-PR03 owns the future compile/test lane and 2.0 plan wiring.
 | `file-size cap (700 LOC)` | `.github/scripts/check-file-size.sh` counts non-empty, non-comment lines in every tracked `*.rs` file and fails if any exceeds 700. |
 | `no-secret scan` | `.github/scripts/check-no-secrets.sh` greps tracked files for AWS access key ids, private-key blocks, Slack tokens, GitHub tokens, and `sk-`-prefixed API tokens. |
 | `bench invocation lint` | `.github/scripts/check-bench-invocation.sh`, `.github/scripts/check-mimalloc-dev-dep.sh`, and `scripts/run-benches.test.sh` together verify that no workflow or shell script invokes `cargo bench --workspace` or wraps `cargo bench` in a parallel runner, and that `mimalloc` stays a dev-only dep. |
+| `rust compile and test` | All-features workspace `cargo check`, then all-features workspace nextest with the `ci` profile on Ubuntu. |
+| `2.0 plan contract` | The positive plan validator and its committed offline negative tests. |
 | `doc constants` | `.github/scripts/check-doc-constants.sh` checks source-count claims. |
 | Dependency gates | `cargo-deny` and third-party attribution run when manifests change. |
 
 The comprehensive release workflow for PRs to `main` owns clippy, nextest,
-doctests, audit/deny, attribution, macOS, and fuzz coverage. Local work-item
-gates remain required even when development CI is cheaper.
+doctests, audit/deny, attribution, macOS, and fuzz coverage. Clippy remains in
+the pre-push, full local, and release gates rather than duplicating it in routine
+development CI. Local work-item gates remain required.
+
+After M00-PR03 merges, the desired `development` required contexts are exactly
+`fmt`, `file-size cap (700 LOC)`, `no-secret scan`, `bench invocation lint`,
+`rust compile and test`, and `2.0 plan contract`. Authenticated settings before
+this PR have only the first four and no required-review rule. Adding the new
+contexts is a post-merge owner/settings action; repository files do not mutate
+branch protection. The independent reviewer pair is the 2.0 review control, so
+no impossible GitHub self-approval is required.
 
 ### Benchmarks are not a CI gate
 
@@ -282,19 +298,24 @@ shape as the head commit. The PR description should cover:
   changes, public-API changes, recovery paths, lock orderings,
   provider re-entry boundaries.
 
-CI runs automatically on PR open and on every push to the branch. The
-PR cannot merge until every gate is green.
+CI runs automatically on PR open and on every push to the branch. Every
+required applicable gate and check must be green before the PR can merge.
+
+The repository PR template collects the complete 2.0 handoff. It records
+evidence and role confirmations but does not technically enforce them.
 
 ### Review
 
-Every merge requires CI green plus an external review. Self-review by
-the author is required (walk the diff once after CI finishes) and an
-external reviewer must sign off via the GitHub review surface. Inline
-findings are resolved per-thread via reply, not by blanket dismissal.
-
-For 2.0 work, follow the [PASS/FIX/REPLAN protocol](v2/review-protocol.md).
-An implementation agent opens a non-draft PR and stops. The repository owner
-alone merges after PASS and green required checks.
+Every merge requires green required checks and review under the repository's
+applicable policy. For 2.0 work, follow the
+[PASS/FIX/REPLAN protocol](v2/review-protocol.md): the implementer edits and
+tests only; the orchestrator owns Git history, the non-draft PR, consolidated
+comments from two independent read-only reviewers, and any eligible authorized
+merge. Merge eligibility requires an unchanged reviewed head, green exact-head
+required checks, Blocker/Major-clean final review, policy permission, clean
+scope/worktree state, and explicit user authorization. A changed head voids
+PASS. This does not authorize self-approval, auto-merge, release, publication,
+tagging, reactions, or branch-protection changes.
 
 ---
 
@@ -454,9 +475,14 @@ The attribution is required even for small adaptations. `NOTICE`
 collects copyright holders for bundled or adapted code; add an entry
 there when you introduce a new adapted source.
 
-`THIRDPARTY.md` is generated from `Cargo.lock` by `cargo about
-generate about.hbs > THIRDPARTY.md`. Do not hand-edit it. CI fails the
-`third-party attribution current` gate on any drift.
+`THIRDPARTY.md` is generated from `Cargo.lock` by cargo-about 0.9.2:
+
+```bash
+cargo about generate about.hbs | sed 's/[[:space:]]*$//' > THIRDPARTY.md
+```
+
+Do not hand-edit it. CI fails the `third-party attribution current` gate on a
+tool-version mismatch or output drift.
 
 ---
 

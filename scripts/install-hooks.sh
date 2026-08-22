@@ -6,8 +6,8 @@
 # the same gates. Mirrors the CI split:
 #   pre-commit -> cargo fmt --check + file-size + no-secret  (fast)
 #   pre-push   -> cargo clippy -D warnings (fast lib/bin lint only; the full
-#                 nextest + doctest suite runs at the dev->main release gate
-#                 and inside agent workflows, not on every push)
+#                 nextest suite runs in development CI; doctests and the full
+#                 cross-platform gate run on dev->main release PRs)
 #
 # Escape hatches: `git commit/push --no-verify` (once) or
 # `export SELENE_SKIP_HOOKS=1` (whole shell session).
@@ -19,7 +19,7 @@ chmod +x .githooks/pre-commit .githooks/pre-push 2>/dev/null || true
 
 echo "core.hooksPath -> .githooks"
 echo "  pre-commit: cargo fmt --check + file-size cap + no-secret scan"
-echo "  pre-push:   cargo clippy -D warnings (fast; full suite at release gate)"
+echo "  pre-push:   cargo clippy -D warnings (workspace nextest runs in development CI)"
 echo "Skip once: --no-verify   |   skip session: export SELENE_SKIP_HOOKS=1"
 echo
 echo "LSP: rust-analyzer is editor-side (not a git hook). Enable clippy-on-save"
