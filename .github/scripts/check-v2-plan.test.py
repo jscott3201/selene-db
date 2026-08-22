@@ -107,13 +107,13 @@ class PlanContractTests(unittest.TestCase):
         result = self.mutate_plan(break_dependency)
         self.assert_failure(result, "M00-PR04: merged work item has unmerged dependencies: ['M00-PR03']")
 
-    def test_stale_baseline_pr_status_fails(self) -> None:
+    def test_stale_completed_pr_status_fails(self) -> None:
         result = self.mutate_plan(
-            lambda plan: next(item for item in plan["pull_requests"] if item["id"] == "M00-PR03").update(
+            lambda plan: next(item for item in plan["pull_requests"] if item["id"] == "M00-PR04").update(
                 status="Unmerged"
             )
         )
-        self.assert_failure(result, "M00-PR03: prerequisite status must be Merged")
+        self.assert_failure(result, "M00-PR04: prerequisite status must be Merged")
 
     def test_missing_markdown_target_fails(self) -> None:
         result = self.mutate_plan(

@@ -129,7 +129,7 @@ preserve the same value invariants as runtime writes:
 
 There is no umbrella crate. Keep dependency direction intentional:
 
-`selene-core -> selene-graph -> selene-algorithms -> selene-gql`
+`selene-profile -> selene-core -> selene-graph -> selene-algorithms -> selene-gql`
 
 `selene-persist` depends on `selene-core` and stays below graph semantics.
 `selene-testing` provides fixtures, corpus helpers, OpenRouter/local embedding
@@ -146,7 +146,8 @@ epoch mutation.
 
 | Crate | Owns |
 |---|---|
-| `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, `JsonValue`, vector metrics/top-k helpers, `DbString`, schema/value types, feature register, property maps, codecs, and changesets. |
+| `selene-profile` | Typed GQL profile source, validation, canonical hashing, and checked-in runtime/documentation generation. It has no engine-crate dependencies. |
+| `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, `JsonValue`, vector metrics/top-k helpers, `DbString`, schema/value types, the profile compatibility adapter, property maps, codecs, and changesets. |
 | `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, exact BM25 text search, exact JSON search, reusable BM25 postings indexes, recovery provider, compaction, and graph type enforcement. |
 | `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |
 | `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It never depends on GQL. |
@@ -155,8 +156,9 @@ epoch mutation.
 
 ## Query And Procedure Surface
 
-- `crates/selene-core/src/feature_register.rs` is the parser-visible optional
-  feature surface.
+- `spec/gql-profile/profile.json` is the feature and implementation-choice
+  source. `crates/selene-core/src/feature_register.rs` preserves the current
+  parser-visible compatibility path over generated data.
 - `ProcedureRegistry` is the planner/executor/test seam. It is not a third-party
   extension point.
 - `BuiltinProcedureRegistry` is the production registry. Procedure names,

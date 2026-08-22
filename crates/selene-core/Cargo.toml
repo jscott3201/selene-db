@@ -12,6 +12,7 @@ description = "Foundation types for the selene-db ISO/IEC 39075:2024 GQL propert
 name = "selene_core"
 
 [dependencies]
+selene-profile.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 miette.workspace = true
