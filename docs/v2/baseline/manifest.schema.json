@@ -41,7 +41,7 @@
           "type": "string"
         },
         "workspace_version": {
-          "minLength": 1,
+          "const": "1.4.0",
           "type": "string"
         }
       },
@@ -275,7 +275,7 @@
                 "type": "boolean"
               },
               "version": {
-                "minLength": 1,
+                "const": "1.4.0",
                 "type": "string"
               }
             },
@@ -289,6 +289,8 @@
             ],
             "type": "object"
           },
+          "maxItems": 6,
+          "minItems": 6,
           "type": "array"
         },
         "persistence": {
@@ -467,7 +469,7 @@
                     "type": "string"
                   },
                   "path_count": {
-                    "minimum": 0,
+                    "minimum": 1,
                     "type": "integer"
                   }
                 },
@@ -482,6 +484,8 @@
                 ],
                 "type": "object"
               },
+              "maxItems": 5,
+              "minItems": 5,
               "type": "array"
             },
             "declared_item_count": {
@@ -505,7 +509,7 @@
               "type": "string"
             },
             "path_count": {
-              "minimum": 0,
+              "minimum": 1,
               "type": "integer"
             },
             "published_crate_count": {

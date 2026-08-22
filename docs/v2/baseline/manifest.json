@@ -375,7 +375,7 @@
     "capture_head_tree_sha": "8e3df4fd4225df1df12128ce81d51f2fe565eb0b",
     "helper": {
       "path": "scripts/v2_baseline.py",
-      "sha256": "0f3545bfc0a648909fe2c00a2f0d272b3b27c78643c04752185efd9258d51284"
+      "sha256": "8cdb5498e8133eddb8d9c29fba61b7c6ddaa1d06c99dc08266602e1fcf40c20d"
     },
     "initial_base_sha": "b7ea652bbf79b48efb6c9ae63deb485f26a69bb9",
     "initial_base_tree_sha": "8e3df4fd4225df1df12128ce81d51f2fe565eb0b",
@@ -4885,7 +4885,7 @@
     {
       "bytes": 2126,
       "path": "docs/v2/baseline/README.md",
-      "sha256": "f5e6836136b5635f8c14f7fd319fb7a3d832f62e76c54c0573fc079b7d9d7cdc"
+      "sha256": "fb5fadf2830ad267732ae12324e0b0ae440befcfdcfa3cb93c81fb631f9acd3b"
     },
     {
       "bytes": 13611,

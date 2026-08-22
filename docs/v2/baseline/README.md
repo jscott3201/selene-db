@@ -19,7 +19,7 @@ This package fixes deterministic inventories and one observed run. Raw evidence 
 | Capture HEAD | `b7ea652bbf79b48efb6c9ae63deb485f26a69bb9` |
 | Capture HEAD tree | `8e3df4fd4225df1df12128ce81d51f2fe565eb0b` |
 | Runner SHA-256 | `4d3d5ea335cb63637c023cd7281d596b24b1471087f996ac75e1eeda21512d4c` |
-| Helper SHA-256 | `0f3545bfc0a648909fe2c00a2f0d272b3b27c78643c04752185efd9258d51284` |
+| Helper SHA-256 | `8cdb5498e8133eddb8d9c29fba61b7c6ddaa1d06c99dc08266602e1fcf40c20d` |
 | Archive refs | `pending_owner_only` |
 
 Harness file hashes are separate from source provenance; no self-referential final harness commit is claimed.

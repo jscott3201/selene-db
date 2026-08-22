@@ -19,10 +19,12 @@ import sys
 import tempfile
 import time
 import tomllib
+from collections.abc import Callable
 from typing import Any
 
 
 ARCHIVE_SHA = "b8782bec34ff0b815b62711ac7e33cac09d8ea71"
+ARCHIVE_VERSION = "1.4.0"
 EXPECTED_BASE_SHA = "b7ea652bbf79b48efb6c9ae63deb485f26a69bb9"
 SCHEMA_VERSION = 1
 REPORT_PATHS = tuple(
@@ -51,11 +53,12 @@ SERVICE_ENV_PREFIXES = (
     "OMLX_",
 )
 DISPOSITIONS = {"passed", "failed", "unavailable", "skipped", "not_applicable"}
-EXPECTED_SCHEMA_SHA256 = "1ed7804ad049bda713dea0214d4e37e21892148cedfbb593e34e2dac1f11d0f9"
+EXPECTED_SCHEMA_SHA256 = "464cfc99a93c16677d95393a7238df273a4f9ca0517beb570a5ffddfc8b9535a"
 API_INVENTORY_SCOPE = (
     "The inventory contains local public rustdoc paths, items declared by local traits, and public inherent impl items only; "
     "trait and blanket impl entries and dependency-associated surfaces are excluded."
 )
+RUST_PATH = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
 class BaselineError(RuntimeError):
@@ -120,6 +123,55 @@ def controlled_output_dir(root: pathlib.Path, requested: pathlib.Path | None) ->
             f"baseline output must use the controlled directory {expected_parent / ARCHIVE_SHA}"
         )
     return candidate
+
+
+def _staged_sibling(destination: pathlib.Path, purpose: str) -> pathlib.Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return pathlib.Path(
+        tempfile.mkdtemp(prefix=f".{destination.name}.{purpose}-", dir=destination.parent)
+    )
+
+
+def _publish_directory(
+    staged: pathlib.Path,
+    destination: pathlib.Path,
+    validate: Callable[[], list[str]],
+    failure_hook: Callable[[str], None] | None = None,
+) -> None:
+    """Replace one directory while retaining the prior tree until validation passes."""
+
+    backup = _staged_sibling(destination, "backup")
+    backup.rmdir()
+    had_destination = destination.exists()
+    published = False
+    try:
+        if had_destination:
+            os.replace(destination, backup)
+        if failure_hook:
+            failure_hook("after_backup")
+        os.replace(staged, destination)
+        published = True
+        if failure_hook:
+            failure_hook("after_publish")
+        errors = validate()
+        if errors:
+            raise BaselineError("published package failed validation: " + "; ".join(errors))
+        if failure_hook:
+            failure_hook("after_validation")
+    except BaseException as error:
+        try:
+            if published and destination.exists():
+                shutil.rmtree(destination)
+            if had_destination and backup.exists():
+                os.replace(backup, destination)
+        except OSError as rollback_error:
+            raise BaselineError(
+                f"publication failed and rollback also failed: {rollback_error}"
+            ) from error
+        raise
+    else:
+        if backup.exists():
+            shutil.rmtree(backup)
 
 
 def validate_capture_worktree(root: pathlib.Path, dirty_paths: list[str] | None = None) -> None:
@@ -466,6 +518,8 @@ def schema_errors(value: Any, schema: dict[str, Any], path: str = "$") -> list[s
     if isinstance(value, list):
         if len(value) < schema.get("minItems", 0):
             errors.append(f"{path}: array has fewer than minItems")
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            errors.append(f"{path}: array has more than maxItems")
         item_schema = schema.get("items")
         if item_schema:
             for index, item in enumerate(value):
@@ -510,6 +564,11 @@ def api_inventory_errors(value: Any) -> list[str]:
         errors.append("API inventory version or source SHA is invalid")
     if value["inventory_scope"] != API_INVENTORY_SCOPE:
         errors.append("API inventory scope is invalid")
+    crates = value.get("crates")
+    if not isinstance(crates, list):
+        return [*errors, "API inventory crates is not an array"]
+    expected_identities = {(package, crate) for package, crate, _ in PUBLISHED_CRATES}
+    seen_identities: set[tuple[str, str]] = set()
     crate_fields = {
         "package",
         "crate",
@@ -523,19 +582,74 @@ def api_inventory_errors(value: Any) -> list[str]:
     }
     symbol_fields = {"path", "kind"}
     example_fields = {"item", "sha256", "lines"}
-    for index, crate in enumerate(value.get("crates", [])):
+    for index, crate in enumerate(crates):
         if not isinstance(crate, dict) or set(crate) != crate_fields:
             errors.append(f"API inventory crate {index} has missing or extra fields")
             continue
+        identity = (crate["package"], crate["crate"])
+        if identity in seen_identities:
+            errors.append(f"API inventory has duplicate crate identity {identity!r}")
+        seen_identities.add(identity)
+        if identity not in expected_identities:
+            errors.append(f"API inventory has unexpected crate identity {identity!r}")
+        if crate["crate_version"] != ARCHIVE_VERSION:
+            errors.append(
+                f"API inventory crate {identity!r} has version {crate['crate_version']!r}, expected {ARCHIVE_VERSION!r}"
+            )
         if crate.get("disposition") not in {"preserve", "replace", "remove", "internalize"}:
             errors.append(f"API inventory crate {index} has an invalid disposition")
         for collection in ("paths", "declared_items"):
-            for item in crate.get(collection, []):
+            items = crate.get(collection)
+            if not isinstance(items, list):
+                errors.append(f"API inventory crate {index} {collection} is not an array")
+                continue
+            if collection == "paths" and not items:
+                errors.append(f"API inventory crate {identity!r} has no public paths")
+            seen_paths: set[str] = set()
+            for item in items:
                 if not isinstance(item, dict) or set(item) != symbol_fields:
                     errors.append(f"API inventory crate {index} has an invalid {collection} item")
-        for item in crate.get("examples", []):
+                    continue
+                path = item["path"]
+                if not isinstance(path, str) or RUST_PATH.fullmatch(path) is None:
+                    errors.append(f"API inventory crate {index} has a malformed {collection} path")
+                elif path != crate["crate"] and not path.startswith(f"{crate['crate']}::"):
+                    errors.append(f"API inventory crate {index} has a non-local {collection} path {path!r}")
+                if isinstance(path, str):
+                    if path in seen_paths:
+                        errors.append(f"API inventory crate {index} has duplicate {collection} path {path!r}")
+                    seen_paths.add(path)
+                if not isinstance(item["kind"], str) or not item["kind"]:
+                    errors.append(f"API inventory crate {index} has an invalid {collection} kind")
+        examples = crate.get("examples")
+        if not isinstance(examples, list):
+            errors.append(f"API inventory crate {index} examples is not an array")
+            continue
+        seen_examples: set[tuple[str, str]] = set()
+        for item in examples:
             if not isinstance(item, dict) or set(item) != example_fields:
                 errors.append(f"API inventory crate {index} has an invalid example")
+                continue
+            example_key = (item["item"], item["sha256"])
+            if all(isinstance(value, str) for value in example_key):
+                if example_key in seen_examples:
+                    errors.append(f"API inventory crate {index} has a duplicate example")
+                seen_examples.add(example_key)
+            if (
+                not isinstance(item["item"], str)
+                or RUST_PATH.fullmatch(item["item"]) is None
+                or not item["item"].startswith(f"{crate['crate']}::")
+                or not isinstance(item["sha256"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is None
+                or not isinstance(item["lines"], int)
+                or isinstance(item["lines"], bool)
+                or item["lines"] < 1
+            ):
+                errors.append(f"API inventory crate {index} has malformed example metadata")
+    if seen_identities != expected_identities:
+        errors.append(
+            f"API inventory crate identities differ: expected {sorted(expected_identities)}, got {sorted(seen_identities)}"
+        )
     return errors
 
 
@@ -717,6 +831,79 @@ def _disposition(package: str) -> tuple[str, str]:
         "selene-db-algorithms": ("preserve", "M10-PR01"),
         "selene-db-gql": ("replace", "M05 and M06"),
     }[package]
+
+
+def cross_file_inventory_errors(
+    manifest: dict[str, Any], inventory: dict[str, Any], inventory_sha256: str
+) -> list[str]:
+    """Check inventory identities and counts against the manifest package facts."""
+
+    errors: list[str] = []
+    expected = {(package, crate) for package, crate, _ in PUBLISHED_CRATES}
+    public_api = manifest["deterministic"]["public_api"]
+    package_facts = [
+        package for package in manifest["deterministic"]["packages"] if package["publish"]
+    ]
+
+    def index_by_identity(items: list[dict[str, Any]], label: str) -> dict[tuple[str, str], dict[str, Any]]:
+        indexed: dict[tuple[str, str], dict[str, Any]] = {}
+        for item in items:
+            identity = (item["package"], item["crate"])
+            if identity in indexed:
+                errors.append(f"{label} has duplicate crate identity {identity!r}")
+            indexed[identity] = item
+        if set(indexed) != expected:
+            errors.append(
+                f"{label} crate identities differ: expected {sorted(expected)}, got {sorted(indexed)}"
+            )
+        return indexed
+
+    inventory_crates = index_by_identity(inventory["crates"], "API inventory")
+    summaries = index_by_identity(public_api["crates"], "public API summary")
+    packages = index_by_identity(package_facts, "published package facts")
+    if manifest["archive"]["workspace_version"] != ARCHIVE_VERSION:
+        errors.append("archive workspace version differs from the exact historical version")
+    if public_api["inventory_path"] != "docs/v2/baseline/api-inventory.json":
+        errors.append("public API inventory path is not canonical")
+    if public_api["inventory_scope"] != inventory["inventory_scope"]:
+        errors.append("public API inventory scope mismatch")
+    if public_api["inventory_sha256"] != inventory_sha256:
+        errors.append("public API inventory hash mismatch")
+    if public_api["published_crate_count"] != len(expected):
+        errors.append("public API published crate count mismatch")
+
+    for identity in sorted(expected & set(inventory_crates) & set(summaries) & set(packages)):
+        crate = inventory_crates[identity]
+        summary = summaries[identity]
+        package = packages[identity]
+        disposition, owner = _disposition(identity[0])
+        if crate["crate_version"] != package["version"] or package["version"] != ARCHIVE_VERSION:
+            errors.append(f"{identity!r}: inventory/package version mismatch")
+        if (crate["disposition"], crate["owner"]) != (disposition, owner):
+            errors.append(f"{identity!r}: inventory disposition or owner mismatch")
+        for field, collection in (
+            ("path_count", "paths"),
+            ("declared_item_count", "declared_items"),
+            ("example_count", "examples"),
+        ):
+            actual = len(crate[collection])
+            if summary[field] != actual:
+                errors.append(f"{identity!r}: {field} mismatch, expected {actual}, got {summary[field]}")
+        for field in ("package", "crate", "disposition", "owner"):
+            if summary[field] != crate[field]:
+                errors.append(f"{identity!r}: summary {field} differs from inventory")
+
+    aggregates = {
+        "path_count": sum(len(crate["paths"]) for crate in inventory_crates.values()),
+        "declared_item_count": sum(
+            len(crate["declared_items"]) for crate in inventory_crates.values()
+        ),
+        "example_count": sum(len(crate["examples"]) for crate in inventory_crates.values()),
+    }
+    for field, actual in aggregates.items():
+        if public_api[field] != actual:
+            errors.append(f"public API aggregate {field} mismatch, expected {actual}, got {public_api[field]}")
+    return errors
 
 
 def _inventory_document(crates: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1057,7 +1244,11 @@ def _example_target_count(root: pathlib.Path, paths: list[str]) -> int:
     return len(source_targets) + declared
 
 
-def capture(root: pathlib.Path, requested_output: pathlib.Path | None = None) -> pathlib.Path:
+def capture(
+    root: pathlib.Path,
+    requested_output: pathlib.Path | None = None,
+    _publish_hook: Callable[[str], None] | None = None,
+) -> pathlib.Path:
     root = root.resolve()
     source_sha = resolve_archive_commit(root, ARCHIVE_SHA)
     head = git_output(root, "rev-parse", "HEAD")
@@ -1065,10 +1256,8 @@ def capture(root: pathlib.Path, requested_output: pathlib.Path | None = None) ->
         raise BaselineError(f"harness HEAD {head} does not contain required base {EXPECTED_BASE_SHA}")
     validate_capture_worktree(root)
     output = controlled_output_dir(root, requested_output)
-    if output.exists():
-        shutil.rmtree(output)
-    output.mkdir(parents=True)
-    logs_dir = output / "logs"
+    staged = _staged_sibling(output, "capture")
+    logs_dir = staged / "logs"
     environment, secrets = _scrubbed_environment()
     commands: list[dict[str, Any]] = []
     benchmarks: list[dict[str, Any]] = []
@@ -1114,7 +1303,7 @@ def capture(root: pathlib.Path, requested_output: pathlib.Path | None = None) ->
         inventory_errors = api_inventory_errors(inventory)
         if inventory_errors:
             raise BaselineError("; ".join(inventory_errors))
-        inventory_path = output / "api-inventory.json"
+        inventory_path = staged / "api-inventory.json"
         inventory_path.write_text(canonical_json(inventory))
 
         for command_id, argv in _archive_gate_specs():
@@ -1315,7 +1504,7 @@ def capture(root: pathlib.Path, requested_output: pathlib.Path | None = None) ->
         errors = closed_schema_errors(schema) + schema_errors(manifest, schema)
         if errors:
             raise BaselineError("manifest construction failed: " + "; ".join(errors))
-        reports_dir = output / "reports"
+        reports_dir = staged / "reports"
         render_reports(manifest, reports_dir)
         manifest["reports"] = [
             {
@@ -1328,24 +1517,35 @@ def capture(root: pathlib.Path, requested_output: pathlib.Path | None = None) ->
         final_errors = schema_errors(manifest, schema)
         if final_errors:
             raise BaselineError("final manifest failed schema: " + "; ".join(final_errors))
-        (output / "manifest.json").write_text(canonical_json(manifest))
-        (output / "manifest.schema.json").write_text(canonical_json(schema))
+        (staged / "manifest.json").write_text(canonical_json(manifest))
+        (staged / "manifest.schema.json").write_text(canonical_json(schema))
+        candidate_errors = evidence_package_errors(root, staged)
+        if candidate_errors:
+            raise BaselineError("captured package is invalid: " + "; ".join(candidate_errors))
+        _publish_directory(
+            staged,
+            output,
+            lambda: evidence_package_errors(root, output),
+            _publish_hook,
+        )
         return output
     finally:
         signal.signal(signal.SIGTERM, previous_term)
         shutil.rmtree(clone.parent, ignore_errors=True)
+        if staged.exists():
+            shutil.rmtree(staged, ignore_errors=True)
 
 
-def validate_tracked_baseline(root: pathlib.Path) -> list[str]:
-    root = root.resolve()
-    baseline_dir = root / BASELINE_RELATIVE
+def _package_errors(
+    root: pathlib.Path, package_dir: pathlib.Path, reports_dir: pathlib.Path
+) -> list[str]:
     errors: list[str] = []
-    schema_path = baseline_dir / "manifest.schema.json"
-    manifest_path = baseline_dir / "manifest.json"
-    inventory_path = baseline_dir / "api-inventory.json"
+    schema_path = package_dir / "manifest.schema.json"
+    manifest_path = package_dir / "manifest.json"
+    inventory_path = package_dir / "api-inventory.json"
     for path in (schema_path, manifest_path, inventory_path):
         if not path.is_file():
-            errors.append(f"required baseline file is absent: {path.relative_to(root)}")
+            errors.append(f"required package file is absent: {path}")
     if errors:
         return errors
     try:
@@ -1363,8 +1563,8 @@ def validate_tracked_baseline(root: pathlib.Path) -> list[str]:
     if errors:
         return errors
 
-    if sha256_file(inventory_path) != manifest["deterministic"]["public_api"]["inventory_sha256"]:
-        errors.append("API inventory hash mismatch")
+    inventory_sha256 = sha256_file(inventory_path)
+    errors.extend(cross_file_inventory_errors(manifest, inventory, inventory_sha256))
     for key in ("script", "helper"):
         identity = manifest["harness"][key]
         path = root / identity["path"]
@@ -1374,11 +1574,13 @@ def validate_tracked_baseline(root: pathlib.Path) -> list[str]:
             errors.append(f"harness {key} hash mismatch")
 
     expected_reports = {f"docs/v2/baseline/{path.name}" for path in REPORT_PATHS}
-    observed_reports = {report["path"] for report in manifest["reports"]}
-    if observed_reports != expected_reports:
+    observed_report_paths = [report["path"] for report in manifest["reports"]]
+    if len(observed_report_paths) != len(expected_reports) or set(observed_report_paths) != expected_reports:
         errors.append("manifest report set differs from the five required reports")
     for report in manifest["reports"]:
-        path = root / report["path"]
+        if report["path"] not in expected_reports:
+            continue
+        path = reports_dir / pathlib.Path(report["path"]).name
         if not path.is_file():
             errors.append(f"required report is absent: {report['path']}")
             continue
@@ -1389,10 +1591,21 @@ def validate_tracked_baseline(root: pathlib.Path) -> list[str]:
         rendered = pathlib.Path(raw)
         render_reports(manifest, rendered)
         for report in REPORT_PATHS:
-            tracked = baseline_dir / report.name
+            tracked = reports_dir / report.name
             candidate = rendered / report.name
             if tracked.is_file() and tracked.read_bytes() != candidate.read_bytes():
                 errors.append(f"deterministic report render mismatch: {report.name}")
+    return errors
+
+
+def evidence_package_errors(root: pathlib.Path, evidence_dir: pathlib.Path) -> list[str]:
+    return _package_errors(root.resolve(), evidence_dir, evidence_dir / "reports")
+
+
+def baseline_package_errors(root: pathlib.Path, baseline_dir: pathlib.Path) -> list[str]:
+    if not baseline_dir.is_dir():
+        return [f"required baseline directory is absent: {baseline_dir}"]
+    errors = _package_errors(root.resolve(), baseline_dir, baseline_dir)
     allowed = {
         "README.md",
         "gates.md",
@@ -1409,42 +1622,41 @@ def validate_tracked_baseline(root: pathlib.Path) -> list[str]:
     return errors
 
 
-def install(root: pathlib.Path, evidence: pathlib.Path | None = None) -> None:
+def validate_tracked_baseline(root: pathlib.Path) -> list[str]:
+    root = root.resolve()
+    return baseline_package_errors(root, root / BASELINE_RELATIVE)
+
+
+def install(
+    root: pathlib.Path,
+    evidence: pathlib.Path | None = None,
+    _publish_hook: Callable[[str], None] | None = None,
+) -> None:
     root = root.resolve()
     evidence_dir = evidence or controlled_output_dir(root, None)
-    required = ("manifest.json", "manifest.schema.json", "api-inventory.json")
-    for name in required:
-        if not (evidence_dir / name).is_file():
-            raise BaselineError(f"captured evidence is absent: {evidence_dir / name}")
-    schema_path = evidence_dir / "manifest.schema.json"
-    inventory_path = evidence_dir / "api-inventory.json"
-    if sha256_file(schema_path) != EXPECTED_SCHEMA_SHA256:
-        raise BaselineError("captured manifest schema differs from the harness contract")
-    schema = json.loads(schema_path.read_text())
-    manifest = json.loads((evidence_dir / "manifest.json").read_text())
-    inventory = json.loads(inventory_path.read_text())
-    errors = closed_schema_errors(schema) + schema_errors(manifest, schema) + api_inventory_errors(inventory)
-    if sha256_file(inventory_path) != manifest["deterministic"]["public_api"]["inventory_sha256"]:
-        errors.append("captured API inventory hash mismatch")
+    errors = evidence_package_errors(root, evidence_dir)
     if errors:
         raise BaselineError("captured evidence is invalid: " + "; ".join(errors))
-    for key in ("script", "helper"):
-        identity = manifest["harness"][key]
-        if sha256_file(root / identity["path"]) != identity["sha256"]:
-            raise BaselineError(f"captured evidence was produced by a different {key}")
+    manifest = json.loads((evidence_dir / "manifest.json").read_text())
     baseline_dir = root / BASELINE_RELATIVE
-    baseline_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(evidence_dir / "manifest.schema.json", baseline_dir / "manifest.schema.json")
-    shutil.copyfile(evidence_dir / "api-inventory.json", baseline_dir / "api-inventory.json")
-    render_reports(manifest, baseline_dir)
-    for report in manifest["reports"]:
-        path = root / report["path"]
-        if sha256_file(path) != report["sha256"] or path.stat().st_size != report["bytes"]:
-            raise BaselineError(f"installed report differs from captured render: {report['path']}")
-    (baseline_dir / "manifest.json").write_text(canonical_json(manifest))
-    errors = validate_tracked_baseline(root)
-    if errors:
-        raise BaselineError("installed baseline is invalid: " + "; ".join(errors))
+    staged = _staged_sibling(baseline_dir, "install")
+    try:
+        shutil.copyfile(evidence_dir / "manifest.schema.json", staged / "manifest.schema.json")
+        shutil.copyfile(evidence_dir / "api-inventory.json", staged / "api-inventory.json")
+        render_reports(manifest, staged)
+        (staged / "manifest.json").write_text(canonical_json(manifest))
+        candidate_errors = baseline_package_errors(root, staged)
+        if candidate_errors:
+            raise BaselineError("installed candidate is invalid: " + "; ".join(candidate_errors))
+        _publish_directory(
+            staged,
+            baseline_dir,
+            lambda: baseline_package_errors(root, baseline_dir),
+            _publish_hook,
+        )
+    finally:
+        if staged.exists():
+            shutil.rmtree(staged, ignore_errors=True)
 
 
 def copy_baseline_package(source_root: pathlib.Path, destination_root: pathlib.Path) -> None:

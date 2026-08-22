@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,19 @@ assert SPEC is not None and SPEC.loader is not None
 baseline = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = baseline
 SPEC.loader.exec_module(baseline)
+
+
+def tree_bytes(root: pathlib.Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def publication_debris(destination: pathlib.Path) -> list[pathlib.Path]:
+    prefix = f".{destination.name}."
+    return sorted(path for path in destination.parent.iterdir() if path.name.startswith(prefix))
 
 
 class BaselineHarnessTests(unittest.TestCase):
@@ -135,6 +149,118 @@ class BaselineHarnessTests(unittest.TestCase):
                 {"path": "demo::Thing::new", "kind": "function"},
             ],
         )
+
+    def test_api_inventory_rejects_incomplete_or_mismatched_content(self) -> None:
+        manifest = json.loads((ROOT / "docs/v2/baseline/manifest.json").read_text())
+        inventory = json.loads((ROOT / "docs/v2/baseline/api-inventory.json").read_text())
+
+        def contract_errors(changed_manifest: dict, changed_inventory: dict) -> list[str]:
+            errors = baseline.api_inventory_errors(changed_inventory)
+            if not errors:
+                digest = baseline.sha256_bytes(baseline.canonical_json(changed_inventory).encode())
+                errors.extend(
+                    baseline.cross_file_inventory_errors(changed_manifest, changed_inventory, digest)
+                )
+            return errors
+
+        def mutated() -> tuple[dict, dict]:
+            return json.loads(json.dumps(manifest)), json.loads(json.dumps(inventory))
+
+        cases = []
+        changed_manifest, changed_inventory = mutated()
+        changed_inventory["crates"] = []
+        cases.append(("empty inventory", changed_manifest, changed_inventory, "crate identities differ"))
+
+        changed_manifest, changed_inventory = mutated()
+        changed_inventory["crates"][0]["paths"] = []
+        cases.append(("empty paths", changed_manifest, changed_inventory, "has no public paths"))
+
+        changed_manifest, changed_inventory = mutated()
+        changed_inventory["crates"].pop()
+        cases.append(("missing crate", changed_manifest, changed_inventory, "crate identities differ"))
+
+        changed_manifest, changed_inventory = mutated()
+        extra_crate = json.loads(json.dumps(changed_inventory["crates"][0]))
+        extra_crate["package"] = "unexpected-package"
+        extra_crate["crate"] = "unexpected_crate"
+        changed_inventory["crates"].append(extra_crate)
+        cases.append(("extra crate", changed_manifest, changed_inventory, "unexpected crate identity"))
+
+        for field, value in (("package", "wrong-package"), ("crate", "wrong_crate"), ("crate_version", "0.0.0")):
+            changed_manifest, changed_inventory = mutated()
+            changed_inventory["crates"][0][field] = value
+            cases.append((f"wrong {field}", changed_manifest, changed_inventory, field.replace("crate_", "")))
+
+        changed_manifest, changed_inventory = mutated()
+        changed_inventory["crates"].append(json.loads(json.dumps(changed_inventory["crates"][0])))
+        cases.append(("duplicate crate", changed_manifest, changed_inventory, "duplicate crate identity"))
+
+        changed_manifest, changed_inventory = mutated()
+        changed_inventory["crates"][0]["paths"].append(
+            json.loads(json.dumps(changed_inventory["crates"][0]["paths"][0]))
+        )
+        cases.append(("duplicate path", changed_manifest, changed_inventory, "duplicate paths path"))
+
+        changed_manifest, changed_inventory = mutated()
+        changed_inventory["crates"][0]["paths"][0]["path"] = "not a rust path"
+        cases.append(("malformed path", changed_manifest, changed_inventory, "malformed paths path"))
+
+        changed_manifest, changed_inventory = mutated()
+        changed_manifest["deterministic"]["public_api"]["crates"][0]["path_count"] += 1
+        cases.append(("per-crate count", changed_manifest, changed_inventory, "path_count mismatch"))
+
+        changed_manifest, changed_inventory = mutated()
+        changed_manifest["deterministic"]["public_api"]["path_count"] += 1
+        cases.append(("aggregate count", changed_manifest, changed_inventory, "aggregate path_count mismatch"))
+
+        for name, changed_manifest, changed_inventory, expected in cases:
+            with self.subTest(name=name):
+                self.assertTrue(
+                    any(expected in error for error in contract_errors(changed_manifest, changed_inventory)),
+                    contract_errors(changed_manifest, changed_inventory),
+                )
+
+    def test_capture_publication_failure_preserves_existing_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="selene-baseline-capture-publish-") as raw:
+            root = pathlib.Path(raw)
+            destination = root / "target" / "v2-baseline" / baseline.ARCHIVE_SHA
+            destination.mkdir(parents=True)
+            (destination / "manifest.json").write_text("authoritative\n")
+            before = tree_bytes(destination)
+            staged = baseline._staged_sibling(destination, "capture")
+            (staged / "manifest.json").write_text("partial replacement\n")
+
+            def fail_after_publish(phase: str) -> None:
+                if phase == "after_publish":
+                    raise RuntimeError("injected capture publication failure")
+
+            with self.assertRaisesRegex(RuntimeError, "injected capture publication failure"):
+                baseline._publish_directory(staged, destination, lambda: [], fail_after_publish)
+            self.assertEqual(tree_bytes(destination), before)
+            self.assertEqual(publication_debris(destination), [])
+
+    def test_install_publication_failure_preserves_existing_package(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="selene-baseline-install-publish-") as raw:
+            root = pathlib.Path(raw)
+            baseline.copy_baseline_package(ROOT, root)
+            destination = root / baseline.BASELINE_RELATIVE
+            before = tree_bytes(destination)
+            evidence = root / "evidence"
+            reports = evidence / "reports"
+            reports.mkdir(parents=True)
+            for name in ("manifest.json", "manifest.schema.json", "api-inventory.json"):
+                shutil.copyfile(ROOT / baseline.BASELINE_RELATIVE / name, evidence / name)
+            for report in baseline.REPORT_PATHS:
+                shutil.copyfile(ROOT / baseline.BASELINE_RELATIVE / report, reports / report)
+
+            def fail_after_publish(phase: str) -> None:
+                if phase == "after_publish":
+                    raise RuntimeError("injected install publication failure")
+
+            with self.assertRaisesRegex(RuntimeError, "injected install publication failure"):
+                baseline.install(root, evidence, fail_after_publish)
+            self.assertEqual(tree_bytes(destination), before)
+            self.assertEqual(publication_debris(destination), [])
 
     def test_zero_benchmark_matches_is_failure(self) -> None:
         with tempfile.TemporaryDirectory(prefix="selene-baseline-bench-") as raw:
