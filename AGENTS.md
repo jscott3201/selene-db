@@ -37,6 +37,43 @@ the version-policy source of truth. The 1.x line receives no maintenance or
 migration support. Treat `2.0.0-alpha.1` as a source coordinate unless its
 crates.io publication has been verified.
 
+## 2.0 Program Contract
+
+[`docs/v2/README.md`](docs/v2/README.md) is the tracked 2.0 program entry
+point. Its finalized decisions, machine plan, milestone/work-item projections,
+review protocol, issue ownership, risk register, and conformance policy are the
+portable execution contract. Untracked local notes are supplementary and must
+not be required to execute a work item.
+
+The six-crate, no-facade, row-executor workspace described below is the current
+`c5c0a985` baseline. M01 adds the generated profile authority, M02 adds the
+future `selene-db` facade and catalog, M06 replaces row execution, and M09 adds
+format 2. Do not claim those targets exist before their owning work items merge.
+
+Agents never merge 2.0 work. An implementation agent opens a non-draft PR and
+stops; the assistant returns PASS, FIX, or REPLAN. The repository owner alone
+merges after PASS and green required checks. Agents also do not self-approve,
+react, tag, release, publish, or alter branch protection.
+
+Every 2.0 handoff includes:
+
+```text
+Plan ID:
+PR URL:
+Base SHA / Head SHA / commits:
+Outcome delivered:
+Files/subsystems changed:
+Public API and persisted/profile changes:
+Commands and results:
+Benchmarks/fuzz/crash evidence:
+Decisions and deviations:
+Temporary bridges and deletion owner:
+Known risks/follow-ups:
+Reviewer questions:
+```
+
+Skipped commands are reported as unrun with the reason; they are never green.
+
 ## Hard Rules
 
 1. Preserve strict ISO GQL at the language boundary. Do not add SQL, Cypher,
@@ -440,12 +477,11 @@ bench(algorithms): add graph retrieval pressure rows
 docs(workflow): refresh agent instructions
 ```
 
-Use GitHub connector tools when available for PR comments, CI polling, and
-merges. If the connector does not expose a needed operation, use `gh` and request
-network escalation when sandboxing blocks it. Under the current long-goal user
-direction, merge PRs to `development` after local validation, local review, and
-green CI. Do not use trigger mentions for the cloud reviewer and do not add PR
-reactions.
+Use GitHub connector tools when available for permitted read-only state checks,
+PR creation, and CI polling. If a permitted operation is unavailable, use `gh`
+and request network escalation when sandboxing blocks it. Agents never merge
+2.0 PRs or add review reactions; after the required handoff they stop for the
+PASS/FIX/REPLAN protocol.
 
 After every merged PR in this long-running goal workflow:
 

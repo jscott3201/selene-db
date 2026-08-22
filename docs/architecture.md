@@ -1,13 +1,17 @@
 # selene-db architecture
 
-This document describes how selene-db is built. It assumes you have read
+This document describes the current `c5c0a985` baseline. It assumes you have read
 [`README.md`](../README.md) and want to understand the layering, concurrency
-model, persistence design, the native procedure surface, and the numbered
-architecture decisions that shape the workspace.
+model, persistence design, and native procedure surface. The
+[tracked 2.0 program](v2/README.md) owns the target architecture and finalized
+decisions; future facade, catalog, profile, batch, and format-2 components are
+not present in this baseline.
 
-selene-db is an embeddable property graph engine for Rust that targets
-ISO/IEC 39075:2024 GQL minimum conformance plus a curated subset of optional
-features. The engine is library-only: no transport, no auth, no server.
+selene-db is an embeddable property graph engine for Rust that implements
+selected ISO/IEC 39075:2024 GQL syntax and semantics. The current feature
+register is implementation inventory, not a formal 2.0 conformance claim; see
+the [evidence-gated policy](v2/conformance-policy.md). The engine is
+library-only: no transport, no auth, no server.
 Embedders depend on the published workspace crates or a local checkout and run
 the engine in-process.
 
@@ -20,8 +24,8 @@ surfaces see [`graph-algorithms.md`](graph-algorithms.md).
 
 ## 1. Crate dependency graph
 
-The workspace is a flat tree of six mandatory crates with no umbrella facade
-(decision D8). There are no opt-in extension crates. `selene-core` is the
+At the c5 baseline, the workspace is a flat tree of six mandatory crates with
+no umbrella facade. There are no opt-in extension crates. `selene-core` is the
 leaf; every other crate transitively depends on it. The runtime dependency
 direction is linear — `core → graph → algorithms → gql` — and
 `selene-algorithms` never imports `selene-gql`. `selene-testing` is dev-only
@@ -40,9 +44,9 @@ and is consumed via `[dev-dependencies]`.
 |---|---|---|
 | `selene-core` | none | Foundation types: `Value` (mandatory ISO scalar values plus numeric, temporal, reference, byte-string, vector, JSON, list, record, path, and extension variants), `DbString`, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Changeset`, GQLSTATUS table, ISO feature register. |
 | `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + immutable chunked persistent maps, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
-| `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`, D17). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
-| `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the D20 snapshot harness. Independent of `selene-gql`. |
-| `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait (D15), and its sole frozen production impl `BuiltinProcedureRegistry` — 49 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
+| `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
+| `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the snapshot harness. Independent of `selene-gql`. |
+| `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait, and its sole frozen production impl `BuiltinProcedureRegistry` — 50 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
 | `selene-testing` | core, graph (+ algorithms for fixtures) | Shared fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / algorithm corpora. Consumed via `[dev-dependencies]`. |
 
 The dependency graph is intentionally acyclic with a single sink
@@ -87,7 +91,7 @@ necessary, a borrowed registry or context.
 
 `parse(source: &str) -> Result<Statement, ParserError>` and
 `parse_with_source` (which preserves source spans for richer diagnostics)
-are the only entry points from raw GQL. The parser is a pest 2.8 PEG defined
+are the only entry points from raw GQL. The parser is a pest 2.9 PEG defined
 in `crates/selene-gql/src/parser/grammar.pest`. Rule names mirror the
 ISO 39075 grammar names, aligned with opengql/grammar v1.9.0 where the donor
 diverged. Strings are single-quoted (Spec 02); double-quoted lexemes are
@@ -102,8 +106,8 @@ AnalysisError>` runs semantic checks: scope resolution, binding decls
 (`ExprTypeTable`), statement-category classification (`ReadOnly`,
 `DataModifying`, `CatalogModifying`, `TransactionControl`), and the mutation
 write set (`MutationWriteSet`, `WriteSetEntry`). The Flagger runs in this
-phase: any construct outside the D1 claimed feature register is rejected with
-a `GqlStatus` flag.
+phase: a construct outside the current implementation register is rejected with
+a `GqlStatus` flag. That register does not establish a formal claim.
 
 ### Plan
 
@@ -147,8 +151,8 @@ a `Vec<Change>` (label diffs, property diffs, node/edge create/delete,
 schema mutations). On `WriteTxn::commit` the mutator atomically swaps a new
 graph snapshot into the `ArcSwap` and hands the `&[Change]` slice to
 `selene-persist` for WAL append. Engine-owned audit events route through the
-same funnel into a dedicated append-only `audit.log` substrate (`SLAU`,
-D17), WAL-first then audit-after, so there is no parallel ledger and no
+same funnel into a dedicated append-only `audit.log` substrate (`SLAU`),
+WAL-first then audit-after, so there is no parallel ledger and no
 audit-vs-graph split-brain.
 
 ### Persistence
@@ -165,7 +169,7 @@ operational detail.
 ## 3. Concurrency model
 
 selene-db uses a one-writer-many-readers shape with no allocation on the
-read path. The primitives are codified by decision D7.
+read path.
 
 | Primitive | Where it is used | Why |
 |---|---|---|
@@ -321,13 +325,13 @@ The provider plumbing (first-party only):
 
 ### `ProcedureRegistry` trait
 
-`CALL` dispatch is mediated by the `ProcedureRegistry` trait (D15), defined
+`CALL` dispatch is mediated by the `ProcedureRegistry` trait, defined
 in `selene-gql`. It is the plan/execute seam: the planner resolves procedure
 signatures and the executor dispatches calls through a `&dyn
 ProcedureRegistry`. The trait has exactly one frozen production
 implementation — the concrete native `BuiltinProcedureRegistry`
 (`selene-gql/src/runtime/builtin_registry.rs`) — which registers 69
-procedures at construction (the 49 `selene.*` platform built-ins plus the 19
+procedures at construction (the 50 `selene.*` platform built-ins plus the 19
 `algo.*` procedures) and reports a constant `registry_version()` of `0` so
 the CALL plan cache never invalidates. The injectable `&dyn` seam exists for
 the test harness, not for third-party packs: there is no loadable-pack
@@ -347,12 +351,13 @@ IW010). The algorithm crate never imports `selene-gql`, which keeps the
 
 ---
 
-## 6. Architecture decisions D1-D20
+## 6. Current implementation choices
 
-The workspace shape is codified by twenty numbered decisions. They are
-referenced from spec files and brief logs throughout the codebase.
+Earlier documents used local numbered labels for the c5 implementation
+inventory. Those labels are not 2.0 decision authority. The canonical program
+uses [D-001 through D-022](v2/decisions/finalized.md).
 
-### D1 — Library only
+### Library only
 
 selene-db is an embeddable Rust library. No server process, no transport, no
 auth layer. Embedders own the network and policy surfaces. This decision is
@@ -360,23 +365,23 @@ what lets selene-db ship without a wire format claim (ISO 39075 clause 4.2.3)
 and what makes `IW001` / `IW002` (principals and authorization) the caller's
 responsibility.
 
-### D2 — Strict ISO GQL parser
+### Strict ISO GQL parser
 
 The query language is ISO/IEC 39075:2024 GQL. No Cypher, no SQL, no SPARQL
-grammar in the parser. Constructs outside the D1 claimed feature register are
+grammar in the parser. Constructs outside the current implementation register are
 rejected by the Flagger at parse time. This eliminates a class of
 "works on Neo4j but not on us" surprises and pins the language surface to
 a stable external standard.
 
-### D3 — Multi-graph workspace per process
+### Multi-graph workspace per process
 
 A single process can host multiple `SharedGraph` instances side by side,
 each with its own snapshot, write lock, WAL directory, and provider set.
-Cross-graph transactions are outside the current D1 scope (feature `GT03` is
+Cross-graph transactions are outside the current inventory (feature `GT03` is
 not claimed). This decision lets embedders run shard-per-graph or
 tenant-per-graph patterns without process-level coordination.
 
-### D4 — Snapshot isolation by ArcSwap publication
+### Snapshot isolation by ArcSwap publication
 
 Readers see exactly the snapshot they captured via `SharedGraph::read()`.
 Writers never mutate a snapshot in place; they construct a new
@@ -384,23 +389,22 @@ Writers never mutate a snapshot in place; they construct a new
 `ArcSwap::store` plus structurally shared persistent maps and Arc-backed row
 storage.
 
-### D5 — Non-graph capabilities are externalized
+### Native capability ownership
 
 selene-db is one cohesive native graph engine. Graph algorithms ship in the
-mandatory `selene-algorithms` crate outside `selene-graph` (storage and
-algorithms stay in separate crates), while non-graph capabilities — vectors,
-time-series, RDF, GraphRAG — are externalized to separate dedicated
-projects, never in-tree extensions. Refusing to widen the graph core is what
-keeps the cold dependency closure for a graph-only embedder bounded.
+mandatory `selene-algorithms` crate outside `selene-graph`; vectors, text, JSON,
+indexes, and native procedures are in-tree engine features owned by their
+current crates. Time-series, RDF, and GraphRAG-specific policy are not current
+engine surfaces.
 
-### D6 — `Value` is a closed substitution union
+### `Value` is a closed substitution union
 
 `selene_core::Value` is a non-exhaustive enum with a canonical, append-only
 variant order. Reordering variants is a major-version and durability-format
 change. Extension types are surfaced via the `Value::Extended { type_id,
 payload }` variant indexed by `ExtensionTypeId`, not by adding variants.
 
-### D7 — Concurrency primitives
+### Concurrency primitives
 
 The concurrency stack is `ArcSwap` for snapshot publication, `parking_lot`
 locks for writer mutual exclusion and provider state, `immutable-chunkmap` for
@@ -409,7 +413,7 @@ copy-on-write maps, `RoaringBitmap` for label/id sets, and
 locks are not used on the hot path because they poison on panic; an
 in-process engine treats poison as a non-feature.
 
-### D8 — Multi-crate workspace, no umbrella
+### Multi-crate workspace, no umbrella
 
 `selene-core` is the leaf; `selene-persist` depends only on `selene-core`;
 `selene-graph` builds on `selene-core`; `selene-algorithms` builds on
@@ -419,38 +423,38 @@ runtime direction is the linear chain `core → graph → algorithms → gql`, a
 `selene-algorithms` never imports `selene-gql`. There is no `selene` umbrella
 crate that re-exports the others.
 
-### D9 — Forbid unsafe
+### Forbid unsafe
 
 `#![forbid(unsafe_code)]` is set on every workspace crate. Performance work
 happens through safe upstream APIs (`SmallVec`, `roaring`,
 `immutable-chunkmap`, `rkyv` zero-copy decode). The selene-db codebase contains
 no `unsafe` blocks of its own.
 
-### D10 — `missing_docs = "deny"`
+### `missing_docs = "deny"`
 
 Every public item ships rustdoc. The lint is workspace-wide and CI-gated.
 This is what makes the engine usable from the Rust docs without ever
 touching the source.
 
-### D11 — 700 LOC per-file cap
+### 700 LOC per-file cap
 
 A static CI check enforces a 700-line cap on each tracked source file.
 Files that bloat past 700 lines must be split. The cap is per-file only;
 no per-crate or per-module budget gates merges.
 
-### D12 — Conventional commits
+### Conventional commits
 
 Commits follow `type(scope): subject`. Scopes name the touched crate or
 component (`feat(BRIEF-NN)`, `chore`, `docs`, etc.). Conventional
 commits drive the changelog and the brief workflow audit trail.
 
-### D13 — Postcard for WAL payloads
+### Postcard for WAL payloads
 
 The WAL serializes `Vec<Change>` with postcard 1.x. Postcard is a tight
 no-alloc-friendly format; selene-db does not hand-roll a binary format.
 The WAL header and section table are framed by `selene-persist`.
 
-### D14 — rkyv snapshots over sorted-vec intermediates
+### rkyv snapshots over sorted-vec intermediates
 
 Snapshots are written by lowering persistent engine maps into sorted `Vec`
 intermediates and archiving with rkyv 0.8 (`pointer_width_64`,
@@ -458,7 +462,7 @@ intermediates and archiving with rkyv 0.8 (`pointer_width_64`,
 The `unaligned` feature lets rkyv decode out of 1-byte-aligned byte
 buffers, which is what the snapshot reader produces.
 
-### D15 — Frozen native procedure registry
+### Frozen native procedure registry
 
 `CALL` is dispatched through the `ProcedureRegistry` trait, whose sole
 production implementation, `BuiltinProcedureRegistry`, registers its full
@@ -468,7 +472,7 @@ or removed after construction, and `registry_version()` is a constant `0` —
 which lets the analyzer and planner trust the registry and keep the CALL plan
 cache stable without locking on every lookup.
 
-### D16 — Tiered procedure contexts
+### Tiered procedure contexts
 
 Procedures are partitioned by tier: read-tier (`GraphContext`),
 write-tier (`MutationContext`), and procedure-tier (`ProcedureContext`).
@@ -477,7 +481,7 @@ trait. The planner enforces tier compatibility against the surrounding
 statement category at plan time, and the registry re-checks the tier on
 dispatch so a read-only built-in can never re-enter the write funnel.
 
-### D17 — Engine-owned audit through the mutation funnel
+### Engine-owned audit through the mutation funnel
 
 Engine-owned audit events route through the same `Mutator` that graph writes
 use, into a dedicated append-only `audit.log` substrate (`SLAU`) with
@@ -485,19 +489,19 @@ retention independent of the WAL/snapshot lineage. Writes are WAL-first then
 audit-after through the one funnel, so there is no parallel ledger and no
 audit-vs-graph split-brain scenario.
 
-### D18 — Blake3 for content hashing
+### Blake3 for content hashing
 
 Snapshot section digests and any other "is this byte stream identical"
 checks use blake3. The hash function is the same in every crate that needs
 one.
 
-### D19 — Rustls-only TLS posture
+### Rustls-only TLS posture
 
 Transitive dependencies must use rustls, never native-tls. CI enforces
-this via `cargo-deny`. The engine itself ships no TLS code (per D1), but
+this via `cargo-deny`. The engine itself ships no TLS code, but
 its dependency closure cannot pull in OpenSSL bindings.
 
-### D20 — Snapshot harness pattern
+### Snapshot harness pattern
 
 Every runtime surface that can drift (planner output, executor output,
 procedure signatures, algorithm output) is pinned by golden
@@ -507,7 +511,7 @@ snapshot management. See section 7 for the full pattern description.
 
 ---
 
-## 7. Snapshot harness pattern (D20)
+## 7. Snapshot harness pattern
 
 The snapshot harness exists because selene-db has many independent
 producers of structured output that must not drift silently: planner

@@ -6,8 +6,8 @@ selene-db is a single native graph engine — there is no extension/procedure-pa
 
 ## 1. What "embedding" means here
 
-`selene-db` is a **library-only** engine. Per D1 (ISO/IEC 39075:2024
-Clause 4.2.3 does not normatively define a wire format), the engine ships:
+`selene-db` is a **library-only** engine. ISO/IEC 39075:2024 Clause 4.2.3
+does not normatively define a wire format. The engine ships:
 
 - no server process,
 - no transport (HTTP, gRPC, BACnet, anything),
@@ -33,8 +33,10 @@ The engine's job ends at the public crate APIs. Everything outside the in-proces
 
 ## 2. Workspace dependencies
 
-`selene-db` is a multi-crate workspace with no umbrella crate (D8). Pull in
-only what you need. The public packages are published to crates.io under the
+At the current c5 baseline, `selene-db` is a six-crate workspace with no
+umbrella crate. The [2.0 roadmap](v2/README.md) adds the future facade and
+catalog in M02. Pull in only what exists at your source revision. The current
+public packages use the crates.io
 `selene-db-*` namespace. The examples use the current source coordinate,
 `2.0.0-alpha.1`, which may not yet be published. Use `package = ...` aliases so
 the Rust crate names remain `selene_core`, `selene_graph`, and so on.
@@ -100,7 +102,7 @@ posture.
 
 selene-db is a single native engine — there is no extension/procedure-pack model and nothing to load at runtime. `CALL` is served by the one frozen native `BuiltinProcedureRegistry` (`selene-gql/src/runtime/builtin_registry.rs`), constructed with `BuiltinProcedureRegistry::new()`. It registers exactly 69 procedures, fixed at construction:
 
-- 49 platform built-ins covering health, feature reporting, verification, compaction stats, scalar/vector/text index management, graph reachability, vector search and scoring, BM25 scoring, JSON candidate production, Reciprocal Rank Fusion, and maintenance;
+- 50 platform built-ins covering health, feature reporting, verification, compaction stats, scalar/vector/text index management, graph reachability, vector search and scoring, BM25 scoring, JSON candidate production, Reciprocal Rank Fusion, and maintenance;
 - 19 `algo.*` procedures (projection lifecycle, PageRank, betweenness, label propagation, Louvain, triangle count, WCC, SCC, topological sort, articulation points, bridges, Dijkstra, SSSP, APSP), binding `CALL algo.*` directly over the `selene-algorithms` native API.
 
 `BuiltinProcedureRegistry` implements `selene_gql::ProcedureRegistry`; pass `&registry` everywhere the pipeline asks for `&dyn ProcedureRegistry` (see §6). The `CALL` grammar is plain ISO `CALL` (IW010), unchanged. `SHOW PROCEDURES` enumerates all 69:
@@ -171,13 +173,13 @@ std::thread::spawn(move || {
 });
 ```
 
-`SharedGraph::read()` returns `Arc<SeleneGraph>` — an immutable snapshot. The lock-free read path never blocks on writers (D7).
+`SharedGraph::read()` returns `Arc<SeleneGraph>` — an immutable snapshot. The lock-free read path never blocks on writers.
 
 `SharedGraph` does **not** implement `Drop`-driven persistence. The graph lives entirely in memory; durability is added by wiring `selene-persist` (see §7).
 
 ## 4. The transaction model
 
-selene-db runs **one writer at a time** per graph and **unbounded concurrent readers** (Spec 03 §4, §6). Isolation is **strict-serializable** under a single write lock with lock-free reads (D7, ISO Clause 4.6).
+selene-db runs **one writer at a time** per graph and **unbounded concurrent readers**. Isolation is **strict-serializable** under a single write lock with lock-free reads.
 
 ### 4.1 Begin a write
 
@@ -685,7 +687,7 @@ guard for a larger read transaction, use `recover_guarded(&guard, &registry)`.
 Provider callbacks must not invoke same-directory checkpoint, prune, rotation,
 or MANIFEST publication while the shared guard is held.
 
-Both `IndexProvider` and `RecoveryProvider` exist because `selene-graph` and `selene-persist` are separately layered (D8). Most providers implement both traits with thin shims so that the same derived state is written at snapshot time and re-read at recovery time.
+Both `IndexProvider` and `RecoveryProvider` exist because `selene-graph` and `selene-persist` are separately layered. Most providers implement both traits with thin shims so that the same derived state is written at snapshot time and re-read at recovery time.
 
 #### A successful recovery can still have dropped a commit
 

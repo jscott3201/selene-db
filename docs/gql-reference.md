@@ -4,10 +4,12 @@ This document is the query-author's reference for the GQL surface that
 selene-db exposes. It assumes you have read the README quickstart and can
 build a `SharedGraph` plus an `EmptyProcedureRegistry`.
 
-selene-db targets **ISO/IEC 39075:2024 minimum conformance** plus a curated
-subset of optional features. The parser is **strict ISO GQL**: no Cypher,
-no SQL, no SPARQL grammar. Constructs outside the D1 claimed feature register
-are rejected at parse time by the GQL Flagger (ISO GQL Clause 24.6).
+The current engine implements selected ISO/IEC 39075:2024 GQL syntax and
+semantics plus namespaced extensions. It does not make a blanket minimum- or
+selected-profile conformance claim. The parser keeps a strict GQL boundary: no
+Cypher, SQL, or SPARQL grammar. The current feature register drives parser and
+analyzer admission, but is implementation inventory rather than formal 2.0
+claim evidence. See the [2.0 conformance policy](v2/conformance-policy.md).
 
 For the engine architecture see [`architecture.md`](architecture.md). For
 durability and recovery see
@@ -37,11 +39,13 @@ between `plan` and `execute_statement`.
 
 ---
 
-## 1. What's supported
+## 1. Current implementation inventory
 
-The supported feature set is declared in
-`selene-core::feature_register::SUPPORTED_FEATURES` and rendered for the
-spec docs by the build. The table below summarizes the major clause groups.
+`selene-core::feature_register::SUPPORTED_FEATURES` records the current
+implemented surface and is rendered for existing reference docs. M01 will
+replace it as claim authority with an implication-closed generated profile.
+The table below summarizes current behavior; “Full” and “Partial” describe
+implementation coverage in that row, not formal conformance status.
 
 | Group | Coverage | Notes |
 |---|---|---|
@@ -55,14 +59,14 @@ spec docs by the build. The table below summarizes the major clause groups.
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are claimed (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
 
-Statements outside the claimed feature set fail with a Flagger error during
+Statements outside the registered feature set fail with a Flagger error during
 parsing or analysis, never at runtime.
 
 ---
 
 ## 2. Data types
 
-### Mandatory types (ISO minimum conformance)
+### Core scalar types implemented
 
 | GQL type | Literal syntax | `Value` variant | Notes |
 |:---|:---|:---|:---|
@@ -71,7 +75,7 @@ parsing or analysis, never at runtime.
 | `FLOAT` | `3.14`, `-0.5`, `1.0e6`, `2.5e-3` | `Value::Float` (f64) | IEEE 754 binary64 (feature `GA01`). |
 | `STRING` | `'single quotes'`, `"double quotes"`, `` `accent quotes` ``, `'\n'` escapes | `Value::String(DbString)` | ISO single-, double-, and accent-quoted character strings. Doubled delimiters and backslash escapes are honored unless the literal uses `@` no-escape form. |
 
-### Optional types claimed under D1
+### Additional types in the current register
 
 | GQL type | Literal syntax | `Value` variant | Feature |
 |:---|:---|:---|:---|
@@ -573,7 +577,7 @@ DROP GRAPH analytics IF EXISTS
 ```
 
 `DROP GRAPH` is supported as the implementation-defined
-`IM_DROP_GRAPH` factory-reset surface. Under D1, selene-db embeds exactly
+`IM_DROP_GRAPH` factory-reset surface. In the c5 baseline, selene-db embeds exactly
 one current graph; the parsed graph name is informational and the command
 resets the current session graph. `DROP GRAPH IF EXISTS` parses too; the
 modifier is informational under the same single-graph model.
@@ -748,7 +752,7 @@ procedure output.
 | `selene.json_contains_candidate_nodes`, `selene.json_path_*_candidate_nodes` | Graph | Candidate-scoped JSON filters over explicit `LIST<NODE>` inputs. |
 | `selene.compact` | Maintenance | Compact dead graph rows out of the live store. |
 
-The 49 platform built-ins are registered by the native
+The 50 platform built-ins are registered by the native
 `selene-gql` `BuiltinProcedureRegistry` (the sole frozen production
 `ProcedureRegistry` impl) and documented in its rustdoc.
 
@@ -782,7 +786,7 @@ same indexed edge-property filter group used by global retrieval procedures:
 
 `EmptyProcedureRegistry` is the no-op registry used by the README example.
 A real embedder constructs the native `BuiltinProcedureRegistry`, which is
-frozen at construction (D16): it allocates a fixed set of handles for the 49
+frozen at construction: it allocates a fixed set of handles for the 50
 platform built-ins plus 19 `algo.*` procedures and never changes thereafter
 (`registry_version()` is a constant `0`). It can be shared across threads
 via `Arc`. There are no loadable third-party packs to register.
@@ -828,7 +832,7 @@ execute_statement(&plan_for("COMMIT"), &mut session, &registry)?;
 Mixed catalog-and-data transactions are forbidden (implementation-defined
 choices `IE006`, `IE007`): a transaction may either modify schema or
 modify data, but not both. Feature `GP18` (mixed catalog/data) is not
-claimed under D1.
+present in the current register.
 
 Multi-graph transactions (`GT03`) are not claimed; one transaction touches
 exactly one graph.
@@ -837,8 +841,9 @@ exactly one graph.
 
 ## 10. GQL Flagger
 
-The Flagger (ISO GQL Clause 24.6) rejects constructs outside the D1 claimed
-feature register at parse or analysis time. Rejection happens
+The Flagger rejects constructs outside the current implementation register at
+parse or analysis time. This behavior is implementation inventory, not proof of
+a formal 2.0 claim. Rejection happens
 **before** execution; there is no runtime "unsupported feature" surprise.
 
 Examples of rejected constructs:
@@ -848,7 +853,7 @@ Examples of rejected constructs:
 | `CREATE PROCEDURE pkg.fn() { LET x = 1 RETURN x }` | Procedure-local definitions (`GP05`-`GP13`) are deferred. | Parser error. |
 | `CALL pkg.fn(TABLE rows)` | Binding tables as procedure arguments (`GP14`) are deferred. | Parser error. |
 | `CALL pkg.fn(GRAPH g)` | Graphs as procedure arguments (`GP15`) are deferred. | Parser error. |
-| `CREATE GRAPH demo` | Graph management (`GC04`) is unclaimed under the D1 single-graph embedder model. | Flagger error. |
+| `CREATE GRAPH demo` | Graph management (`GC04`) is absent from the c5 single-graph model. | Flagger error. |
 | `MERGE (n:Person {id: 1})` | `MERGE` mutation lowering is deferred. | Parser error. |
 | `RETURN NULL IS TYPED GRAPH AS ok` | Graph reference value types (`GV60`) are deferred. | Flagger error. |
 | `CAST(x AS FLOAT16)` | Feature `GV20` not claimed. | Flagger error. |
@@ -858,10 +863,11 @@ Examples of rejected constructs:
 
 ### Runtime feature introspection
 
-`CALL selene.feature_status()` surfaces the claimed feature register at
+`CALL selene.feature_status()` surfaces the current implementation register at
 runtime with `feature_id`, `status`, and `rationale` columns. It is backed by
 the `feature_register` module in `selene-core`: `SUPPORTED_FEATURES`,
-`NOT_SUPPORTED_RATIONALE`, and `is_supported`.
+`NOT_SUPPORTED_RATIONALE`, and `is_supported`. This status is not a generated
+2.0 conformance declaration.
 
 ---
 
@@ -885,7 +891,7 @@ diagnostic codes follow the GQLSTATUS table in
 
 ## 12. What's NOT supported
 
-The current D1 surface is deliberately narrow. The list below names what is
+The current c5 surface is deliberately narrow. The list below names what is
 explicitly absent. The canonical rationale is
 `feature_register::NOT_SUPPORTED_RATIONALE`.
 

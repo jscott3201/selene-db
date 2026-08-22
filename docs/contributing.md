@@ -9,8 +9,9 @@ workflow. For the design rationale behind the workspace shape, read
 selene-db is an embeddable Rust property graph engine. It is library-only:
 no server, no transport, no auth, no wire format. Embedders take the
 workspace crates as dependencies and run the engine in-process. That
-posture, combined with strict ISO/IEC 39075:2024 GQL conformance, shapes
-the contribution rules below.
+posture, combined with a strict GQL language boundary, shapes the contribution
+rules below. Formal 2.0 wording is evidence-gated; see the
+[conformance policy](v2/conformance-policy.md).
 
 All package and release work follows the
 [2.0 line and 1.x end-of-life policy](v2/eol-and-version-policy.md). Do not add
@@ -21,19 +22,20 @@ or tags. The alpha version in source is not proof of crates.io publication.
 
 ## 1. Engineering posture
 
-The non-negotiable floors below are codified by workspace lints, CI gates,
-and the numbered architecture decisions in [`architecture.md`](architecture.md#6-architecture-decisions-d1-d21).
+The non-negotiable floors below are codified by workspace lints and repository
+gates. The [finalized 2.0 decisions](v2/decisions/finalized.md) are the program
+authority; older local decision labels in historical documents are not.
 
 | Floor | Mechanism |
 | :--- | :--- |
-| No `unsafe` in selene-db source | `unsafe_code = "forbid"` at workspace level (D9). |
-| Every `pub` item carries rustdoc | `missing_docs = "deny"` at workspace level (D10). |
-| 700 LOC per file cap | CI gate `file-size cap (700 LOC)` (D11). |
-| rustls-only TLS posture | `cargo-deny` deny-list on `native-tls`, `openssl-sys`, `openssl-src`, `schannel`, `security-framework` (D20). |
+| No `unsafe` in selene-db source | `unsafe_code = "forbid"` at workspace level. |
+| Every `pub` item carries rustdoc | `missing_docs = "deny"` at workspace level. |
+| 700 LOC per file cap | CI gate `file-size cap (700 LOC)`. |
+| rustls-only TLS posture | `cargo-deny` deny-list on `native-tls`, `openssl-sys`, `openssl-src`, `schannel`, `security-framework`. |
 | No hand-rolled crypto, TLS, async runtime, or serialization primitives | Delegate to upstream crates: `blake3`, `xxhash-rust`, `rkyv`, `postcard`, `jiff`, `rust_decimal`. |
-| Conventional commits with crate-or-component scope | `type(scope): subject`, for example `feat(selene-gql): ...` or `fix(BRIEF-NN): ...` (D12). |
-| Library only | No server, transport, or auth code anywhere in the workspace (D1). |
-| Strict ISO GQL only | No Cypher, SQL, or SPARQL grammar in the parser (D2). |
+| Conventional commits with crate-or-component scope | `type(scope): subject`, for example `feat(selene-gql): ...` or `fix(BRIEF-NN): ...`. |
+| Library only | No server, transport, or auth code anywhere in the workspace. |
+| Strict GQL boundary | No Cypher, SQL, or SPARQL grammar in the parser. |
 
 The codebase contains zero `unsafe` blocks of its own. Donor code adapted
 from prior forks is scrubbed of `unsafe` before integration; where a fast
@@ -79,8 +81,7 @@ automatically when you `cd` into the workspace.
 
 | Tool | Purpose |
 | :--- | :--- |
-| `cargo-fuzz` (nightly) | Run the GQL parser fuzz harness. CI runs it on Linux only; local fuzzing is optional. |
-| `valgrind` | Required by `iai-callgrind` for the iai measurement layer. Linux only; macOS does not ship valgrind, and `scripts/run-benches.sh --layer iai` will refuse to run there. |
+| `cargo-fuzz` (nightly) | Run the GQL parser fuzz harness. Release CI runs it on Linux; local fuzzing is risk-driven. |
 
 Install the cargo helpers:
 
@@ -121,8 +122,9 @@ The full test suite runs across the workspace:
 cargo test --workspace --all-features
 ```
 
-CI runs `cargo test --workspace --locked --all-features` on both Ubuntu
-and macOS. Match that locally before opening a PR.
+The c5 development-PR workflow does not compile Rust. Run the tests required by
+the owning work item locally; the release workflow supplies the comprehensive
+Linux/macOS gate. M00-PR03 owns the future development compile/test lane.
 
 Per-crate test runs are fine for tight iteration:
 
@@ -147,9 +149,8 @@ The workspace uses four kinds of tests:
   silently (planner, executor, built-in procedure signatures, algorithm
   result shapes, recovery results).
 
-See [`architecture.md`](architecture.md#7-snapshot-harness-pattern-d21)
-for the snapshot-harness pattern (decision D21) and the pure-mirror
-invariant.
+See [`architecture.md`](architecture.md#7-snapshot-harness-pattern) for the
+snapshot-harness pattern and pure-mirror invariant.
 
 ---
 
@@ -189,35 +190,31 @@ opt-ins; do not paper over a warning with `--allow` on the command line.
 If a lint is genuinely wrong for a site, add a narrow `#[allow(...)]`
 with a comment that explains why.
 
-There are no project-managed git hooks; configure your editor or a
-personal `pre-commit` to run `cargo fmt` and `cargo clippy` if you want
-local feedback.
+Install the project-managed hooks once with `scripts/install-hooks.sh`.
+`.githooks/pre-commit` mirrors cheap development-PR checks, while
+`.githooks/pre-push` runs workspace clippy.
 
 ---
 
 ## 6. CI gates
 
-CI runs on every pull request against `main` and on `workflow_dispatch`.
-The workflow lives at [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
-Every gate below must be green before a PR can merge.
+The development workflow lives at
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml). It runs on non-draft
+PRs to `development` and on manual dispatch. At the c5 baseline it is a cheap
+gate; M00-PR03 owns the future compile/test lane and 2.0 plan wiring.
 
 | Gate | What it checks |
 | :--- | :--- |
 | `fmt` | `cargo fmt --all --check` on Ubuntu. |
-| `clippy (ubuntu-latest, macos-latest)` | `cargo clippy --workspace --all-targets --locked -- -D warnings` on both platforms. |
-| `test (ubuntu-latest, macos-latest)` | `cargo test --workspace --locked --all-features` on both platforms. |
-| `parse-fuzz` | `cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=60` against `crates/selene-gql/fuzz`, Linux only. The fuzzer is seeded from the positive GQL corpus in `crates/selene-testing/corpus/positive`. |
-| `cargo-deny` | `cargo deny check bans licenses sources` against [`deny.toml`](../deny.toml): license allow-list, banned-crate list (rustls posture), source allow-list (crates.io only, git deps must be sha-pinned). |
-| `cargo-audit` | `cargo audit` against the RustSec advisory database. Yanked crates fail. |
 | `file-size cap (700 LOC)` | `.github/scripts/check-file-size.sh` counts non-empty, non-comment lines in every tracked `*.rs` file and fails if any exceeds 700. |
 | `no-secret scan` | `.github/scripts/check-no-secrets.sh` greps tracked files for AWS access key ids, private-key blocks, Slack tokens, GitHub tokens, and `sk-`-prefixed API tokens. |
 | `bench invocation lint` | `.github/scripts/check-bench-invocation.sh`, `.github/scripts/check-mimalloc-dev-dep.sh`, and `scripts/run-benches.test.sh` together verify that no workflow or shell script invokes `cargo bench --workspace` or wraps `cargo bench` in a parallel runner, and that `mimalloc` stays a dev-only dep. |
-| `third-party attribution current` | `.github/scripts/check-thirdparty-current.sh` regenerates `THIRDPARTY.md` with `cargo about generate about.hbs` and fails on drift. |
+| `doc constants` | `.github/scripts/check-doc-constants.sh` checks source-count claims. |
+| Dependency gates | `cargo-deny` and third-party attribution run when manifests change. |
 
-Gates that depend on `Cargo.lock` (`cargo-deny`, `cargo-audit`,
-`third-party attribution current`) short-circuit to a no-op when the
-lockfile is absent. Once the lockfile exists, they are unconditionally
-enforced.
+The comprehensive release workflow for PRs to `main` owns clippy, nextest,
+doctests, audit/deny, attribution, macOS, and fuzz coverage. Local work-item
+gates remain required even when development CI is cheaper.
 
 ### Benchmarks are not a CI gate
 
@@ -231,19 +228,18 @@ re-introduces a parallel invocation.
 To run benches locally:
 
 ```bash
-# Quick smoke profile, criterion only.
-scripts/run-benches.sh --profile quick --layer criterion
+# Curated smoke profile.
+scripts/run-benches.sh --smoke
 
-# Full publish-quality profile, both layers (iai requires Linux + valgrind).
-scripts/run-benches.sh --profile full --layer both
+# One full-profile Criterion target.
+scripts/run-benches.sh --profile full --bench single_graph
 
-# Filter to a single bench by name.
-scripts/run-benches.sh --profile quick --filter graph_node_fetch
+# Filter one target by Criterion ID.
+scripts/run-benches.sh --profile quick --bench single_graph --filter node_fetch
 ```
 
-Trend tracking lives in committed perf-baseline documents under
-[`_design/`](../_design) and in [`BENCHMARKS.md`](../BENCHMARKS.md).
-There is no gh-pages dashboard.
+The runner is Criterion-only. Registry, command, and current evidence records
+live in [`BENCHMARKS.md`](../BENCHMARKS.md).
 
 ---
 
@@ -257,13 +253,13 @@ hyphenated slug.
 
 ### Commit messages
 
-Conventional commits with a crate-or-component scope (decision D12):
+Use conventional commits with a crate-or-component scope:
 
 ```text
 feat(selene-gql): add OPTIONAL-MATCH null padding for typed bindings
 fix(selene-persist): cover NewDecoderErrors in recovery match arm
 chore(BRIEF-NN): close milestone after merge
-docs(architecture): document D21 snapshot harness mechanics
+docs(v2): install the program contract
 ```
 
 Allowed types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`.
@@ -296,37 +292,23 @@ the author is required (walk the diff once after CI finishes) and an
 external reviewer must sign off via the GitHub review surface. Inline
 findings are resolved per-thread via reply, not by blanket dismissal.
 
----
-
-## 8. Architecture decisions (D1-D21)
-
-The workspace shape is codified by twenty-one numbered decisions. They
-are the canonical reference for "why is this crate split this way" and
-"why does the engine refuse to do X." See
-[`architecture.md`](architecture.md#6-architecture-decisions-d1-d21)
-for the full list. The most contribution-relevant decisions are:
-
-| Decision | Subject |
-| :--- | :--- |
-| D1 | Library only; no server, transport, or auth. |
-| D2 | Strict ISO GQL parser; no Cypher / SQL / SPARQL. |
-| D5 | Non-graph capabilities live in separate dedicated projects, not in `selene-graph`. |
-| D7 | Concurrency primitives: `ArcSwap`, `parking_lot`, `immutable-chunkmap`, `RoaringBitmap`, `triomphe`. |
-| D8 | Multi-crate workspace, no umbrella facade. |
-| D9 | `#![forbid(unsafe_code)]` workspace-wide. |
-| D10 | `missing_docs = "deny"` workspace-wide. |
-| D11 | 700 LOC per-file cap. |
-| D12 | Conventional commits with crate-or-component scope. |
-| D18 | Lifecycle audit through the mutation funnel; no parallel ledger. |
-| D20 | rustls-only TLS posture. |
-| D21 | Snapshot harness pattern for output drift. |
-
-If you find yourself fighting one of these decisions, surface the
-conflict in your PR description before reshaping the workspace.
+For 2.0 work, follow the [PASS/FIX/REPLAN protocol](v2/review-protocol.md).
+An implementation agent opens a non-draft PR and stops. The repository owner
+alone merges after PASS and green required checks.
 
 ---
 
-## 9. Snapshot harness pattern (D21)
+## 8. 2.0 program decisions
+
+The canonical architecture and governance authority is
+[`docs/v2/decisions/finalized.md`](v2/decisions/finalized.md). Read the owning
+work item with those decisions before editing. A conflicting current-source fact
+returns REPLAN; it is not permission to reinterpret a decision or preserve a
+superseded 1.x contract.
+
+---
+
+## 9. Snapshot harness pattern
 
 Every runtime surface that can drift silently is pinned by golden
 `.snap` files: planner output, executor output, built-in procedure
@@ -350,23 +332,26 @@ each anchor row.
 
 When you add a snapshot golden, accept the rendered output via
 `cargo insta review` and commit the `.snap` file alongside the test.
-See [`architecture.md`](architecture.md#7-snapshot-harness-pattern-d21)
+See [`architecture.md`](architecture.md#7-snapshot-harness-pattern)
 for the full discussion.
 
 ---
 
 ## 10. Adding a new feature gate
 
-selene-db tracks ISO/IEC 39075:2024 GQL conformance through an explicit
-feature register in `selene-core`. The Flagger (Clause 24.6) rejects
-any construct outside the claimed register at parse time.
+At the c5 baseline, `selene-core` carries the parser-visible feature inventory.
+It does not establish a formal 2.0 claim. M01 replaces claim authority with the
+generated profile described by the
+[conformance policy](v2/conformance-policy.md). Until that cutover, keep runtime
+and parser behavior synchronized with the current register and update evidence
+without strengthening public claim wording.
 
 If you implement an ISO optional feature:
 
 1. Add the register entry in `selene-core` with the ISO feature id
    (for example `GG02`, `GT01`, `IW010`).
-2. Wire the parser and analyzer to admit the construct only when the
-   register flags it claimed.
+2. Wire the parser and analyzer to admit the construct only when the current
+   register reports it implemented.
 3. Add positive corpus entries under `crates/selene-testing/corpus/positive`
    and negative corpus entries under `crates/selene-testing/corpus/negative`
    if the construct has rejectable variants.
@@ -384,14 +369,14 @@ Flagger must still admit it; do not pretend it is standard.
 
 selene-db is a single native engine: there is no procedure-pack model.
 All `CALL`-able procedures are registered natively in the one frozen
-`selene_gql::runtime::builtin_registry::BuiltinProcedureRegistry` (D16) —
-the 49 `selene.*` platform built-ins plus the 19 `algo.*` procedures.
+`selene_gql::runtime::builtin_registry::BuiltinProcedureRegistry` —
+the 50 `selene.*` platform built-ins plus the 19 `algo.*` procedures.
 
 The high-level flow is:
 
 1. Decide the tier: read-tier procedures get a `GraphContext`,
    write-tier procedures get a `MutationContext`. The planner enforces
-   tier compatibility at plan time (D17).
+   tier compatibility at plan time.
 2. Author the procedure body as a native function over its `Context`
    plus row-shaped inputs that returns row-shaped outputs. For an
    algorithm, add the native free function to `selene-algorithms` first
@@ -477,22 +462,20 @@ generate about.hbs > THIRDPARTY.md`. Do not hand-edit it. CI fails the
 
 ## 14. What NOT to add
 
-Some changes are out of scope by decision:
+Some changes are out of scope:
 
-- **No server, transport, or auth code** anywhere in the workspace (D1).
+- **No server, transport, or auth code** anywhere in the workspace.
   selene-db is library-only; embedders own the network and policy
   surfaces. ISO 39075 Clause 4.2.3 puts no wire format in scope.
-- **No graph types in `selene-persist`** (D5, D14). The persistence
+- **No graph types in `selene-persist`.** The persistence
   crate sees `&[Change]` going in and a `RecoveryResult` coming out.
   It must never grow a dependency on `selene-graph` or `selene-core`'s
   graph-shaped types.
-- **No non-graph types in `selene-graph`** (D5). The graph crate ships
-  pure graph storage. Index integration plugs in through the
-  `IndexProvider` trait; `CALL`-able procedures live one layer up in the
-  native `BuiltinProcedureRegistry` in `selene-gql` (D16), never in the
-  graph crate. Non-graph capabilities (vectors, time-series, RDF) are
-  separate dedicated projects, not in-tree.
-- **No `unsafe` Rust** anywhere in selene-db's own source (D9). The
+- **No extension-pack split.** Vectors, text, JSON, indexes, algorithms, and
+  native procedures are in-tree engine capabilities. Keep storage ownership in
+  `selene-graph`, algorithms in `selene-algorithms`, and `CALL` registration in
+  the native `BuiltinProcedureRegistry` in `selene-gql`.
+- **No `unsafe` Rust** anywhere in selene-db's own source. The
   lint is `forbid`, not `deny`; you cannot override it locally. If a
   performance path seems to need `unsafe`, escalate the design in the
   PR description before writing the code.
@@ -501,24 +484,26 @@ Some changes are out of scope by decision:
   `postcard`, `jiff`, `rust_decimal`. The engine reserves the right
   to vendor a dependency if needed, but does not reimplement these
   surfaces.
-- **No Cypher / SQL / SPARQL grammar in the parser** (D2). The query
-  language is ISO/IEC 39075:2024 GQL. Constructs outside the claimed
-  feature register are rejected by the Flagger at parse time. If you
+- **No Cypher / SQL / SPARQL grammar in the parser.** The query
+  language is ISO/IEC 39075:2024 GQL. Constructs outside the current
+  implementation register are rejected by the Flagger at parse time. If you
   want to admit a new optional feature, add the feature register
   entry first.
 - **No `cargo bench --workspace`** in any script or workflow. Use
   `scripts/run-benches.sh` so bench binaries run sequentially. The
   `bench invocation lint` CI gate enforces this.
 - **No native-tls, openssl-sys, schannel, or security-framework** in
-  the transitive dependency closure (D20). `cargo-deny` enforces the
+  the transitive dependency closure. `cargo-deny` enforces the
   ban list.
 
 ---
 
 ## See also
 
-- [`architecture.md`](architecture.md) — crate layout, threading
-  model, persistence design, D1-D21.
+- [`architecture.md`](architecture.md) — current crate layout, threading
+  model, and persistence design.
+- [`v2/README.md`](v2/README.md) — target decisions, milestones, work items,
+  and review protocol.
 - [`embedding-guide.md`](embedding-guide.md) — using selene-db as a
   library in an application.
 - [`getting-started.md`](getting-started.md) — install, first query,
