@@ -70,7 +70,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest
+          tool: nextest@0.9.143
+          fallback: none
       - name: cargo nextest + doctests
         run: |
           cargo nextest run --workspace --locked --all-features

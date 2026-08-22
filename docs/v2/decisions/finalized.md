@@ -47,7 +47,7 @@ alternatives, consequences, and the smallest affected plan delta.
 <a id="d-021"></a>
 - **D-021 · PR sizing:** Default PR cap is one invariant, at most 25 production files and roughly 1,500 net non-generated lines. Exceeding the cap requires stop/replan or an explicit reviewed exception.
 <a id="d-022"></a>
-- **D-022 · Review control:** OpenCode opens a non-draft PR and stops. The assistant returns PASS, FIX, or REPLAN. Agents never self-merge 2.0 work.
+- **D-022 · Review control:** Implementers edit and test only. Orchestrators own Git history, non-draft PR mutations, consolidated comments from an independent read-only reviewer pair, and eligible authorized merges. Merge requires an unchanged reviewed head, green required exact-head checks, Blocker/Major-clean final review, repository-policy permission, clean scope/worktree state, and explicit user authorization; a changed head voids PASS.
 
 ## Consequence order
 
@@ -63,8 +63,8 @@ alternatives, consequences, and the smallest affected plan delta.
 REPLAN is required before restoring 1.x support, changing the database/catalog
 ownership root, adding nested directories, MVCC, multiple commit-critical
 providers, a server, plugins, or distributed execution, weakening the evidence
-gate, exposing physical rows, retaining a deleted bridge, or permitting an
-agent to merge its own work.
+gate, exposing physical rows, retaining a deleted bridge, collapsing the
+implementer/orchestrator/reviewer separation, or bypassing merge eligibility.
 
 Physical choices remain evidence-driven only in their owning work items:
 collection backends in M08-PR06, joins in M06-PR04, active-row representation

@@ -2,32 +2,40 @@
 
 ## Roles
 
-**Implementation agent**
+**Implementer**
 
 - Reads repository instructions, the program entry point, owning milestone,
   exact work item, current source, tests, and relevant issue evidence.
 - Implements one bounded slice and runs its required gates.
-- Opens a non-draft PR to `development`, writes the handoff, and stops.
-- Never merges, self-approves, reacts, changes protection, tags, or publishes.
+- Returns the tested worktree and handoff without staging, committing, pushing,
+  creating or updating a PR, reviewing, or merging.
 
-**Assistant reviewer**
+**Orchestrator**
 
-- Reviews the exact diff, handoff, source context, tests, generated evidence,
-  and CI at named SHAs.
-- Checks scope, architecture, semantics, diagnostics, performance evidence,
-  failure behavior, and bridge deletion.
-- Returns one verdict: PASS, FIX, or REPLAN.
+- Owns commits, pushes, non-draft PR creation and updates, CI polling, and the
+  single consolidated comment that carries independent review results.
+- Keeps the implementation and reviewer conclusions separate from its own.
+- May merge only after every eligibility condition below is satisfied and the
+  user has explicitly authorized merge.
 
-**Repository owner**
+**Independent read-only reviewer pair**
 
-- Resolves product decisions raised by REPLAN.
-- Alone merges after PASS and green required checks.
-- Performs protected branch, archive, tag, release, and publication actions.
+- Each reviewer inspects the exact diff, handoff, source context, tests,
+  generated evidence, and CI at the same named head SHA.
+- Each independently checks scope, architecture, semantics, diagnostics,
+  performance evidence, failure behavior, and bridge deletion.
+- Reviewers return PASS, FIX, or REPLAN without editing, approving, reacting,
+  merging, or adopting the implementer or orchestrator's conclusions.
+
+The repository owner resolves product decisions raised by REPLAN and performs
+settings, protected-branch, archive, release, publication, and tag actions when
+separately authorized.
 
 ## Verdicts
 
 - **PASS:** the outcome, acceptance evidence, scope, and deletion obligations
-  are satisfied. PASS authorizes an owner decision; it does not merge.
+  are satisfied at the reviewed head. PASS is evidence for merge eligibility;
+  it is not a merge action or approval.
 - **FIX:** the plan remains valid and one bounded repair batch can correct the
   same PR. Findings name severity and required evidence.
 - **REPLAN:** implementation facts invalidate the boundary, dependency order,
@@ -67,6 +75,37 @@ Reviewer questions:
 
 Missing commands are not green. The handoff states why each was skipped.
 
+## Merge eligibility and required checks
+
+The orchestrator may merge only when all of these conditions hold:
+
+- the final reviewed head is unchanged;
+- required checks report green for that exact head;
+- the final review pair is Blocker/Major-clean;
+- repository policy and branch protection permit merge;
+- the PR scope and implementation worktree state are clean; and
+- the user has explicitly authorized merge. Authorization may be a standing
+  instruction for the active session.
+
+A changed head voids PASS and requires review under the bounded loop. No role
+may infer self-approval, auto-merge, release, publication, tagging, reactions,
+or branch-protection mutation from PASS or merge authorization.
+
+After M00-PR03 merges, the desired required contexts on `development` are:
+
+- `fmt`
+- `file-size cap (700 LOC)`
+- `no-secret scan`
+- `bench invocation lint`
+- `rust compile and test`
+- `2.0 plan contract`
+
+Before M00-PR03, authenticated settings show only the first four contexts and
+no required-review rule. Adding the two contexts is a post-merge owner/settings
+action; this PR does not mutate branch protection. The independent reviewer
+pair is the configured 2.0 review control, so the policy does not require a
+GitHub self-approval that the acting account cannot provide.
+
 ## Finding severity
 
 - **Blocker:** data loss, atomicity/recovery error, claim overstatement,
@@ -80,11 +119,12 @@ Missing commands are not green. The handoff states why each was skipped.
 
 ## Bounded review loop
 
-Each cycle reviews one immutable head SHA. Cycle 1 may produce one batched
-repair for confirmed Blocker and Major findings. Cycle 2 reviews the repaired
-head and must be Blocker/Major-clean or return REPLAN. There is no third cycle.
-Minor and Follow-up observations are tracked without changing the PR and do not
-trigger the repair loop.
+Each cycle reviews one immutable head SHA. Both independent reviewers examine
+that same head. Cycle 1 may produce one batched repair for confirmed Blocker and
+Major findings. Cycle 2 reviews the repaired head and must be
+Blocker/Major-clean or return REPLAN. There is no third cycle. Minor and
+Follow-up observations are tracked without changing the PR and do not trigger
+the repair loop.
 
-After owner merge, update plan state from the merged integration head. PASS on
-an earlier head is void if the PR changes.
+After an eligible authorized merge, update plan state from the merged
+integration head. PASS on an earlier head is void if the PR changes.

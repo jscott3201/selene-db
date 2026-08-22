@@ -1,7 +1,7 @@
 # Release gate for selene-db — runs on PRs into `main` (i.e. `development` → `main`).
 #
 # Workflow model (2026-05-28): everyday Brief work merges into `development`
-# behind the cheap `ci.yml` gate + local hooks. A release batches `development`
+# behind the routine `ci.yml` gate + local hooks. A release batches `development`
 # into a single PR against `main`; THIS workflow is the comprehensive pre-merge
 # gate that runs everything the fast gate skipped — full build, lint, tests,
 # doctests, macOS validation, dependency audit, and a parser fuzz pass.
@@ -63,6 +63,15 @@ jobs:
       - uses: actions/checkout@v7
       - run: bash .github/scripts/check-repository-home.sh .
 
+  v2-plan-contract:
+    name: 2.0 plan contract
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 -B .github/scripts/check-v2-plan.py --root .
+      - run: python3 -B .github/scripts/check-v2-plan.test.py
+
   clippy:
     name: clippy (${{ matrix.os }})
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
@@ -97,7 +106,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest
+          tool: nextest@0.9.143
+          fallback: none
       - name: cargo nextest + doctests
         run: |
           cargo nextest run --workspace --locked --all-features --profile ci
@@ -143,7 +153,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-about
+          tool: cargo-about@0.9.2
+          fallback: none
       - run: bash .github/scripts/check-thirdparty-current.sh
 
   file-size-cap:

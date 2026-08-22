@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# selene-db fast pre-commit gate — mirrors the cheap PR->development CI.
-# Heavy checks (clippy, tests) run in .githooks/pre-push.
+# selene-db fast pre-commit gate — mirrors the cheap portion of development CI.
+# Clippy runs in .githooks/pre-push; workspace nextest runs in development CI.
 # Skip once:    git commit --no-verify
 # Skip session: export SELENE_SKIP_HOOKS=1
 set -euo pipefail

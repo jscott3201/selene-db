@@ -66,13 +66,13 @@ Make the support and version break executable: archive the final 1.x source snap
 ### Bridge and deletion
 
 - No bridge. The PR intentionally removes compatibility promises.
-- After merge, repository owner creates and protects the archive branch/tag; the agent does not merge or perform owner-only actions.
+- After merge, the repository owner creates and protects the archive branch/tag; implementers do not perform Git, GitHub, settings, release, or archive mutations.
 
 <a id="m00-pr02"></a>
 ## M00-PR02 — Commit the Finalized 2.0 Architecture and Milestone Contract
 
 - **Owner:** M00
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** Medium / M
 - **Dependencies:** M00-PR01
 - **Issues:** None
@@ -84,7 +84,7 @@ Install the approved architecture decisions, master milestone map, PR review pro
 
 - Add the finalized decision record covering product boundary, facade, catalog scope, conformance policy, contexts, identity, edge directionality, compiler, executor, constraints/indexes, persistence, extensions, and release criteria.
 - Add the milestone/PR package or a repository-native copy of its canonical documents under tracked `docs/v2/` paths; underscore working directories remain untracked.
-- Add the PASS/FIX/REPLAN review protocol and explicit “agent opens PR and stops” rule.
+- Add the PASS/FIX/REPLAN review protocol with separate implementer, orchestrator, and independent read-only reviewer roles.
 - Map every current open issue to its owning 2.0 PR and state that issues are closed only by the owning implementation PR.
 - Link 2.0 docs from README and AGENTS without turning AGENTS into a fast-moving PR ledger.
 - Record source snapshot, assumptions, research boundaries, and the fact that the initial review did not independently execute the Rust suite.
@@ -101,7 +101,7 @@ Install the approved architecture decisions, master milestone map, PR review pro
 - All relative links in the 2.0 documentation resolve in a link-check script.
 - The documented milestone and PR counts match the canonical plan data.
 - The seven current open issues each map to exactly one owning PR.
-- AGENTS clearly says agents must not merge 2.0 PRs and must include the required handoff fields.
+- AGENTS clearly separates implementer edit/test work from orchestrator Git, PR, review-comment, and eligible authorized merge mutations and includes the required handoff fields.
 - No tracked document directs future work into a gitignored underscore directory.
 - ISO references use clause/feature/implementation-defined IDs and paraphrase rather than reproducing the standard.
 
@@ -115,7 +115,7 @@ Install the approved architecture decisions, master milestone map, PR review pro
 ### Review focus
 
 - Decision text matches the finalized package exactly.
-- No hidden optionality around 1.x support or no-auto-merge.
+- No hidden optionality around 1.x support and no ambiguity in the corrected role or merge-eligibility model.
 - PR slices are implementation-sized rather than broad epics.
 - Tracked versus local working-document rules are coherent.
 
@@ -140,16 +140,16 @@ Install the approved architecture decisions, master milestone map, PR review pro
 - **Issues:** None
 - **Commit scope:** `ci`
 
-Turn the 2.0 review contract into repository automation: fast but real Rust checks on development PRs, plan metadata validation, and a mandatory human/assistant review stop before merge.
+Turn the 2.0 operating model into repository automation: practical Rust checks on every non-draft development PR, deterministic plan validation, complete handoff evidence, and exact-head merge eligibility.
 
 ### Scope
 
 - Add a development-PR Rust compile/test lane that is bounded enough for routine work but cannot accept syntactically valid, uncompiled architecture changes.
 - Validate milestone/PR identifiers, dependency references, issue ownership, and generated tracker freshness.
 - Install a PR template requiring plan ID, scope, deviations, tests, benchmarks, bridge/deletion obligations, and handoff summary.
-- Document and, where GitHub settings permit, require non-draft PRs and review approval before merge.
+- Document non-draft PR handling, the independent reviewer pair, exact-head merge eligibility, and the post-merge branch-protection settings action.
 - Keep full cross-platform, audit, fuzz, and exhaustive gates on the main/release path while defining risk-triggered gates for each PR.
-- Remove any instruction that lets an OpenCode agent merge after its own validation.
+- Replace the blanket agent merge prohibition with the corrected implementer/orchestrator separation and explicit authorization conditions.
 
 ### Non-goals
 
@@ -160,9 +160,9 @@ Turn the 2.0 review contract into repository automation: fast but real Rust chec
 
 ### Acceptance evidence
 
-- A deliberate Rust compile error in a test branch fails the development workflow.
+- A deliberate Rust compile error in a disposable isolated copy fails the exact `cargo check --workspace --locked --all-features` command invoked by development CI.
 - A broken plan dependency, duplicate PR ID, missing Markdown file, and stale tracker each fail the plan validator fixture tests.
-- PR template includes a checkbox confirming the agent will stop after opening the PR.
+- PR template records the complete handoff, role separation, exact-head review state, and merge-eligibility confirmations without claiming technical enforcement.
 - Release workflow still covers Linux/macOS, nextest, doctests, deny/audit, attribution, parser fuzz, and persist decoder fuzz.
 - Required check names are stable and documented for branch protection configuration.
 - CI does not use secrets or untrusted PR text unsafely in shell commands.
@@ -172,20 +172,20 @@ Turn the 2.0 review contract into repository automation: fast but real Rust chec
 - Add positive and negative fixture tests for the plan validator.
 - Run workflow syntax validation or actionlint when available.
 - Run repository shell-script tests.
-- Use a temporary branch/commit or local workflow simulation to prove the compile lane detects Rust failure.
+- Use a disposable copy outside the repository to prove the exact cargo-check lane detects a deliberate Rust compile failure.
 - Run `git diff --check` and existing secret scan.
 
 ### Review focus
 
 - The routine lane actually compiles/tests code.
 - No unsafe workflow interpolation.
-- No agent self-merge loophole.
+- Role separation and every merge-eligibility condition are explicit and internally consistent.
 - Plan validator is deterministic and does not depend on network access.
 
 ### Stop conditions
 
 - Development CI cost grows beyond the agreed routine budget without a narrower valid gate.
-- Required branch-protection changes cannot be represented or performed by the owner.
+- A required job can be skipped or deadlocked on an eligible non-draft PR.
 - Workflow changes accidentally weaken release gates.
 
 ### Bridge and deletion

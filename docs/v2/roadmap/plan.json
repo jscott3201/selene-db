@@ -43,7 +43,7 @@
         "Archive source at branch `archive/1.x-final` and tag `archive-v1-eol-2026-08-21`; the tag intentionally does not match the release workflow pattern `v*.*.*`.",
         "`development` becomes the sole 2.0 integration branch and workspace packages move to `2.0.0-alpha.1`.",
         "`main` may remain the last published 1.x release line until 2.0 GA, but it is archival rather than maintained.",
-        "OpenCode agents may open non-draft PRs but must never merge them; every PR stops for assistant review."
+        "Implementers edit and test only; orchestrators own Git history, non-draft PR mutations, consolidated independent-review comments, and eligible authorized merges under D-022."
       ],
       "exit": [
         "Repository-facing EOL language is unambiguous and repeated in README, CHANGELOG, contributing/agent guidance, and 2.0 docs.",
@@ -616,7 +616,7 @@
         "The selected profile is implication-closed, all mandatory and claimed feature evidence is green, and Annex B/extension disclosures are generated.",
         "Public API, examples, rustdoc, error handling, release notes, package metadata, and crates.io dry runs are coherent.",
         "Full CI, fuzz, mutation, crash matrix, benchmark guard set, and cross-platform release workflows pass at the release candidate SHA.",
-        "A final assistant review returns PASS before merge/tag/publish."
+        "A final independent reviewer pair returns Blocker/Major-clean PASS on the unchanged exact head before an authorized merge; tag and publication remain separately controlled."
       ],
       "risks": [
         "Reintroducing old graph-root APIs to make native features easier to wire.",
@@ -729,7 +729,7 @@
       ],
       "bridge": [
         "No bridge. The PR intentionally removes compatibility promises.",
-        "After merge, repository owner creates and protects the archive branch/tag; the agent does not merge or perform owner-only actions."
+        "After merge, the repository owner creates and protects the archive branch/tag; implementers do not perform Git, GitHub, settings, release, or archive mutations."
       ],
       "commit_scope": "release",
       "file": "docs/v2/roadmap/work-items-00-04.md#m00-pr01",
@@ -762,7 +762,7 @@
       "scope": [
         "Add the finalized decision record covering product boundary, facade, catalog scope, conformance policy, contexts, identity, edge directionality, compiler, executor, constraints/indexes, persistence, extensions, and release criteria.",
         "Add the milestone/PR package or a repository-native copy of its canonical documents under tracked `docs/v2/` paths; underscore working directories remain untracked.",
-        "Add the PASS/FIX/REPLAN review protocol and explicit “agent opens PR and stops” rule.",
+        "Add the PASS/FIX/REPLAN review protocol with separate implementer, orchestrator, and independent read-only reviewer roles.",
         "Map every current open issue to its owning 2.0 PR and state that issues are closed only by the owning implementation PR.",
         "Link 2.0 docs from README and AGENTS without turning AGENTS into a fast-moving PR ledger.",
         "Record source snapshot, assumptions, research boundaries, and the fact that the initial review did not independently execute the Rust suite."
@@ -783,7 +783,7 @@
         "All relative links in the 2.0 documentation resolve in a link-check script.",
         "The documented milestone and PR counts match the canonical plan data.",
         "The seven current open issues each map to exactly one owning PR.",
-        "AGENTS clearly says agents must not merge 2.0 PRs and must include the required handoff fields.",
+        "AGENTS clearly separates implementer edit/test work from orchestrator Git, PR, review-comment, and eligible authorized merge mutations and includes the required handoff fields.",
         "No tracked document directs future work into a gitignored underscore directory.",
         "ISO references use clause/feature/implementation-defined IDs and paraphrase rather than reproducing the standard."
       ],
@@ -802,7 +802,7 @@
       ],
       "review_focus": [
         "Decision text matches the finalized package exactly.",
-        "No hidden optionality around 1.x support or no-auto-merge.",
+        "No hidden optionality around 1.x support and no ambiguity in the corrected role or merge-eligibility model.",
         "PR slices are implementation-sized rather than broad epics.",
         "Tracked versus local working-document rules are coherent."
       ],
@@ -817,14 +817,14 @@
       ],
       "commit_scope": "docs",
       "file": "docs/v2/roadmap/work-items-00-04.md#m00-pr02",
-      "status": "Unmerged"
+      "status": "Merged"
     },
     {
       "id": "M00-PR03",
       "milestone": "M00",
       "number": 3,
       "title": "Enforce the 2.0 PR, Review, and CI Operating Model",
-      "outcome": "Turn the 2.0 review contract into repository automation: fast but real Rust checks on development PRs, plan metadata validation, and a mandatory human/assistant review stop before merge.",
+      "outcome": "Turn the 2.0 operating model into repository automation: practical Rust checks on every non-draft development PR, deterministic plan validation, complete handoff evidence, and exact-head merge eligibility.",
       "dependencies": [
         "M00-PR02"
       ],
@@ -849,9 +849,9 @@
         "Add a development-PR Rust compile/test lane that is bounded enough for routine work but cannot accept syntactically valid, uncompiled architecture changes.",
         "Validate milestone/PR identifiers, dependency references, issue ownership, and generated tracker freshness.",
         "Install a PR template requiring plan ID, scope, deviations, tests, benchmarks, bridge/deletion obligations, and handoff summary.",
-        "Document and, where GitHub settings permit, require non-draft PRs and review approval before merge.",
+        "Document non-draft PR handling, the independent reviewer pair, exact-head merge eligibility, and the post-merge branch-protection settings action.",
         "Keep full cross-platform, audit, fuzz, and exhaustive gates on the main/release path while defining risk-triggered gates for each PR.",
-        "Remove any instruction that lets an OpenCode agent merge after its own validation."
+        "Replace the blanket agent merge prohibition with the corrected implementer/orchestrator separation and explicit authorization conditions."
       ],
       "non_goals": [
         "No self-hosted runner or new CI service.",
@@ -860,16 +860,16 @@
         "No change to engine behavior."
       ],
       "design": [
-        "Development PR minimum: fmt, cargo check, focused nextest or a bounded workspace test profile, clippy for changed crates, existing repository scripts, and plan validation.",
-        "Risk-triggered jobs are selected by changed paths and PR checklist, but authors may always run more.",
+        "Development PR minimum: existing cheap checks, all-features workspace cargo check, all-features workspace nextest with the CI profile, and positive/negative plan validation.",
+        "The Rust and plan jobs run on every eligible non-draft development PR without path filters; dependency-only jobs remain conditional.",
         "Release PR remains the comprehensive cross-platform/fuzz/audit gate.",
-        "Branch protection is an owner action; repository files document the exact required check names and desired approval count.",
+        "Branch protection is a post-merge owner/settings action; required contexts are the existing four plus rust compile and test and 2.0 plan contract, with the independent pair retained as the review control.",
         "Plan validation fails closed on unknown dependencies or duplicate issue ownership."
       ],
       "acceptance": [
-        "A deliberate Rust compile error in a test branch fails the development workflow.",
+        "A deliberate Rust compile error in a disposable isolated copy fails the exact `cargo check --workspace --locked --all-features` command invoked by development CI.",
         "A broken plan dependency, duplicate PR ID, missing Markdown file, and stale tracker each fail the plan validator fixture tests.",
-        "PR template includes a checkbox confirming the agent will stop after opening the PR.",
+        "PR template records the complete handoff, role separation, exact-head review state, and merge-eligibility confirmations without claiming technical enforcement.",
         "Release workflow still covers Linux/macOS, nextest, doctests, deny/audit, attribution, parser fuzz, and persist decoder fuzz.",
         "Required check names are stable and documented for branch protection configuration.",
         "CI does not use secrets or untrusted PR text unsafely in shell commands."
@@ -878,7 +878,7 @@
         "Add positive and negative fixture tests for the plan validator.",
         "Run workflow syntax validation or actionlint when available.",
         "Run repository shell-script tests.",
-        "Use a temporary branch/commit or local workflow simulation to prove the compile lane detects Rust failure.",
+        "Use a disposable copy outside the repository to prove the exact cargo-check lane detects a deliberate Rust compile failure.",
         "Run `git diff --check` and existing secret scan."
       ],
       "benchmarks": [
@@ -886,17 +886,17 @@
       ],
       "docs": [
         "Update `docs/v2/review-protocol.md` with exact checks and verdict states.",
-        "Update AGENTS CI/PR flow and remove self-merge language."
+        "Update AGENTS CI/PR flow with implementer, orchestrator, independent reviewer, and exact-head merge-eligibility language."
       ],
       "review_focus": [
         "The routine lane actually compiles/tests code.",
         "No unsafe workflow interpolation.",
-        "No agent self-merge loophole.",
+        "Role separation and every merge-eligibility condition are explicit and internally consistent.",
         "Plan validator is deterministic and does not depend on network access."
       ],
       "stop_conditions": [
         "Development CI cost grows beyond the agreed routine budget without a narrower valid gate.",
-        "Required branch-protection changes cannot be represented or performed by the owner.",
+        "A required job can be skipped or deadlocked on an eligible non-draft PR.",
         "Workflow changes accidentally weaken release gates."
       ],
       "bridge": [
@@ -6188,7 +6188,7 @@
         "Annex B applicable records have final values/evidence and no IA001 or other mapping mismatch.",
         "Generated declaration includes SHA/profile hash/test result hash/tool version and is reproducible on a clean checkout.",
         "README/release notes cannot claim more than the generated declaration.",
-        "Assistant review verifies at least a sample of each major clause/evidence category before PASS."
+        "The independent reviewer pair verifies at least a sample of each major clause/evidence category before PASS."
       ],
       "tests": [
         "Complete conformance suite and claim gate.",
@@ -6320,7 +6320,7 @@
       "milestone": "M10",
       "number": 7,
       "title": "Run Release Candidate Hardening, Final Review, Tag, and Publish",
-      "outcome": "Produce a clean release candidate SHA, execute the complete cross-platform correctness/durability/conformance/performance/security gate, obtain assistant PASS, and only then merge/tag/publish 2.0.",
+      "outcome": "Produce a clean release candidate SHA, execute the complete cross-platform correctness/durability/conformance/performance/security gate, obtain independent exact-head PASS, and only then perform separately authorized merge, tag, and publication actions.",
       "dependencies": [
         "M10-PR06"
       ],
@@ -6345,14 +6345,14 @@
         "Run Linux/macOS full build, clippy, nextest, doctest, rustdoc, deny, audit, license/notice, secret/file-size/row/version/doc/bench checks.",
         "Run complete parser/persistence/plan fuzz, selected mutation suites, generated crash matrix, conformance claim gate, public API/package dry runs, and benchmark guard set.",
         "Generate release evidence bundle with SHA/toolchains/commands/results/hashes/profile/conformance/format/API/benchmark/crash summaries.",
-        "Open the final development→main non-draft release PR and stop for assistant review; do not merge/tag/publish autonomously.",
-        "After PASS and owner merge, create the approved semver tag and verify crates publish in dependency order plus facade."
+        "Return the final development→main release handoff to the orchestrator, which owns the non-draft PR and any eligible authorized merge.",
+        "After exact-head PASS and authorized merge, the repository owner performs the separately authorized semver tag/publication actions and verifies dependency order plus facade."
       ],
       "non_goals": [
         "No new product feature.",
         "No benchmark tuning without a regression/root-cause PR.",
         "No bypassing failed fuzz/mutation/crash/conformance gates.",
-        "No automatic merge/tag/publish by OpenCode agent."
+        "No self-approval, auto-merge, or implicit tag/publication authority."
       ],
       "design": [
         "Release evidence is generated from a clean tree and content-addressed to the candidate SHA.",
@@ -6365,8 +6365,8 @@
         "Every required gate is green or a formally accepted non-blocking exception is recorded in release evidence and does not undermine correctness/conformance claim.",
         "Crash matrix, fuzz, mutation, and conformance artifacts are tied to the exact candidate SHA.",
         "Benchmark guards show no unexplained regression versus accepted 2.0 section baselines.",
-        "Assistant review verdict is PASS with no unresolved FIX/REPLAN items.",
-        "Release PR is merged by the owner/reviewer, then tag/publish succeeds in dry-run and actual workflows.",
+        "The independent review pair returns PASS on the unchanged exact head with no unresolved Blocker/Major findings.",
+        "The orchestrator merges only after every eligibility condition and explicit user authorization; separately authorized tag/publication then succeeds in dry-run and actual workflows.",
         "Published packages, docs, and generated conformance declaration report the same version/profile/SHA lineage."
       ],
       "tests": [
@@ -6389,12 +6389,12 @@
         "No scope creep or bypass.",
         "Evidence tied to exact SHA.",
         "Conformance wording and format/API freeze.",
-        "Owner-controlled merge/tag/publish."
+        "Orchestrator merge eligibility and separately controlled tag/publication."
       ],
       "stop_conditions": [
         "Any unexplained correctness, crash, fuzz, mutation, conformance, security, or material performance failure.",
         "Candidate changes after evidence without rerun.",
-        "Assistant verdict is FIX or REPLAN.",
+        "The final independent verdict is FIX or REPLAN.",
         "Publish workflow/tag classification is not proven."
       ],
       "bridge": [
@@ -6587,7 +6587,7 @@
     {
       "id": "D-022",
       "area": "Review control",
-      "decision": "OpenCode opens a non-draft PR and stops. The assistant returns PASS, FIX, or REPLAN. Agents never self-merge 2.0 work.",
+      "decision": "Implementers edit and test only. Orchestrators own Git history, non-draft PR mutations, consolidated comments from an independent read-only reviewer pair, and eligible authorized merges. Merge requires an unchanged reviewed head, green required exact-head checks, Blocker/Major-clean final review, repository-policy permission, clean scope/worktree state, and explicit user authorization; a changed head voids PASS.",
       "file": "docs/v2/decisions/finalized.md#d-022"
     }
   ]

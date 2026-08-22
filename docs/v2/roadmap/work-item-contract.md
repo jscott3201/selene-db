@@ -38,12 +38,20 @@ failure and lifecycle semantics, delete the bridge assigned to the slice, and
 run focused gates before package and full gates. An unrun gate is reported as
 unrun with the reason.
 
-## Handoff and stop
+## Handoff and merge eligibility
 
-The agent opens a non-draft PR and stops. Its handoff uses the fields in the
-[review protocol](../review-protocol.md), names every skipped gate and
-deviation, and assigns every remaining bridge. The assistant returns PASS, FIX,
-or REPLAN. The repository owner alone merges after PASS and green checks.
+The implementer returns a tested worktree without staging, committing, pushing,
+creating or updating a PR, reviewing, or merging. Its handoff uses the fields in
+the [review protocol](../review-protocol.md), names every skipped gate and
+deviation, and assigns every remaining bridge. The orchestrator owns Git
+history, the non-draft PR, consolidated independent-review comments, and any
+eligible authorized merge.
+
+Two read-only reviewers return PASS, FIX, or REPLAN for one exact head. Merge
+eligibility requires an unchanged final reviewed head, green required exact-head
+checks, Blocker/Major-clean final review, repository-policy permission, clean
+scope and worktree state, and explicit user authorization. A changed head voids
+PASS.
 
 Stop for REPLAN when a locked decision, dependency, safety assumption,
 conformance boundary, issue owner, or PR-sized scope is invalid. Do not absorb a

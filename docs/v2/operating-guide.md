@@ -38,17 +38,24 @@ breaks the boundary returns REPLAN.
 Independent evidence work may run in parallel. One writer owns integration;
 agents do not edit the same seam concurrently.
 
-## PR and review stop
+## Worktree handoff and review
 
 Use the work item's conventional scope and keep one invariant within D-021.
-The implementation agent opens a non-draft PR and stops. It does not merge,
-self-approve, react, tag, release, or alter protection. The assistant returns
-PASS, FIX, or REPLAN. The repository owner alone merges after PASS and green
-required checks.
+The implementer edits and tests, then returns the worktree and handoff. It does
+not stage, commit, push, create or update a PR, submit a review, or merge. The
+orchestrator owns those Git and GitHub mutations, including the non-draft PR and
+one consolidated comment containing the independent reviewers' conclusions.
 
-M00-PR03 owns CI workflow changes, compile lanes, validator negative fixtures,
-PR template enforcement, branch-protection instructions, and deterministic
-`cargo-about` pinning. Do not pull that work into another slice.
+Two read-only reviewers independently inspect the same immutable head. The
+orchestrator may merge only after that head remains unchanged, required
+exact-head checks are green, final review is Blocker/Major-clean, repository
+policy permits the merge, scope and worktree state are clean, and the user has
+explicitly authorized it. A changed head voids PASS. Self-approval, auto-merge,
+release, publication, tagging, reactions, and branch-protection changes remain
+separate and are not authorized by PASS.
+
+M00-PR03 installs the CI compile lane, validator negative fixtures, PR template,
+branch-protection instructions, and deterministic `cargo-about` pin.
 
 The [required handoff](review-protocol.md) lists exact commands, results,
 skips, evidence paths, deviations, bridge status, risks, and questions. “All
