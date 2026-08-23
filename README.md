@@ -6,8 +6,9 @@ first-class JSON metadata, BM25 full-text search, and local persistence.
 
 It is a library, not a service. There is no bundled database server, wire
 protocol, auth layer, cloud control plane, extension loader, or procedure-pack
-system. Applications link the crates they need, own their network and security
-boundary, and run the engine in process.
+system. Applications depend on the `selene-db` facade, own their network and
+security boundary, and run the engine in process. Lower workspace crates remain
+available for advanced engine work without the facade's 2.x stability promise.
 
 The project north star is strict ISO GQL at the language boundary plus
 pragmatic native retrieval primitives for graph-heavy and agentic-memory
@@ -30,6 +31,7 @@ evidence-gated conformance wording.
 
 | Area | Current surface |
 |---|---|
+| Facade | In-memory `Database` builder, movable lifetime-free sessions, GQL execution, facade-owned diagnostics, and summary-only outcomes. |
 | GQL | Parser, analyzer, planner, optimizer, executor, parameter binding, source-string plan cache, feature-status reporting, and ISO-oriented errors. |
 | Graph storage | In-memory property graph with stable external IDs, dense internal rows, immutable reader snapshots, typed property indexes, composite indexes, and one mutation funnel. |
 | Transactions | Serialized writers, snapshot readers, rollback by non-publication, and provider fanout under the write lock. |
@@ -43,12 +45,15 @@ evidence-gated conformance wording.
 
 ## Workspace Crates
 
-At the `c5c0a985` baseline there is no umbrella facade crate; use the six
-current layers directly. The 2.0 roadmap adds the future `selene-db` facade and
-catalog in M02. They are not present in this source yet.
+`selene-db` is the stability-promised embedding surface. The other crates are
+advanced/internal boundaries unless the facade intentionally re-exports a
+type.
 
 | Crate | Owns |
 |---|---|
+| [`selene-db`](crates/selene-db) | Stable database builder, ownership root, lifetime-free sessions, facade errors, and summary outcomes. |
+| [`selene-catalog`](crates/selene-catalog) | Catalog ownership boundary. M02-PR01 contains only the temporary single-graph bootstrap identity. |
+| [`selene-profile`](crates/selene-profile) | Generated GQL profile, implementation-choice, and conformance-evidence authority. |
 | [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, `JsonValue`, IDs, `DbString`, labels, property maps, schema metadata, codecs, origins, changesets, and core vector kernels. |
 | [`selene-graph`](crates/selene-graph) | Graph storage, transactions, mutation funnel, property/composite/vector/text indexes, exact and ANN vector search, BM25 search, exact JSON search, maintained candidate state, graph type validation, compaction, and recovery providers. |
 | [`selene-persist`](crates/selene-persist) | WAL, snapshots, MANIFEST recovery, retention pruning, and audit log files. It stays below graph semantics. |
@@ -56,72 +61,51 @@ catalog in M02. They are not present in this source yet.
 | [`selene-gql`](crates/selene-gql) | GQL grammar, AST, analysis, planning, optimization, execution, procedure traits, and the built-in procedure registry. |
 | [`selene-testing`](crates/selene-testing) | Test fixtures, graph generators, benchmark corpora, opt-in local/remote embedding helpers, and snapshot-harness utilities. |
 
-The intended dependency direction is:
+The main engine dependency direction is:
 
 ```text
-selene-core -> selene-graph -> selene-algorithms -> selene-gql
+selene-core -> selene-graph -> selene-algorithms -> selene-gql -> selene-db
 ```
 
-`selene-persist` depends on `selene-core` and remains graph-blind.
-`selene-testing` is for tests and benchmarks.
+`selene-profile` feeds runtime profile consumers. `selene-catalog` depends only
+on `selene-core` and `selene-profile`; `selene-db` privately composes the
+catalog and engine layers. `selene-persist` depends on `selene-core` and remains
+graph-blind. `selene-testing` is for tests and benchmarks.
 
 ## Quickstart
 
-Released public packages use the `selene-db-*` namespace on crates.io. The
-example below follows the current source coordinate; confirm the alpha is
-published before using it as a registry dependency. Keep the Rust crate names
-stable with package aliases:
+The example follows the current source coordinate; confirm the alpha is
+published before using it as a registry dependency. A source checkout can use
+the equivalent path dependency.
 
 ```toml
 [dependencies]
-selene-core = { package = "selene-db-core", version = "2.0.0-alpha.1" }
-selene-graph = { package = "selene-db-graph", version = "2.0.0-alpha.1" }
-selene-gql = { package = "selene-db-gql", version = "2.0.0-alpha.1" }
+selene-db = { version = "2.0.0-alpha.1" }
 ```
 
-Create a graph, write through the mutation funnel, and query with GQL:
+Build an in-memory database, then write and query with GQL:
 
 ```rust
-use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
-use selene_gql::{BuiltinProcedureRegistry, Session, StatementOutput};
-use selene_graph::SharedGraph;
+use selene_db::{Database, ExecutionOutcome};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let graph = SharedGraph::new(GraphId::new(1));
+fn main() -> Result<(), selene_db::Error> {
+    let database = Database::builder().build();
+    let session = database.session();
 
-    let person = db_string("Person")?;
-    let name = db_string("name")?;
-
-    let mut tx = graph.begin_write();
-    {
-        let props = PropertyMap::from_pairs([(
-            name,
-            Value::String(db_string("Ada")?),
-        )])?;
-        tx.mutator().create_node(LabelSet::single(person), props)?;
-    }
-    tx.commit()?;
-
-    let registry = BuiltinProcedureRegistry::new();
-    let mut session = Session::new(&graph);
-    let output = session.execute_source(
-        "MATCH (p:Person) RETURN p.name AS name",
-        &registry,
-    )?;
-
-    let StatementOutput::Rows(rows) = output else {
-        panic!("MATCH ... RETURN should return rows");
-    };
-    assert_eq!(rows.row_count(), 1);
+    session.execute("INSERT (:Person { name: 'Ada' })")?;
+    let output = session.execute("MATCH (p:Person) RETURN p")?;
+    assert_eq!(output, ExecutionOutcome::Rows { row_count: 1 });
 
     Ok(())
 }
 ```
 
-For a fuller walk through graph creation, typed properties, parameters,
-transactions, and persistence wiring, start with
-[Getting Started](docs/getting-started.md) and the
-[Embedding Guide](docs/embedding-guide.md).
+The M02-PR01 facade uses one temporary in-memory bootstrap graph and returns
+summary counts rather than row values. It rejects transaction and `SESSION`
+controls because request-local lower sessions cannot preserve their state.
+M02-PR05 removes this adapter after catalog-backed named graphs are available.
+The [Embedding Guide](docs/embedding-guide.md) identifies the stable entry point
+and documents the lower advanced APIs separately.
 
 ## GQL Boundary
 

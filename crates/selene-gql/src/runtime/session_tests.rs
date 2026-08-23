@@ -151,6 +151,40 @@ fn session_without_cache_executes_source_normally() {
 }
 
 #[test]
+fn stateless_source_execution_rejects_controls_before_state_changes() {
+    let graph = SharedGraph::new(GraphId::new(3896));
+    let mut session = Session::new(&graph);
+
+    for source in [
+        "START TRANSACTION",
+        "COMMIT",
+        "ROLLBACK",
+        "SESSION SET VALUE $answer = 42",
+        "SESSION CLOSE",
+    ] {
+        let error = session
+            .execute_source_stateless(source, &EmptyProcedureRegistry)
+            .expect_err(source);
+        assert!(matches!(
+            error,
+            ExecutorError::FeatureNotSupportedYet { .. }
+        ));
+        assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+        assert!(!session.has_active_txn());
+        assert!(!session.is_closed());
+        assert!(session.parameters().is_empty());
+    }
+
+    let output = session
+        .execute_source_stateless("RETURN 1", &EmptyProcedureRegistry)
+        .expect("ordinary source still executes");
+    let StatementOutput::Rows(table) = output else {
+        panic!("RETURN should produce rows");
+    };
+    assert_eq!(table.row_count(), 1);
+}
+
+#[test]
 fn session_with_cache_hits_on_second_source_execute() {
     let graph = SharedGraph::new(GraphId::new(3898));
     let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(4).expect("nonzero"));

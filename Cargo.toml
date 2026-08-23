@@ -1,7 +1,6 @@
 # selene-db workspace root.
 #
-# Multi-crate, no umbrella facade (decision D8 in CLAUDE.md). Members are
-# added as they're built.
+# Workspace members are added as their owning 2.0 work items land.
 #
 # Workspace-level configuration (lints, profile, deps version pins) lives
 # here so each member crate inherits the floor without re-declaring.
@@ -15,6 +14,8 @@ members = [
     "crates/selene-persist",
     "crates/selene-gql",
     "crates/selene-algorithms",
+    "crates/selene-catalog",
+    "crates/selene-db",
     "crates/selene-testing",
 ]
 exclude = ["_spec", "crates/selene-gql/fuzz", "crates/selene-persist/fuzz"]
@@ -86,6 +87,7 @@ wide = "1.6.1"
 stacker = "0.1.25"
 selene-persist = { package = "selene-db-persist", path = "crates/selene-persist", version = "2.0.0-alpha.1" }
 selene-profile = { package = "selene-db-profile", path = "crates/selene-profile", version = "2.0.0-alpha.1" }
+selene-catalog = { package = "selene-db-catalog", path = "crates/selene-catalog", version = "2.0.0-alpha.1" }
 
 # Dev dependencies.
 criterion = "0.8.2"
