@@ -567,7 +567,7 @@ Create closed, independently versioned rule and evidence authorities with canoni
 ## M01-PR06 — Add the Executable Evidence Harness and Release Claim Gate
 
 - **Owner:** M01
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / M
 - **Dependencies:** M01-PR05
 - **Issues:** None

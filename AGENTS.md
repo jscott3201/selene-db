@@ -45,10 +45,11 @@ review protocol, issue ownership, risk register, and conformance policy are the
 portable execution contract. Untracked local notes are supplementary and must
 not be required to execute a work item.
 
-The six-crate, no-facade, row-executor workspace described below is the current
-`c5c0a985` baseline. M01 adds the generated profile authority, M02 adds the
-future `selene-db` facade and catalog, M06 replaces row execution, and M09 adds
-format 2. Do not claim those targets exist before their owning work items merge.
+The no-facade, row-executor workspace at `c5c0a985` is the historical 2.0
+baseline. The current workspace includes the generated profile authority plus
+the `selene-db` facade and `selene-catalog` boundary. M06 replaces row execution,
+and M09 adds format 2. Do not claim those targets exist before their owning work
+items merge.
 
 The implementer edits repository files and runs tests only. It does not stage,
 commit, push, create or update a PR, submit review output, or merge. The
@@ -127,10 +128,13 @@ preserve the same value invariants as runtime writes:
 
 ## Workspace Map
 
-There is no umbrella crate. Keep dependency direction intentional:
+`selene-db` is the stability-promised facade. Keep lower dependency direction
+intentional:
 
-`selene-profile -> selene-core -> selene-graph -> selene-algorithms -> selene-gql`
+`selene-core -> selene-graph -> selene-algorithms -> selene-gql`
 
+`selene-profile` feeds GQL and catalog consumers. `selene-catalog` depends only
+on `selene-core` and `selene-profile`; the facade composes the lower layers.
 `selene-persist` depends on `selene-core` and stays below graph semantics.
 `selene-testing` provides fixtures, corpus helpers, OpenRouter/local embedding
 support, and benchmark profiles for dev-dependencies.
@@ -147,11 +151,13 @@ epoch mutation.
 | Crate | Owns |
 |---|---|
 | `selene-profile` | Typed GQL profile source, validation, canonical hashing, and checked-in runtime/documentation generation. It has no engine-crate dependencies. |
+| `selene-catalog` | Catalog ownership boundary. The M02-PR01 surface is limited to the temporary single-graph bootstrap identity and default names; later M02 work owns durable catalog descriptors and transactions. |
 | `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, `JsonValue`, vector metrics/top-k helpers, `DbString`, schema/value types, the profile compatibility adapter, property maps, codecs, and changesets. |
 | `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, exact BM25 text search, exact JSON search, reusable BM25 postings indexes, recovery provider, compaction, and graph type enforcement. |
 | `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |
 | `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It never depends on GQL. |
 | `selene-gql` | Parser, AST, analyzer, planner, optimizer, executor, procedure tiers, and the concrete native `BuiltinProcedureRegistry`. |
+| `selene-db` | Stable database builder, ownership root, lifetime-free facade sessions, facade diagnostics, and summary outcomes. Lower engine types are not re-exported by default. |
 | `selene-testing` | Shared fixtures, graph generators, OpenRouter/local embedding corpus and client support, benchmark profiles, and snapshot-harness support. |
 
 ## Query And Procedure Surface

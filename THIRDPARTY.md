@@ -3891,7 +3891,9 @@ SOFTWARE.
 
 Used by:
 - selene-db-algorithms v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db-catalog v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - selene-db-core v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
+- selene-db v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - selene-db-gql v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - selene-db-graph v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db
 - selene-db-persist v2.0.0-alpha.1 — https://github.com/jscott3201/selene-db

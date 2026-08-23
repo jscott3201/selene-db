@@ -1,0 +1,22 @@
+[package]
+name = "selene-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Stable embedded database facade for the selene-db GQL engine."
+
+[lib]
+name = "selene_db"
+
+[dependencies]
+selene-catalog.workspace = true
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "2.0.0-alpha.1" }
+selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "2.0.0-alpha.1" }
+selene-gql = { package = "selene-db-gql", path = "../selene-gql", version = "2.0.0-alpha.1" }
+
+[lints]
+workspace = true

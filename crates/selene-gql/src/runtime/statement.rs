@@ -143,6 +143,31 @@ impl Session<'_> {
         source: &str,
         registry: &dyn ProcedureRegistry,
     ) -> Result<StatementOutput, ExecutorError> {
+        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::Stateful)
+    }
+
+    /// Execute one source statement without allowing persistent session state.
+    ///
+    /// This hidden compatibility entry is used by the M02 facade while it
+    /// creates a borrowed lower session per request. It rejects transaction and
+    /// `SESSION` controls after the single parse/plan pass and before execution.
+    /// M02-PR05 removes this adapter when catalog-backed sessions own their
+    /// lower execution state.
+    #[doc(hidden)]
+    pub fn execute_source_stateless(
+        &mut self,
+        source: &str,
+        registry: &dyn ProcedureRegistry,
+    ) -> Result<StatementOutput, ExecutorError> {
+        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::Stateless)
+    }
+
+    fn execute_source_with_policy(
+        &mut self,
+        source: &str,
+        registry: &dyn ProcedureRegistry,
+        policy: SourceExecutionPolicy,
+    ) -> Result<StatementOutput, ExecutorError> {
         let profile_identity = current_profile_identity();
         // ISO/IEC 39075:2024 section 6 GR3 + section 7.3: once a session is
         // closed by `SESSION CLOSE`, every subsequent GQL-request is rejected.
@@ -166,7 +191,7 @@ impl Session<'_> {
                 .as_mut()
                 .and_then(|cache| cache.get(source, schema_version, profile_identity))
         {
-            return execute_statement(&cached, self, registry);
+            return execute_source_plan(&cached, self, registry, policy);
         }
 
         let shared_plan_cache = (!active_txn_has_schema_changes)
@@ -200,7 +225,7 @@ impl Session<'_> {
                     profile_identity,
                 );
             }
-            return execute_statement(&cached, self, registry);
+            return execute_source_plan(&cached, self, registry, policy);
         }
         if top_level_call_candidate
             && let (Some(cache), Some(graph_id)) = (call_plan_cache.as_ref(), cache_graph_id)
@@ -215,7 +240,7 @@ impl Session<'_> {
             })
         {
             metrics::counter_inc(metrics::CALL_PLAN_CACHE_HITS_TOTAL);
-            return execute_statement(&cached, self, registry);
+            return execute_source_plan(&cached, self, registry, policy);
         }
 
         // Codex PR #127 auto-review P2 #2 + P2 #3: compile failures inside an
@@ -256,7 +281,7 @@ impl Session<'_> {
             && let Some(cached) = cache.get(key)
         {
             metrics::counter_inc(metrics::CALL_PLAN_CACHE_HITS_TOTAL);
-            return execute_statement(&cached, self, registry);
+            return execute_source_plan(&cached, self, registry, policy);
         }
 
         let graph_type = self
@@ -281,6 +306,7 @@ impl Session<'_> {
         // plans at hit-cost. EXPLAIN renders the optimized inner plan for free
         // because the optimizer recurses into PipelineOp::ExplainPlan { inner }.
         let plan = Arc::new(self.optimize_plan(lowered));
+        ensure_source_policy(&plan, policy)?;
         let source_arc = Arc::<str>::from(source);
         if !active_txn_has_schema_changes && let Some(cache) = self.plan_cache.as_mut() {
             cache.insert(
@@ -307,7 +333,7 @@ impl Session<'_> {
         if let (Some(cache), Some(key)) = (call_plan_cache, call_plan_key) {
             cache.insert_with_source(key, source_arc, Arc::clone(&plan));
         }
-        execute_statement(&plan, self, registry)
+        execute_source_plan(&plan, self, registry, policy)
     }
 
     /// Run the default optimizer over a freshly-lowered plan.
@@ -341,6 +367,40 @@ impl Session<'_> {
         let ctx = OptimizeContext::new(&caps).with_index_catalog(&catalog);
         optimize(lowered, &ctx)
     }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SourceExecutionPolicy {
+    Stateful,
+    Stateless,
+}
+
+fn execute_source_plan(
+    plan: &ExecutionPlan,
+    session: &mut Session<'_>,
+    registry: &dyn ProcedureRegistry,
+    policy: SourceExecutionPolicy,
+) -> Result<StatementOutput, ExecutorError> {
+    ensure_source_policy(plan, policy)?;
+    execute_statement(plan, session, registry)
+}
+
+fn ensure_source_policy(
+    plan: &ExecutionPlan,
+    policy: SourceExecutionPolicy,
+) -> Result<(), ExecutorError> {
+    if policy == SourceExecutionPolicy::Stateless
+        && matches!(
+            plan.category,
+            StatementCategory::TransactionControl | StatementCategory::SessionControl
+        )
+    {
+        return Err(ExecutorError::FeatureNotSupportedYet {
+            feature: "stateful control in the stateless facade",
+            span: SourceSpan::default(),
+        });
+    }
+    Ok(())
 }
 
 fn is_tx_control_statement(statement: &Statement) -> bool {

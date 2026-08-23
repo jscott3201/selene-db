@@ -15,7 +15,9 @@ does not normatively define a wire format. The engine ships:
 - no principals table, no role catalog, no session store,
 - no metrics endpoint, no admin UI.
 
-What it does ship is a multi-crate Rust workspace. The embedder takes the crates as dependencies, opens a graph in-process, and runs ISO GQL against it.
+The stable entry point is the `selene-db` facade. It opens the in-process engine
+and runs GQL without exposing graph storage handles. Lower workspace crates are
+advanced/internal APIs unless the facade intentionally re-exports a type.
 
 Everything that touches the outside world is the **embedder's** responsibility:
 
@@ -33,23 +35,32 @@ The engine's job ends at the public crate APIs. Everything outside the in-proces
 
 ## 2. Workspace dependencies
 
-At the current c5 baseline, `selene-db` is a six-crate workspace with no
-umbrella crate. The [2.0 roadmap](v2/README.md) adds the future facade and
-catalog in M02. Pull in only what exists at your source revision. The current
-public packages use the crates.io
-`selene-db-*` namespace. The examples use the current source coordinate,
-`2.0.0-alpha.1`, which may not yet be published. Use `package = ...` aliases so
-the Rust crate names remain `selene_core`, `selene_graph`, and so on.
+Applications should depend only on package `selene-db`. The examples use the
+current source coordinate, `2.0.0-alpha.1`, which may not yet be published.
 
 The crate set is layered so transitive footprint stays small:
 
 | Tier | What you can do | Crates to add |
 |:---|:---|:---|
+| Stable facade | Build an in-memory database and execute GQL through movable sessions | `selene-db` |
 | Core graph | Open a `SharedGraph`, mutate via `Mutator`, read snapshots | `selene-core`, `selene-graph` |
 | Core graph + GQL | Run ISO GQL statements (no `CALL`, no persistence) | + `selene-gql` |
 | Core graph + persistence | Direct mutation with WAL + snapshot recovery | + `selene-persist` |
 | Graph algorithms (native API) | `selene-algorithms` free functions + the `GraphAlgorithms` trait, off the GQL path | + `selene-algorithms` |
 | GQL `CALL` (platform built-ins + `algo.*`) | Wire `CALL selene.*` / `CALL algo.*` via the frozen native `BuiltinProcedureRegistry` | + `selene-gql`, `selene-algorithms` |
+
+### Stable facade
+
+```toml
+[dependencies]
+selene-db = { version = "2.0.0-alpha.1" }
+```
+
+M02-PR01 supports one in-memory bootstrap graph and summary-only outcomes.
+Named graphs, persistence configuration, parameters, facade transactions, and
+row-value materialization are not available through the facade yet. The lower
+crate sections below document advanced engine integration and do not carry the
+facade's 2.x stability promise.
 
 ### 2.1 Plain core graph
 
