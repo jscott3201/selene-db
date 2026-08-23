@@ -123,6 +123,40 @@ runner invocation, `scripts/criterion-summary.sh <criterion-id>` prints
 tab-separated sample count, median, mean, standard deviation, and sample p95 in
 milliseconds for quick variance checks.
 
+## §0 selene-catalog
+
+Bench bin: `catalog_descriptors`. It measures canonical-name lookup, typed-ID
+lookup, and `Arc` snapshot clone at 100 and 1,000 schema-owned objects in the
+quick profile. The full profile adds 10,000 objects.
+
+M02-PR02 quick evidence was recorded on 2026-08-23 with Apple M5 (10 cores,
+16 GiB), macOS 26.7 build 25G220, rustc 1.97.1, and the worktree based on
+`7bd53af3f112c4a912e894075ccc9c1ab80494fd`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_descriptors
+```
+
+Two consecutive quick runs produced the following median ranges. The profile's
+10 samples are a smoke envelope, so these rows are recorded evidence rather
+than regression thresholds.
+
+| Bench | 100 objects | 1,000 objects | Notes |
+|---|---:|---:|---|
+| `catalog_descriptor/canonical_name_lookup` | 30.341–30.623 ns | 90.714–109.02 ns | `BTreeMap<CatalogName, CatalogObjectId>` lookup with a pre-canonicalized query. |
+| `catalog_descriptor/snapshot/clone_arc` | 3.6660–4.1816 ns | 3.6604–3.8273 ns | Clone one immutable snapshot handle; descriptor count does not change the operation. |
+| `catalog_descriptor/snapshot/read_by_id` | 4.7855–5.7107 ns | 9.7319–11.730 ns | `BTreeMap` point lookup keyed by typed descriptor ID. |
+
+The bench also prints `CatalogSnapshot::memory_accounting`. This is a
+reproducible structural lower bound, not process resident memory: it sums inline
+descriptor/dictionary key-value sizes and owned string capacities, and excludes
+allocator metadata, `BTreeMap` node slack, and `Arc` control blocks.
+
+| Objects | Descriptors | Accounted bytes / descriptor | Dictionary entries | Accounted bytes / entry |
+|---:|---:|---:|---:|---:|
+| 100 | 103 | 197.40 B | 101 | 95.80 B |
+| 1,000 | 1,003 | 197.94 B | 1,001 | 95.98 B |
+
 ## §1 selene-core
 
 Bench bins: `value_clone`, `vector_wgpu`. `value_clone` measures `Value` /

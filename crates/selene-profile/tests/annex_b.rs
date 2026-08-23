@@ -384,6 +384,76 @@ fn il010_matches_the_production_i64_literal_boundary() {
 }
 
 #[test]
+fn catalog_name_and_descriptor_choices_match_runtime_evidence() {
+    let expected = [
+        ("IA020", AnnexBValue::Boolean(false), true),
+        (
+            "IE003",
+            AnnexBValue::OrderedStringList(&[
+                "Unicode data version 17.0.0",
+                "UAX #31 R1-2 profile of R1-1: XID_Start/XID_Continue plus U+005F LOW LINE at start and continuation",
+                "delimited identifiers use decoded spelling outside the XID repertoire",
+            ]),
+            true,
+        ),
+        (
+            "IV003",
+            AnnexBValue::OrderedIdentifierList(&[
+                "catalog_descriptor",
+                "directory_descriptor",
+                "schema_descriptor",
+                "graph_descriptor",
+                "graph_type_descriptor",
+                "binding_table_descriptor",
+                "procedure_descriptor",
+                "index_descriptor",
+                "constraint_descriptor",
+            ]),
+            false,
+        ),
+        (
+            "IW023",
+            AnnexBValue::OrderedStringList(&[
+                "NFC of decoded spelling",
+                "case-sensitive without case folding",
+                "Unicode scalar value lexicographic ordering",
+            ]),
+            true,
+        ),
+    ];
+
+    for (id, value, stable) in expected {
+        let record = annex_b_by_id(id).expect("catalog choice is generated");
+        let AnnexBDecision::Selected {
+            value: actual,
+            stability,
+            visibility,
+            ..
+        } = record.decision
+        else {
+            panic!("{id} must be selected")
+        };
+        assert_eq!(actual, value, "{id}");
+        assert_eq!(
+            stability,
+            if stable {
+                selene_profile::RuntimeDecisionStability::Stable
+            } else {
+                selene_profile::RuntimeDecisionStability::Provisional
+            },
+            "{id}"
+        );
+        assert_eq!(
+            visibility,
+            selene_profile::RuntimeDecisionVisibility::Public,
+            "{id}"
+        );
+        assert!(record.evidence.contains(&"EVID-CATALOG-TESTS"), "{id}");
+        assert!(record.evidence.contains(&"EVID-CATALOG-DOCS"), "{id}");
+    }
+}
+
+#[test]
 fn generated_markdown_is_complete_and_stable() {
     let profile = parse_profile(SOURCE).expect("profile validates");
     let outputs = render_outputs(&profile).expect("outputs render");

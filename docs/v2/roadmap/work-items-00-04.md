@@ -629,7 +629,7 @@ Bind the static conformance registries to compiled evidence, execute determinist
 ## M02-PR01 — Add the `selene-catalog` and Stable `selene-db` Facade Skeleton
 
 - **Owner:** M02
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / M
 - **Dependencies:** M00-PR04, M01-PR01
 - **Issues:** None

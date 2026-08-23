@@ -1842,9 +1842,15 @@ dependencies = [
 name = "selene-db-catalog"
 version = "2.0.0-alpha.1"
 dependencies = [
+ "criterion",
+ "mimalloc",
+ "proptest",
  "selene-db-core",
  "selene-db-profile",
+ "serde",
  "serde_json",
+ "unicode-ident",
+ "unicode-normalization",
 ]
 
 [[package]]
