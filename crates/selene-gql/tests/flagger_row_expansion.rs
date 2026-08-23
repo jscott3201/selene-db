@@ -1,11 +1,12 @@
 //! Flagger coverage for row-expansion query forms.
 
-use selene_core::{GraphId, feature_register::FeatureId};
+use selene_core::GraphId;
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, TxContext, analyze,
     execute_pattern, execute_pipeline, feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 
 #[test]
 fn for_list_feature_is_supported_and_recorded() {

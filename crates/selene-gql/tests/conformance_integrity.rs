@@ -1,18 +1,23 @@
 //! BRIEF-125 conformance integrity regression coverage.
 
-use selene_core::{
-    CoreError, NodeId,
-    feature_register::{FeatureId, NOT_SUPPORTED_RATIONALE, SUPPORTED_FEATURES},
-    gqlstatus_name,
-};
-use selene_gql::{GqlStatus, ParserError, parse};
+use selene_core::{CoreError, NodeId, gqlstatus_name};
+use selene_gql::{GqlStatus, ParserError};
 use selene_graph::GraphError;
 use selene_persist::PersistError;
+use selene_profile::{CapabilityStatus, FeatureId, capabilities, capability};
+
+fn supported(feature: FeatureId) -> bool {
+    capability(feature).is_some_and(|record| record.status == CapabilityStatus::Supported)
+}
+
+fn has_rationale(feature: FeatureId) -> bool {
+    capability(feature).is_some_and(|record| !record.non_support_rationale.is_empty())
+}
 
 #[test]
 fn unsupported_graph_management_surfaces_emit_42n01() {
     let source = "CREATE GRAPH demo";
-    let error = parse(source).expect_err(source);
+    let error = selene_gql::parse(source).expect_err(source);
     assert_eq!(error.gqlstatus().as_str(), "42N01");
     let ParserError::UnsupportedFeature { feature_id, .. } = error else {
         panic!("expected UnsupportedFeature for {source:?}");
@@ -28,12 +33,8 @@ fn path_mode_features_are_runtime_supported() {
         FeatureId::G012,
         FeatureId::G013,
     ] {
-        assert!(SUPPORTED_FEATURES.contains(&feature));
-        assert!(
-            !NOT_SUPPORTED_RATIONALE
-                .iter()
-                .any(|(unsupported, _)| *unsupported == feature)
-        );
+        assert!(supported(feature));
+        assert!(!has_rationale(feature));
     }
 }
 
@@ -47,15 +48,10 @@ fn record_type_features_are_runtime_supported() {
         FeatureId::GV47,
         FeatureId::GV48,
     ] {
+        assert!(supported(feature), "{feature} must be runtime-supported");
         assert!(
-            SUPPORTED_FEATURES.contains(&feature),
-            "{feature} must be runtime-supported"
-        );
-        assert!(
-            !NOT_SUPPORTED_RATIONALE
-                .iter()
-                .any(|(unsupported, _)| *unsupported == feature),
-            "{feature} must not remain in NOT_SUPPORTED_RATIONALE"
+            !has_rationale(feature),
+            "{feature} must not retain a non-support rationale"
         );
     }
 }
@@ -64,34 +60,27 @@ fn record_type_features_are_runtime_supported() {
 fn deferred_reference_value_type_features_remain_unsupported() {
     // GRAPH/TABLE reference types stay deferred.
     for feature in [FeatureId::GV60, FeatureId::GV61] {
-        assert!(!SUPPORTED_FEATURES.contains(&feature), "{feature}");
-        assert!(
-            NOT_SUPPORTED_RATIONALE
-                .iter()
-                .any(|(unsupported, _)| *unsupported == feature),
-            "{feature}"
-        );
+        assert!(!supported(feature), "{feature}");
+        assert!(has_rationale(feature), "{feature}");
     }
 }
 
 #[test]
 fn explicit_value_type_nullability_is_runtime_supported() {
-    assert!(SUPPORTED_FEATURES.contains(&FeatureId::GV90));
-    assert!(
-        !NOT_SUPPORTED_RATIONALE
-            .iter()
-            .any(|(unsupported, _)| *unsupported == FeatureId::GV90),
-        "GV90 must not remain in NOT_SUPPORTED_RATIONALE"
-    );
+    assert!(supported(FeatureId::GV90));
+    assert!(!has_rationale(FeatureId::GV90));
 }
 
 #[test]
-fn no_feature_is_both_supported_and_rationalized_unsupported() {
-    for (feature, _) in NOT_SUPPORTED_RATIONALE {
-        assert!(
-            !SUPPORTED_FEATURES.contains(feature),
-            "{feature} is in BOTH SUPPORTED_FEATURES and NOT_SUPPORTED_RATIONALE"
-        );
+fn supported_features_do_not_carry_non_support_rationales() {
+    for record in capabilities() {
+        if record.status == CapabilityStatus::Supported {
+            assert!(
+                record.non_support_rationale.is_empty(),
+                "{} is supported but has a non-support rationale",
+                record.id
+            );
+        }
     }
 }
 
@@ -103,12 +92,8 @@ fn quantifier_features_are_runtime_supported() {
         FeatureId::G060,
         FeatureId::G061,
     ] {
-        assert!(SUPPORTED_FEATURES.contains(&feature));
-        assert!(
-            !NOT_SUPPORTED_RATIONALE
-                .iter()
-                .any(|(unsupported, _)| *unsupported == feature)
-        );
+        assert!(supported(feature));
+        assert!(!has_rationale(feature));
     }
 }
 
@@ -127,12 +112,8 @@ fn literal_features_are_runtime_supported() {
         FeatureId::GL10,
         FeatureId::GL11,
     ] {
-        assert!(SUPPORTED_FEATURES.contains(&feature));
-        assert!(
-            !NOT_SUPPORTED_RATIONALE
-                .iter()
-                .any(|(unsupported, _)| *unsupported == feature)
-        );
+        assert!(supported(feature));
+        assert!(!has_rationale(feature));
     }
 }
 
@@ -144,27 +125,18 @@ fn approximate_numeric_type_features_are_runtime_supported() {
         FeatureId::GV23,
         FeatureId::GV24,
     ] {
-        assert!(SUPPORTED_FEATURES.contains(&feature));
-        assert!(
-            !NOT_SUPPORTED_RATIONALE
-                .iter()
-                .any(|(unsupported, _)| *unsupported == feature)
-        );
+        assert!(supported(feature));
+        assert!(!has_rationale(feature));
     }
 }
 
 #[test]
 fn match_mode_features_are_runtime_supported() {
     // ISO 39075:2024 §16.4 CR1/CR2: G002 (DIFFERENT EDGES) and G003 (REPEATABLE
-    // ELEMENTS) are runtime-supported. They must be in SUPPORTED_FEATURES and must NOT
-    // carry a NOT_SUPPORTED_RATIONALE entry.
+    // ELEMENTS) are runtime-supported and must not carry non-support rationales.
     for feature in [FeatureId::G002, FeatureId::G003] {
-        assert!(SUPPORTED_FEATURES.contains(&feature));
-        assert!(
-            !NOT_SUPPORTED_RATIONALE
-                .iter()
-                .any(|(unsupported, _)| *unsupported == feature)
-        );
+        assert!(supported(feature));
+        assert!(!has_rationale(feature));
     }
 }
 

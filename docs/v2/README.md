@@ -35,8 +35,8 @@ profile authority in M01, the facade and catalog in M02, batch execution in
 M06, and format 2 in M09. Do not describe target components as implemented
 before their owning work items merge.
 
-The current feature register is implementation inventory. It cannot support a
-formal 2.0 conformance claim by itself; use the
+The generated `selene-profile` capability records are implementation inventory.
+They cannot support a formal 2.0 conformance claim by themselves; use the
 [evidence-gated conformance policy](conformance-policy.md).
 
 The archive branch and tag named by D-002 are **pending owner-only** actions.

@@ -145,8 +145,9 @@ FINISH
 
 ```gql
 CALL selene.feature_status()
-YIELD feature_id, feature_name, status, rationale
-RETURN feature_id, status
+YIELD feature_id, status, rationale, feature_name, surface,
+      profile_relation, claim_state, evidence_status, evidence_count, profile_hash
+RETURN feature_id, status, surface, profile_hash
 ```
 
 Quantified edge bindings are list-valued. Projecting a property from one of
@@ -452,10 +453,10 @@ allocator policy.
 ## ISO GQL Posture
 
 The current engine is GQL-oriented and implements selected ISO/IEC 39075:2024
-syntax and semantics plus namespaced extensions. The current
-`selene-core::feature_register` reports implementation inventory; it is not a
-formal 2.0 conformance claim. M01 will establish the generated profile and
-evidence authority. See the
+syntax and semantics plus namespaced extensions. `spec/gql-profile/profile.json`
+and the generated `selene-profile` API are the authority for parser admission,
+runtime inventory, claim state, and evidence. Those dimensions remain separate,
+and the inventory is not a formal 2.0 conformance claim. See the
 [2.0 conformance policy](docs/v2/conformance-policy.md).
 
 Important boundaries:

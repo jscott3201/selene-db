@@ -1,11 +1,12 @@
 //! Character-string type descriptor coverage for `STRING`, `CHAR`, and `VARCHAR`.
 
-use selene_core::{GraphId, Record, Value, feature_register::FeatureId};
+use selene_core::{GraphId, Record, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ExecutorError, ImplDefinedCaps, Session,
     StatementOutput, analyze, execute_statement, feature_walk, parse, plan,
 };
 use selene_graph::{GraphTypeDef, SharedGraph};
+use selene_profile::FeatureId;
 use smallvec::smallvec;
 
 fn db_string(value: &str) -> selene_core::DbString {

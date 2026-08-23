@@ -1,29 +1,32 @@
 //! `selene.feature_status` native built-in.
-//!
-//! Walks `SUPPORTED_FEATURES` and `REFERENCED_FEATURES` from
-//! `selene_core::feature_register` and emits one row per known feature. Ported
-//! verbatim from the historical procedure-pack `feature_status` built-in.
 
-use std::collections::BTreeMap;
-
-use selene_core::{
-    Value, db_string,
-    feature_register::{
-        FeatureId, REFERENCED_FEATURES, SUPPORTED_FEATURES, is_supported, name_of,
-        non_supported_rationale,
-    },
-};
+use selene_core::{Value, db_string};
+use selene_profile::{CapabilityRecord, CapabilityStatus, capabilities, current_profile_identity};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use crate::procedure_registry::ProcedureError;
 use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, ProcedureResult};
 
-static FEATURE_STATUS_OUTPUTS: [StaticOutputColumn; 3] = [
+static FEATURE_STATUS_OUTPUTS: [StaticOutputColumn; 10] = [
     StaticOutputColumn::new("feature_id", GqlType::String)
-        .with_description("ISO GQL feature identifier."),
-    StaticOutputColumn::new("status", GqlType::String).with_description("Feature support state."),
+        .with_description("ISO or implementation feature identifier."),
+    StaticOutputColumn::new("status", GqlType::String).with_description("Runtime support state."),
     StaticOutputColumn::new("rationale", GqlType::String)
-        .with_description("Support rationale or feature name."),
+        .with_description("Non-support rationale or feature name."),
+    StaticOutputColumn::new("feature_name", GqlType::String)
+        .with_description("Canonical feature display name."),
+    StaticOutputColumn::new("surface", GqlType::String)
+        .with_description("ISO or namespaced extension surface."),
+    StaticOutputColumn::new("profile_relation", GqlType::String)
+        .with_description("Direct, implied, unselected, or extension profile relation."),
+    StaticOutputColumn::new("claim_state", GqlType::String)
+        .with_description("Generated conformance claim state."),
+    StaticOutputColumn::new("evidence_status", GqlType::String)
+        .with_description("Whether registered evidence references are present."),
+    StaticOutputColumn::new("evidence_count", GqlType::Uint64)
+        .with_description("Number of registered evidence references."),
+    StaticOutputColumn::new("profile_hash", GqlType::String)
+        .with_description("Canonical generated profile hash."),
 ];
 
 pub(super) fn signature() -> Vec<ProcedureParameter> {
@@ -52,38 +55,35 @@ pub(super) fn execute(
         });
     }
 
-    let mut features = BTreeMap::<FeatureId, &'static str>::new();
-    for (id, name) in REFERENCED_FEATURES {
-        features.insert(*id, *name);
-    }
-    for id in SUPPORTED_FEATURES {
-        features
-            .entry(*id)
-            .or_insert_with(|| name_of(*id).unwrap_or(""));
-    }
-
-    let rows = features
-        .into_iter()
-        .map(|(id, display)| {
-            let (status, rationale) = feature_status(id, display);
-            Ok(vec![
-                string(id.as_str())?,
-                string(status)?,
-                string(rationale)?,
-            ])
-        })
+    let profile_hash = current_profile_identity().canonical_hash();
+    let rows = capabilities()
+        .iter()
+        .map(|record| row(record, profile_hash))
         .collect::<Result<Vec<_>, ProcedureError>>()?;
     Ok(ProcedureResult { rows })
 }
 
-fn feature_status(id: FeatureId, display: &'static str) -> (&'static str, &'static str) {
-    if is_supported(id) {
-        ("supported", display)
-    } else if let Some(rationale) = non_supported_rationale(id) {
-        ("unsupported", rationale)
+fn row(
+    record: &CapabilityRecord,
+    profile_hash: &'static str,
+) -> Result<Vec<Value>, ProcedureError> {
+    let rationale = if record.status != CapabilityStatus::Supported {
+        record.non_support_rationale
     } else {
-        ("referenced", display)
-    }
+        record.name
+    };
+    Ok(vec![
+        string(record.id.as_str())?,
+        string(record.status.as_str())?,
+        string(rationale)?,
+        string(record.name)?,
+        string(record.surface.as_str())?,
+        string(record.profile_relation.as_str())?,
+        string(record.claim_state.as_str())?,
+        string(record.evidence_status.as_str())?,
+        Value::Uint(u64::try_from(record.evidence_count).unwrap_or(u64::MAX)),
+        string(profile_hash)?,
+    ])
 }
 
 fn string(value: &str) -> Result<Value, ProcedureError> {

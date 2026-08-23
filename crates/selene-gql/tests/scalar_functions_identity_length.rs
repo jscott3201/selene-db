@@ -7,10 +7,7 @@ mod exec_common;
 use std::sync::Arc;
 
 use exec_common::{column_values, db_string, execute_read, execute_read_result};
-use selene_core::{
-    DbString, EdgeDirection, EdgeId, GraphId, NodeId, Path, PathSegment, Value,
-    feature_register::FeatureId,
-};
+use selene_core::{DbString, EdgeDirection, EdgeId, GraphId, NodeId, Path, PathSegment, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, GqlType, ProcedureContext,
     ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
@@ -18,6 +15,7 @@ use selene_gql::{
     ProcedureSignature, ProcedureTier, Session, StatementOutput, analyze, feature_walk, parse,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 use smallvec::smallvec;
 
 const BINDING_TABLE_WITH_ROWS: ProcedureHandle = ProcedureHandle::new(1);

@@ -1,6 +1,6 @@
 //! DDL Flagger walk.
 
-use selene_core::feature_register::FeatureId;
+use selene_profile::FeatureId;
 
 use crate::{
     DdlStatement,

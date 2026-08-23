@@ -14,10 +14,8 @@ pub(super) mod transaction;
 use std::borrow::Cow;
 
 use pest::iterators::Pair;
-use selene_core::{
-    DbString,
-    feature_register::{FeatureId, name_of, non_supported_rationale},
-};
+use selene_core::DbString;
+use selene_profile::{FeatureId, capability};
 
 use crate::{
     ast::{GqlType, QueryPipeline, SetOp, SourceSpan, Statement, util::NonEmpty},
@@ -51,11 +49,7 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
             mutation::build_mutation_pipeline(program_pair).map(Statement::Mutate)
         }
         Rule::ddl_statement => ddl::build_ddl_statement(program_pair).map(Statement::Ddl),
-        Rule::create_schema_command => Err(unsupported_feature(
-            &program_pair,
-            FeatureId::GC02,
-            "CREATE SCHEMA is not runtime-supported",
-        )),
+        Rule::create_schema_command => Err(unsupported_feature(&program_pair, FeatureId::GC02)),
         Rule::call_stmt => call::build_top_level_call(program_pair),
         Rule::explain_stmt => explain::build_explain_statement(program_pair),
         Rule::transaction_control => transaction::build_transaction_control(program_pair),
@@ -64,16 +58,13 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
     }
 }
 
-fn unsupported_feature(
-    pair: &Pair<'_, Rule>,
-    feature_id: FeatureId,
-    fallback_hint: &'static str,
-) -> ParserError {
+fn unsupported_feature(pair: &Pair<'_, Rule>, feature_id: FeatureId) -> ParserError {
+    let record = capability(feature_id).expect("parser feature IDs are generated capabilities");
     ParserError::UnsupportedFeature {
         feature_id,
-        display_name: name_of(feature_id).unwrap_or("unnamed feature"),
+        display_name: record.name,
         span: span(pair),
-        hint: non_supported_rationale(feature_id).unwrap_or(fallback_hint),
+        hint: record.non_support_rationale,
     }
 }
 

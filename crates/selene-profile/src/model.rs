@@ -52,15 +52,15 @@ pub enum ClaimState {
     Claimed,
 }
 
-/// Compatibility status exposed by the current runtime registry.
+/// Complete runtime support status recorded in the canonical profile inventory.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeSupport {
-    /// Current runtime consumers accept the feature.
+    /// The complete capability is runtime-supported.
     Supported,
-    /// Current runtime consumers reject the feature with a rationale.
+    /// The complete capability is not runtime-supported.
     Unsupported,
-    /// The feature is known but has no parser-reachable rejection surface.
+    /// The capability is known but has no parser-reachable rejection surface.
     Referenced,
 }
 
@@ -82,7 +82,7 @@ pub struct FeatureRecord {
     pub id: FeatureCode,
     /// Short feature name.
     pub name: String,
-    /// Existing runtime compatibility status.
+    /// Complete runtime support status.
     pub runtime_support: RuntimeSupport,
     /// Formal claim state.
     pub claim_state: ClaimState,
@@ -106,7 +106,7 @@ pub struct ImplementationExtension {
     pub id: ExtensionId,
     /// Short extension name.
     pub name: String,
-    /// Existing runtime compatibility status.
+    /// Complete runtime support status.
     pub runtime_support: RuntimeSupport,
     /// Exact rejection rationale, or an empty string when none exists.
     pub unsupported_rationale: String,

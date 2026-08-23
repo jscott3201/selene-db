@@ -5,14 +5,13 @@
 mod exec_common;
 
 use exec_common::{column_values, db_string, execute_read, execute_read_result};
-use selene_core::{
-    GraphId, JsonValue as CoreJsonValue, PropertyValueType, Value, feature_register::FeatureId,
-};
+use selene_core::{GraphId, JsonValue as CoreJsonValue, PropertyValueType, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlType, PipelineStatement, QueryPipeline, ReturnClause,
     ReturnItem, Session, SourceSpan, Statement, StatementOutput, ValueExpr, feature_walk, parse,
 };
 use selene_graph::{GraphTypeDef, SharedGraph};
+use selene_profile::FeatureId;
 
 fn single_value(source: &str, column: &str) -> Value {
     let table = execute_read(source);

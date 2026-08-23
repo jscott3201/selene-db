@@ -34,6 +34,7 @@ use selene_gql::{
 use selene_graph::{SharedGraph, VectorIndexKind};
 
 const SOURCE: &str = "CALL bench.repeat() YIELD n";
+const FEATURE_STATUS_SOURCE: &str = "CALL selene.feature_status() YIELD feature_id, status, rationale, feature_name, surface, profile_relation, claim_state, evidence_status, evidence_count, profile_hash";
 const REPEATS: usize = 100;
 const VECTOR_SOURCE: &str =
     "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10) YIELD node_id, distance";
@@ -108,6 +109,31 @@ fn bench_procedure_call_repeat(c: &mut Criterion) {
                 &registry,
                 Some(Arc::clone(&cache)),
             ));
+        });
+    });
+    group.finish();
+}
+
+fn bench_feature_status_procedure(c: &mut Criterion) {
+    let registry = BuiltinProcedureRegistry::new();
+    let graph = SharedGraph::new(GraphId::new(71_002));
+    let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(8).expect("nonzero")));
+    Session::new(&graph)
+        .with_call_plan_cache(Arc::clone(&cache))
+        .execute_source(FEATURE_STATUS_SOURCE, &registry)
+        .expect("warmup feature-status call executes");
+
+    let mut group = c.benchmark_group("procedure_feature_status");
+    group.throughput(Throughput::Elements(
+        selene_profile::capabilities().len() as u64
+    ));
+    group.bench_function("shared_cache_generated_capabilities", |b| {
+        b.iter(|| {
+            let output = Session::new(&graph)
+                .with_call_plan_cache(Arc::clone(&cache))
+                .execute_source(FEATURE_STATUS_SOURCE, &registry)
+                .expect("feature-status call executes");
+            std::hint::black_box(output);
         });
     });
     group.finish();
@@ -629,7 +655,8 @@ fn db_string(value: &str) -> DbString {
 criterion_group! {
     name = procedure_call_repeat_group;
     config = common::criterion_config();
-    targets = bench_procedure_call_repeat, call_pipeline::bench_call_pipeline,
+    targets = bench_procedure_call_repeat, bench_feature_status_procedure,
+        call_pipeline::bench_call_pipeline,
         bench_vector_search_procedure,
         rank_fusion::bench_rank_fusion_procedure,
         vector_ann_expanded::bench_vector_ann_expanded_procedure,

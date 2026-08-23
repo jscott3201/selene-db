@@ -92,7 +92,7 @@ selene-db-gql|analyze|1
 selene-db-gql|plan_optimize|1
 selene-db-gql|write_e2e|1
 selene-db-gql|expression_eval|0
-selene-db-gql|procedure_call_repeat|0
+selene-db-gql|procedure_call_repeat|1
 selene-db-gql|correlated_subquery|0
 selene-db-gql|read_pipeline|0
 selene-db-algorithms|algo_bench|0

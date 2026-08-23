@@ -1,13 +1,14 @@
 //! Session-scoped execution-plan cache.
 //!
-//! # Why the cache key is schema-epoch-only
+//! # Why data generation is not a cache dimension
 //!
 //! Cached plans are the *optimized* plans (`Session::execute_source` optimizes
 //! before insert). The cache freshness check compares the stored
-//! `schema_version_at_plan` against the graph's current `schema_version`, which
-//! bumps only on schema-changing commits (CREATE / DROP INDEX, type DDL). The
-//! snapshot `generation` counter — which bumps on *every* commit including
-//! data-only writes — is deliberately NOT part of the key: optimizer index
+//! `schema_version_at_plan` and `profile_identity_at_plan` against the current
+//! schema and effective profile. The schema version bumps only on
+//! schema-changing commits (CREATE / DROP INDEX, type DDL). The snapshot
+//! `generation` counter — which bumps on *every* commit including data-only
+//! writes — is deliberately NOT part of the key: optimizer index
 //! *selection* depends only on the set of indexes (schema), never on row data,
 //! so a chosen access path (LabelIndex / TypedIndexRange / CompositeLookup)
 //! stays correct as rows mutate within an epoch. Adding `generation` would
@@ -26,6 +27,7 @@ use std::{
 
 use lru::LruCache;
 use selene_core::GraphId;
+use selene_profile::ProfileIdentity;
 
 use crate::{ExecutionPlan, ImplDefinedCaps, PipelineOp, SubqueryBody};
 
@@ -49,6 +51,7 @@ impl Borrow<str> for CacheKey {
 struct CachedPlan {
     plan: Arc<ExecutionPlan>,
     schema_version_at_plan: u64,
+    profile_identity_at_plan: ProfileIdentity,
 }
 
 /// Shared LRU cache for non-CALL source-string execution plans.
@@ -56,10 +59,10 @@ struct CachedPlan {
 /// The cache is caller-owned so embedders can share one
 /// `Arc<SharedPlanCache>` across short-lived sessions executing against the
 /// same graph. Keys include graph identity, schema epoch, procedure-registry
-/// epoch, source text, implementation-defined caps, and the optimizer
-/// index-selection mode, matching every setting currently baked into a lowered
-/// or optimized plan. Procedure-CALL-containing plans remain owned by
-/// [`crate::CallPlanCache`].
+/// epoch, effective profile identity, source text, implementation-defined caps,
+/// and the optimizer index-selection mode, matching every setting currently
+/// baked into a lowered or optimized plan. Procedure-CALL-containing plans
+/// remain owned by [`crate::CallPlanCache`].
 pub struct SharedPlanCache {
     inner: Mutex<SharedPlanCacheInner>,
 }
@@ -74,6 +77,7 @@ struct SharedPlanCacheKey {
     graph_id: GraphId,
     schema_version: u64,
     registry_version: u64,
+    profile_identity: ProfileIdentity,
     source: Arc<str>,
     caps: ImplDefinedCaps,
     index_selection: bool,
@@ -113,9 +117,17 @@ impl PlanCache {
         }
     }
 
-    pub(crate) fn get(&mut self, source: &str, schema_version: u64) -> Option<Arc<ExecutionPlan>> {
+    pub(crate) fn get(
+        &mut self,
+        source: &str,
+        schema_version: u64,
+        profile_identity: ProfileIdentity,
+    ) -> Option<Arc<ExecutionPlan>> {
         match self.inner.get(source) {
-            Some(cached) if cached.schema_version_at_plan == schema_version => {
+            Some(cached)
+                if cached.schema_version_at_plan == schema_version
+                    && cached.profile_identity_at_plan == profile_identity =>
+            {
                 let plan = Arc::clone(&cached.plan);
                 self.stats.hits = self.stats.hits.saturating_add(1);
                 trace_cache_event("hit", schema_version, source);
@@ -140,6 +152,7 @@ impl PlanCache {
         source: Arc<str>,
         plan: Arc<ExecutionPlan>,
         schema_version: u64,
+        profile_identity: ProfileIdentity,
     ) {
         if !is_cacheable(&plan) {
             return;
@@ -150,6 +163,7 @@ impl PlanCache {
         let cached = CachedPlan {
             plan,
             schema_version_at_plan: schema_version,
+            profile_identity_at_plan: profile_identity,
         };
         if self.inner.push(key, cached).is_some() && !replacing_existing {
             self.stats.capacity_evictions = self.stats.capacity_evictions.saturating_add(1);
@@ -231,6 +245,7 @@ pub(crate) struct SharedPlanCacheLookup<'a> {
     pub(crate) graph_id: GraphId,
     pub(crate) schema_version: u64,
     pub(crate) registry_version: u64,
+    pub(crate) profile_identity: ProfileIdentity,
     pub(crate) source: &'a str,
     pub(crate) caps: ImplDefinedCaps,
     pub(crate) index_selection: bool,
@@ -240,6 +255,7 @@ pub(crate) struct SharedPlanCacheInsert {
     pub(crate) graph_id: GraphId,
     pub(crate) schema_version: u64,
     pub(crate) registry_version: u64,
+    pub(crate) profile_identity: ProfileIdentity,
     pub(crate) source: Arc<str>,
     pub(crate) caps: ImplDefinedCaps,
     pub(crate) index_selection: bool,
@@ -251,6 +267,7 @@ impl SharedPlanCacheKey {
             graph_id: value.graph_id,
             schema_version: value.schema_version,
             registry_version: value.registry_version,
+            profile_identity: value.profile_identity,
             source: Arc::from(value.source),
             caps: value.caps,
             index_selection: value.index_selection,
@@ -262,6 +279,7 @@ impl SharedPlanCacheKey {
             graph_id: value.graph_id,
             schema_version: value.schema_version,
             registry_version: value.registry_version,
+            profile_identity: value.profile_identity,
             source: value.source,
             caps: value.caps,
             index_selection: value.index_selection,
@@ -334,6 +352,7 @@ mod tests {
     use std::{num::NonZeroUsize, sync::Arc};
 
     use selene_core::{DbString, db_string};
+    use selene_profile::{ProfileIdentity, current_profile_identity};
 
     use super::*;
     use crate::{
@@ -352,6 +371,10 @@ mod tests {
 
     fn admitted(value: &str) -> DbString {
         db_string(value).expect("test name admits")
+    }
+
+    fn profile() -> ProfileIdentity {
+        current_profile_identity()
     }
 
     fn call_plan() -> Arc<ExecutionPlan> {
@@ -430,10 +453,10 @@ mod tests {
     #[test]
     fn plan_cache_basic_hit_miss() {
         let mut cache = PlanCache::new(NonZeroUsize::new(2).unwrap());
-        assert!(cache.get("RETURN 1", 0).is_none());
+        assert!(cache.get("RETURN 1", 0, profile()).is_none());
 
-        cache.insert(Arc::from("RETURN 1"), planned("RETURN 1"), 0);
-        assert!(cache.get("RETURN 1", 0).is_some());
+        cache.insert(Arc::from("RETURN 1"), planned("RETURN 1"), 0, profile());
+        assert!(cache.get("RETURN 1", 0, profile()).is_some());
 
         assert_eq!(
             cache.stats(),
@@ -449,35 +472,47 @@ mod tests {
     #[test]
     fn plan_cache_lru_evicts_oldest() {
         let mut cache = PlanCache::new(NonZeroUsize::new(2).unwrap());
-        cache.insert(Arc::from("RETURN 1"), planned("RETURN 1"), 0);
-        cache.insert(Arc::from("RETURN 2"), planned("RETURN 2"), 0);
-        cache.insert(Arc::from("RETURN 3"), planned("RETURN 3"), 0);
+        cache.insert(Arc::from("RETURN 1"), planned("RETURN 1"), 0, profile());
+        cache.insert(Arc::from("RETURN 2"), planned("RETURN 2"), 0, profile());
+        cache.insert(Arc::from("RETURN 3"), planned("RETURN 3"), 0, profile());
 
-        assert!(cache.get("RETURN 1", 0).is_none());
-        assert!(cache.get("RETURN 2", 0).is_some());
-        assert!(cache.get("RETURN 3", 0).is_some());
+        assert!(cache.get("RETURN 1", 0, profile()).is_none());
+        assert!(cache.get("RETURN 2", 0, profile()).is_some());
+        assert!(cache.get("RETURN 3", 0, profile()).is_some());
         assert_eq!(cache.stats().capacity_evictions, 1);
     }
 
     #[test]
     fn plan_cache_schema_version_mismatch_is_miss() {
         let mut cache = PlanCache::new(NonZeroUsize::new(2).unwrap());
-        cache.insert(Arc::from("RETURN 1"), planned("RETURN 1"), 0);
+        cache.insert(Arc::from("RETURN 1"), planned("RETURN 1"), 0, profile());
 
-        assert!(cache.get("RETURN 1", 1).is_none());
+        assert!(cache.get("RETURN 1", 1, profile()).is_none());
         assert_eq!(cache.stats().stale_invalidations, 1);
-        assert!(cache.get("RETURN 1", 1).is_none());
+        assert!(cache.get("RETURN 1", 1, profile()).is_none());
+        assert_eq!(cache.stats().misses, 1);
+    }
+
+    #[test]
+    fn plan_cache_profile_identity_mismatch_invalidates_entry() {
+        let mut cache = PlanCache::new(NonZeroUsize::new(2).unwrap());
+        cache.insert(Arc::from("RETURN 1"), planned("RETURN 1"), 0, profile());
+        let synthetic = ProfileIdentity::new("synthetic", 3, 3, "other-hash");
+
+        assert!(cache.get("RETURN 1", 0, synthetic).is_none());
+        assert_eq!(cache.stats().stale_invalidations, 1);
+        assert!(cache.get("RETURN 1", 0, profile()).is_none());
         assert_eq!(cache.stats().misses, 1);
     }
 
     #[test]
     fn plan_cache_clear_resets_state() {
         let mut cache = PlanCache::new(NonZeroUsize::new(2).unwrap());
-        cache.insert(Arc::from("RETURN 1"), planned("RETURN 1"), 0);
-        assert!(cache.get("RETURN 1", 0).is_some());
+        cache.insert(Arc::from("RETURN 1"), planned("RETURN 1"), 0, profile());
+        assert!(cache.get("RETURN 1", 0, profile()).is_some());
 
         cache.clear();
-        assert!(cache.get("RETURN 1", 0).is_none());
+        assert!(cache.get("RETURN 1", 0, profile()).is_none());
 
         assert_eq!(
             cache.stats(),
@@ -493,9 +528,9 @@ mod tests {
     #[test]
     fn cache_skips_call_plans() {
         let mut cache = PlanCache::new(NonZeroUsize::new(2).unwrap());
-        cache.insert(Arc::from("CALL cache.call()"), call_plan(), 0);
+        cache.insert(Arc::from("CALL cache.call()"), call_plan(), 0, profile());
 
-        assert!(cache.get("CALL cache.call()", 0).is_none());
+        assert!(cache.get("CALL cache.call()", 0, profile()).is_none());
         assert_eq!(cache.stats().misses, 1);
     }
 
@@ -506,9 +541,14 @@ mod tests {
             Arc::from("EXPLAIN CALL cache.call()"),
             explain_call_plan(),
             0,
+            profile(),
         );
 
-        assert!(cache.get("EXPLAIN CALL cache.call()", 0).is_none());
+        assert!(
+            cache
+                .get("EXPLAIN CALL cache.call()", 0, profile())
+                .is_none()
+        );
         assert_eq!(cache.stats().misses, 1);
     }
 
@@ -519,13 +559,15 @@ mod tests {
             Arc::from("RETURN VALUE { CALL cache.call() RETURN 1 LIMIT 1 } AS v"),
             expression_subquery_call_plan(),
             0,
+            profile(),
         );
 
         assert!(
             cache
                 .get(
                     "RETURN VALUE { CALL cache.call() RETURN 1 LIMIT 1 } AS v",
-                    0
+                    0,
+                    profile()
                 )
                 .is_none()
         );
@@ -539,6 +581,7 @@ mod tests {
             graph_id: selene_core::GraphId::new(7),
             schema_version: 0,
             registry_version: 0,
+            profile_identity: profile(),
             source,
             caps: ImplDefinedCaps::DEFAULT,
             index_selection: true,
@@ -550,6 +593,7 @@ mod tests {
                 graph_id: selene_core::GraphId::new(7),
                 schema_version: 0,
                 registry_version: 0,
+                profile_identity: profile(),
                 source: Arc::from("RETURN 1"),
                 caps: ImplDefinedCaps::DEFAULT,
                 index_selection: true,
@@ -575,6 +619,7 @@ mod tests {
             graph_id: selene_core::GraphId::new(7),
             schema_version: 0,
             registry_version: 0,
+            profile_identity: profile(),
             source: Arc::from("RETURN 1"),
             caps: ImplDefinedCaps::DEFAULT,
             index_selection: true,
@@ -587,6 +632,7 @@ mod tests {
                     graph_id: selene_core::GraphId::new(7),
                     schema_version: 0,
                     registry_version: 0,
+                    profile_identity: profile(),
                     source: "RETURN 1",
                     caps: ImplDefinedCaps::DEFAULT,
                     index_selection: true,
@@ -599,6 +645,20 @@ mod tests {
                     graph_id: selene_core::GraphId::new(7),
                     schema_version: 0,
                     registry_version: 0,
+                    profile_identity: ProfileIdentity::new("synthetic", 3, 3, "other-hash"),
+                    source: "RETURN 1",
+                    caps: ImplDefinedCaps::DEFAULT,
+                    index_selection: true,
+                })
+                .is_none()
+        );
+        assert!(
+            cache
+                .get(SharedPlanCacheLookup {
+                    graph_id: selene_core::GraphId::new(7),
+                    schema_version: 0,
+                    registry_version: 0,
+                    profile_identity: profile(),
                     source: "RETURN 1",
                     caps: ImplDefinedCaps::DEFAULT.with_max_list_length(1),
                     index_selection: true,
@@ -611,6 +671,7 @@ mod tests {
                     graph_id: selene_core::GraphId::new(7),
                     schema_version: 0,
                     registry_version: 0,
+                    profile_identity: profile(),
                     source: "RETURN 1",
                     caps: ImplDefinedCaps::DEFAULT,
                     index_selection: false,

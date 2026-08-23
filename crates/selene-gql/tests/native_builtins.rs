@@ -15,6 +15,7 @@ use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::{SharedGraph, TypedIndexKind};
+use selene_profile::{PROFILE_HASH, capabilities};
 
 fn db_string(value: &str) -> DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")
@@ -172,26 +173,47 @@ fn health_reports_node_and_edge_counts() {
 }
 
 #[test]
-fn feature_status_reports_supported_rows() {
+fn feature_status_reports_generated_capability_records() {
     let graph = graph(330_003);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
 
     let table = execute_rows(
         &mut session,
-        "CALL selene.feature_status() YIELD feature_id, status, rationale",
+        "CALL selene.feature_status() YIELD feature_id, status, rationale, feature_name, surface, profile_relation, claim_state, evidence_status, evidence_count, profile_hash",
         &registry,
     );
     let feature_ids = string_column(&table, "feature_id");
     let statuses = string_column(&table, "status");
     let rationales = string_column(&table, "rationale");
+    let names = string_column(&table, "feature_name");
+    let surfaces = string_column(&table, "surface");
+    let relations = string_column(&table, "profile_relation");
+    let claims = string_column(&table, "claim_state");
+    let evidence_statuses = string_column(&table, "evidence_status");
+    let evidence_counts = uint_column(&table, "evidence_count");
+    let profile_hashes = string_column(&table, "profile_hash");
 
-    assert!(!feature_ids.is_empty());
+    assert_eq!(feature_ids.len(), 208);
+    assert_eq!(
+        feature_ids,
+        capabilities()
+            .iter()
+            .map(|record| record.id.as_str().to_owned())
+            .collect::<Vec<_>>()
+    );
     let gp04 = feature_ids
         .iter()
         .position(|value| value == "GP04")
         .expect("GP04 row exists");
     assert_eq!(statuses[gp04], "supported");
+    assert_eq!(rationales[gp04], "Named procedure calls");
+    assert_eq!(names[gp04], "Named procedure calls");
+    assert_eq!(surfaces[gp04], "iso");
+    assert_eq!(relations[gp04], "direct");
+    assert_eq!(claims[gp04], "implemented_unclaimed");
+    assert_eq!(evidence_statuses[gp04], "incomplete");
+    assert_eq!(evidence_counts[gp04], 0);
 
     for (feature_id, expected_name) in [
         ("GQ12", "ORDER BY and page statement: OFFSET clause"),
@@ -222,6 +244,39 @@ fn feature_status_reports_supported_rows() {
         .position(|value| value == "GV65")
         .expect("GV65 row exists");
     assert_eq!(statuses[gv65], "referenced");
+    assert_eq!(relations[gv65], "implied");
+
+    for feature_id in ["GC04", "GS04", "GH02", "GV66"] {
+        let index = feature_ids
+            .iter()
+            .position(|value| value == feature_id)
+            .unwrap_or_else(|| panic!("{feature_id} row exists"));
+        assert_eq!(statuses[index], "unsupported");
+        assert!(!rationales[index].is_empty());
+    }
+    let gc04 = feature_ids
+        .iter()
+        .position(|value| value == "GC04")
+        .unwrap();
+    assert_eq!(relations[gc04], "implied");
+
+    let im_json = feature_ids
+        .iter()
+        .position(|value| value == "IM_JSON")
+        .expect("IM_JSON row exists");
+    assert_eq!(statuses[im_json], "supported");
+    assert_eq!(surfaces[im_json], "extension");
+    assert_eq!(relations[im_json], "extension");
+    assert_eq!(claims[im_json], "not_applicable");
+
+    assert!(profile_hashes.iter().all(|hash| hash == PROFILE_HASH));
+    assert!(
+        rationales
+            .iter()
+            .chain(names.iter())
+            .all(|value| !value.contains("crates/") && !value.contains("tests/")),
+        "procedure output must not expose internal evidence paths"
+    );
 }
 
 #[test]

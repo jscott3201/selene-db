@@ -512,9 +512,10 @@ Some changes are out of scope:
   surfaces.
 - **No Cypher / SQL / SPARQL grammar in the parser.** The query
   language is ISO/IEC 39075:2024 GQL. Constructs outside the current
-  implementation register are rejected by the Flagger at parse time. If you
-  want to admit a new optional feature, add the feature register
-  entry first.
+  generated profile marks as Flagger-rejected are rejected at parse time. Change
+  `spec/gql-profile/profile.json`, regenerate with
+  `cargo run --locked -p selene-db-profile --bin selene-profile -- --write`, and
+  update the matching behavior evidence together.
 - **No `cargo bench --workspace`** in any script or workflow. Use
   `scripts/run-benches.sh` so bench binaries run sequentially. The
   `bench invocation lint` CI gate enforces this.

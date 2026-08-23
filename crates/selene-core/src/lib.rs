@@ -26,7 +26,6 @@ mod decimal_type;
 mod duration_type;
 pub mod error;
 pub mod extension_type_ids;
-pub mod feature_register;
 pub mod gqlstatus;
 pub mod hlc;
 pub mod identity;

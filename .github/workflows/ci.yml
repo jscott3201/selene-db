@@ -99,6 +99,8 @@ jobs:
         with:
           tool: nextest@0.9.143
           fallback: none
+      - name: check generated profile
+        run: cargo run --locked -p selene-db-profile --bin selene-profile -- --check
       - run: cargo check --workspace --locked --all-features
       - run: cargo nextest run --workspace --locked --all-features --profile ci
 

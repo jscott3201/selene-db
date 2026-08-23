@@ -7,7 +7,7 @@
   "required": ["format_version", "generator_version", "profile_id", "selected_features", "release_claimable", "clause_anchors", "features", "supported_feature_order", "unsupported_feature_order", "implications", "implementation_defined_choices", "implementation_dependent_notes", "implementation_extensions", "evidence", "applicability"],
   "properties": {
     "format_version": {"const": 3},
-    "generator_version": {"const": 2},
+    "generator_version": {"const": 3},
     "profile_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
     "selected_features": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}, "uniqueItems": true},
     "release_claimable": {"type": "boolean"},

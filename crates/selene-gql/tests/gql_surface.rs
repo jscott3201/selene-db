@@ -342,11 +342,12 @@ fn feature_status_procedure_returns_supported_rows() {
     let mut session = Session::new(&graph);
     let table = execute_rows(
         &mut session,
-        "CALL selene.feature_status() YIELD feature_id, status, rationale",
+        "CALL selene.feature_status() YIELD feature_id, status, rationale, feature_name, surface, profile_relation, claim_state, evidence_status, evidence_count, profile_hash",
         &registry,
     );
     let feature_ids = column_strings(&table, "feature_id");
     let statuses = column_strings(&table, "status");
+    let hashes = column_strings(&table, "profile_hash");
 
     assert!(!feature_ids.is_empty());
     let gp04 = feature_ids
@@ -354,6 +355,11 @@ fn feature_status_procedure_returns_supported_rows() {
         .position(|value| value == "GP04")
         .expect("GP04 row exists");
     assert_eq!(statuses[gp04], "supported");
+    assert!(
+        hashes
+            .iter()
+            .all(|hash| hash == selene_profile::PROFILE_HASH)
+    );
 }
 
 #[test]

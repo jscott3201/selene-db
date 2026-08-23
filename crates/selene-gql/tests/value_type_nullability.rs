@@ -1,11 +1,12 @@
 //! Explicit value-type nullability coverage (GV90).
 
-use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_core::{GraphId, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlStatus, GqlType, PipelineStatement, Session,
     Statement, StatementOutput, ValueExpr, ast::format_read_statement, feature_walk, parse,
 };
 use selene_graph::{GraphTypeDef, PropertyElementType, RecordFieldType, SharedGraph};
+use selene_profile::FeatureId;
 
 fn db_string(value: &str) -> selene_core::DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")

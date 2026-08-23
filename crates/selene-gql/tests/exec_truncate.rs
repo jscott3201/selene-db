@@ -9,12 +9,13 @@
 
 mod exec_common;
 
-use selene_core::{Change, GraphId, LabelSet, NodeId, PropertyMap, feature_register::FeatureId};
+use selene_core::{Change, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ExecutorError, TxContext, analyze, execute_pattern,
     execute_pipeline, feature_walk, parse, plan,
 };
 use selene_graph::{CommitOutcome, SeleneGraph, SharedGraph};
+use selene_profile::FeatureId;
 
 use exec_common::db_string;
 

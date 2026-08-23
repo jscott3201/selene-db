@@ -99,7 +99,7 @@ fn render_mod(profile: &ValidatedProfile) -> String {
     output.push_str(
         "mod annex_b;\nmod annex_b_ia;\nmod annex_b_id;\nmod annex_b_ie;\nmod annex_b_il;\nmod annex_b_is;\nmod annex_b_iv;\nmod annex_b_iw;\nmod feature_data;\nmod feature_ids;\nmod profile_data;\n\n\
          pub use annex_b::{\n    \
-         ANNEX_B_CATEGORY_COUNTS, ANNEX_B_LOOKUP_TEST_VECTORS, ANNEX_B_REGISTER, annex_b_by_id,\n\
+         ANNEX_B_CATEGORY_COUNTS, ANNEX_B_LOOKUP_TEST_VECTORS, annex_b_by_id, annex_b_records,\n\
          };\n\
          pub use annex_b_ia::ANNEX_B_IA;\n\
          pub use annex_b_id::ANNEX_B_ID;\n\
@@ -108,9 +108,7 @@ fn render_mod(profile: &ValidatedProfile) -> String {
          pub use annex_b_is::ANNEX_B_IS;\n\
          pub use annex_b_iv::ANNEX_B_IV;\n\
          pub use annex_b_iw::ANNEX_B_IW;\n\
-         pub use feature_data::{\n    \
-         FLAGGER_ACCEPTED_FEATURES, NOT_SUPPORTED_RATIONALE, REFERENCED_FEATURES, SUPPORTED_FEATURES,\n\
-         };\n\
+         pub(crate) use feature_data::{CAPABILITY_RECORDS, capability_by_id};\n\
          pub use profile_data::{DIRECT_SELECTED_FEATURES, TARGET_FEATURE_CLOSURE};\n\n",
     );
     writeln!(
@@ -141,6 +139,11 @@ fn render_mod(profile: &ValidatedProfile) -> String {
         output,
         "/// BLAKE3 hash of the canonical semantic profile.\npub const PROFILE_HASH: &str = {:?};",
         profile.hash()
+    )
+    .expect("writing to String cannot fail");
+    writeln!(
+        output,
+        "\npub(crate) const PROFILE_IDENTITY: crate::runtime::ProfileIdentity =\n    crate::runtime::ProfileIdentity::new(\n        PROFILE_ID,\n        PROFILE_FORMAT_VERSION,\n        PROFILE_GENERATOR_VERSION,\n        PROFILE_HASH,\n    );"
     )
     .expect("writing to String cannot fail");
     output
@@ -178,11 +181,17 @@ fn render_feature_ids(profile: &ValidatedProfile) -> String {
 fn render_feature_data(profile: &ValidatedProfile) -> String {
     let mut output = header(profile);
     output.push_str(
-        "use crate::runtime::FeatureId;\n\n\
-         /// Every feature and extension currently referenced by runtime consumers.\n\
+        "use crate::runtime::{\n    CapabilityClaimState, CapabilityRecord, CapabilityStatus, EvidenceStatus, FeatureId,\n    FeatureSurface, FlaggerStatus, ProfileRelation,\n};\n\n\
          #[rustfmt::skip]\n\
-         pub const REFERENCED_FEATURES: &[(FeatureId, &str)] = &[\n",
+         pub(crate) const CAPABILITY_RECORDS: &[CapabilityRecord] = &[\n",
     );
+    let direct = profile
+        .profile()
+        .selected_features
+        .iter()
+        .map(|id| id.as_str())
+        .collect::<BTreeSet<_>>();
+    let closure = target_closure(profile);
     let mut entries = profile
         .profile()
         .features
@@ -193,7 +202,9 @@ fn render_feature_data(profile: &ValidatedProfile) -> String {
                 item.id.as_str(),
                 item.name.as_str(),
                 item.runtime_support,
+                Some(item.claim_state),
                 item.unsupported_rationale.as_str(),
+                item.evidence.len(),
             )
         })
         .chain(
@@ -207,69 +218,66 @@ fn render_feature_data(profile: &ValidatedProfile) -> String {
                         item.id.as_str(),
                         item.name.as_str(),
                         item.runtime_support,
+                        None,
                         item.unsupported_rationale.as_str(),
+                        item.evidence.len(),
                     )
                 }),
         )
         .collect::<Vec<_>>();
     entries.sort_by_key(|item| item.0);
-    for (_, id, name, _, _) in &entries {
-        writeln!(output, "    (FeatureId::{id}, {name:?}),")
-            .expect("writing to String cannot fail");
-    }
-    output.push_str(
-        "];\n\n/// Existing runtime-supported feature and extension set.\n\
-         #[rustfmt::skip]\n\
-         pub const SUPPORTED_FEATURES: &[FeatureId] = &[\n",
-    );
-    for id in &profile.profile().supported_feature_order {
-        writeln!(output, "    FeatureId::{},", id.as_str()).expect("writing to String cannot fail");
-    }
-    output.push_str(
-        "];\n\n/// Exact runtime rejection rationales.\n\
-         #[rustfmt::skip]\n\
-         pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[\n",
-    );
-    for feature_id in &profile.profile().unsupported_feature_order {
-        let feature = profile
-            .profile()
-            .features
-            .iter()
-            .find(|item| item.id == *feature_id)
-            .expect("unsupported compatibility references were validated");
+    let mut lookup_entries = Vec::with_capacity(entries.len());
+    for (index, (_, id, name, status, claim, rationale, evidence_count)) in
+        entries.into_iter().enumerate()
+    {
+        lookup_entries.push((id, index));
+        let rationale = if status == RuntimeSupport::Referenced && rationale.is_empty() {
+            format!("{name} is referenced by the profile but is not runtime-supported.")
+        } else {
+            rationale.to_owned()
+        };
+        let is_iso = claim.is_some();
+        let is_direct = is_iso && direct.contains(id);
+        let (surface, relation, claim) = match claim {
+            Some(claim) => (
+                "Iso",
+                if is_direct {
+                    "Direct"
+                } else if closure.contains(id) {
+                    "Implied"
+                } else {
+                    "Unselected"
+                },
+                claim_name_rust(claim),
+            ),
+            None => ("Extension", "Extension", "NotApplicable"),
+        };
+        let flagger_status = if flagger_accepted(is_iso, is_direct, status) {
+            "Accepted"
+        } else {
+            "Rejected"
+        };
         writeln!(
             output,
-            "    (FeatureId::{}, {:?}),",
-            feature.id.as_str(),
-            feature.unsupported_rationale
+            "    CapabilityRecord {{ id: FeatureId::{id}, name: {name:?}, status: CapabilityStatus::{}, flagger_status: FlaggerStatus::{flagger_status}, surface: FeatureSurface::{surface}, profile_relation: ProfileRelation::{relation}, claim_state: CapabilityClaimState::{claim}, evidence_status: EvidenceStatus::{}, evidence_count: {evidence_count}, non_support_rationale: {rationale:?} }},",
+            runtime_support_rust(status),
+            if evidence_count == 0 {
+                "Incomplete"
+            } else {
+                "Present"
+            },
         )
         .expect("writing to String cannot fail");
     }
-    output.push_str("];\n");
-    output.push_str(
-        "\n/// Parser-visible compatibility set retained until M01-PR04.\n\
-         #[rustfmt::skip]\n\
-         pub const FLAGGER_ACCEPTED_FEATURES: &[FeatureId] = &[\n",
-    );
-    let mut accepted = profile
-        .profile()
-        .selected_features
-        .iter()
-        .map(|id| id.as_str())
-        .chain(
-            profile
-                .profile()
-                .implementation_extensions
-                .iter()
-                .filter(|extension| extension.runtime_support == RuntimeSupport::Supported)
-                .map(|extension| extension.id.as_str()),
+    output.push_str("];\n\npub(crate) fn capability_by_id(id: &str) -> Option<&'static CapabilityRecord> {\n    match id {\n");
+    for (id, index) in lookup_entries {
+        writeln!(
+            output,
+            "        {id:?} => Some(&CAPABILITY_RECORDS[{index}]),"
         )
-        .collect::<Vec<_>>();
-    accepted.sort_unstable();
-    for id in accepted {
-        writeln!(output, "    FeatureId::{id},").expect("writing to String cannot fail");
+        .expect("writing to String cannot fail");
     }
-    output.push_str("];\n");
+    output.push_str("        _ => None,\n    }\n}\n");
     output
 }
 
@@ -306,10 +314,10 @@ fn render_markdown(profile: &ValidatedProfile) -> String {
     let mut output = format!(
         "<!-- @generated by selene-profile; profile-hash: {} -->\n\n\
          # GQL profile registry\n\n\
-         Profile `{}` uses source format {} and generator version {}. Release claimable: **{}**. Runtime support is separate from formal claim state.\n\n\
+         Profile `{}` uses source format {} and generator version {}. Release claimable: **{}**. Flagger admission, runtime support, formal claim state, and evidence are separate generated dimensions.\n\n\
          ## ISO optional features\n\n\
-         | ID | Name | Runtime | Claim | Rationale |\n\
-         |---|---|---|---|---|\n",
+         | ID | Name | Flagger | Runtime | Claim | Rationale |\n\
+         |---|---|---|---|---|---|\n",
         profile.hash(),
         markdown(&profile.profile().profile_id),
         profile.profile().format_version,
@@ -319,9 +327,18 @@ fn render_markdown(profile: &ValidatedProfile) -> String {
     for item in &profile.profile().features {
         writeln!(
             output,
-            "| {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} |",
             item.id.as_str(),
             markdown(&item.name),
+            flagger_status_name(
+                true,
+                profile
+                    .profile()
+                    .selected_features
+                    .iter()
+                    .any(|selected| selected == &item.id),
+                item.runtime_support,
+            ),
             enum_name(item.runtime_support),
             claim_name(item.claim_state),
             markdown(&item.unsupported_rationale)
@@ -331,14 +348,15 @@ fn render_markdown(profile: &ValidatedProfile) -> String {
     output.push_str(
         "\n## Implementation extensions\n\n\
          These IDs are not ISO optional features.\n\n\
-         | ID | Name | Runtime |\n|---|---|---|\n",
+         | ID | Name | Flagger | Runtime |\n|---|---|---|---|\n",
     );
     for item in &profile.profile().implementation_extensions {
         writeln!(
             output,
-            "| {} | {} | {} |",
+            "| {} | {} | {} | {} |",
             item.id.as_str(),
             markdown(&item.name),
+            flagger_status_name(false, false, item.runtime_support),
             enum_name(item.runtime_support)
         )
         .expect("writing to String cannot fail");
@@ -563,6 +581,35 @@ fn claim_name(value: crate::ClaimState) -> &'static str {
     }
 }
 
+fn claim_name_rust(value: crate::ClaimState) -> &'static str {
+    match value {
+        crate::ClaimState::Unsupported => "Unsupported",
+        crate::ClaimState::ImplementedUnclaimed => "ImplementedUnclaimed",
+        crate::ClaimState::ClaimedPendingEvidence => "ClaimedPendingEvidence",
+        crate::ClaimState::Claimed => "Claimed",
+    }
+}
+
+fn runtime_support_rust(value: RuntimeSupport) -> &'static str {
+    match value {
+        RuntimeSupport::Supported => "Supported",
+        RuntimeSupport::Unsupported => "Unsupported",
+        RuntimeSupport::Referenced => "Referenced",
+    }
+}
+
+fn flagger_status_name(iso: bool, direct: bool, runtime_support: RuntimeSupport) -> &'static str {
+    if flagger_accepted(iso, direct, runtime_support) {
+        "accepted"
+    } else {
+        "rejected"
+    }
+}
+
+fn flagger_accepted(iso: bool, direct: bool, runtime_support: RuntimeSupport) -> bool {
+    (iso && direct) || runtime_support == RuntimeSupport::Supported
+}
+
 fn markdown(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -570,4 +617,20 @@ fn markdown(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('|', "\\|")
         .replace(['\r', '\n'], " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flagger_policy_keeps_admission_independent_from_runtime_support() {
+        assert!(flagger_accepted(true, true, RuntimeSupport::Unsupported));
+        assert!(flagger_accepted(true, false, RuntimeSupport::Supported));
+        assert!(flagger_accepted(false, false, RuntimeSupport::Supported));
+        assert!(!flagger_accepted(false, false, RuntimeSupport::Unsupported));
+        assert!(!flagger_accepted(false, false, RuntimeSupport::Referenced));
+        assert!(!flagger_accepted(true, false, RuntimeSupport::Unsupported));
+        assert!(!flagger_accepted(true, false, RuntimeSupport::Referenced));
+    }
 }

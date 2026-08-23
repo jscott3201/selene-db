@@ -7,11 +7,11 @@ and evidence; they must not reproduce the publication.
 
 ## Current posture
 
-The c5 feature register reports implemented and parser-visible surface. It is
-not sufficient evidence for a formal 2.0 conformance claim. M01 establishes the
-generated, implication-closed profile authority. Until that gate exists and is
-green, public wording is limited to “GQL-oriented” or “implements selected GQL
-syntax and semantics,” with known gaps.
+The generated, implication-closed profile reports parser admission, runtime
+status, formal claim state, and evidence as separate fields. It is not
+sufficient evidence for a formal 2.0 conformance claim, and the current profile
+is not release-claimable. Public wording is limited to “GQL-oriented” or
+“implements selected GQL syntax and semantics,” with known gaps.
 
 ## Claim states
 
@@ -25,12 +25,11 @@ Manual release prose must not exceed the generated claim.
 
 ## M01 authority
 
-The future `selene-profile` source and generated artifacts will own feature
+The `selene-profile` source and generated artifacts own feature
 taxonomy and implications, implementation-defined choices and applicability,
 implementation-dependent disclosures, Unicode/collation/source repertoire,
 extension inventory, flagger state, runtime status, rule/evidence traceability,
-and the release declaration. That crate and authority do not exist at the c5
-baseline.
+and the release declaration.
 
 ## Evidence bar
 

@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use selene_profile::{
-    ANNEX_B_REGISTER, ClaimState, DIRECT_SELECTED_FEATURES, FLAGGER_ACCEPTED_FEATURES,
-    NOT_SUPPORTED_RATIONALE, PROFILE_FORMAT_VERSION, PROFILE_GENERATOR_VERSION, PROFILE_ID,
-    REFERENCED_FEATURES, RELEASE_CLAIMABLE, SUPPORTED_FEATURES, TARGET_FEATURE_CLOSURE,
-    check_repository, parse_profile, render_outputs, write_repository,
+    CapabilityClaimState, CapabilityStatus, ClaimState, DIRECT_SELECTED_FEATURES, EvidenceStatus,
+    FeatureId, FeatureSurface, FlaggerStatus, PROFILE_FORMAT_VERSION, PROFILE_GENERATOR_VERSION,
+    PROFILE_HASH, PROFILE_ID, ProfileRelation, RELEASE_CLAIMABLE, TARGET_FEATURE_CLOSURE,
+    annex_b_records, capabilities, capability_by_id, check_repository, current_profile_identity,
+    parse_profile, render_outputs, write_repository,
 };
 use serde_json::{Value, json};
 
@@ -32,33 +33,39 @@ fn feature_mut(value: &mut Value, index: usize) -> &mut serde_json::Map<String, 
 #[test]
 fn checked_in_profile_loads_and_preserves_seed_contract() {
     let profile = parse_profile(SOURCE).expect("checked-in profile validates");
-    assert_eq!(
-        profile.hash(),
-        "f11ab8d5c6e04428a7dba2719547101bfae37aabe88b987c04f508ff5c3f947d"
-    );
+    assert_eq!(profile.hash(), PROFILE_HASH);
     assert_eq!(profile.profile().features.len(), 197);
     assert_eq!(profile.profile().implementation_extensions.len(), 11);
-    assert_eq!(REFERENCED_FEATURES.len(), 208);
-    assert_eq!(SUPPORTED_FEATURES.len(), 132);
-    assert_eq!(NOT_SUPPORTED_RATIONALE.len(), 43);
-    assert_eq!(ANNEX_B_REGISTER.len(), 117);
+    assert_eq!(capabilities().len(), 208);
+    assert_eq!(
+        capabilities()
+            .iter()
+            .filter(|record| record.status == CapabilityStatus::Supported)
+            .count(),
+        132
+    );
+    assert_eq!(
+        capabilities()
+            .iter()
+            .filter(|record| record.status == CapabilityStatus::Unsupported)
+            .count(),
+        43
+    );
+    assert_eq!(
+        capabilities()
+            .iter()
+            .filter(|record| record.flagger_status == FlaggerStatus::Accepted)
+            .count(),
+        143
+    );
+    assert_eq!(annex_b_records().count(), 117);
     assert_eq!(PROFILE_FORMAT_VERSION, 3);
-    assert_eq!(PROFILE_GENERATOR_VERSION, 2);
+    assert_eq!(PROFILE_GENERATOR_VERSION, 3);
     assert_eq!(PROFILE_ID, "selene-gql-core-2.0");
     assert_eq!(RELEASE_CLAIMABLE, profile.profile().release_claimable);
     assert!(!profile.profile().release_claimable);
     assert_eq!(DIRECT_SELECTED_FEATURES.len(), 132);
     assert_eq!(TARGET_FEATURE_CLOSURE.len(), 138);
-    assert_eq!(FLAGGER_ACCEPTED_FEATURES.len(), 143);
-    assert!(SUPPORTED_FEATURES.windows(4).any(|window| {
-        window
-            == [
-                selene_profile::FeatureId::GA01,
-                selene_profile::FeatureId::GA05,
-                selene_profile::FeatureId::GA06,
-                selene_profile::FeatureId::GA07,
-            ]
-    }));
 
     assert!(
         profile
@@ -74,6 +81,109 @@ fn checked_in_profile_loads_and_preserves_seed_contract() {
             .iter()
             .all(|feature| { !feature.id.as_str().starts_with("IM_") })
     );
+}
+
+#[test]
+fn generated_runtime_records_cover_identity_status_relation_and_evidence() {
+    let identity = current_profile_identity();
+    assert_eq!(identity.profile_id(), PROFILE_ID);
+    assert_eq!(identity.source_format_version(), PROFILE_FORMAT_VERSION);
+    assert_eq!(identity.generator_version(), PROFILE_GENERATOR_VERSION);
+    assert_eq!(identity.canonical_hash(), PROFILE_HASH);
+
+    let source = parse_profile(SOURCE).expect("checked-in profile validates");
+    let mut expected = source
+        .profile()
+        .features
+        .iter()
+        .map(|record| (record.runtime_order, record.id.as_str()))
+        .chain(
+            source
+                .profile()
+                .implementation_extensions
+                .iter()
+                .map(|record| (record.runtime_order, record.id.as_str())),
+        )
+        .collect::<Vec<_>>();
+    expected.sort_unstable_by_key(|(order, _)| *order);
+    assert_eq!(
+        capabilities()
+            .iter()
+            .map(|record| record.id.as_str())
+            .collect::<Vec<_>>(),
+        expected.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
+    );
+
+    let gp04 = capability_by_id("GP04").expect("GP04 capability");
+    assert_eq!(gp04.id, FeatureId::GP04);
+    assert_eq!(gp04.status, CapabilityStatus::Supported);
+    assert_eq!(gp04.flagger_status, FlaggerStatus::Accepted);
+    assert_eq!(gp04.surface, FeatureSurface::Iso);
+    assert_eq!(gp04.profile_relation, ProfileRelation::Direct);
+    assert_eq!(gp04.claim_state, CapabilityClaimState::ImplementedUnclaimed);
+    assert_eq!(gp04.evidence_status, EvidenceStatus::Incomplete);
+    assert_eq!(gp04.evidence_count, 0);
+
+    for id in ["GC04", "GV65"] {
+        assert_eq!(
+            capability_by_id(id)
+                .expect("implied capability")
+                .profile_relation,
+            ProfileRelation::Implied
+        );
+    }
+    assert_eq!(
+        capability_by_id("GV65").expect("GV65 capability").status,
+        CapabilityStatus::Referenced
+    );
+    assert!(
+        capabilities()
+            .iter()
+            .filter(|record| record.status != CapabilityStatus::Supported)
+            .all(|record| !record.non_support_rationale.is_empty())
+    );
+    for id in ["GS04", "GH02", "GV66"] {
+        let record = capability_by_id(id).expect("direct unsupported capability");
+        assert_eq!(record.status, CapabilityStatus::Unsupported);
+        assert_eq!(record.profile_relation, ProfileRelation::Direct);
+        assert_eq!(record.flagger_status, FlaggerStatus::Accepted);
+        assert!(!record.non_support_rationale.is_empty());
+    }
+
+    let json = capability_by_id("IM_JSON").expect("IM_JSON capability");
+    assert_eq!(json.status, CapabilityStatus::Supported);
+    assert_eq!(json.flagger_status, FlaggerStatus::Accepted);
+    assert_eq!(json.surface, FeatureSurface::Extension);
+    assert_eq!(json.profile_relation, ProfileRelation::Extension);
+    assert_eq!(json.claim_state, CapabilityClaimState::NotApplicable);
+
+    for id in [
+        "GC03", "GE04", "GE05", "GH02", "GG01", "GG02", "GG20", "GG21", "GS04", "GV66", "GV67",
+    ] {
+        let record = capability_by_id(id).expect("direct parser-visible capability");
+        assert_eq!(record.status, CapabilityStatus::Unsupported, "{id}");
+        assert_eq!(record.profile_relation, ProfileRelation::Direct, "{id}");
+        assert_eq!(record.flagger_status, FlaggerStatus::Accepted, "{id}");
+    }
+
+    for id in ["GC04", "GV65"] {
+        assert_eq!(
+            capability_by_id(id)
+                .expect("implied capability")
+                .flagger_status,
+            FlaggerStatus::Rejected,
+            "{id}",
+        );
+    }
+    let unselected = capability_by_id("GV20").expect("GV20 capability");
+    assert_eq!(unselected.status, CapabilityStatus::Unsupported);
+    assert_eq!(unselected.profile_relation, ProfileRelation::Unselected);
+    assert_eq!(unselected.flagger_status, FlaggerStatus::Rejected);
+    for id in ["GV60", "GV61"] {
+        let record = capability_by_id(id).expect("reference type capability");
+        assert_eq!(record.status, CapabilityStatus::Unsupported, "{id}");
+        assert_eq!(record.flagger_status, FlaggerStatus::Rejected, "{id}");
+    }
 }
 
 #[test]
@@ -134,7 +244,7 @@ fn format_and_generator_versions_are_incompatible_boundaries() {
     assert!(
         parse_value(&generator)
             .unwrap_err()
-            .contains("generator_version must be 2, got 1")
+            .contains("generator_version must be 3, got 1")
     );
 }
 
@@ -361,6 +471,51 @@ fn repeated_generation_is_byte_identical() {
 }
 
 #[test]
+fn generated_capability_evidence_summary_tracks_registered_references() {
+    let mut value = source_value();
+    let gp04 = value["features"]
+        .as_array_mut()
+        .expect("features")
+        .iter_mut()
+        .find(|record| record["id"] == "GP04")
+        .expect("GP04 record");
+    gp04["evidence"] = json!(["EVID-FLAGGER"]);
+
+    let profile = parse_value(&value).expect("evidence fixture validates");
+    let feature_data = render_outputs(&profile)
+        .expect("outputs render")
+        .into_iter()
+        .find(|(path, _)| {
+            path == std::path::Path::new("crates/selene-profile/src/generated/feature_data.rs")
+        })
+        .expect("feature data output")
+        .1;
+    let gp04_line = feature_data
+        .lines()
+        .find(|line| line.contains("FeatureId::GP04"))
+        .expect("GP04 generated record");
+    assert!(gp04_line.contains("EvidenceStatus::Present"));
+    assert!(gp04_line.contains("evidence_count: 1"));
+}
+
+#[test]
+fn stale_generated_output_is_rejected() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let root = temporary.path();
+    let source_path = root.join("spec/gql-profile/profile.json");
+    std::fs::create_dir_all(source_path.parent().expect("source parent")).unwrap();
+    std::fs::write(&source_path, SOURCE).unwrap();
+    write_repository(root).expect("initial generation");
+
+    let stale = root.join("crates/selene-profile/src/generated/feature_data.rs");
+    std::fs::write(&stale, "stale\n").unwrap();
+    let error = check_repository(root).expect_err("stale output must fail");
+    assert!(
+        matches!(error, selene_profile::ProfileError::Stale(path) if path == std::path::Path::new("crates/selene-profile/src/generated/feature_data.rs"))
+    );
+}
+
+#[test]
 fn markdown_generation_escapes_table_content() {
     let mut value = source_value();
     let feature = value["features"]
@@ -439,7 +594,7 @@ fn schema_closes_every_object_rule() {
         "https://selene-db.dev/schema/gql-profile-v3.json"
     );
     assert_eq!(schema["properties"]["format_version"]["const"], 3);
-    assert_eq!(schema["properties"]["generator_version"]["const"], 2);
+    assert_eq!(schema["properties"]["generator_version"]["const"], 3);
     assert_eq!(
         schema["properties"]["selected_features"]["uniqueItems"],
         true

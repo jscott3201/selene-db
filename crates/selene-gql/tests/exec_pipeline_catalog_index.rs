@@ -8,10 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use selene_core::{
-    Change, DbString, GraphId, HlcTimestamp, Origin, Value,
-    feature_register::{FeatureId, SUPPORTED_FEATURES},
-};
+use selene_core::{Change, DbString, GraphId, HlcTimestamp, Origin, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, BuiltinProcedureRegistry, EmptyProcedureRegistry,
     ExecutionPlan, ExecutorError, Session, StatementOutput, TxContext, analyze, execute_pipeline,
@@ -19,6 +16,7 @@ use selene_gql::{
 };
 use selene_graph::{CommitOutcome, GraphTypeDef, SharedGraph, TypedIndexKind};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
+use selene_profile::{CapabilityStatus, FeatureId, capability};
 
 use exec_common::db_string;
 
@@ -317,7 +315,10 @@ fn named_index_survives_wal_recovery() {
 
 #[test]
 fn flagger_records_im_index_ddl_and_feature_is_supported() {
-    assert!(SUPPORTED_FEATURES.contains(&FeatureId::IM_INDEX_DDL));
+    assert!(
+        capability(FeatureId::IM_INDEX_DDL)
+            .is_some_and(|record| record.status == CapabilityStatus::Supported)
+    );
 
     for source in [
         "CREATE INDEX sensor_ts_idx ON :Sensor(ts)",

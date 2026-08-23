@@ -157,8 +157,8 @@ epoch mutation.
 ## Query And Procedure Surface
 
 - `spec/gql-profile/profile.json` is the feature and implementation-choice
-  source. `crates/selene-core/src/feature_register.rs` preserves the current
-  parser-visible compatibility path over generated data.
+  source. `selene-profile` exposes the generated typed capability, identity,
+  and Annex B lookup APIs used by runtime consumers.
 - `ProcedureRegistry` is the planner/executor/test seam. It is not a third-party
   extension point.
 - `BuiltinProcedureRegistry` is the production registry. Procedure names,

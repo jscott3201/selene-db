@@ -2433,6 +2433,20 @@ The first four are scale-independent (single-query CPU).
 | `procedure_call_repeat/no_cache` | 2.958 ms | 100 short-lived sessions, parse/analyze/plan each. |
 | `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
 | `procedure_call_pipeline/match_call_repeat/1000` | 254.62 µs (quick) | Warm plan-cache `MATCH` over 1k input nodes feeding regular `CALL bench.repeat()`; covers direct procedure-call row growth beyond one-row source calls. |
+| `gql_profile_conformance/generated_capability_lookup` | 2.484 µs (quick) | One typed lookup for each of the 208 generated capability records. |
+| `gql_profile_flagger/parse_admitted_and_rejected` | 23.02 µs (quick) | Parses one admitted direct-selected parameter query and one rejected implied `CREATE GRAPH` query. |
+| `procedure_feature_status/shared_cache_generated_capabilities` | 54.58 µs (quick) | Warm shared-cache `selene.feature_status()` call returning the generated inventory. |
+
+PR-local generated-profile smoke commands:
+
+- `scripts/run-benches.sh --profile quick --bench parse --filter gql_profile`
+- `scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_feature_status`
+
+The quick parse run measured `gql_parse_corpus/m5c` at 1.134 ms
+(1.126–1.147 ms), compared with the supplied base row's 1.763 ms median
+(1.716–1.844 ms). The generated lookup processed all 208 records in 2.484 µs
+(2.479–2.490 µs). The feature-status command measured the ten-column, 208-row
+procedure at 54.58 µs (54.40–54.82 µs).
 
 PR-local quick procedure-call row-extension A/B:
 

@@ -1,6 +1,6 @@
 {
   "format_version": 3,
-  "generator_version": 2,
+  "generator_version": 3,
   "profile_id": "selene-gql-core-2.0",
   "selected_features": [
     "G002",

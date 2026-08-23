@@ -1,7 +1,7 @@
 //! DDL keyword-boundary regression coverage.
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{ParserError, parse};
+use selene_profile::FeatureId;
 
 fn assert_syntax_error(source: &str) {
     let error = parse(source).expect_err(source);
@@ -12,7 +12,7 @@ fn assert_syntax_error(source: &str) {
 }
 
 fn assert_unsupported(source: &str, expected: FeatureId) {
-    let error = parse(source).expect_err(source);
+    let error = selene_gql::parse(source).expect_err(source);
     assert_eq!(error.gqlstatus().as_str(), "42N01", "{source}");
     let ParserError::UnsupportedFeature { feature_id, .. } = error else {
         panic!("expected UnsupportedFeature for {source}");
@@ -21,7 +21,7 @@ fn assert_unsupported(source: &str, expected: FeatureId) {
 }
 
 fn assert_not_implemented(source: &str) {
-    let error = parse(source).expect_err(source);
+    let error = selene_gql::parse(source).expect_err(source);
     assert!(
         matches!(error, ParserError::NotImplemented { .. }),
         "{source} must reject as NotImplemented, got {error:?}"

@@ -2,8 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::feature_register::{FLAGGER_ACCEPTED_FEATURES, NOT_SUPPORTED_RATIONALE};
 use selene_gql::{ParserError, feature_walk, parse};
+use selene_profile::{CapabilityStatus, FlaggerStatus, capabilities, capability};
 use selene_testing::corpus::{CorpusKind, Expectation, load_default_corpus};
 
 #[test]
@@ -26,6 +26,14 @@ fn corpus_contracts_hold() {
                     .map(|feature| feature.feature_id)
                     .collect::<BTreeSet<_>>();
                 for feature in declared_features {
+                    assert_eq!(
+                        capability(feature)
+                            .expect("declared feature is generated")
+                            .flagger_status,
+                        FlaggerStatus::Accepted,
+                        "{}: positive feature {feature} is not Flagger-accepted",
+                        case.path.display()
+                    );
                     assert!(
                         observed.contains(&feature),
                         "{}: declared feature {feature} was not observed; observed {:?}",
@@ -48,6 +56,14 @@ fn corpus_contracts_hold() {
                     );
                 };
                 assert_eq!(feature_id, expected, "{}", case.path.display());
+                assert_eq!(
+                    capability(feature_id)
+                        .expect("rejected feature is generated")
+                        .flagger_status,
+                    FlaggerStatus::Rejected,
+                    "{}: Flagger-accepted feature was rejected",
+                    case.path.display()
+                );
             }
             (CorpusKind::Negative, Expectation::ParseRejectedSyntax) => {
                 let error = parse(&case.source).unwrap_err_or_else(|| {
@@ -70,7 +86,7 @@ fn corpus_contracts_hold() {
 }
 
 #[test]
-fn corpus_covers_flagger_compatibility_set() {
+fn corpus_covers_generated_flagger_capabilities() {
     let cases = load_default_corpus().expect("corpus loads");
     let positive = cases
         .iter()
@@ -90,9 +106,10 @@ fn corpus_covers_flagger_compatibility_set() {
         .flat_map(|case| case.declared_features())
         .collect::<BTreeSet<_>>();
 
-    let missing_accepted = FLAGGER_ACCEPTED_FEATURES
+    let missing_accepted = capabilities()
         .iter()
-        .copied()
+        .filter(|record| record.flagger_status == FlaggerStatus::Accepted)
+        .map(|record| record.id)
         .filter(|feature| !positive.contains(feature) && !blocked_accepted.contains(feature))
         .collect::<Vec<_>>();
     assert!(
@@ -104,10 +121,13 @@ fn corpus_covers_flagger_compatibility_set() {
             .collect::<Vec<_>>()
     );
 
-    let missing_rejected = NOT_SUPPORTED_RATIONALE
+    let missing_rejected = capabilities()
         .iter()
-        .map(|(feature, _)| *feature)
-        .filter(|feature| !FLAGGER_ACCEPTED_FEATURES.contains(feature))
+        .filter(|record| {
+            record.flagger_status == FlaggerStatus::Rejected
+                && record.status == CapabilityStatus::Unsupported
+        })
+        .map(|record| record.id)
         .filter(|feature| !negative.contains(feature))
         .collect::<Vec<_>>();
     assert!(
@@ -166,6 +186,7 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
             ],
         ),
         ("GP01-inline-procedure.gql", &["GP01", "GP02", "GQ09"]),
+        ("GP04-named-procedure-call.gql", &["GP04"]),
         ("GQ18-value-subquery.gql", &["GQ13", "GQ18"]),
         ("GV45-record-literal.gql", &["GV45", "GV50"]),
         ("GV46-closed-record-type.gql", &["GA06", "GV45", "GV46"]),

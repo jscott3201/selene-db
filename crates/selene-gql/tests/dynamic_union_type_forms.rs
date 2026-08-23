@@ -1,6 +1,6 @@
 //! ISO dynamic union value type coverage.
 
-use selene_core::{GraphId, Value, db_string, feature_register::FeatureId};
+use selene_core::{GraphId, Value, db_string};
 use selene_gql::{
     EmptyProcedureRegistry, GqlStatus, GqlType, IsCheckKind, PipelineStatement, Session, Statement,
     StatementOutput, ValueExpr,
@@ -8,6 +8,7 @@ use selene_gql::{
     feature_walk, parse,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 
 #[test]
 fn open_dynamic_union_type_forms_parse_to_ast() {

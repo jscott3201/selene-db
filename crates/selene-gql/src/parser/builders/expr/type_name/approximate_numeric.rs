@@ -1,7 +1,7 @@
 //! Approximate numeric type-name helpers.
 
 use pest::iterators::Pair;
-use selene_core::feature_register::FeatureId;
+use selene_profile::FeatureId;
 
 use crate::{GqlType, error::ParserError, parser::builders::span};
 

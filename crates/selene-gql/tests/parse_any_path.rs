@@ -1,10 +1,10 @@
 //! Parser coverage for ISO counted `ANY` path search (Feature G016).
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{
     GqlStatus, ParserError, PathMode, PathSelector, PipelineStatement, Statement, feature_walk,
     parse,
 };
+use selene_profile::FeatureId;
 
 fn match_clause(source: &str) -> selene_gql::MatchClause {
     let Statement::Query(query) = parse(source).expect("parse succeeds") else {

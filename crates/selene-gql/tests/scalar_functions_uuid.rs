@@ -7,12 +7,13 @@ mod exec_common;
 use exec_common::{
     column_values, db_string, execute_read, execute_read_result, first_scan, planned,
 };
-use selene_core::{GraphId, PropertyValueType, Value, feature_register::FeatureId};
+use selene_core::{GraphId, PropertyValueType, Value};
 use selene_gql::{
     EmptyProcedureRegistry, IndexKind, Literal, OptimizeContext, ScanAccess, Session,
     StatementOutput, TypedIndexBounds, feature_walk, optimize, parse,
 };
 use selene_graph::{GraphTypeDef, SharedGraph, TypedIndexKind};
+use selene_profile::FeatureId;
 use selene_testing::MockIndexCatalog;
 
 const UUID_TEXT: &str = "018f1b6d-7b89-7cc0-9f40-2c6f8d4df101";

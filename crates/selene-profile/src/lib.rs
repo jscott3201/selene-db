@@ -17,11 +17,9 @@ mod validate;
 pub use generate::{check_repository, render_outputs, write_repository};
 pub use generated::{
     ANNEX_B_CATEGORY_COUNTS, ANNEX_B_IA, ANNEX_B_ID, ANNEX_B_IE, ANNEX_B_IL, ANNEX_B_IS,
-    ANNEX_B_IV, ANNEX_B_IW, ANNEX_B_LOOKUP_TEST_VECTORS, ANNEX_B_REGISTER,
-    DIRECT_SELECTED_FEATURES, FLAGGER_ACCEPTED_FEATURES, NOT_SUPPORTED_RATIONALE,
-    PROFILE_FORMAT_VERSION, PROFILE_GENERATOR_VERSION, PROFILE_HASH, PROFILE_ID,
-    REFERENCED_FEATURES, RELEASE_CLAIMABLE, SUPPORTED_FEATURES, TARGET_FEATURE_CLOSURE,
-    annex_b_by_id,
+    ANNEX_B_IV, ANNEX_B_IW, ANNEX_B_LOOKUP_TEST_VECTORS, DIRECT_SELECTED_FEATURES,
+    PROFILE_FORMAT_VERSION, PROFILE_GENERATOR_VERSION, PROFILE_HASH, PROFILE_ID, RELEASE_CLAIMABLE,
+    TARGET_FEATURE_CLOSURE, annex_b_by_id, annex_b_records,
 };
 pub use model::{
     ApplicabilityDefinition, ApplicabilityExpression, ApplicabilityId, ClaimState, ClauseAnchor,
@@ -32,8 +30,33 @@ pub use model::{
     RuntimeSupport,
 };
 pub use runtime::{
-    AnnexBDecision, AnnexBId, AnnexBRecord, AnnexBRegister, AnnexBValue, ApplicabilityStatus,
-    DecisionStability as RuntimeDecisionStability, DecisionVisibility as RuntimeDecisionVisibility,
-    FeatureId,
+    AnnexBDecision, AnnexBId, AnnexBRecord, AnnexBValue, ApplicabilityStatus, CapabilityClaimState,
+    CapabilityRecord, CapabilityStatus, DecisionStability as RuntimeDecisionStability,
+    DecisionVisibility as RuntimeDecisionVisibility, EvidenceStatus, FeatureId, FeatureSurface,
+    FlaggerStatus, ProfileIdentity, ProfileRelation,
 };
 pub use validate::{ProfileError, ValidatedProfile, load_profile, parse_profile};
+
+/// Return the generated identity used by runtime compilation and cache paths.
+#[must_use]
+pub const fn current_profile_identity() -> ProfileIdentity {
+    generated::PROFILE_IDENTITY
+}
+
+/// Return every ISO feature and extension in deterministic runtime order.
+#[must_use]
+pub const fn capabilities() -> &'static [CapabilityRecord] {
+    generated::CAPABILITY_RECORDS
+}
+
+/// Look up one generated capability by typed identifier.
+#[must_use]
+pub fn capability(id: FeatureId) -> Option<&'static CapabilityRecord> {
+    capability_by_id(id.as_str())
+}
+
+/// Look up one generated capability by stable identifier text.
+#[must_use]
+pub fn capability_by_id(id: &str) -> Option<&'static CapabilityRecord> {
+    generated::capability_by_id(id)
+}

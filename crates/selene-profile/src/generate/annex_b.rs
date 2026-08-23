@@ -30,11 +30,8 @@ pub(super) fn render_categories(profile: &ValidatedProfile) -> Vec<(PathBuf, Str
 pub(super) fn render_index(profile: &ValidatedProfile) -> String {
     let mut output = header(profile);
     output.push_str(
-        "use crate::runtime::{AnnexBId, AnnexBRecord, AnnexBRegister};\n\n\
+        "use crate::runtime::{AnnexBId, AnnexBRecord};\n\n\
          use super::{\n    annex_b_ia::ANNEX_B_IA, annex_b_id::ANNEX_B_ID, annex_b_ie::ANNEX_B_IE, annex_b_il::ANNEX_B_IL,\n    annex_b_is::ANNEX_B_IS, annex_b_iv::ANNEX_B_IV, annex_b_iw::ANNEX_B_IW,\n};\n\n\
-         const CATEGORIES: &[&[AnnexBRecord]] = &[\n    ANNEX_B_IA, ANNEX_B_ID, ANNEX_B_IE, ANNEX_B_IL, ANNEX_B_IS, ANNEX_B_IV, ANNEX_B_IW,\n];\n\n\
-         /// Complete Annex B register. This compatibility bridge is deleted by M01-PR04.\n\
-         pub const ANNEX_B_REGISTER: AnnexBRegister = AnnexBRegister::new(CATEGORIES);\n\n\
          /// Exact category counts in report order.\n\
          pub const ANNEX_B_CATEGORY_COUNTS: &[(&str, usize)] = &[\n",
     );
@@ -63,9 +60,13 @@ pub(super) fn render_index(profile: &ValidatedProfile) -> String {
         .expect("String writes cannot fail");
     }
     output.push_str(
-        "];\n\n/// Look up one exact Annex B singleton identifier.\n\
+        "];\n\n/// Iterate all Annex B records in category and runtime order.\n\
+         pub fn annex_b_records() -> impl Iterator<Item = &'static AnnexBRecord> {\n    \
+         ANNEX_B_IA\n        .iter()\n        .chain(ANNEX_B_ID)\n        .chain(ANNEX_B_IE)\n        .chain(ANNEX_B_IL)\n        .chain(ANNEX_B_IS)\n        .chain(ANNEX_B_IV)\n        .chain(ANNEX_B_IW)\n}\n\n\
+         /// Look up one exact Annex B singleton identifier.\n\
          #[must_use]\n\
-         pub fn annex_b_by_id(id: &str) -> Option<&'static AnnexBRecord> {\n    ANNEX_B_REGISTER.get(id)\n}\n",
+         pub fn annex_b_by_id(id: &str) -> Option<&'static AnnexBRecord> {\n    \
+         let category = match id.get(..2) {\n        Some(\"IA\") => ANNEX_B_IA,\n        Some(\"ID\") => ANNEX_B_ID,\n        Some(\"IE\") => ANNEX_B_IE,\n        Some(\"IL\") => ANNEX_B_IL,\n        Some(\"IS\") => ANNEX_B_IS,\n        Some(\"IV\") => ANNEX_B_IV,\n        Some(\"IW\") => ANNEX_B_IW,\n        _ => return None,\n    };\n    category.iter().find(|record| record.id.as_str() == id)\n}\n",
     );
     output
 }

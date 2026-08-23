@@ -4,7 +4,9 @@ use std::{rc::Rc, sync::Arc, time::Instant};
 
 use selene_core::{CancellationToken, Change, NodeScanBudget, metrics};
 use selene_graph::CommitOutcome;
+use selene_profile::current_profile_identity;
 
+use super::call_plan_cache::CallPlanSourceLookup;
 use super::plan_cache::{SharedPlanCacheInsert, SharedPlanCacheLookup};
 use super::session::materialize_parameter_values;
 use crate::{
@@ -127,10 +129,12 @@ impl Session<'_> {
     /// prepared against the current graph schema version skip parse, analyze,
     /// and plan. Short-lived sessions can additionally use the opt-in shared
     /// non-CALL source-plan cache, keyed by graph ID, schema version, registry
-    /// version, source text, caps, and optimizer mode. Procedure-call-rooted
+    /// version, profile identity, source text, caps, and optimizer mode.
+    /// Procedure-call-rooted
     /// statements use the separate opt-in shared CALL plan cache, keyed by
-    /// graph ID, schema version, registry version, and formatter-canonical
-    /// source. Embedded in-pipeline `CALL` remains uncached.
+    /// graph ID, schema version, registry version, profile identity, caps,
+    /// optimizer mode, and formatter-canonical source. Embedded in-pipeline
+    /// `CALL` remains uncached.
     /// If an active explicit transaction has uncommitted schema changes, both
     /// caches bypass lookup and insert so analysis sees transaction-local
     /// schema.
@@ -139,6 +143,7 @@ impl Session<'_> {
         source: &str,
         registry: &dyn ProcedureRegistry,
     ) -> Result<StatementOutput, ExecutorError> {
+        let profile_identity = current_profile_identity();
         // ISO/IEC 39075:2024 section 6 GR3 + section 7.3: once a session is
         // closed by `SESSION CLOSE`, every subsequent GQL-request is rejected.
         // This is the spec request boundary; embedders that drop the `Session`
@@ -159,7 +164,7 @@ impl Session<'_> {
             && let Some(cached) = self
                 .plan_cache
                 .as_mut()
-                .and_then(|cache| cache.get(source, schema_version))
+                .and_then(|cache| cache.get(source, schema_version, profile_identity))
         {
             return execute_statement(&cached, self, registry);
         }
@@ -181,20 +186,33 @@ impl Session<'_> {
                 graph_id,
                 schema_version,
                 registry_version,
+                profile_identity,
                 source,
                 caps: self.caps,
                 index_selection: self.index_selection,
             })
         {
             if let Some(cache) = self.plan_cache.as_mut() {
-                cache.insert(Arc::from(source), Arc::clone(&cached), schema_version);
+                cache.insert(
+                    Arc::from(source),
+                    Arc::clone(&cached),
+                    schema_version,
+                    profile_identity,
+                );
             }
             return execute_statement(&cached, self, registry);
         }
         if top_level_call_candidate
             && let (Some(cache), Some(graph_id)) = (call_plan_cache.as_ref(), cache_graph_id)
-            && let Some(cached) =
-                cache.get_source(graph_id, schema_version, registry_version, source)
+            && let Some(cached) = cache.get_source(CallPlanSourceLookup {
+                graph_id,
+                schema_version,
+                registry_version,
+                profile_identity,
+                caps: self.caps,
+                index_selection: self.index_selection,
+                source,
+            })
         {
             metrics::counter_inc(metrics::CALL_PLAN_CACHE_HITS_TOTAL);
             return execute_statement(&cached, self, registry);
@@ -224,7 +242,15 @@ impl Session<'_> {
         }
 
         let call_plan_key = cache_graph_id.and_then(|graph_id| {
-            CallPlanKey::for_statement(graph_id, schema_version, registry_version, &statement)
+            CallPlanKey::for_statement(
+                graph_id,
+                schema_version,
+                registry_version,
+                profile_identity,
+                self.caps,
+                self.index_selection,
+                &statement,
+            )
         });
         if let (Some(cache), Some(key)) = (call_plan_cache.as_ref(), call_plan_key.as_ref())
             && let Some(cached) = cache.get(key)
@@ -257,7 +283,12 @@ impl Session<'_> {
         let plan = Arc::new(self.optimize_plan(lowered));
         let source_arc = Arc::<str>::from(source);
         if !active_txn_has_schema_changes && let Some(cache) = self.plan_cache.as_mut() {
-            cache.insert(Arc::clone(&source_arc), Arc::clone(&plan), schema_version);
+            cache.insert(
+                Arc::clone(&source_arc),
+                Arc::clone(&plan),
+                schema_version,
+                profile_identity,
+            );
         }
         if let (Some(cache), Some(graph_id)) = (shared_plan_cache, cache_graph_id) {
             cache.insert(
@@ -265,6 +296,7 @@ impl Session<'_> {
                     graph_id,
                     schema_version,
                     registry_version,
+                    profile_identity,
                     source: Arc::clone(&source_arc),
                     caps: self.caps,
                     index_selection: self.index_selection,

@@ -1,7 +1,7 @@
 //! ISO binding-table reference value type form coverage.
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{GqlStatus, ParserError, parse};
+use selene_profile::FeatureId;
 
 #[test]
 fn binding_table_reference_type_forms_report_gv61_unsupported() {

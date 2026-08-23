@@ -8,13 +8,13 @@
 //!     is "Reference parameters" (§17.7 / row 77). Per ISO Annex A item 52 a
 //!     conforming implementation may not contain a `<cast specification>`
 //!     without GA05, so CAST is gated behind GA05, not baseline.
-//!   - GA05 is runtime-supported in `SUPPORTED_FEATURES` (selene-db implements
+//!   - GA05 has generated `supported` runtime status (selene-db implements
 //!     CAST); GE08 is not (reference parameters are unimplemented).
 //!   - The positive CAST corpus parses/analyzes and stamps GA05.
 //!   - The CHANGELOG records the GA05 support correction.
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{EmptyProcedureRegistry, analyze, feature_walk, parse};
+use selene_profile::{CapabilityStatus, FeatureId, capability};
 
 fn parse_or_panic(source: &str) -> selene_gql::Statement {
     parse(source).unwrap_or_else(|err| panic!("parse failed for `{source}`: {err:?}"))
@@ -54,14 +54,15 @@ fn cast_feature_ga05_runtime_supported_ge08_not() {
     // A item 52 requires GA05 for any `<cast specification>`. The mislabeled
     // GE08 ("Reference parameters", §17.7) is runtime-unsupported (reference parameters
     // are unimplemented).
-    use selene_core::feature_register::SUPPORTED_FEATURES;
     assert!(
-        SUPPORTED_FEATURES.contains(&FeatureId::GA05),
+        capability(FeatureId::GA05)
+            .is_some_and(|record| record.status == CapabilityStatus::Supported),
         "FeatureId::GA05 (Cast specification) must be runtime-supported — CAST is implemented"
     );
     assert!(
-        !SUPPORTED_FEATURES.contains(&FeatureId::GE08),
-        "FeatureId::GE08 (Reference parameters) must NOT be in SUPPORTED_FEATURES"
+        capability(FeatureId::GE08)
+            .is_some_and(|record| record.status != CapabilityStatus::Supported),
+        "FeatureId::GE08 (Reference parameters) must not be runtime-supported"
     );
 }
 

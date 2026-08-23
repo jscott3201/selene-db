@@ -24,33 +24,35 @@ surfaces see [`graph-algorithms.md`](graph-algorithms.md).
 
 ## 1. Crate dependency graph
 
-At the c5 baseline, the workspace is a flat tree of six mandatory crates with
-no umbrella facade. There are no opt-in extension crates. `selene-core` is the
-leaf; every other crate transitively depends on it. The runtime dependency
-direction is linear — `core → graph → algorithms → gql` — and
-`selene-algorithms` never imports `selene-gql`. `selene-testing` is dev-only
-and is consumed via `[dev-dependencies]`.
+The workspace has six mandatory runtime/profile crates and the non-publishable
+`selene-testing` support crate. There is no umbrella facade or opt-in extension
+crate. `selene-profile` and `selene-core` are independent dependency roots. The
+graph semantics chain is `core → graph → algorithms → gql`, while `selene-gql`
+also consumes the generated profile API. `selene-algorithms` never imports
+`selene-gql`.
 
 ```text
+   selene-profile ─────────────────────────────────────▶ selene-gql
    selene-core ──▶ selene-graph ──▶ selene-algorithms ──▶ selene-gql
 
-   selene-persist ──▶ selene-core   (graph-blind durability; never sees Graph)
+   selene-core ──▶ selene-persist   (graph-blind durability; never sees Graph)
 
-   (dev-only)  selene-testing  depends on selene-core, selene-graph
-                                (+ selene-algorithms for fixtures)
+   (dev-only)  selene-testing  depends on selene-profile, selene-core,
+                                selene-graph, and selene-gql
 ```
 
 | Crate | Depends on | Owns |
 |---|---|---|
-| `selene-core` | none | Foundation types: `Value` (mandatory ISO scalar values plus numeric, temporal, reference, byte-string, vector, JSON, list, record, path, and extension variants), `DbString`, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Changeset`, GQLSTATUS table, ISO feature register. |
+| `selene-profile` | none | Typed source validation, canonical profile identity and hashing, generated capability records, and generated Annex B records and documentation. |
+| `selene-core` | none | Foundation types: `Value` (mandatory ISO scalar values plus numeric, temporal, reference, byte-string, vector, JSON, list, record, path, and extension variants), `DbString`, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Changeset`, and the GQLSTATUS table. |
 | `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + immutable chunked persistent maps, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
 | `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
 | `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the snapshot harness. Independent of `selene-gql`. |
-| `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait, and its sole frozen production impl `BuiltinProcedureRegistry` — 50 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
-| `selene-testing` | core, graph (+ algorithms for fixtures) | Shared fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / algorithm corpora. Consumed via `[dev-dependencies]`. |
+| `selene-gql` | profile, core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, generated-profile Flagger, the `ProcedureRegistry` trait, and its sole frozen production impl `BuiltinProcedureRegistry` — 50 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
+| `selene-testing` | profile, core, graph, gql | Shared fixtures, synthetic graph generators, and planner/executor corpus helpers. Consumed through development and benchmark surfaces. |
 
-The dependency graph is intentionally acyclic with a single sink
-(`selene-core`) and a single broad runtime consumer (`selene-gql`).
+The dependency graph is acyclic, with `selene-profile` and `selene-core` as
+roots and `selene-gql` as the broad runtime consumer.
 `selene-algorithms` is a mandatory first-class crate that sits between
 `selene-graph` and `selene-gql`: it owns the native algorithm API and never
 imports the GQL layer, so the graph storage core stays free of the
