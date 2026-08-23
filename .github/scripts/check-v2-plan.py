@@ -212,7 +212,7 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
         "issue": meta["issue_count"],
         "decision": meta["decision_count"],
     }
-    expected = {"milestone": 11, "work item": 64, "issue": 7, "decision": 22}
+    expected = {"milestone": 11, "work item": 65, "issue": 7, "decision": 22}
     for name in expected:
         if actual[name] != expected[name] or declared[name] != expected[name]:
             check.fail(f"plan counts: {name} declared={declared[name]} actual={actual[name]} expected={expected[name]}")
@@ -658,7 +658,7 @@ def main() -> int:
         for error in check.errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("v2 plan validation passed: 11 milestones, 64 work items, 7 issues, 22 decisions")
+    print("v2 plan validation passed: 11 milestones, 65 work items, 7 issues, 22 decisions")
     return 0
 
 

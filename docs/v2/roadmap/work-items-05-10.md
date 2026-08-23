@@ -2379,7 +2379,7 @@ Promote native procedures to catalog objects with stable descriptors, generation
 - **Owner:** M10
 - **State:** Unmerged
 - **Risk / size:** Critical / L
-- **Dependencies:** M10-PR04, M01-PR05
+- **Dependencies:** M10-PR04, M01-PR06
 - **Issues:** None
 - **Commit scope:** `conformance`
 

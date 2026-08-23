@@ -1,0 +1,85 @@
+{
+  "format_version": 1,
+  "registry_version": 1,
+  "profile_id": "selene-gql-core-2.0",
+  "profile_hash": "19cb31d768a93146b7d5198b81c310d0023c1df84187cb80973495679832e930",
+  "rules_hash": "6cb431ead227a47b778548f0bd75931434c589b9adb3809dc8f6ddcbcf16ff47",
+  "evidence": [
+    {
+      "id": "EVID-CONFORMANCE-G010-POSITIVE",
+      "targets": [{ "rule_id": "RULE-24.3-G010", "requirement_id": "REQ-POSITIVE" }],
+      "expected": {
+        "status": { "kind": "success" },
+        "result_type": { "kind": "not_asserted" },
+        "nullability": "not_applicable",
+        "ordering": "unspecified",
+        "side_effects": "forbidden"
+      },
+      "planned_registration": "REG-G010-POSITIVE",
+      "disposition": {
+        "disposition": "pending",
+        "owner_pr": "M01-PR06",
+        "reason": "M01-PR06 owns compiled registration and execution."
+      }
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-NEGATIVE",
+      "targets": [{ "rule_id": "RULE-24.6-GC04", "requirement_id": "REQ-NEGATIVE" }],
+      "expected": {
+        "status": { "kind": "error" },
+        "result_type": { "kind": "not_asserted" },
+        "nullability": "not_applicable",
+        "ordering": "not_applicable",
+        "side_effects": "forbidden"
+      },
+      "planned_registration": "REG-GC04-NEGATIVE",
+      "disposition": {
+        "disposition": "pending",
+        "owner_pr": "M01-PR06",
+        "reason": "M01-PR06 owns compiled registration and execution."
+      }
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-STATUS",
+      "targets": [{ "rule_id": "RULE-24.6-GC04", "requirement_id": "REQ-STATUS" }],
+      "expected": {
+        "status": { "kind": "exact", "gqlstatus": "42N01" },
+        "result_type": { "kind": "not_asserted" },
+        "nullability": "not_applicable",
+        "ordering": "not_applicable",
+        "side_effects": "forbidden"
+      },
+      "planned_registration": "REG-GC04-STATUS",
+      "disposition": {
+        "disposition": "pending",
+        "owner_pr": "M01-PR06",
+        "reason": "M01-PR06 owns compiled registration and execution."
+      }
+    },
+    {
+      "id": "EVID-CONFORMANCE-INVENTORY-PENDING",
+      "targets": [
+        { "rule_id": "RULE-24.2-001", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-24.3-GC04", "requirement_id": "REQ-SUPPORT" },
+        { "rule_id": "RULE-24.3-001", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-24.5-001", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-24.7-001", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-24.7-002", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-ANNEX-B-001", "requirement_id": "REQ-INVENTORY" }
+      ],
+      "expected": {
+        "status": { "kind": "not_applicable" },
+        "result_type": { "kind": "not_asserted" },
+        "nullability": "not_applicable",
+        "ordering": "not_applicable",
+        "side_effects": "not_applicable"
+      },
+      "planned_registration": null,
+      "disposition": {
+        "disposition": "pending",
+        "owner_pr": "M01-PR06",
+        "reason": "M01-PR06 registers the pending marker; M10-PR05 owns inventory completion."
+      }
+    }
+  ]
+}
