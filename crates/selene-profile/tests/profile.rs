@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use selene_profile::{
-    ANNEX_B_REGISTER, ClaimState, NOT_SUPPORTED_RATIONALE, REFERENCED_FEATURES, SUPPORTED_FEATURES,
+    ANNEX_B_REGISTER, ClaimState, DIRECT_SELECTED_FEATURES, FLAGGER_ACCEPTED_FEATURES,
+    NOT_SUPPORTED_RATIONALE, PROFILE_FORMAT_VERSION, PROFILE_GENERATOR_VERSION, PROFILE_ID,
+    REFERENCED_FEATURES, RELEASE_CLAIMABLE, SUPPORTED_FEATURES, TARGET_FEATURE_CLOSURE,
     check_repository, parse_profile, render_outputs, write_repository,
 };
 use serde_json::{Value, json};
@@ -30,13 +32,24 @@ fn feature_mut(value: &mut Value, index: usize) -> &mut serde_json::Map<String, 
 #[test]
 fn checked_in_profile_loads_and_preserves_seed_contract() {
     let profile = parse_profile(SOURCE).expect("checked-in profile validates");
-    assert_eq!(profile.hash().len(), 64);
-    assert_eq!(profile.profile().features.len(), 165);
+    assert_eq!(
+        profile.hash(),
+        "97c5902a11725cf34e1edb08c9c3e4d397d9c33eda464d98eae171f258aaa447"
+    );
+    assert_eq!(profile.profile().features.len(), 197);
     assert_eq!(profile.profile().implementation_extensions.len(), 11);
-    assert_eq!(REFERENCED_FEATURES.len(), 176);
-    assert_eq!(SUPPORTED_FEATURES.len(), 143);
-    assert_eq!(NOT_SUPPORTED_RATIONALE.len(), 32);
+    assert_eq!(REFERENCED_FEATURES.len(), 208);
+    assert_eq!(SUPPORTED_FEATURES.len(), 132);
+    assert_eq!(NOT_SUPPORTED_RATIONALE.len(), 43);
     assert_eq!(ANNEX_B_REGISTER.len(), 34);
+    assert_eq!(PROFILE_FORMAT_VERSION, 2);
+    assert_eq!(PROFILE_GENERATOR_VERSION, 1);
+    assert_eq!(PROFILE_ID, "selene-gql-core-2.0");
+    assert_eq!(RELEASE_CLAIMABLE, profile.profile().release_claimable);
+    assert!(!profile.profile().release_claimable);
+    assert_eq!(DIRECT_SELECTED_FEATURES.len(), 132);
+    assert_eq!(TARGET_FEATURE_CLOSURE.len(), 138);
+    assert_eq!(FLAGGER_ACCEPTED_FEATURES.len(), 143);
     assert!(SUPPORTED_FEATURES.windows(4).any(|window| {
         window
             == [
@@ -104,6 +117,25 @@ fn malformed_state_and_identifier_fail() {
     feature_mut(&mut identity, 0).insert("id".to_owned(), json!("g002"));
     let error = parse_value(&identity).unwrap_err();
     assert!(error.contains("malformed feature ID g002"), "{error}");
+}
+
+#[test]
+fn format_and_generator_versions_are_incompatible_boundaries() {
+    let mut format = source_value();
+    format["format_version"] = json!(1);
+    assert!(
+        parse_value(&format)
+            .unwrap_err()
+            .contains("format_version must be 2, got 1")
+    );
+
+    let mut generator = source_value();
+    generator["generator_version"] = json!(2);
+    assert!(
+        parse_value(&generator)
+            .unwrap_err()
+            .contains("generator_version must be 1, got 2")
+    );
 }
 
 #[test]
@@ -399,5 +431,15 @@ fn schema_closes_every_object_rule() {
     assert_eq!(
         schema["$defs"]["extension_id"]["pattern"],
         "^IM_[A-Z0-9_]+$"
+    );
+    assert_eq!(
+        schema["$id"],
+        "https://selene-db.dev/schema/gql-profile-v2.json"
+    );
+    assert_eq!(schema["properties"]["format_version"]["const"], 2);
+    assert_eq!(schema["properties"]["generator_version"]["const"], 1);
+    assert_eq!(
+        schema["properties"]["selected_features"]["uniqueItems"],
+        true
     );
 }

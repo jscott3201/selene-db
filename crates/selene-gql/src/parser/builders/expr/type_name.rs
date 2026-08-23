@@ -610,14 +610,14 @@ fn float_precision_type(
             feature_id: FeatureId::GV25,
             display_name: "128 bit floating point numbers",
             span,
-            hint: "this precision/scale request requires FLOAT128, which is outside the selene-db D1 claim list",
+            hint: "this precision/scale request requires runtime-unsupported FLOAT128",
         });
     }
     Err(ParserError::UnsupportedFeature {
         feature_id: FeatureId::GV26,
         display_name: "256 bit floating point numbers",
         span,
-        hint: "this precision/scale request requires FLOAT256 or a floating-point type wider than FLOAT128, which is outside the selene-db D1 claim list",
+        hint: "this precision/scale request requires runtime-unsupported FLOAT256 or a wider floating-point type",
     })
 }
 
@@ -632,7 +632,7 @@ fn signed_integer_precision_type(precision: u16, span: SourceSpan) -> Result<Gql
             feature_id: FeatureId::GV16,
             display_name: "256 bit signed integer numbers",
             span,
-            hint: "this precision requires a signed integer wider than INT128, which is outside the selene-db D1 claim list",
+            hint: "this precision requires a runtime-unsupported signed integer wider than INT128",
         }),
     }
 }
@@ -651,7 +651,7 @@ fn unsigned_integer_precision_type(
             feature_id: FeatureId::GV15,
             display_name: "256 bit unsigned integer numbers",
             span,
-            hint: "this precision requires an unsigned integer wider than UINT128, which is outside the selene-db D1 claim list",
+            hint: "this precision requires a runtime-unsupported unsigned integer wider than UINT128",
         }),
     }
 }

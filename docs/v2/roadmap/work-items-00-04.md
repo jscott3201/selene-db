@@ -260,7 +260,7 @@ Run and record the complete source, test, benchmark, public-API, persistence-for
 ## M01-PR01 — Introduce the Canonical `selene-profile` Registry
 
 - **Owner:** M01
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / M
 - **Dependencies:** M00-PR02
 - **Issues:** None

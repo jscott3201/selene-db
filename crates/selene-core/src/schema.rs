@@ -507,7 +507,7 @@ impl ValueType {
     }
 }
 
-/// Predefined value types claimed by the D1 surface.
+/// Predefined value types exposed by the current runtime surface.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PredefinedValueType {
     /// Boolean.

@@ -48,5 +48,5 @@ fn deferred_reset_schema_and_graph_report_unsupported_features() {
 }
 
 // ---------------------------------------------------------------------------
-// feature_register hygiene (selene-core claim surface)
+// feature_register hygiene (selene-core runtime/flagger inventory)
 // ---------------------------------------------------------------------------

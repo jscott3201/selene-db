@@ -13,11 +13,11 @@ fn observed_features(source: &str) -> BTreeSet<FeatureId> {
 }
 
 #[test]
-fn sort_key_optional_features_are_claimed_supported() {
+fn sort_key_optional_features_are_runtime_supported() {
     for feature in [FeatureId::GQ14, FeatureId::GQ16, FeatureId::GF20] {
         assert!(
             SUPPORTED_FEATURES.contains(&feature),
-            "{feature} must be claimed supported"
+            "{feature} must be runtime-supported"
         );
     }
 }

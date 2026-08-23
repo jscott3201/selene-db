@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::feature_register::{NOT_SUPPORTED_RATIONALE, SUPPORTED_FEATURES};
+use selene_core::feature_register::{FLAGGER_ACCEPTED_FEATURES, NOT_SUPPORTED_RATIONALE};
 use selene_gql::{ParserError, feature_walk, parse};
 use selene_testing::corpus::{CorpusKind, Expectation, load_default_corpus};
 
@@ -70,16 +70,16 @@ fn corpus_contracts_hold() {
 }
 
 #[test]
-fn corpus_covers_feature_register() {
+fn corpus_covers_flagger_compatibility_set() {
     let cases = load_default_corpus().expect("corpus loads");
     let positive = cases
         .iter()
         .filter(|case| case.kind == CorpusKind::Positive)
         .flat_map(|case| case.declared_features())
         .collect::<BTreeSet<_>>();
-    // Some claimed features have no independent parser surface and are only
-    // reachable behind an unclaimed feature that must reject first.
-    let blocked_supported = cases
+    // Some accepted features have no independent parser surface and are only
+    // reachable behind a feature that must reject first.
+    let blocked_accepted = cases
         .iter()
         .filter(|case| case.kind == CorpusKind::Negative)
         .flat_map(|case| case.also_covers.iter().copied())
@@ -90,15 +90,15 @@ fn corpus_covers_feature_register() {
         .flat_map(|case| case.declared_features())
         .collect::<BTreeSet<_>>();
 
-    let missing_supported = SUPPORTED_FEATURES
+    let missing_accepted = FLAGGER_ACCEPTED_FEATURES
         .iter()
         .copied()
-        .filter(|feature| !positive.contains(feature) && !blocked_supported.contains(feature))
+        .filter(|feature| !positive.contains(feature) && !blocked_accepted.contains(feature))
         .collect::<Vec<_>>();
     assert!(
-        missing_supported.is_empty(),
-        "missing positive corpus coverage for {:?}",
-        missing_supported
+        missing_accepted.is_empty(),
+        "missing parser-accepted corpus coverage for {:?}",
+        missing_accepted
             .iter()
             .map(|feature| feature.as_str())
             .collect::<Vec<_>>()
@@ -107,6 +107,7 @@ fn corpus_covers_feature_register() {
     let missing_rejected = NOT_SUPPORTED_RATIONALE
         .iter()
         .map(|(feature, _)| *feature)
+        .filter(|feature| !FLAGGER_ACCEPTED_FEATURES.contains(feature))
         .filter(|feature| !negative.contains(feature))
         .collect::<Vec<_>>();
     assert!(

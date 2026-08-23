@@ -6,9 +6,9 @@
 //! temporal instants to "the same most specific static value types", §4.16.6.3
 //! restricts durations to one unit group, and §4.4.2 NOTE 25 leaves only
 //! identical values otherwise. Feature GA04 "Universal comparison" would widen
-//! that, and §4.4.2 NOTE 26 spells out the consequence of not claiming it: "no
-//! two values are universally comparable values". `selene-core`'s feature
-//! register does not claim GA04.
+//! that, and §4.4.2 NOTE 26 spells out the consequence when it is unsupported:
+//! "no two values are universally comparable values". The generated runtime
+//! inventory does not report GA04 as supported.
 //!
 //! The engine-wide consequence is a single sentence: **the numeric types are
 //! the only family whose values compare across distinct `Value` variants.**

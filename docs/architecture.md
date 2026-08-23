@@ -377,8 +377,8 @@ a stable external standard.
 
 A single process can host multiple `SharedGraph` instances side by side,
 each with its own snapshot, write lock, WAL directory, and provider set.
-Cross-graph transactions are outside the current inventory (feature `GT03` is
-not claimed). This decision lets embedders run shard-per-graph or
+Cross-graph transactions are outside the current runtime inventory (feature
+`GT03` is not runtime-supported). This decision lets embedders run shard-per-graph or
 tenant-per-graph patterns without process-level coordination.
 
 ### Snapshot isolation by ArcSwap publication

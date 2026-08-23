@@ -3,7 +3,7 @@
 //! Each session command mutates [`Session`] state directly and returns
 //! [`StatementOutput::Empty`]. `SESSION SET VALUE` evaluates its right-hand
 //! side against an empty binding row (the value is restricted to a
-//! `<value specification>`, so GS14 is not claimed) and binds the result as a
+//! `<value specification>`, so GS14 is runtime-unsupported) and binds the result as a
 //! session-local parameter. `SESSION SET TIME ZONE` parses the time-zone
 //! string with `jiff`. `SESSION SET [PROPERTY] GRAPH <current graph>` is a
 //! no-op in the D1 single-graph engine. The RESET forms clear parameters /

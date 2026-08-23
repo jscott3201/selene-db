@@ -1,6 +1,7 @@
 //! Closed decode, semantic validation, and canonical hashing.
 
 mod canonical;
+pub(crate) mod dependencies;
 mod ids;
 mod runtime;
 
@@ -9,12 +10,14 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::closure::ClosureGraph;
 use crate::model::{ApplicabilityExpression, Profile, RuntimeSupport};
 use ids::{
     valid_extension_id, valid_feature_id, valid_impl_defined_id, valid_prefixed, valid_profile_id,
 };
 
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
+const GENERATOR_VERSION: u32 = 1;
 const MAX_APPLICABILITY_DEPTH: usize = 64;
 
 /// Profile loading, validation, or generation failure.
@@ -45,6 +48,7 @@ pub struct ValidatedProfile {
     profile: Profile,
     canonical_json: Vec<u8>,
     hash: String,
+    pub(crate) closure: ClosureGraph,
 }
 
 impl ValidatedProfile {
@@ -79,7 +83,7 @@ pub fn load_profile(path: &Path) -> Result<ValidatedProfile, ProfileError> {
 /// Decode, validate, and canonicalize profile JSON.
 pub fn parse_profile(source: &str) -> Result<ValidatedProfile, ProfileError> {
     let mut profile: Profile = serde_json::from_str(source)?;
-    validate(&profile)?;
+    let closure = validate(&profile)?;
     canonical::canonicalize(&mut profile);
     let canonical_json = serde_json::to_vec(&profile)?;
     let hash = blake3::hash(&canonical_json).to_hex().to_string();
@@ -87,6 +91,7 @@ pub fn parse_profile(source: &str) -> Result<ValidatedProfile, ProfileError> {
         profile,
         canonical_json,
         hash,
+        closure,
     })
 }
 
@@ -94,11 +99,17 @@ fn invalid(message: impl Into<String>) -> ProfileError {
     ProfileError::Invalid(message.into())
 }
 
-fn validate(profile: &Profile) -> Result<(), ProfileError> {
+fn validate(profile: &Profile) -> Result<ClosureGraph, ProfileError> {
     if profile.format_version != FORMAT_VERSION {
         return Err(invalid(format!(
             "format_version must be {FORMAT_VERSION}, got {}",
             profile.format_version
+        )));
+    }
+    if profile.generator_version != GENERATOR_VERSION {
+        return Err(invalid(format!(
+            "generator_version must be {GENERATOR_VERSION}, got {}",
+            profile.generator_version
         )));
     }
     if !valid_profile_id(&profile.profile_id) {
@@ -115,6 +126,10 @@ fn validate(profile: &Profile) -> Result<(), ProfileError> {
     unique_ids(
         "feature",
         profile.features.iter().map(|item| item.id.as_str()),
+    )?;
+    unique_ids(
+        "selected feature",
+        profile.selected_features.iter().map(|item| item.as_str()),
     )?;
     unique_ids(
         "supported compatibility",
@@ -167,7 +182,17 @@ fn validate(profile: &Profile) -> Result<(), ProfileError> {
     validate_ids(profile)?;
     runtime::validate(profile)?;
     validate_references(profile)?;
-    validate_cycles(profile)
+    let closure = ClosureGraph::build(
+        profile.features.iter().map(|item| item.id.as_str()),
+        profile
+            .implications
+            .iter()
+            .map(|edge| (edge.source.as_str(), edge.target.as_str())),
+    )
+    .map_err(invalid)?;
+    dependencies::validate(profile, &closure)?;
+    validate_applicability_cycles(profile)?;
+    Ok(closure)
 }
 
 fn unique_ids<'a>(kind: &str, ids: impl Iterator<Item = &'a str>) -> Result<(), ProfileError> {
@@ -252,6 +277,13 @@ fn validate_references(profile: &Profile) -> Result<(), ProfileError> {
     let evidence = strings(profile.evidence.iter().map(|item| item.id.as_str()));
     let applicability = strings(profile.applicability.iter().map(|item| item.id.as_str()));
 
+    check_refs(
+        "feature",
+        "selected_features",
+        &profile.selected_features,
+        &features,
+    )?;
+
     let unsupported = profile
         .features
         .iter()
@@ -322,16 +354,6 @@ fn validate_references(profile: &Profile) -> Result<(), ProfileError> {
         check_ref("feature", edge.id.as_str(), edge.target.as_str(), &features)?;
         check_refs("clause", edge.id.as_str(), &edge.clause_anchors, &clauses)?;
         check_refs("evidence", edge.id.as_str(), &edge.evidence, &evidence)?;
-    }
-    let mut edge_pairs = BTreeSet::new();
-    for edge in &profile.implications {
-        if !edge_pairs.insert((edge.source.as_str(), edge.target.as_str())) {
-            return Err(invalid(format!(
-                "duplicate implication edge {} -> {}",
-                edge.source.as_str(),
-                edge.target.as_str()
-            )));
-        }
     }
     for choice in &profile.implementation_defined_choices {
         check_refs(
@@ -432,19 +454,7 @@ fn validate_expression(
     }
 }
 
-fn validate_cycles(profile: &Profile) -> Result<(), ProfileError> {
-    let mut implications = BTreeMap::<&str, Vec<&str>>::new();
-    for feature in &profile.features {
-        implications.insert(feature.id.as_str(), Vec::new());
-    }
-    for edge in &profile.implications {
-        implications
-            .get_mut(edge.source.as_str())
-            .expect("feature references were validated")
-            .push(edge.target.as_str());
-    }
-    check_cycles("implication", &implications)?;
-
+fn validate_applicability_cycles(profile: &Profile) -> Result<(), ProfileError> {
     let mut applicability = BTreeMap::<&str, Vec<&str>>::new();
     for definition in &profile.applicability {
         let mut references = Vec::new();
@@ -553,7 +563,7 @@ macro_rules! ref_id {
     )+};
 }
 
-ref_id!(crate::ClauseAnchorId, crate::EvidenceId);
+ref_id!(crate::ClauseAnchorId, crate::EvidenceId, crate::FeatureCode);
 
 fn check_ref(
     kind: &str,

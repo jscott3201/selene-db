@@ -54,7 +54,7 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
         Rule::create_schema_command => Err(unsupported_feature(
             &program_pair,
             FeatureId::GC02,
-            "CREATE SCHEMA is outside the current catalog claim",
+            "CREATE SCHEMA is not runtime-supported",
         )),
         Rule::call_stmt => call::build_top_level_call(program_pair),
         Rule::explain_stmt => explain::build_explain_statement(program_pair),

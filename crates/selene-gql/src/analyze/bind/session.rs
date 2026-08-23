@@ -2,8 +2,8 @@
 //!
 //! Session commands carry no binding-variable scope: `SESSION SET VALUE`
 //! evaluates its right-hand side against an empty binding row (restricted to a
-//! `<value specification>` per ISO section 7.1 Conformance Rule, so GS14 is not
-//! claimed), and the RESET / CLOSE forms mutate session state only. The bind
+//! `<value specification>` per ISO section 7.1 Conformance Rule, so GS14 is
+//! runtime-unsupported), and the RESET / CLOSE forms mutate session state only. The bind
 //! pass is therefore a no-op, mirroring transaction-control binding.
 
 use crate::SourceSpan;

@@ -327,11 +327,11 @@ fn order_terms(
 ) {
     if let Some(first) = terms.first() {
         // Stamp every ORDER BY clause with GA07. The strict spec rule
-        // (sort key must be a return alias unless GA07 is claimed) is a
-        // bind-pass concern — the Flagger cannot tell at parse time
-        // whether a sort key is an alias. The conservative gate is to
-        // claim GA07 on any ORDER BY presence; selene-db's D1 claim list
-        // includes GA07, so this stamp does not produce rejections.
+        // (sort key must be a return alias without GA07) is a bind-pass
+        // concern — the Flagger cannot tell at parse time whether a sort key
+        // is an alias. The conservative gate records GA07 for any ORDER BY;
+        // the temporary flagger-acceptance compatibility set includes GA07,
+        // so this stamp does not produce rejections.
         record_feature(uses, FeatureId::GA07, first.span);
     }
     for term in terms {

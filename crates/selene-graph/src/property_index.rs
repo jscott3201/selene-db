@@ -494,8 +494,8 @@ fn remove_commit(
 /// comparable values"; every other family is narrower (§4.16.6.2 temporal
 /// instants only at the same most specific type, §4.16.6.3 durations only
 /// within one unit group, §4.4.2 NOTE 25 otherwise only identical values), and
-/// absent Feature GA04 "Universal comparison" — which
-/// `selene_core::feature_register` does not claim — §4.4.2 NOTE 26 leaves no
+/// absent Feature GA04 "Universal comparison" — which the generated runtime
+/// inventory does not report as supported — §4.4.2 NOTE 26 leaves no
 /// further comparability. `selene-gql`'s `value_compare` implements exactly
 /// that: its only cross-variant arms are numeric, so a `String` skipped by an
 /// `I64` index is a definite `false` for any `I64`-keyed equality probe.

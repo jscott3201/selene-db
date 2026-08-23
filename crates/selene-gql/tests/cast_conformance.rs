@@ -2,17 +2,16 @@
 //!
 //! Split out of `cast.rs` (which retains the core CAST parser/analyzer/runtime
 //! ISO §22 dispatch-matrix coverage) to keep both test files under the
-//! 700-LOC cap. These tests pin the *conformance claims* selene-db makes (or
-//! deliberately does not make) about CAST:
+//! 700-LOC cap. These tests pin the runtime-support inventory for CAST:
 //!   - CAST records GA05 "Cast specification" (ISO §20.8 / Annex D row 53), the
 //!     real ISO optional feature for `<cast specification>` — NOT GE08, which
 //!     is "Reference parameters" (§17.7 / row 77). Per ISO Annex A item 52 a
 //!     conforming implementation may not contain a `<cast specification>`
 //!     without GA05, so CAST is gated behind GA05, not baseline.
-//!   - GA05 IS claimed in `SUPPORTED_FEATURES` (selene-db implements CAST);
-//!     GE08 is NOT (reference parameters are unimplemented).
+//!   - GA05 is runtime-supported in `SUPPORTED_FEATURES` (selene-db implements
+//!     CAST); GE08 is not (reference parameters are unimplemented).
 //!   - The positive CAST corpus parses/analyzes and stamps GA05.
-//!   - The CHANGELOG `[Unreleased]` section documents the GA05 claim.
+//!   - The CHANGELOG records the GA05 support correction.
 
 use selene_core::feature_register::FeatureId;
 use selene_gql::{EmptyProcedureRegistry, analyze, feature_walk, parse};
@@ -49,16 +48,16 @@ fn cast_records_ga05_not_ge08() {
 }
 
 #[test]
-fn cast_feature_ga05_claimed_ge08_not() {
+fn cast_feature_ga05_runtime_supported_ge08_not() {
     // CONFORMANCE-00 (Codex review follow-up): GA05 ("Cast specification",
-    // §20.8) IS claimed — selene-db implements the cast construct and ISO Annex
+    // §20.8) is runtime-supported — selene-db implements the cast construct and ISO Annex
     // A item 52 requires GA05 for any `<cast specification>`. The mislabeled
-    // GE08 ("Reference parameters", §17.7) is NOT claimed (reference parameters
+    // GE08 ("Reference parameters", §17.7) is runtime-unsupported (reference parameters
     // are unimplemented).
     use selene_core::feature_register::SUPPORTED_FEATURES;
     assert!(
         SUPPORTED_FEATURES.contains(&FeatureId::GA05),
-        "FeatureId::GA05 (Cast specification) must be claimed — CAST is implemented"
+        "FeatureId::GA05 (Cast specification) must be runtime-supported — CAST is implemented"
     );
     assert!(
         !SUPPORTED_FEATURES.contains(&FeatureId::GE08),
@@ -112,8 +111,8 @@ fn iso_conformance_cast_positive_corpus_all_pass() {
 #[test]
 fn changelog_unreleased_documents_conformance_destamp() {
     // CONFORMANCE-00 (Codex review follow-up): release notes must document the
-    // conformance-honesty fix — GE08 reclaimed for "Reference parameters"
-    // (§17.7) and removed from CAST, GA05 "Cast specification" (§20.8) claimed
+    // feature-inventory fix — GE08 restored to "Reference parameters"
+    // (§17.7) and removed from CAST, GA05 "Cast specification" (§20.8) supported
     // for CAST, and GG21 de-stamped (§18.2/18.3). Pin the entry so a forgotten
     // changelog edit fails the build, including after the entry moves from
     // [Unreleased] into the cut release section.
@@ -133,7 +132,7 @@ fn changelog_unreleased_documents_conformance_destamp() {
     );
     assert!(
         release_notes.contains("GA05"),
-        "[1.2.0] must mention the GA05 claim; observed: {release_notes}"
+        "[1.2.0] must mention GA05 support; observed: {release_notes}"
     );
     assert!(
         release_notes.contains("GG21"),

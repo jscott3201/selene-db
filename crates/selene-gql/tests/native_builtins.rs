@@ -206,6 +206,22 @@ fn feature_status_reports_supported_rows() {
         assert_eq!(statuses[index], "supported");
         assert_eq!(rationales[index], expected_name);
     }
+
+    for feature_id in [
+        "GC03", "GE04", "GE05", "GG01", "GG02", "GG20", "GG21", "GH02", "GS04", "GV66", "GV67",
+    ] {
+        let index = feature_ids
+            .iter()
+            .position(|value| value == feature_id)
+            .unwrap_or_else(|| panic!("{feature_id} row exists"));
+        assert_eq!(statuses[index], "unsupported");
+        assert!(!rationales[index].is_empty());
+    }
+    let gv65 = feature_ids
+        .iter()
+        .position(|value| value == "GV65")
+        .expect("GV65 row exists");
+    assert_eq!(statuses[gv65], "referenced");
 }
 
 #[test]

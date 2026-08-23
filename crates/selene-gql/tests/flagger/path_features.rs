@@ -5,14 +5,14 @@ use super::{assert_read_execution, assert_read_plan};
 
 #[test]
 fn union_and_otherwise_features_are_supported() {
-    parse("RETURN 1 UNION RETURN 2").expect("UNION is claimed");
+    parse("RETURN 1 UNION RETURN 2").expect("UNION is parser-compatibility accepted");
     assert_read_plan("RETURN 1 OTHERWISE RETURN 2");
 }
 
 #[test]
 fn group_by_feature_is_supported() {
-    parse("RETURN n GROUP BY n").expect("GROUP BY is claimed");
-    parse("WITH n GROUP BY n RETURN n").expect("WITH GROUP BY is claimed");
+    parse("RETURN n GROUP BY n").expect("GROUP BY is parser-compatibility accepted");
+    parse("WITH n GROUP BY n RETURN n").expect("WITH GROUP BY is parser-compatibility accepted");
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn counted_shortest_selectors_flag_g019_and_g020() {
         );
     }
 
-    // Both counted forms must plan and execute (claimed, not merely flagged).
+    // Both counted forms must plan and execute, not merely be flagged.
     for source in [
         "MATCH SHORTEST 3 (n)-[:K]->(m) RETURN m",
         "MATCH SHORTEST 2 GROUPS (n)-[:K]->(m) RETURN m",
@@ -125,10 +125,10 @@ fn quantifier_and_match_mode_features_are_recorded() {
         );
     }
 
-    // ISO 39075:2024 §16.4 CR1/CR2: the two `<match mode>` features are claimed
-    // (G002 = DIFFERENT EDGES, G003 = REPEATABLE ELEMENTS). Each parses cleanly
-    // and the flagger RECORDS its feature-use (a capability claim, not a
-    // rejection trigger), then both plan and execute.
+    // ISO 39075:2024 §16.4 CR1/CR2: the two `<match mode>` features are
+    // runtime-supported (G002 = DIFFERENT EDGES, G003 = REPEATABLE ELEMENTS).
+    // Each parses cleanly and the flagger records its feature use without
+    // rejecting it, then both plan and execute.
     let different =
         feature_walk(&parse("MATCH DIFFERENT EDGES (n) RETURN n").expect("G002 parses"))
             .into_iter()

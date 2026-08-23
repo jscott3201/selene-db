@@ -36,7 +36,7 @@ fn open_graph_reference_type_forms_report_gv60_unsupported() {
         "RETURN NULL IS TYPED PROPERTY GRAPH AS ok",
         "RETURN NULL IS TYPED ANY PROPERTY GRAPH AS ok",
     ] {
-        let err = parse(source).expect_err("GRAPH reference type remains unclaimed");
+        let err = parse(source).expect_err("GRAPH reference type remains runtime-unsupported");
         let ParserError::UnsupportedFeature { feature_id, .. } = err else {
             panic!("{source} should report unsupported GV60, got {err:?}");
         };
@@ -78,7 +78,7 @@ fn open_reference_type_keywords_accept_whitespace_boundaries() {
         "RETURN NULL IS TYPED PROPERTY GRAPH AS ok",
         "RETURN NULL IS TYPED ANY PROPERTY GRAPH AS ok",
     ] {
-        let err = parse(source).expect_err("GRAPH reference type remains unclaimed");
+        let err = parse(source).expect_err("GRAPH reference type remains runtime-unsupported");
         let ParserError::UnsupportedFeature { feature_id, .. } = err else {
             panic!("{source} should report unsupported GV60, got {err:?}");
         };
@@ -102,7 +102,7 @@ fn open_reference_type_keywords_accept_comment_boundaries() {
         "RETURN NULL IS TYPED PROPERTY /* boundary */ GRAPH AS ok",
         "RETURN NULL IS TYPED ANY /* boundary */ PROPERTY /* boundary */ GRAPH AS ok",
     ] {
-        let err = parse(source).expect_err("GRAPH reference type remains unclaimed");
+        let err = parse(source).expect_err("GRAPH reference type remains runtime-unsupported");
         let ParserError::UnsupportedFeature { feature_id, .. } = err else {
             panic!("{source} should report unsupported GV60, got {err:?}");
         };

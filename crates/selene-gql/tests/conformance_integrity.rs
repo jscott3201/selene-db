@@ -10,7 +10,7 @@ use selene_graph::GraphError;
 use selene_persist::PersistError;
 
 #[test]
-fn unclaimed_graph_management_surfaces_emit_42n01() {
+fn unsupported_graph_management_surfaces_emit_42n01() {
     let source = "CREATE GRAPH demo";
     let error = parse(source).expect_err(source);
     assert_eq!(error.gqlstatus().as_str(), "42N01");
@@ -21,7 +21,7 @@ fn unclaimed_graph_management_surfaces_emit_42n01() {
 }
 
 #[test]
-fn path_mode_features_are_claimed_supported() {
+fn path_mode_features_are_runtime_supported() {
     for feature in [
         FeatureId::G010,
         FeatureId::G011,
@@ -38,7 +38,7 @@ fn path_mode_features_are_claimed_supported() {
 }
 
 #[test]
-fn record_type_features_are_claimed_supported() {
+fn record_type_features_are_runtime_supported() {
     // GV45 (record types umbrella / value form) shipped earlier; GV46 (closed), GV47
     // (open), GV48 (nested) record TYPES ship with the typed/closed RECORD grammar.
     for feature in [
@@ -49,7 +49,7 @@ fn record_type_features_are_claimed_supported() {
     ] {
         assert!(
             SUPPORTED_FEATURES.contains(&feature),
-            "{feature} must be claimed supported"
+            "{feature} must be runtime-supported"
         );
         assert!(
             !NOT_SUPPORTED_RATIONALE
@@ -75,7 +75,7 @@ fn deferred_reference_value_type_features_remain_unsupported() {
 }
 
 #[test]
-fn explicit_value_type_nullability_is_claimed_supported() {
+fn explicit_value_type_nullability_is_runtime_supported() {
     assert!(SUPPORTED_FEATURES.contains(&FeatureId::GV90));
     assert!(
         !NOT_SUPPORTED_RATIONALE
@@ -96,7 +96,7 @@ fn no_feature_is_both_supported_and_rationalized_unsupported() {
 }
 
 #[test]
-fn quantifier_features_are_claimed_supported() {
+fn quantifier_features_are_runtime_supported() {
     for feature in [
         FeatureId::G036,
         FeatureId::G037,
@@ -113,7 +113,7 @@ fn quantifier_features_are_claimed_supported() {
 }
 
 #[test]
-fn literal_features_are_claimed_supported() {
+fn literal_features_are_runtime_supported() {
     for feature in [
         FeatureId::GL01,
         FeatureId::GL02,
@@ -137,7 +137,7 @@ fn literal_features_are_claimed_supported() {
 }
 
 #[test]
-fn approximate_numeric_type_features_are_claimed_supported() {
+fn approximate_numeric_type_features_are_runtime_supported() {
     for feature in [
         FeatureId::GV21,
         FeatureId::GV22,
@@ -154,9 +154,9 @@ fn approximate_numeric_type_features_are_claimed_supported() {
 }
 
 #[test]
-fn match_mode_features_are_claimed_supported() {
+fn match_mode_features_are_runtime_supported() {
     // ISO 39075:2024 §16.4 CR1/CR2: G002 (DIFFERENT EDGES) and G003 (REPEATABLE
-    // ELEMENTS) are claimed. They must be in SUPPORTED_FEATURES and must NOT
+    // ELEMENTS) are runtime-supported. They must be in SUPPORTED_FEATURES and must NOT
     // carry a NOT_SUPPORTED_RATIONALE entry.
     for feature in [FeatureId::G002, FeatureId::G003] {
         assert!(SUPPORTED_FEATURES.contains(&feature));

@@ -65,7 +65,7 @@ fn not_null_type_names_round_trip_through_parser_and_formatter() {
 }
 
 #[test]
-fn feature_walk_claims_gv90_and_inner_type_features() {
+fn feature_walk_records_gv90_and_inner_type_features() {
     let parsed = parse("RETURN $x :: UINT8 NOT NULL AS x").expect("source parses");
     let features = feature_walk(&parsed)
         .into_iter()

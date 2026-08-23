@@ -1,7 +1,7 @@
 //! BRIEF-135a commit 1 + commit 2 acceptance bars — CAST(<expr> AS <type>)
 //! parser, analyzer, walker, format, GQLSTATUS, and runtime ISO §22 dispatch
-//! matrix coverage. The CONFORMANCE-00 conformance-honesty bars (CAST records
-//! GA05 "Cast specification"; GA05 claimed, GE08 not; corpus + CHANGELOG pins)
+//! matrix coverage. The CONFORMANCE-00 inventory-honesty bars (CAST records
+//! GA05 "Cast specification"; GA05 is runtime-supported, GE08 is not; corpus + CHANGELOG pins)
 //! live in the sibling `cast_conformance.rs` so both files stay under the
 //! 700-LOC cap.
 

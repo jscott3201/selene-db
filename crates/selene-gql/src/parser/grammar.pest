@@ -6,8 +6,8 @@
 // Rule names follow snake_case mirrors of ISO/IEC 39075:2024 grammar names,
 // aligned with opengql/grammar v1.9.0 where the donor name diverged.
 //
-// FEATURE comments tag rules whose surface area belongs to a D1 claimed feature
-// ID. The Flagger rejects unsupported surfaces before execution.
+// FEATURE comments tag rules with parser-compatibility feature IDs. The Flagger
+// rejects unsupported surfaces before execution.
 // -------------------------------------------------------------------
 // PEG grammar (pest). Case-insensitive keywords via ^"keyword".
 // All whitespace and comments handled implicitly by WHITESPACE/COMMENT.
@@ -212,8 +212,8 @@ session_set_time_zone  = { time_kw ~ zone_kw ~ string_lit }
 //
 // The RHS is restricted to a <value specification> (literal or general value
 // parameter reference) per ISO section 7.1 Conformance Rule: without Feature
-// GS14, the initializer shall conform to <value specification>. selene-db does
-// NOT claim GS14, so simple-expression / subquery RHS forms are rejected.
+// GS14, the initializer shall conform to <value specification>. GS14 is outside
+// the parser compatibility set, so simple-expression / subquery RHS forms are rejected.
 session_set_value      = { session_value_kw ~ if_not_exists? ~ param_ref ~ session_value_declared_type? ~ "=" ~ (session_value_subquery_expr | session_value_simple_expr | session_value_spec) }
 session_value_declared_type = { (typed_marker ~ type_name) | type_name }
 session_value_subquery_expr = { &(value_subquery_expr ~ EOI) ~ value_subquery_expr }
@@ -390,7 +390,7 @@ any_path_count = { uint }
 // this position. Consequently §16.6 SR2bii (literal positivity, a static
 // violation -> 22G0F at build time) fully covers the reachable surface, and
 // §22.4 GR7 (dynamic non-positive count -> 22G0F at runtime) is not applicable;
-// add a parameter alternative here if a future brief claims the dynamic form.
+// add a parameter alternative here if a future brief supports the dynamic form.
 counted_shortest_tail = {
     uint ~ path_modifier? ~ (path_or_paths ~ !("="))? ~ counted_group_kw?
   | path_modifier? ~ (path_or_paths ~ !("="))? ~ counted_group_kw

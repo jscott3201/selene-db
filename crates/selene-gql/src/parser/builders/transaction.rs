@@ -16,12 +16,12 @@ pub(super) fn build_transaction_control(pair: Pair<'_, Rule>) -> Result<Statemen
         Rule::start_transaction_mixed => Err(unsupported_feature(
             &inner,
             FeatureId::GP18,
-            "mixed catalog/data transaction forms are outside the current transaction claim",
+            "mixed catalog/data transaction forms are not runtime-supported",
         )),
         Rule::start_transaction_on_graph => Err(unsupported_feature(
             &inner,
             FeatureId::GT03,
-            "multi-graph transaction forms are outside the current transaction claim",
+            "multi-graph transaction forms are not runtime-supported",
         )),
         Rule::start_transaction => Ok(Statement::StartTransaction { span: source_span }),
         Rule::commit => Ok(Statement::Commit { span: source_span }),

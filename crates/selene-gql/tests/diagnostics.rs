@@ -20,7 +20,7 @@ fn parse_with_source_syntax_error_renders_source_highlight() {
 #[test]
 fn parse_with_source_reports_unsupported_feature() {
     let error = parse_with_source(Arc::<str>::from("RETURN n IS TYPED FLOAT16"), "query.gql")
-        .expect_err("FLOAT16 is unclaimed");
+        .expect_err("FLOAT16 is runtime-unsupported");
     let ParserError::UnsupportedFeature { feature_id, .. } = error.error() else {
         panic!("expected UnsupportedFeature");
     };

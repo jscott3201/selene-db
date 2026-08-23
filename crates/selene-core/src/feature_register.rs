@@ -3,14 +3,23 @@
 //! Keep runtime consumers on this path until M01-PR04 removes the adapter.
 
 pub use selene_profile::{
-    ANNEX_B_REGISTER, AnnexBId, FeatureId, ImplDefinedChoice, NOT_SUPPORTED_RATIONALE,
-    REFERENCED_FEATURES, SUPPORTED_FEATURES,
+    ANNEX_B_REGISTER, AnnexBId, FLAGGER_ACCEPTED_FEATURES, FeatureId, ImplDefinedChoice,
+    NOT_SUPPORTED_RATIONALE, REFERENCED_FEATURES, SUPPORTED_FEATURES,
 };
 
 /// True when `id` is in the existing runtime-supported feature set.
 #[must_use]
 pub fn is_supported(id: FeatureId) -> bool {
     SUPPORTED_FEATURES.contains(&id)
+}
+
+/// True when the compatibility flagger accepts syntax carrying `id`.
+///
+/// M01-PR04 owns removal of this compatibility distinction when flagging moves
+/// to generated profile policy.
+#[must_use]
+pub fn is_flagger_accepted(id: FeatureId) -> bool {
+    FLAGGER_ACCEPTED_FEATURES.contains(&id)
 }
 
 /// Return the display name for a referenced feature or extension ID.
