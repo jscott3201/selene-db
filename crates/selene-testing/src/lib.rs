@@ -11,6 +11,7 @@ pub mod analyzed_corpus;
 pub mod bench_fixtures;
 pub mod bench_profiles;
 pub mod closed_graph_fixtures;
+pub mod conformance;
 pub mod corpus;
 pub mod executor_corpus;
 pub mod local_omlx;

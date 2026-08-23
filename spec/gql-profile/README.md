@@ -51,8 +51,16 @@ references, owners, expected dimensions, and dispositions. The checked-in seed
 currently pins 138 features; profile growth does not require a validator-code
 change. Semantic array reordering does not change canonical bytes or hashes.
 
-Every M01-PR05 evidence record remains pending. The profile evidence references
-point to the tracked M01-PR06 work item rather than nonexistent fixtures or
-functions. M01-PR06 owns compiled registration, source checks, execution,
-manifests, traceability generation, claim scripting, and release enforcement.
-M10-PR05 owns complete inventory and the final claim transition.
+The three executable seed records have explicit compiled registrations and
+complete static dispositions. The inventory marker remains pending under
+M10-PR05, which owns complete inventory and the final claim transition.
+Execution manifests are caller-provided external outputs, not static authority.
+Refresh or check the SHA-free traceability page with:
+
+```bash
+cargo run --locked -p selene-db-testing --bin selene-conformance -- docs --write --root .
+cargo run --locked -p selene-db-testing --bin selene-conformance -- docs --check --root .
+```
+
+`scripts/check-conformance-claim.sh <full-sha> iso_aligned` requires an exact,
+clean revision. `selected_profile` is accepted as a request and currently fails.

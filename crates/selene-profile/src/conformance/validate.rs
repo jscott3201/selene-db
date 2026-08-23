@@ -13,7 +13,8 @@ use crate::{ProfileError, ValidatedProfile};
 const RULES_PATH: &str = "spec/gql-profile/rules.json";
 const EVIDENCE_PATH: &str = "spec/gql-profile/evidence.json";
 const SOURCE_VERSION: u32 = 1;
-const REGISTRY_VERSION: u32 = 1;
+const RULES_REGISTRY_VERSION: u32 = 1;
+const EVIDENCE_REGISTRY_VERSION: u32 = 2;
 
 /// Load and validate the checked-in static registries.
 pub fn load_conformance(
@@ -68,7 +69,7 @@ fn validate_sources(
 }
 
 fn validate_rules(rules: &RulesSource, profile: &ValidatedProfile) -> Result<(), ProfileError> {
-    if rules.format_version != SOURCE_VERSION || rules.registry_version != REGISTRY_VERSION {
+    if rules.format_version != SOURCE_VERSION || rules.registry_version != RULES_REGISTRY_VERSION {
         return Err(invalid(
             "rules format_version and registry_version must both be 1",
         ));
@@ -187,9 +188,11 @@ fn validate_evidence(
     profile: &ValidatedProfile,
     rules_hash: &str,
 ) -> Result<(), ProfileError> {
-    if evidence.format_version != SOURCE_VERSION || evidence.registry_version != REGISTRY_VERSION {
+    if evidence.format_version != SOURCE_VERSION
+        || evidence.registry_version != EVIDENCE_REGISTRY_VERSION
+    {
         return Err(invalid(
-            "evidence format_version and registry_version must both be 1",
+            "evidence format_version must be 1 and registry_version must be 2",
         ));
     }
     if evidence.profile_id != profile.profile().profile_id
@@ -266,16 +269,22 @@ fn validate_evidence_record<'a>(
     if record.targets.is_empty() {
         return Err(invalid(format!("{} has no rule targets", record.id)));
     }
-    if let Some(registration) = record.planned_registration.as_deref()
+    if let Some(registration) = record.registration.as_deref()
         && (!valid_prefixed(registration, "REG-") || !registrations.insert(registration))
     {
         return Err(invalid(format!(
-            "{} has malformed or duplicate planned registration",
+            "{} has malformed or duplicate registration",
             record.id
         )));
     }
     match &record.disposition {
         EvidenceDisposition::Pending { owner_pr, reason } => {
+            if record.registration.is_some() {
+                return Err(invalid(format!(
+                    "{} is pending but has an executable registration",
+                    record.id
+                )));
+            }
             if !valid_pr(owner_pr) || !valid_text(reason) {
                 return Err(invalid(format!(
                     "{} has malformed pending disposition",
@@ -283,7 +292,14 @@ fn validate_evidence_record<'a>(
                 )));
             }
         }
-        EvidenceDisposition::Complete => {}
+        EvidenceDisposition::Complete => {
+            if record.registration.is_none() {
+                return Err(invalid(format!(
+                    "{} is complete without an executable registration",
+                    record.id
+                )));
+            }
+        }
     }
     let is_complete = matches!(record.disposition, EvidenceDisposition::Complete);
     let mut local_targets = BTreeSet::new();
@@ -484,7 +500,7 @@ mod tests {
                     ordering: ExpectedOrder::NotApplicable,
                     side_effects: ExpectedSideEffects::NotApplicable,
                 },
-                planned_registration: Some("REG-TEST".to_owned()),
+                registration: None,
                 disposition: EvidenceDisposition::Pending {
                     owner_pr: "M01-PR06".to_owned(),
                     reason: "test".to_owned(),

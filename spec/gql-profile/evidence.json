@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "registry_version": 1,
+  "registry_version": 2,
   "profile_id": "selene-gql-core-2.0",
   "profile_hash": "19cb31d768a93146b7d5198b81c310d0023c1df84187cb80973495679832e930",
   "rules_hash": "6cb431ead227a47b778548f0bd75931434c589b9adb3809dc8f6ddcbcf16ff47",
@@ -15,12 +15,8 @@
         "ordering": "unspecified",
         "side_effects": "forbidden"
       },
-      "planned_registration": "REG-G010-POSITIVE",
-      "disposition": {
-        "disposition": "pending",
-        "owner_pr": "M01-PR06",
-        "reason": "M01-PR06 owns compiled registration and execution."
-      }
+      "registration": "REG-G010-POSITIVE",
+      "disposition": { "disposition": "complete" }
     },
     {
       "id": "EVID-CONFORMANCE-GC04-NEGATIVE",
@@ -32,12 +28,8 @@
         "ordering": "not_applicable",
         "side_effects": "forbidden"
       },
-      "planned_registration": "REG-GC04-NEGATIVE",
-      "disposition": {
-        "disposition": "pending",
-        "owner_pr": "M01-PR06",
-        "reason": "M01-PR06 owns compiled registration and execution."
-      }
+      "registration": "REG-GC04-NEGATIVE",
+      "disposition": { "disposition": "complete" }
     },
     {
       "id": "EVID-CONFORMANCE-GC04-STATUS",
@@ -49,12 +41,8 @@
         "ordering": "not_applicable",
         "side_effects": "forbidden"
       },
-      "planned_registration": "REG-GC04-STATUS",
-      "disposition": {
-        "disposition": "pending",
-        "owner_pr": "M01-PR06",
-        "reason": "M01-PR06 owns compiled registration and execution."
-      }
+      "registration": "REG-GC04-STATUS",
+      "disposition": { "disposition": "complete" }
     },
     {
       "id": "EVID-CONFORMANCE-INVENTORY-PENDING",
@@ -74,11 +62,11 @@
         "ordering": "not_applicable",
         "side_effects": "not_applicable"
       },
-      "planned_registration": null,
+      "registration": null,
       "disposition": {
         "disposition": "pending",
-        "owner_pr": "M01-PR06",
-        "reason": "M01-PR06 registers the pending marker; M10-PR05 owns inventory completion."
+        "owner_pr": "M10-PR05",
+        "reason": "M10-PR05 owns complete inventory and the final claim transition."
       }
     }
   ]
