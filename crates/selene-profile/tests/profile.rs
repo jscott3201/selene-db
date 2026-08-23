@@ -34,7 +34,7 @@ fn checked_in_profile_loads_and_preserves_seed_contract() {
     let profile = parse_profile(SOURCE).expect("checked-in profile validates");
     assert_eq!(
         profile.hash(),
-        "c2f23c35308841ee8162954c9d89bd5532a081288aff72efcaaf8c64531033ca"
+        "f11ab8d5c6e04428a7dba2719547101bfae37aabe88b987c04f508ff5c3f947d"
     );
     assert_eq!(profile.profile().features.len(), 197);
     assert_eq!(profile.profile().implementation_extensions.len(), 11);

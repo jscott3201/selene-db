@@ -370,6 +370,20 @@ fn ia001_float_relocation_and_id086_are_truthful() {
 }
 
 #[test]
+fn il010_matches_the_production_i64_literal_boundary() {
+    let il010 = annex_b_by_id("IL010").expect("IL010 is registered");
+    assert!(matches!(
+        il010.decision,
+        AnnexBDecision::Selected {
+            value: AnnexBValue::UnsignedInteger(19),
+            stability: selene_profile::RuntimeDecisionStability::Stable,
+            visibility: selene_profile::RuntimeDecisionVisibility::Public,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn generated_markdown_is_complete_and_stable() {
     let profile = parse_profile(SOURCE).expect("profile validates");
     let outputs = render_outputs(&profile).expect("outputs render");

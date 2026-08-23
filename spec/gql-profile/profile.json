@@ -4702,9 +4702,9 @@
         "disposition": "selected",
         "value": {
           "type": "unsigned_integer",
-          "value": 39
+          "value": 19
         },
-        "rationale": "The widest supported unsigned literal target is u128, whose maximum has 39 decimal digits.",
+        "rationale": "Production int_lit parsing delegates to parse_i64, so the largest accepted unsigned decimal image is i64::MAX, which has 19 digits.",
         "stability": "stable",
         "visibility": "public"
       },
