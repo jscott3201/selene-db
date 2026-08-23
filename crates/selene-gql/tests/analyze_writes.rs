@@ -405,8 +405,8 @@ fn alter_node_type_classifies_as_catalog_modifying() {
 }
 
 #[test]
-fn create_graph_classifies_as_catalog_modifying() {
-    let error = parse("CREATE GRAPH demo").expect_err("CREATE GRAPH is outside D1");
+fn create_graph_is_profile_rejected_before_analysis() {
+    let error = selene_gql::parse("CREATE GRAPH demo").expect_err("CREATE GRAPH is outside D1");
     assert_eq!(error.gqlstatus().as_str(), "42N01");
 }
 

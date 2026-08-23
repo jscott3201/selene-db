@@ -17,6 +17,7 @@ name = "selene_gql"
 selene-core = { package = "selene-db-core", path = "../selene-core", version = "2.0.0-alpha.1" }
 selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "2.0.0-alpha.1" }
 selene-algorithms = { package = "selene-db-algorithms", path = "../selene-algorithms", version = "2.0.0-alpha.1" }
+selene-profile.workspace = true
 jiff.workspace = true
 miette.workspace = true
 parking_lot.workspace = true

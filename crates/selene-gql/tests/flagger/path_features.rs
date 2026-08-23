@@ -1,18 +1,18 @@
-use selene_core::feature_register::FeatureId;
 use selene_gql::{feature_walk, parse};
+use selene_profile::FeatureId;
 
 use super::{assert_read_execution, assert_read_plan};
 
 #[test]
 fn union_and_otherwise_features_are_supported() {
-    parse("RETURN 1 UNION RETURN 2").expect("UNION is parser-compatibility accepted");
+    parse("RETURN 1 UNION RETURN 2").expect("UNION parses");
     assert_read_plan("RETURN 1 OTHERWISE RETURN 2");
 }
 
 #[test]
 fn group_by_feature_is_supported() {
-    parse("RETURN n GROUP BY n").expect("GROUP BY is parser-compatibility accepted");
-    parse("WITH n GROUP BY n RETURN n").expect("WITH GROUP BY is parser-compatibility accepted");
+    parse("RETURN n GROUP BY n").expect("GROUP BY parses");
+    parse("WITH n GROUP BY n RETURN n").expect("WITH GROUP BY parses");
 }
 
 #[test]

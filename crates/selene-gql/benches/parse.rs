@@ -27,6 +27,41 @@ fn bench_parse_corpus(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_profile_conformance(c: &mut Criterion) {
+    let feature_ids: Vec<_> = selene_profile::capabilities()
+        .iter()
+        .map(|record| record.id)
+        .collect();
+    let mut lookup = c.benchmark_group("gql_profile_conformance");
+    lookup.throughput(Throughput::Elements(feature_ids.len() as u64));
+    lookup.bench_function("generated_capability_lookup", |b| {
+        b.iter(|| {
+            for feature_id in &feature_ids {
+                std::hint::black_box(
+                    selene_profile::capability(*feature_id).expect("generated capability exists"),
+                );
+            }
+        });
+    });
+    lookup.finish();
+
+    let mut flagger = c.benchmark_group("gql_profile_flagger");
+    flagger.throughput(Throughput::Elements(2));
+    flagger.bench_function("parse_admitted_and_rejected", |b| {
+        b.iter(|| {
+            std::hint::black_box(
+                selene_gql::parse("RETURN $parameter")
+                    .expect("direct-selected GE04/GE05 parameter syntax is admitted"),
+            );
+            std::hint::black_box(
+                selene_gql::parse("CREATE GRAPH demo")
+                    .expect_err("implied unsupported GC04 is rejected"),
+            );
+        });
+    });
+    flagger.finish();
+}
+
 /// The six PARSER-DOS `[`-backtracking artifacts surfaced by the v1.1.0 fuzz
 /// soak (mirrored from `tests/parser_dos_artifacts.rs`). Each is pure unclosed
 /// `[`; all reject pre-pest via the `[`-depth complexity guard.
@@ -72,6 +107,6 @@ fn bench_parse_hostile(c: &mut Criterion) {
 criterion_group! {
     name = parse_group;
     config = common::criterion_config();
-    targets = bench_parse_corpus, bench_parse_hostile
+    targets = bench_parse_corpus, bench_profile_conformance, bench_parse_hostile
 }
 criterion_main!(parse_group);

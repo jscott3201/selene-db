@@ -8,16 +8,17 @@
 //! and the D1-deferred schema / graph-parameter forms failing cleanly.
 
 use selene_core::GraphId;
-use selene_core::feature_register::{
-    ANNEX_B_REGISTER, FLAGGER_ACCEPTED_FEATURES, FeatureId, NOT_SUPPORTED_RATIONALE,
-    SUPPORTED_FEATURES,
-};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlStatus, GqlType, ParserError, Session,
     SessionSetGraphTarget, Statement, StatementOutput, Value, analyze, execute_statement,
     feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
+use selene_profile::{CapabilityStatus, FeatureId, FlaggerStatus, annex_b_by_id, capability};
+
+fn supported(id: FeatureId) -> bool {
+    capability(id).is_some_and(|record| record.status == CapabilityStatus::Supported)
+}
 
 fn graph(id: u64) -> SharedGraph {
     SharedGraph::new(GraphId::new(id))

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use miette::NarratableReportHandler;
-use selene_core::feature_register::FeatureId;
 use selene_gql::{DiagnosticReport, ParserError, SourceSpan, parse_with_source};
+use selene_profile::FeatureId;
 
 #[test]
 fn parse_with_source_syntax_error_renders_source_highlight() {

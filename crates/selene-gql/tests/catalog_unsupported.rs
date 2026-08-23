@@ -1,7 +1,7 @@
 //! Catalog-management syntax that is parsed but unsupported by this engine.
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{ParserError, parse};
+use selene_profile::FeatureId;
 
 #[test]
 fn create_schema_is_rejected_before_planning() {

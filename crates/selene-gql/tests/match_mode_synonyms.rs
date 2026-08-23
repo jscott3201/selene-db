@@ -7,13 +7,14 @@
 //! in their own binary (split out of `flagger.rs`) to stay under the 700-LOC
 //! file cap.
 
-use selene_core::{GraphId, feature_register::FeatureId};
+use selene_core::GraphId;
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, MatchMode,
     PipelineStatement, Statement, TxContext, analyze, execute_pattern, execute_pipeline,
     feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 
 /// Parse `source` and return the leading MATCH clause's `match_mode`, panicking
 /// if `source` does not parse or contains no MATCH clause. Used to assert the

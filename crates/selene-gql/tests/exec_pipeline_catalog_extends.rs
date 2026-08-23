@@ -8,10 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use selene_core::{
-    Change, GraphId, HlcTimestamp, Origin, PropertyValueType, SchemaChange,
-    feature_register::{FeatureId, SUPPORTED_FEATURES},
-};
+use selene_core::{Change, GraphId, HlcTimestamp, Origin, PropertyValueType, SchemaChange};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutionPlan,
     ExecutorError, TxContext, analyze, execute_pipeline, feature_walk, parse, plan,
@@ -20,6 +17,7 @@ use selene_graph::{
     CommitOutcome, EdgeEndpointDef, GraphTypeDef, PropertyDefaultValue, SharedGraph,
 };
 use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
+use selene_profile::{CapabilityStatus, FeatureId, capability};
 
 use exec_common::db_string;
 
@@ -372,7 +370,10 @@ fn composed_node_type_survives_wal_recovery() {
 
 #[test]
 fn flagger_records_im_extends_and_feature_is_supported() {
-    assert!(SUPPORTED_FEATURES.contains(&FeatureId::IM_EXTENDS));
+    assert!(
+        capability(FeatureId::IM_EXTENDS)
+            .is_some_and(|record| record.status == CapabilityStatus::Supported)
+    );
 
     for source in [
         "CREATE NODE TYPE :Child EXTENDS :Parent ()",

@@ -7,9 +7,10 @@ build a `SharedGraph` plus an `EmptyProcedureRegistry`.
 The current engine implements selected ISO/IEC 39075:2024 GQL syntax and
 semantics plus namespaced extensions. It does not make a blanket minimum- or
 selected-profile conformance claim. The parser keeps a strict GQL boundary: no
-Cypher, SQL, or SPARQL grammar. The generated profile supplies both the runtime
-inventory and a temporary parser compatibility set; neither is formal 2.0 claim
-evidence. See the [2.0 conformance policy](v2/conformance-policy.md).
+Cypher, SQL, or SPARQL grammar. The generated profile independently records
+Flagger admission, runtime status, formal claim state, and evidence; none of
+those fields alone is formal 2.0 claim evidence. See the [2.0 conformance
+policy](v2/conformance-policy.md).
 
 For the engine architecture see [`architecture.md`](architecture.md). For
 durability and recovery see
@@ -41,8 +42,8 @@ between `plan` and `execute_statement`.
 
 ## 1. Current implementation inventory
 
-`selene-core::feature_register::SUPPORTED_FEATURES` is the compatibility view
-of the generated profile's runtime-support inventory. The table below summarizes
+`selene_profile::capabilities()` is the typed, allocation-free view of the
+generated profile's runtime-support inventory. The table below summarizes
 current behavior; “Full” and “Partial” describe implementation coverage in that
 row, not formal conformance status.
 
@@ -52,14 +53,14 @@ row, not formal conformance status.
 | Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is runtime-supported as feature `GQ15`. |
 | Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
-| DDL (`DROP GRAPH`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` and both additive `ALTER` forms are implementation-defined surfaces. `CREATE GRAPH` remains unsupported (`GC04`). `GG01`, `GG02`, `GG20`, and `GG21` remain in the parser compatibility set, but the implication-closed runtime inventory does not report them as supported. |
+| DDL (`DROP GRAPH`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` and both additive `ALTER` forms are implementation-defined surfaces. Type DDL is Flagger-accepted as part of the directly selected parser surface even though the complete runtime inventory reports `GG01`, `GG02`, `GG20`, and `GG21` as unsupported. `CREATE GRAPH` remains rejected through implied feature `GC04`. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries are runtime-supported as `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not runtime-supported. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are runtime-supported (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
 
-Statements outside the parser compatibility set fail with a Flagger error
-during parsing or analysis, never at runtime.
+Parser-observed capabilities whose generated Flagger disposition is `rejected`
+fail during parsing. Flagger admission is not inferred from runtime status.
 
 ---
 
@@ -107,9 +108,9 @@ the comparison family.
 ### Optional type surfaces outside current runtime support
 
 Graph and binding-table reference type spellings (`GV60`-`GV61`), `FLOAT16` /
-`FLOAT128` / `FLOAT256`, and 256-bit integers carry rationale entries in
-`feature_register::NOT_SUPPORTED_RATIONALE`. Query that mentions one of these
-deferred types is rejected at parse or analyze time.
+`FLOAT128` / `FLOAT256`, and 256-bit integers have generated non-support
+rationales. A query that mentions one of these deferred types is rejected while
+parsing.
 
 Explicit value-type nullability (`GV90`), length-qualified byte-string types
 (`GV36`-`GV38`), and `REAL` / `DOUBLE` synonyms (`GV23` / `GV24`) are
@@ -735,7 +736,7 @@ procedure output.
 | Procedure | Tier | Purpose |
 |---|---|---|
 | `selene.health` | Graph | Basic graph health counters. |
-| `selene.feature_status` | Graph | Surfaces the generated runtime-support inventory. |
+| `selene.feature_status` | Graph | Surfaces generated capability status, profile relation, claim/evidence summary, and profile hash. |
 | `selene.verify` | Graph | Integrity check over graph invariants. |
 | `selene.compaction_stats` | Graph | Graph row compaction pressure counters. |
 | `selene.create_index`, `selene.drop_index` | Mutation | Create or drop scalar property indexes through the mutation funnel. |
@@ -799,8 +800,8 @@ via `Arc`. There are no loadable third-party packs to register.
 
 selene-db's default isolation is **serializable** (clause 4.6); the engine
 uses strict-serializable under a single write lock per graph with
-lock-free reads. Implementation-defined choices `IE002` and `IE004` settle
-this in `feature_register::ANNEX_B_REGISTER`.
+lock-free reads. Generated Annex B records `IE002` and `IE004` settle this;
+`selene_profile::annex_b_by_id` provides direct lookup.
 
 Statements outside an explicit transaction auto-commit at statement end
 (implementation-defined choice `IE001`).
@@ -843,10 +844,13 @@ exactly one graph.
 
 ## 10. GQL Flagger
 
-The Flagger rejects constructs outside the temporary parser-compatibility set at
-parse or analysis time. This behavior is implementation inventory, not proof of
-a formal 2.0 claim. Rejection happens
-**before** execution; there is no runtime "unsupported feature" surprise.
+The Flagger looks up each parser-observed feature's generated admission
+disposition. A record is accepted if and only if it is a direct ISO selection
+or is runtime-supported. In the current inventory, rejected records are
+implied-only or unselected and are unsupported or referenced. Rejections carry
+the canonical ID, name, source span, and non-support rationale. Parser
+admission, runtime status, formal claim state, and evidence are independent
+generated fields. Rejection happens **before** execution.
 
 Examples of rejected constructs:
 
@@ -855,7 +859,7 @@ Examples of rejected constructs:
 | `CREATE PROCEDURE pkg.fn() { LET x = 1 RETURN x }` | Procedure-local definitions (`GP05`-`GP13`) are deferred. | Parser error. |
 | `CALL pkg.fn(TABLE rows)` | Binding tables as procedure arguments (`GP14`) are deferred. | Parser error. |
 | `CALL pkg.fn(GRAPH g)` | Graphs as procedure arguments (`GP15`) are deferred. | Parser error. |
-| `CREATE GRAPH demo` | Graph management (`GC04`) is absent from the c5 single-graph model. | Flagger error. |
+| `CREATE GRAPH demo` | Graph management (`GC04`) is absent from the single-graph model. | Flagger error for `GC04`. |
 | `MERGE (n:Person {id: 1})` | `MERGE` mutation lowering is deferred. | Parser error. |
 | `RETURN NULL IS TYPED GRAPH AS ok` | Graph reference value types (`GV60`) are deferred. | Flagger error. |
 | `CAST(x AS FLOAT16)` | Feature `GV20` is unsupported. | Flagger error. |
@@ -865,11 +869,12 @@ Examples of rejected constructs:
 
 ### Runtime feature introspection
 
-`CALL selene.feature_status()` surfaces the current implementation register at
-runtime with `feature_id`, `status`, and `rationale` columns. It is backed by
-the `feature_register` module in `selene-core`: `SUPPORTED_FEATURES`,
-`NOT_SUPPORTED_RATIONALE`, and `is_supported`. This status is not a generated
-2.0 conformance declaration.
+`CALL selene.feature_status()` preserves `feature_id`, `status`, and `rationale`
+as its first three columns, followed by `feature_name`, `surface`,
+`profile_relation`, `claim_state`, `evidence_status`, `evidence_count`, and
+`profile_hash`. Rows come directly from `selene_profile::capabilities()` in
+generated runtime order. Evidence counts summarize registered references and do
+not expose internal paths. This inventory is not a release conformance claim.
 
 ---
 
@@ -881,7 +886,7 @@ with `miette::Diagnostic` derives and `GQLSTATUS`-aligned codes.
 | Phase | Error type | What it means |
 |---|---|---|
 | Parser | `selene_gql::ParserError` | Syntactic error or Flagger rejection during parse. Carries source spans suitable for `miette` rendering. |
-| Analyzer | `selene_gql::AnalysisError` | Scope / type / write-set / Flagger rejection during analysis. Reports unresolved variables, type mismatches, mutation write-set conflicts, and features outside the parser-compatibility set. |
+| Analyzer | `selene_gql::AnalysisError` | Scope, type, and write-set rejection during analysis. Reports unresolved variables, type mismatches, and mutation write-set conflicts. |
 | Planner | `selene_gql::PlannerError` | Lowering failure. Reports missing procedure signatures, undeclared indexes, or unrepresentable plan shapes. |
 | Executor | `selene_gql::ExecutorError` | Runtime failure. Reports graph-mutation rejection (`GraphMutation`), failed-transaction reentry (`InFailedTransaction`), procedure errors (`ProcedureError`), implementation-defined surfaces (`ImplementationDefined`), and Boolean / value-type runtime errors. |
 
@@ -894,8 +899,8 @@ diagnostic codes follow the GQLSTATUS table in
 ## 12. What's NOT supported
 
 The current c5 surface is deliberately narrow. The list below names what is
-explicitly absent. The canonical rationale is
-`feature_register::NOT_SUPPORTED_RATIONALE`.
+explicitly absent. `selene_profile::capability` returns the canonical status and
+non-support rationale for each feature ID.
 
 | Surface | Status |
 |---|---|

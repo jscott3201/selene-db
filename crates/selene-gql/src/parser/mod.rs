@@ -41,7 +41,8 @@ pub(crate) const MAX_NESTING_DEPTH: u32 = guard::MAX_NESTING_DEPTH;
 ///
 /// Returns [`ParserError::SyntaxError`] for parse failures and
 /// [`ParserError::NotImplemented`] for grammar surfaces whose AST builders
-/// are not yet supported.
+/// are not yet supported. [`ParserError::UnsupportedFeature`] reports parsed
+/// capabilities rejected by the generated profile's Flagger disposition.
 #[tracing::instrument(name = "selene.gql.parse", skip(source), fields(source_len = source.len()))]
 pub fn parse(source: &str) -> Result<Statement, ParserError> {
     guard::validate(source)?;

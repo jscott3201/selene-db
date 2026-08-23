@@ -8,7 +8,8 @@ mod strings;
 mod temporal;
 
 use pest::iterators::Pair;
-use selene_core::{DbString, feature_register::FeatureId};
+use selene_core::DbString;
+use selene_profile::FeatureId;
 
 use crate::{
     ast::{

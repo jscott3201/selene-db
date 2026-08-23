@@ -5,12 +5,13 @@
 mod exec_common;
 
 use exec_common::{column_values, execute_read, execute_read_result};
-use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_core::{GraphId, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, ImplDefinedCaps, Session, StatementOutput, analyze,
     feature_walk, parse,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 
 fn single_value(source: &str, column: &str) -> Value {
     let table = execute_read(source);

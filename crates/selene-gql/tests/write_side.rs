@@ -109,7 +109,7 @@ fn parse_graph_ddl() {
         "CREATE GRAPH foo ANY AS COPY OF bar",
         "CREATE GRAPH foo {(Person :Person {name STRING})}",
     ] {
-        let error = parse(source).expect_err(source);
+        let error = selene_gql::parse(source).expect_err(source);
         assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }
     // DROP GRAPH now parses (BRIEF-152): it is the IM_DROP_GRAPH factory-reset

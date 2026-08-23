@@ -385,7 +385,7 @@ Populate the canonical feature inventory and Table 10 relationships, calculate t
 ## M01-PR03 — Build the Exact Annex B Implementation-Defined Profile
 
 - **Owner:** M01
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / L
 - **Dependencies:** M01-PR01
 - **Issues:** None

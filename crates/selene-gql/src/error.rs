@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use selene_core::feature_register::FeatureId;
+use selene_profile::FeatureId;
 
 use crate::ast::span::SourceSpan;
 
@@ -309,8 +309,8 @@ pub enum ParserError {
     /// Source parsed at the grammar level, but no AST builder is implemented yet.
     ///
     /// Distinct from [`Self::SyntaxError`] (parse failed) and
-    /// [`Self::UnsupportedFeature`] (specific ISO feature outside the parser
-    /// compatibility set).
+    /// [`Self::UnsupportedFeature`] (specific capability rejected by the
+    /// generated Flagger disposition).
     /// This variant covers grammar surfaces selene-db will support but whose
     /// builders land in a later brief.
     #[error("not implemented: {message}")]

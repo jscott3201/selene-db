@@ -724,7 +724,7 @@ in-flight work whose acknowledgement you never received.
 
 ## 8. Principals and authorization
 
-Per ISO/IEC 39075:2024 Clause 4, the spec calls out `IW011` (external procedures), `ID001` (principal identity), `IW002` (authentication), `ID003` (authorization privileges) as **implementation-defined**. selene-db declares these in the feature register as **embedder responsibilities** — the engine itself has no principal table, no role catalog, no `GRANT` syntax.
+Per ISO/IEC 39075:2024 Clause 4, the spec calls out `IW011` (external procedures), `ID001` (principal identity), `IW002` (authentication), and `ID003` (authorization privileges) as **implementation-defined**. The generated Annex B records assign these to the embedder; the engine itself has no principal table, role catalog, or `GRANT` syntax.
 
 ### 8.1 Where the authz boundary goes
 

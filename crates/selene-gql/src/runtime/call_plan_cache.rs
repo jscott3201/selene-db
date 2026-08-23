@@ -7,9 +7,10 @@ use std::{
 
 use lru::LruCache;
 use selene_core::GraphId;
+use selene_profile::ProfileIdentity;
 
 use crate::{
-    ExecutionPlan, PipelineStatement,
+    ExecutionPlan, ImplDefinedCaps, PipelineStatement,
     ast::{Statement, format_procedure_call, format_read_statement},
 };
 
@@ -33,6 +34,9 @@ pub struct CallPlanKey {
     graph_id: GraphId,
     schema_version: u64,
     registry_version: u64,
+    profile_identity: ProfileIdentity,
+    caps: ImplDefinedCaps,
+    index_selection: bool,
     canonical_source: Arc<str>,
 }
 
@@ -41,7 +45,32 @@ struct CallPlanSourceEntry {
     graph_id: GraphId,
     schema_version: u64,
     registry_version: u64,
+    profile_identity: ProfileIdentity,
+    caps: ImplDefinedCaps,
+    index_selection: bool,
     key: CallPlanKey,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CallPlanSourceLookup<'a> {
+    pub(crate) graph_id: GraphId,
+    pub(crate) schema_version: u64,
+    pub(crate) registry_version: u64,
+    pub(crate) profile_identity: ProfileIdentity,
+    pub(crate) caps: ImplDefinedCaps,
+    pub(crate) index_selection: bool,
+    pub(crate) source: &'a str,
+}
+
+impl CallPlanSourceEntry {
+    fn matches(&self, lookup: CallPlanSourceLookup<'_>) -> bool {
+        self.graph_id == lookup.graph_id
+            && self.schema_version == lookup.schema_version
+            && self.registry_version == lookup.registry_version
+            && self.profile_identity == lookup.profile_identity
+            && self.caps == lookup.caps
+            && self.index_selection == lookup.index_selection
+    }
 }
 
 /// Counters for [`CallPlanCache`] lookup and eviction behavior.
@@ -70,20 +99,13 @@ impl CallPlanCache {
 
     pub(crate) fn get_source(
         &self,
-        graph_id: GraphId,
-        schema_version: u64,
-        registry_version: u64,
-        source: &str,
+        lookup: CallPlanSourceLookup<'_>,
     ) -> Option<Arc<ExecutionPlan>> {
         let mut inner = self.lock_inner();
-        let Some(key) = inner.source_index.get(source).and_then(|entries| {
+        let Some(key) = inner.source_index.get(lookup.source).and_then(|entries| {
             entries
                 .iter()
-                .find(|entry| {
-                    entry.graph_id == graph_id
-                        && entry.schema_version == schema_version
-                        && entry.registry_version == registry_version
-                })
+                .find(|entry| entry.matches(lookup))
                 .map(|entry| entry.key.clone())
         }) else {
             inner.stats.misses = inner.stats.misses.saturating_add(1);
@@ -96,13 +118,7 @@ impl CallPlanCache {
                 Some(plan)
             }
             None => {
-                remove_source_entry(
-                    &mut inner,
-                    source,
-                    graph_id,
-                    schema_version,
-                    registry_version,
-                );
+                remove_source_entry(&mut inner, lookup);
                 inner.stats.misses = inner.stats.misses.saturating_add(1);
                 None
             }
@@ -144,6 +160,9 @@ impl CallPlanCache {
                 graph_id: key.graph_id,
                 schema_version: key.schema_version,
                 registry_version: key.registry_version,
+                profile_identity: key.profile_identity,
+                caps: key.caps,
+                index_selection: key.index_selection,
                 key,
             };
             match inner.source_index.get_mut(source.as_ref()) {
@@ -152,6 +171,9 @@ impl CallPlanCache {
                         existing.graph_id == entry.graph_id
                             && existing.schema_version == entry.schema_version
                             && existing.registry_version == entry.registry_version
+                            && existing.profile_identity == entry.profile_identity
+                            && existing.caps == entry.caps
+                            && existing.index_selection == entry.index_selection
                     }) {
                         *existing = entry;
                     } else {
@@ -185,23 +207,13 @@ impl CallPlanCache {
     }
 }
 
-fn remove_source_entry(
-    inner: &mut CallPlanCacheInner,
-    source: &str,
-    graph_id: GraphId,
-    schema_version: u64,
-    registry_version: u64,
-) {
-    let Some(entries) = inner.source_index.get_mut(source) else {
+fn remove_source_entry(inner: &mut CallPlanCacheInner, lookup: CallPlanSourceLookup<'_>) {
+    let Some(entries) = inner.source_index.get_mut(lookup.source) else {
         return;
     };
-    entries.retain(|entry| {
-        !(entry.graph_id == graph_id
-            && entry.schema_version == schema_version
-            && entry.registry_version == registry_version)
-    });
+    entries.retain(|entry| !entry.matches(lookup));
     if entries.is_empty() {
-        inner.source_index.pop(source);
+        inner.source_index.pop(lookup.source);
     }
 }
 
@@ -210,6 +222,9 @@ impl CallPlanKey {
         graph_id: GraphId,
         schema_version: u64,
         registry_version: u64,
+        profile_identity: ProfileIdentity,
+        caps: ImplDefinedCaps,
+        index_selection: bool,
         statement: &Statement,
     ) -> Option<Self> {
         let canonical_source = canonical_call_source(statement)?;
@@ -217,6 +232,9 @@ impl CallPlanKey {
             graph_id,
             schema_version,
             registry_version,
+            profile_identity,
+            caps,
+            index_selection,
             canonical_source: Arc::from(canonical_source),
         })
     }
@@ -237,6 +255,12 @@ impl CallPlanKey {
     #[must_use]
     pub const fn registry_version(&self) -> u64 {
         self.registry_version
+    }
+
+    /// Return the generated profile identity carried by this cache key.
+    #[must_use]
+    pub const fn profile_identity(&self) -> ProfileIdentity {
+        self.profile_identity
     }
 
     /// Return the canonical CALL source carried by this cache key.
@@ -272,6 +296,7 @@ mod tests {
     use std::{num::NonZeroUsize, sync::Arc};
 
     use selene_core::GraphId;
+    use selene_profile::{ProfileIdentity, current_profile_identity};
 
     use super::*;
     use crate::{
@@ -284,9 +309,41 @@ mod tests {
     }
 
     fn key_with_registry(source: &str, registry_version: u64) -> CallPlanKey {
+        key_with_profile(source, registry_version, current_profile_identity())
+    }
+
+    fn key_with_profile(
+        source: &str,
+        registry_version: u64,
+        profile_identity: ProfileIdentity,
+    ) -> CallPlanKey {
         let statement = parse(source).expect("source parses");
-        CallPlanKey::for_statement(GraphId::new(7), 3, registry_version, &statement)
-            .expect("source produces CALL cache key")
+        CallPlanKey::for_statement(
+            GraphId::new(7),
+            3,
+            registry_version,
+            profile_identity,
+            ImplDefinedCaps::DEFAULT,
+            true,
+            &statement,
+        )
+        .expect("source produces CALL cache key")
+    }
+
+    fn source_lookup(
+        source: &str,
+        registry_version: u64,
+        profile_identity: ProfileIdentity,
+    ) -> CallPlanSourceLookup<'_> {
+        CallPlanSourceLookup {
+            graph_id: GraphId::new(7),
+            schema_version: 3,
+            registry_version,
+            profile_identity,
+            caps: ImplDefinedCaps::DEFAULT,
+            index_selection: true,
+            source,
+        }
     }
 
     fn plan_for(source: &str) -> Arc<ExecutionPlan> {
@@ -345,27 +402,102 @@ mod tests {
         let statement =
             parse("MATCH (n) CALL cache.echo(n) YIELD out RETURN out").expect("source parses");
 
-        assert!(CallPlanKey::for_statement(GraphId::new(7), 3, 11, &statement).is_none());
+        assert!(
+            CallPlanKey::for_statement(
+                GraphId::new(7),
+                3,
+                11,
+                current_profile_identity(),
+                ImplDefinedCaps::DEFAULT,
+                true,
+                &statement,
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn key_carries_graph_id_schema_version_and_registry_version() {
         let statement = parse("CALL cache.echo()").expect("source parses");
-        let graph_one = CallPlanKey::for_statement(GraphId::new(1), 0, 11, &statement)
-            .expect("source produces key");
-        let graph_two = CallPlanKey::for_statement(GraphId::new(2), 0, 11, &statement)
-            .expect("source produces key");
-        let schema_one = CallPlanKey::for_statement(GraphId::new(1), 1, 11, &statement)
-            .expect("source produces key");
-        let registry_one = CallPlanKey::for_statement(GraphId::new(1), 0, 12, &statement)
-            .expect("source produces key");
+        let make = |graph_id, schema_version, registry_version, profile_identity, caps, indexes| {
+            CallPlanKey::for_statement(
+                graph_id,
+                schema_version,
+                registry_version,
+                profile_identity,
+                caps,
+                indexes,
+                &statement,
+            )
+            .expect("source produces key")
+        };
+        let graph_one = make(
+            GraphId::new(1),
+            0,
+            11,
+            current_profile_identity(),
+            ImplDefinedCaps::DEFAULT,
+            true,
+        );
+        let graph_two = make(
+            GraphId::new(2),
+            0,
+            11,
+            current_profile_identity(),
+            ImplDefinedCaps::DEFAULT,
+            true,
+        );
+        let schema_one = make(
+            GraphId::new(1),
+            1,
+            11,
+            current_profile_identity(),
+            ImplDefinedCaps::DEFAULT,
+            true,
+        );
+        let registry_one = make(
+            GraphId::new(1),
+            0,
+            12,
+            current_profile_identity(),
+            ImplDefinedCaps::DEFAULT,
+            true,
+        );
+        let profile_one = make(
+            GraphId::new(1),
+            0,
+            11,
+            ProfileIdentity::new("synthetic", 3, 3, "other-hash"),
+            ImplDefinedCaps::DEFAULT,
+            true,
+        );
+        let caps_one = make(
+            GraphId::new(1),
+            0,
+            11,
+            current_profile_identity(),
+            ImplDefinedCaps::DEFAULT.with_max_list_length(1),
+            true,
+        );
+        let no_indexes = make(
+            GraphId::new(1),
+            0,
+            11,
+            current_profile_identity(),
+            ImplDefinedCaps::DEFAULT,
+            false,
+        );
 
         assert_ne!(graph_one, graph_two);
         assert_ne!(graph_one, schema_one);
         assert_ne!(graph_one, registry_one);
+        assert_ne!(graph_one, profile_one);
+        assert_ne!(graph_one, caps_one);
+        assert_ne!(graph_one, no_indexes);
         assert_eq!(graph_one.graph_id(), GraphId::new(1));
         assert_eq!(graph_one.schema_version(), 0);
         assert_eq!(graph_one.registry_version(), 11);
+        assert_eq!(graph_one.profile_identity(), current_profile_identity());
     }
 
     #[test]
@@ -408,7 +540,11 @@ mod tests {
 
         assert!(
             cache
-                .get_source(GraphId::new(7), 3, 11, "CALL cache.one()")
+                .get_source(source_lookup(
+                    "CALL cache.one()",
+                    11,
+                    current_profile_identity(),
+                ))
                 .is_some()
         );
         assert_eq!(cache.stats().hits, 1);
@@ -422,13 +558,21 @@ mod tests {
 
         assert!(
             cache
-                .get_source(GraphId::new(7), 3, 11, "CALL cache.one()")
+                .get_source(source_lookup(
+                    "CALL cache.one()",
+                    11,
+                    current_profile_identity(),
+                ))
                 .is_none()
         );
         cache.insert_with_source(key, Arc::clone(&source), plan_for("RETURN 1"));
         assert!(
             cache
-                .get_source(GraphId::new(7), 3, 12, "CALL cache.one()")
+                .get_source(source_lookup(
+                    "CALL cache.one()",
+                    12,
+                    current_profile_identity(),
+                ))
                 .is_none()
         );
 
@@ -439,20 +583,22 @@ mod tests {
     fn call_plan_cache_stale_source_entries_are_recorded_as_misses() {
         let cache = CallPlanCache::new(NonZeroUsize::new(1).expect("nonzero"));
         let source = Arc::<str>::from("CALL cache.one()");
-        let old_key = key_with_registry(&source, 11);
-        let new_key = key_with_registry(&source, 12);
+        let old_profile = current_profile_identity();
+        let new_profile = ProfileIdentity::new("synthetic", 3, 3, "other-hash");
+        let old_key = key_with_profile(&source, 11, old_profile);
+        let new_key = key_with_profile(&source, 11, new_profile);
 
         cache.insert_with_source(old_key, Arc::clone(&source), plan_for("RETURN 1"));
         cache.insert_with_source(new_key, Arc::clone(&source), plan_for("RETURN 2"));
 
         assert!(
             cache
-                .get_source(GraphId::new(7), 3, 11, "CALL cache.one()")
+                .get_source(source_lookup("CALL cache.one()", 11, old_profile))
                 .is_none()
         );
         assert!(
             cache
-                .get_source(GraphId::new(7), 3, 12, "CALL cache.one()")
+                .get_source(source_lookup("CALL cache.one()", 11, new_profile))
                 .is_some()
         );
 

@@ -1,7 +1,7 @@
 //! Session-control builders (ISO/IEC 39075:2024 section 7).
 
 use pest::iterators::Pair;
-use selene_core::feature_register::FeatureId;
+use selene_profile::FeatureId;
 
 use crate::{
     ast::{SessionResetTarget, SessionSetGraphTarget, Statement},
@@ -68,11 +68,7 @@ fn build_session_set_binding_table_parameter(
     } else {
         FeatureId::GS02
     };
-    Err(unsupported_feature(
-        &pair,
-        feature_id,
-        "SESSION SET binding-table parameters are deferred",
-    ))
+    Err(unsupported_feature(&pair, feature_id))
 }
 
 fn build_session_set_graph_parameter(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -85,11 +81,7 @@ fn build_session_set_graph_parameter(pair: Pair<'_, Rule>) -> Result<Statement, 
     } else {
         FeatureId::GS12
     };
-    Err(unsupported_feature(
-        &pair,
-        feature_id,
-        "SESSION SET graph parameters are deferred",
-    ))
+    Err(unsupported_feature(&pair, feature_id))
 }
 
 fn build_session_set_graph(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -167,18 +159,10 @@ fn build_session_set_value(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
                 value = Some(expr::build_value_expr(first_child(child)?)?);
             }
             Rule::session_value_subquery_expr => {
-                return Err(unsupported_feature(
-                    &child,
-                    FeatureId::GS11,
-                    "SESSION SET VALUE subquery initializers are outside the parser compatibility set",
-                ));
+                return Err(unsupported_feature(&child, FeatureId::GS11));
             }
             Rule::session_value_simple_expr => {
-                return Err(unsupported_feature(
-                    &child,
-                    FeatureId::GS14,
-                    "SESSION SET VALUE simple-expression initializers are outside the parser compatibility set",
-                ));
+                return Err(unsupported_feature(&child, FeatureId::GS14));
             }
             _ => return Err(unexpected_pair(child, "unexpected SESSION SET VALUE child")),
         }
@@ -222,18 +206,10 @@ fn build_session_reset(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let inner = first_child(args)?;
     let target = match inner.as_rule() {
         Rule::session_reset_schema => {
-            return Err(unsupported_feature(
-                &inner,
-                FeatureId::GS05,
-                "SESSION RESET SCHEMA is not runtime-supported",
-            ));
+            return Err(unsupported_feature(&inner, FeatureId::GS05));
         }
         Rule::session_reset_graph => {
-            return Err(unsupported_feature(
-                &inner,
-                FeatureId::GS06,
-                "SESSION RESET GRAPH is not runtime-supported",
-            ));
+            return Err(unsupported_feature(&inner, FeatureId::GS06));
         }
         Rule::session_reset_time_zone => SessionResetTarget::TimeZone,
         Rule::session_reset_all => reset_all_target(&inner),

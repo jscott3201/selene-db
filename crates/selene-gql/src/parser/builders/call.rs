@@ -2,7 +2,8 @@
 
 use pest::iterators::Pair;
 
-use selene_core::{DbString, feature_register::FeatureId};
+use selene_core::DbString;
+use selene_profile::FeatureId;
 
 use crate::{
     ast::{
@@ -138,18 +139,10 @@ fn build_procedure_args(pair: Pair<'_, Rule>) -> Result<Vec<crate::ast::ValueExp
         match child.as_rule() {
             Rule::expr => args.push(expr::build_value_expr(child)?),
             Rule::procedure_binding_table_arg => {
-                return Err(unsupported_feature(
-                    &child,
-                    FeatureId::GP14,
-                    "binding-table procedure arguments are deferred",
-                ));
+                return Err(unsupported_feature(&child, FeatureId::GP14));
             }
             Rule::procedure_graph_arg => {
-                return Err(unsupported_feature(
-                    &child,
-                    FeatureId::GP15,
-                    "graph procedure arguments are deferred",
-                ));
+                return Err(unsupported_feature(&child, FeatureId::GP15));
             }
             _ => return Err(unexpected_pair(child, "unexpected procedure argument")),
         }

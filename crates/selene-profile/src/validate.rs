@@ -19,7 +19,7 @@ use ids::{
 };
 
 const FORMAT_VERSION: u32 = 3;
-const GENERATOR_VERSION: u32 = 2;
+const GENERATOR_VERSION: u32 = 3;
 const MAX_APPLICABILITY_DEPTH: usize = 64;
 
 /// Profile loading, validation, or generation failure.

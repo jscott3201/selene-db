@@ -2,10 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{
-    ByteStringType, DbString, GraphId, PropertyValueType, Record, Value,
-    feature_register::FeatureId,
-};
+use selene_core::{ByteStringType, DbString, GraphId, PropertyValueType, Record, Value};
 use selene_gql::{
     AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry, GqlType,
     ImplDefinedCaps, ParserError, PipelineStatement, Session, StatementOutput,
@@ -13,6 +10,7 @@ use selene_gql::{
     feature_walk, parse,
 };
 use selene_graph::{GraphTypeDef, PropertyElementType, RecordFieldType, SharedGraph};
+use selene_profile::FeatureId;
 use smallvec::smallvec;
 
 fn first_value(source: &str) -> Value {

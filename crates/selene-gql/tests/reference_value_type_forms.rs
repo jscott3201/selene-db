@@ -1,11 +1,12 @@
 //! ISO open reference value type form coverage.
 
-use selene_core::{EdgeId, GraphId, NodeId, Value, db_string, feature_register::FeatureId};
+use selene_core::{EdgeId, GraphId, NodeId, Value, db_string};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlType, IsCheckKind, ParserError, PipelineStatement,
     Session, Statement, StatementOutput, ValueExpr, ast::format_read_statement, parse,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 
 #[test]
 fn open_node_and_edge_reference_type_forms_parse_to_ast() {
@@ -36,7 +37,8 @@ fn open_graph_reference_type_forms_report_gv60_unsupported() {
         "RETURN NULL IS TYPED PROPERTY GRAPH AS ok",
         "RETURN NULL IS TYPED ANY PROPERTY GRAPH AS ok",
     ] {
-        let err = parse(source).expect_err("GRAPH reference type remains runtime-unsupported");
+        let err = selene_gql::parse(source)
+            .expect_err("GRAPH reference type remains runtime-unsupported");
         let ParserError::UnsupportedFeature { feature_id, .. } = err else {
             panic!("{source} should report unsupported GV60, got {err:?}");
         };
@@ -78,7 +80,8 @@ fn open_reference_type_keywords_accept_whitespace_boundaries() {
         "RETURN NULL IS TYPED PROPERTY GRAPH AS ok",
         "RETURN NULL IS TYPED ANY PROPERTY GRAPH AS ok",
     ] {
-        let err = parse(source).expect_err("GRAPH reference type remains runtime-unsupported");
+        let err = selene_gql::parse(source)
+            .expect_err("GRAPH reference type remains runtime-unsupported");
         let ParserError::UnsupportedFeature { feature_id, .. } = err else {
             panic!("{source} should report unsupported GV60, got {err:?}");
         };
@@ -102,7 +105,8 @@ fn open_reference_type_keywords_accept_comment_boundaries() {
         "RETURN NULL IS TYPED PROPERTY /* boundary */ GRAPH AS ok",
         "RETURN NULL IS TYPED ANY /* boundary */ PROPERTY /* boundary */ GRAPH AS ok",
     ] {
-        let err = parse(source).expect_err("GRAPH reference type remains runtime-unsupported");
+        let err = selene_gql::parse(source)
+            .expect_err("GRAPH reference type remains runtime-unsupported");
         let ParserError::UnsupportedFeature { feature_id, .. } = err else {
             panic!("{source} should report unsupported GV60, got {err:?}");
         };

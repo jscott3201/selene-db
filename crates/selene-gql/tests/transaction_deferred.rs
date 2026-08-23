@@ -1,7 +1,7 @@
 //! Deferred transaction-control parser gates.
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{ParserError, Statement, parse};
+use selene_profile::FeatureId;
 
 #[test]
 fn deferred_transaction_forms_report_unsupported_features() {

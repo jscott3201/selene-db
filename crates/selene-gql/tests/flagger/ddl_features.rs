@@ -1,20 +1,36 @@
-use selene_core::feature_register::FeatureId;
-use selene_gql::{GqlStatus, ParserError, feature_walk, parse};
+use selene_gql::{GqlStatus, ParserError, SourceSpan, feature_walk, parse};
+use selene_profile::{FeatureId, capability};
 
 use super::assert_read_plan;
 
 #[test]
 fn mutation_feature_is_supported() {
-    parse("MATCH (n) SET n.active = true RETURN n")
-        .expect("GD01 mutation syntax is parser-compatibility accepted");
+    parse("MATCH (n) SET n.active = true RETURN n").expect("GD01 mutation syntax parses");
 }
 
 #[test]
 fn create_graph_is_rejected_before_planning() {
-    // CREATE GRAPH stays GC04-rejected under D1 single-graph: the engine cannot
-    // create a second graph. DROP GRAPH is split out (now IM_DROP_GRAPH).
+    // GG01 is directly selected, but CREATE GRAPH also reaches the implied
+    // unsupported GC04 graph-management capability. DROP GRAPH remains
+    // IM_DROP_GRAPH.
+    let source = "CREATE GRAPH demo";
+    let error = parse(source).expect_err(source);
+    let ParserError::UnsupportedFeature {
+        feature_id,
+        display_name,
+        span,
+        hint,
+    } = error
+    else {
+        panic!("expected UnsupportedFeature for {source:?}");
+    };
+    let record = capability(FeatureId::GC04).expect("GC04 capability");
+    assert_eq!(feature_id, FeatureId::GC04);
+    assert_eq!(display_name, record.name);
+    assert_eq!(span, SourceSpan::new(0, source.len() as u32));
+    assert_eq!(hint, record.non_support_rationale);
+
     for source in [
-        "CREATE GRAPH demo",
         "CREATE GRAPH IF NOT EXISTS demo",
         "CREATE GRAPH demo ANY",
         "CREATE GRAPH demo TYPED socialNetworkGraphType",
@@ -24,7 +40,7 @@ fn create_graph_is_rejected_before_planning() {
         "CREATE GRAPH demo ANY AS COPY OF source",
         "CREATE GRAPH demo {(Person :Person {lastname STRING, joined DATE})} AS COPY OF source",
     ] {
-        let error = parse(source).expect_err(source);
+        let error = selene_gql::parse(source).expect_err(source);
         assert_eq!(error.gqlstatus().as_str(), "42N01");
         assert_feature(error, FeatureId::GC04);
     }
@@ -74,7 +90,7 @@ fn or_replace_catalog_ddl_is_not_implemented() {
         "CREATE OR REPLACE NODE TYPE :Person (name :: STRING)",
         "CREATE OR REPLACE EDGE TYPE :KNOWS (FROM :Person TO :Person)",
     ] {
-        let error = parse(source).expect_err(source);
+        let error = selene_gql::parse(source).expect_err(source);
         assert!(
             matches!(error, ParserError::NotImplemented { .. }),
             "expected NotImplemented for {source:?}, got {error:?}"
@@ -284,9 +300,8 @@ fn drop_cascade_stamps_im_drop_cascade_but_restrict_and_default_do_not() {
 
 #[test]
 fn named_procedure_call_feature_is_supported() {
-    parse("CALL pkg.fn(1)").expect("GP04 named CALL is parser-compatibility accepted");
-    parse("MATCH (n) CALL pkg.fn(n) RETURN n")
-        .expect("in-pipeline GP04 CALL is parser-compatibility accepted");
+    parse("CALL pkg.fn(1)").expect("GP04 named CALL parses");
+    parse("MATCH (n) CALL pkg.fn(n) RETURN n").expect("in-pipeline GP04 CALL parses");
 }
 
 fn assert_feature(error: ParserError, expected: FeatureId) {

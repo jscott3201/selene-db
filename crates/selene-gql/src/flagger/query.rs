@@ -1,6 +1,7 @@
 //! Query and top-level statement Flagger walk.
 
-use selene_core::{DbString, feature_register::FeatureId};
+use selene_core::DbString;
+use selene_profile::FeatureId;
 
 use crate::{
     LimitValue, PipelineStatement, QueryPipeline, ReturnClause, SessionResetTarget, SetOp,
@@ -330,8 +331,8 @@ fn order_terms(
         // (sort key must be a return alias without GA07) is a bind-pass
         // concern — the Flagger cannot tell at parse time whether a sort key
         // is an alias. The conservative gate records GA07 for any ORDER BY;
-        // the temporary flagger-acceptance compatibility set includes GA07,
-        // so this stamp does not produce rejections.
+        // the generated profile marks GA07 supported, so this stamp does not
+        // produce rejections.
         record_feature(uses, FeatureId::GA07, first.span);
     }
     for term in terms {

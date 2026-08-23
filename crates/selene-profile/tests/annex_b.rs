@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use selene_profile::{
     ANNEX_B_CATEGORY_COUNTS, ANNEX_B_IA, ANNEX_B_ID, ANNEX_B_IE, ANNEX_B_IL, ANNEX_B_IS,
-    ANNEX_B_IV, ANNEX_B_IW, ANNEX_B_LOOKUP_TEST_VECTORS, ANNEX_B_REGISTER, AnnexBDecision,
-    AnnexBValue, annex_b_by_id, parse_profile, render_outputs,
+    ANNEX_B_IV, ANNEX_B_IW, ANNEX_B_LOOKUP_TEST_VECTORS, AnnexBDecision, AnnexBValue,
+    annex_b_by_id, annex_b_records, parse_profile, render_outputs,
 };
 use serde_json::{Value, json};
 
@@ -90,7 +90,7 @@ fn exact_inventory_categories_register_and_lookup_are_complete() {
         .map(|(category, ids)| (*category, ids.len()))
         .collect::<Vec<_>>();
     assert_eq!(ANNEX_B_CATEGORY_COUNTS, expected_counts);
-    assert_eq!(ANNEX_B_REGISTER.len(), 117);
+    assert_eq!(annex_b_records().count(), 117);
     assert_eq!(ANNEX_B_LOOKUP_TEST_VECTORS.len(), 117);
 
     for ((category, expected), records) in EXPECTED.iter().zip(generated) {

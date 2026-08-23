@@ -7,11 +7,11 @@
 //! runtime treats it as inert (the lowered plan is byte-identical to the
 //! no-keyword spelling). These tests pin every one of those four facts.
 
-use selene_core::feature_register::{FeatureId, SUPPORTED_FEATURES};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ParserError, PipelineStatement, Statement, analyze,
     feature_walk, parse, plan,
 };
+use selene_profile::{CapabilityStatus, FeatureId, capability};
 
 /// Parse `source`, returning the `MatchClause.path_or_paths` flag of the first
 /// pipeline statement.
@@ -41,8 +41,9 @@ fn observes_g014(source: &str) -> bool {
 #[test]
 fn g014_is_runtime_supported() {
     assert!(
-        SUPPORTED_FEATURES.contains(&FeatureId::G014),
-        "G014 (Explicit PATH/PATHS keywords) must be in SUPPORTED_FEATURES"
+        capability(FeatureId::G014)
+            .is_some_and(|record| record.status == CapabilityStatus::Supported),
+        "G014 (Explicit PATH/PATHS keywords) must be runtime-supported"
     );
 }
 

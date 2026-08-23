@@ -2,7 +2,7 @@
 
 use pest::iterators::Pair;
 
-use selene_core::feature_register::FeatureId;
+use selene_profile::FeatureId;
 
 use crate::{ast::Statement, error::ParserError};
 
@@ -13,16 +13,8 @@ pub(super) fn build_transaction_control(pair: Pair<'_, Rule>) -> Result<Statemen
     let inner = first_child(pair)?;
     let source_span = span(&inner);
     match inner.as_rule() {
-        Rule::start_transaction_mixed => Err(unsupported_feature(
-            &inner,
-            FeatureId::GP18,
-            "mixed catalog/data transaction forms are not runtime-supported",
-        )),
-        Rule::start_transaction_on_graph => Err(unsupported_feature(
-            &inner,
-            FeatureId::GT03,
-            "multi-graph transaction forms are not runtime-supported",
-        )),
+        Rule::start_transaction_mixed => Err(unsupported_feature(&inner, FeatureId::GP18)),
+        Rule::start_transaction_on_graph => Err(unsupported_feature(&inner, FeatureId::GT03)),
         Rule::start_transaction => Ok(Statement::StartTransaction { span: source_span }),
         Rule::commit => Ok(Statement::Commit { span: source_span }),
         Rule::rollback => Ok(Statement::Rollback { span: source_span }),
