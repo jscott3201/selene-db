@@ -243,8 +243,8 @@ pub struct EvidenceRecord {
     pub targets: Vec<EvidenceTarget>,
     /// Expected observable dimensions.
     pub expected: EvidenceExpectation,
-    /// Planned project-stable compiled registration identifier, when applicable.
-    pub planned_registration: Option<String>,
+    /// Project-stable compiled registration identifier, when executable.
+    pub registration: Option<String>,
     /// Current static disposition.
     pub disposition: EvidenceDisposition,
 }

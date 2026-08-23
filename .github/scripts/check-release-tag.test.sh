@@ -48,7 +48,8 @@ expect_fail "a tag/workspace mismatch" "v2.0.0-alpha.1" "2.0.0-alpha.2"
 require_workflow_line "- 'v2.*.*'"
 require_workflow_line "release-policy:"
 require_workflow_line "run: bash .github/scripts/check-release-tag.test.sh"
-require_workflow_line "needs: release-policy"
+require_workflow_line "conformance-claim:"
+require_workflow_line "needs: [release-policy, conformance-claim]"
 require_workflow_line "bash .github/scripts/check-release-tag.sh \"\$GITHUB_REF_NAME\" \"\$workspace_version\""
 require_workflow_line "needs: publish-crates"
 
@@ -62,8 +63,21 @@ if grep -Eq '^    if:' <<<"$policy_block"; then
   exit 1
 fi
 
-if [ "$(grep -Fc "startsWith(github.ref, 'refs/tags/v2.')" "$WORKFLOW")" -ne 2 ]; then
-  echo "FAIL: publishing jobs must both require refs/tags/v2." >&2
+if [ "$(grep -Fc "startsWith(github.ref, 'refs/tags/v2.')" "$WORKFLOW")" -ne 3 ]; then
+  echo "FAIL: claim and publishing jobs must require refs/tags/v2." >&2
+  exit 1
+fi
+
+claim_block="$(awk '
+  /^  conformance-claim:/ { in_claim = 1; next }
+  in_claim && /^  [[:alnum:]_-]+:/ { exit }
+  in_claim { print }
+' "$WORKFLOW")"
+for marker in "dtolnay/rust-toolchain@1.97.1" '"$EXPECTED_REVISION" iso_aligned' "contents: read" "github.event_name == 'workflow_dispatch'" "github.event.pull_request.draft == false"; do
+  grep -Fq -- "$marker" <<<"$claim_block" || { echo "FAIL: conformance claim job is missing $marker" >&2; exit 1; }
+done
+if grep -Eq 'selected_profile|cargo publish|gh release|CARGO_REGISTRY_TOKEN|contents: write' <<<"$claim_block"; then
+  echo "FAIL: conformance claim job can overclaim or publish" >&2
   exit 1
 fi
 

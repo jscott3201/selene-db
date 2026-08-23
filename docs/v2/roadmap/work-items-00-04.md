@@ -509,7 +509,7 @@ Cut over all parser/analyzer/runtime and documentation consumers to generated pr
 ## M01-PR05 — Add the Static Conformance Rule and Evidence Registry
 
 - **Owner:** M01
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / M
 - **Dependencies:** M01-PR04
 - **Issues:** None

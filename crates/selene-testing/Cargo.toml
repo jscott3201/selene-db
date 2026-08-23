@@ -19,10 +19,12 @@ default = []
 workspace = true
 
 [dependencies]
+blake3.workspace = true
 selene-core = { package = "selene-db-core", path = "../selene-core", version = "2.0.0-alpha.1" }
 selene-gql = { package = "selene-db-gql", path = "../selene-gql", version = "2.0.0-alpha.1" }
 selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "2.0.0-alpha.1" }
 selene-profile.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 

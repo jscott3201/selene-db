@@ -93,17 +93,21 @@ fn checked_in_seed_pins_static_boundary_and_pending_ownership() {
     );
     assert_eq!(
         registry.evidence_hash(),
-        "fd5648f42e61542daaef6c96cfc860c474e60d00739d065c86384381f7c2ec77"
+        "ba65ba096de87c2a3c095904d94488a6574bea62f584006485c7faef1814c38b"
     );
     assert!(!profile.profile().release_claimable);
 
-    let mut planned = 0;
+    let mut registered = 0;
+    let mut pending = 0;
     for record in &registry.evidence().evidence {
-        planned += usize::from(record.planned_registration.is_some());
-        let EvidenceDisposition::Pending { owner_pr, .. } = &record.disposition else {
-            panic!("PR05 evidence must remain pending");
-        };
-        assert_eq!(owner_pr, "M01-PR06");
+        registered += usize::from(record.registration.is_some());
+        if let EvidenceDisposition::Pending { owner_pr, .. } = &record.disposition {
+            pending += 1;
+            assert_eq!(owner_pr, "M10-PR05");
+            assert!(record.registration.is_none());
+        } else {
+            assert!(record.registration.is_some());
+        }
         let authority = profile
             .profile()
             .evidence
@@ -115,7 +119,8 @@ fn checked_in_seed_pins_static_boundary_and_pending_ownership() {
             "docs/v2/roadmap/work-items-00-04.md#m01-pr06"
         );
     }
-    assert_eq!(planned, 3);
+    assert_eq!(registered, 3);
+    assert_eq!(pending, 1);
 }
 
 #[test]
@@ -226,9 +231,9 @@ fn duplicate_and_dangling_references_fail() {
             "references unknown requirement",
         ),
         (
-            "/evidence/0/planned_registration",
+            "/evidence/0/registration",
             json!("fixtures::function"),
-            "malformed or duplicate planned registration",
+            "malformed or duplicate registration",
         ),
     ] {
         let (rules, mut evidence) = sources();
@@ -266,7 +271,10 @@ fn stale_boundary_hash_and_contradictory_dispositions_fail() {
     );
 
     let (rules, mut evidence) = sources();
-    evidence["evidence"][1]["disposition"] = json!({"disposition":"complete"});
+    evidence["evidence"][1]["registration"] = Value::Null;
+    evidence["evidence"][1]["disposition"] = json!({
+        "disposition":"pending", "owner_pr":"M10-PR05", "reason":"test"
+    });
     evidence["evidence"][2]["targets"] = evidence["evidence"][1]["targets"].clone();
     evidence["evidence"][2]["expected"]["status"] = json!({"kind":"error"});
     assert!(
@@ -274,6 +282,26 @@ fn stale_boundary_hash_and_contradictory_dispositions_fail() {
             .unwrap_err()
             .contains("mixes complete and pending evidence")
     );
+
+    for (index, registration, disposition, expected) in [
+        (
+            0,
+            Value::Null,
+            json!({"disposition":"complete"}),
+            "complete without",
+        ),
+        (
+            3,
+            json!("REG-INVENTORY"),
+            json!({"disposition":"pending","owner_pr":"M10-PR05","reason":"test"}),
+            "pending but has",
+        ),
+    ] {
+        let (rules, mut evidence) = sources();
+        evidence["evidence"][index]["registration"] = registration;
+        evidence["evidence"][index]["disposition"] = disposition;
+        assert!(parse(&rules, &evidence).unwrap_err().contains(expected));
+    }
 }
 
 #[test]
