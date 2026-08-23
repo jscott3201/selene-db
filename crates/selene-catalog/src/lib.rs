@@ -3,18 +3,35 @@
 //! This lower crate is an advanced engine boundary, not part of the stable 2.x
 //! embedding API. Applications should depend on `selene-db` instead.
 //!
-//! M02-PR01 contains only [`BootstrapCatalog`], the temporary identity used to
-//! place one in-memory graph behind the facade. M02-PR02 and M02-PR03 own the
-//! persistent ID, canonical-name, descriptor, snapshot, and transaction model.
-//! M02-PR05 deletes this bootstrap type after named graphs are operational.
+//! [`BootstrapCatalog`] remains the temporary identity used to place one
+//! in-memory graph behind the facade. The catalog-owned descriptor and immutable
+//! read-snapshot model is separate from that bridge. M02-PR03 owns lifecycle and
+//! writer publication; M02-PR05 deletes the bootstrap after named graphs work.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-use selene_core::GraphId;
+mod descriptor;
+mod error;
+mod identity;
+mod name;
+mod snapshot;
+
+pub use descriptor::{
+    CatalogDescriptor, CatalogParent, CatalogPayload, CoreGraphTypeBridge, CreationMetadata,
+};
+pub use error::{CatalogError, CatalogResult};
+pub use identity::{
+    BindingTableId, CatalogGeneration, CatalogId, CatalogObjectId, CatalogObjectKind, ConstraintId,
+    DirectoryId, GraphId, GraphTypeId, IndexId, ProcedureId, SchemaId,
+};
+pub use name::{CATALOG_UNICODE_VERSION, CatalogName, IdentifierForm};
+pub use snapshot::{CatalogMemoryAccounting, CatalogSnapshot, CatalogSnapshotBuilder};
+
+use selene_core::GraphId as CoreGraphId;
 use selene_profile::{ProfileIdentity, current_profile_identity};
 
-const BOOTSTRAP_GRAPH_ID: GraphId = GraphId::new(1);
+const BOOTSTRAP_GRAPH_ID: CoreGraphId = CoreGraphId::new(1);
 const DEFAULT_CATALOG_NAME: &str = "selene";
 const DEFAULT_SCHEMA_NAME: &str = "public";
 const DEFAULT_GRAPH_NAME: &str = "default";
@@ -26,7 +43,7 @@ const DEFAULT_GRAPH_NAME: &str = "default";
 /// dependency.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BootstrapCatalog {
-    graph_id: GraphId,
+    graph_id: CoreGraphId,
     profile: ProfileIdentity,
 }
 
@@ -42,7 +59,7 @@ impl BootstrapCatalog {
 
     /// Return the internal graph identity used to construct graph storage.
     #[must_use]
-    pub const fn graph_id(self) -> GraphId {
+    pub const fn graph_id(self) -> CoreGraphId {
         self.graph_id
     }
 
@@ -85,7 +102,7 @@ mod tests {
     fn bootstrap_identity_is_non_tombstone_and_profile_bound() {
         let catalog = BootstrapCatalog::new();
 
-        assert_ne!(catalog.graph_id(), GraphId::TOMBSTONE);
+        assert_ne!(catalog.graph_id(), CoreGraphId::TOMBSTONE);
         assert_eq!(catalog.profile(), current_profile_identity());
         assert_eq!(catalog.catalog_name(), "selene");
         assert_eq!(catalog.schema_name(), "public");

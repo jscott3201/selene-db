@@ -306,7 +306,7 @@ fn fixed_provenance_manifest_is_closed_and_hashes_only_semantics() {
         .unwrap();
     assert_eq!(
         manifest.result_hash,
-        "a08faf73692ccbca17852d9be7238bd3865110dd22b3320c315c62d00042b15e"
+        "40fae1202b8b49902d2c3a65e93d1431b59fa8e58b933d1d0647c622dfb2074f"
     );
     let encoded = serde_json::to_vec(&manifest).unwrap();
     assert_eq!(

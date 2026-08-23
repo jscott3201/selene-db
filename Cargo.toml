@@ -53,6 +53,7 @@ jiff = { version = "0.2.35", features = ["serde"] }
 rust_decimal = { version = "1.42.1", default-features = false, features = ["std", "serde"] }
 uuid = { version = "1.24.1", features = ["v4", "v7", "serde"] }
 unicode-normalization = "0.1.25"
+unicode-ident = "1.0.24"
 smallvec = { version = "1.15.2", features = ["const_generics", "serde", "union"] }
 bytes = "1.12.1"
 serde = { version = "1.0.229", features = ["derive", "rc"] }
