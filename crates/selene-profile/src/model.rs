@@ -243,8 +243,14 @@ pub struct ApplicabilityDefinition {
 pub struct Profile {
     /// Incompatible source-format version.
     pub format_version: u32,
+    /// Version of the deterministic generator contract.
+    pub generator_version: u32,
     /// Stable profile identifier.
     pub profile_id: String,
+    /// ISO features selected directly by this profile.
+    pub selected_features: Vec<FeatureCode>,
+    /// Whether this profile may be presented as a complete release claim.
+    pub release_claimable: bool,
     /// Clause citations used by records.
     pub clause_anchors: Vec<ClauseAnchor>,
     /// ISO optional features.

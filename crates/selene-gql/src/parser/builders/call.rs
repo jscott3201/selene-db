@@ -141,14 +141,14 @@ fn build_procedure_args(pair: Pair<'_, Rule>) -> Result<Vec<crate::ast::ValueExp
                 return Err(unsupported_feature(
                     &child,
                     FeatureId::GP14,
-                    "binding-table procedure arguments are outside the current procedure claim",
+                    "binding-table procedure arguments are deferred",
                 ));
             }
             Rule::procedure_graph_arg => {
                 return Err(unsupported_feature(
                     &child,
                     FeatureId::GP15,
-                    "graph procedure arguments are outside the current procedure claim",
+                    "graph procedure arguments are deferred",
                 ));
             }
             _ => return Err(unexpected_pair(child, "unexpected procedure argument")),

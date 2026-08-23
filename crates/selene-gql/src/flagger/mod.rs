@@ -1,4 +1,4 @@
-//! ISO optional-feature gate over parsed AST.
+//! ISO optional-feature compatibility gate over parsed AST.
 
 mod call;
 mod ddl;
@@ -6,7 +6,9 @@ mod expr;
 mod mutation;
 mod query;
 
-use selene_core::feature_register::{FeatureId, is_supported, name_of, non_supported_rationale};
+use selene_core::feature_register::{
+    FeatureId, is_flagger_accepted, name_of, non_supported_rationale,
+};
 
 use crate::{SourceSpan, Statement, error::ParserError};
 
@@ -43,7 +45,7 @@ pub(super) fn record_feature(uses: &mut Vec<FeatureUse>, id: FeatureId, span: So
 }
 
 fn check_feature(id: FeatureId, span: SourceSpan) -> Result<(), ParserError> {
-    if is_supported(id) {
+    if is_flagger_accepted(id) {
         return Ok(());
     }
     Err(ParserError::UnsupportedFeature {
@@ -51,7 +53,7 @@ fn check_feature(id: FeatureId, span: SourceSpan) -> Result<(), ParserError> {
         display_name: name_of(id).unwrap_or("unnamed feature"),
         span,
         hint: non_supported_rationale(id)
-            .unwrap_or("feature is outside the selene-db D1 claim list"),
+            .unwrap_or("feature is outside the parser compatibility set"),
     })
 }
 

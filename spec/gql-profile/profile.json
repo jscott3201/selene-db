@@ -1,7 +1,164 @@
 {
-  "format_version": 1,
-  "profile_id": "selene-current",
-  "clause_anchors": [],
+  "format_version": 2,
+  "generator_version": 1,
+  "profile_id": "selene-gql-core-2.0",
+  "selected_features": [
+    "G002",
+    "G003",
+    "G010",
+    "G011",
+    "G012",
+    "G013",
+    "G014",
+    "G015",
+    "G016",
+    "G017",
+    "G018",
+    "G019",
+    "G020",
+    "G036",
+    "G037",
+    "G060",
+    "G061",
+    "G100",
+    "G110",
+    "G111",
+    "G112",
+    "G113",
+    "G114",
+    "G115",
+    "GA01",
+    "GA05",
+    "GA06",
+    "GA07",
+    "GC03",
+    "GD01",
+    "GE04",
+    "GE05",
+    "GE06",
+    "GE07",
+    "GF01",
+    "GF02",
+    "GF03",
+    "GF04",
+    "GF05",
+    "GF06",
+    "GF07",
+    "GF10",
+    "GF11",
+    "GF12",
+    "GF13",
+    "GF20",
+    "GG01",
+    "GG02",
+    "GG20",
+    "GG21",
+    "GH02",
+    "GL01",
+    "GL02",
+    "GL03",
+    "GL04",
+    "GL05",
+    "GL06",
+    "GL07",
+    "GL08",
+    "GL09",
+    "GL10",
+    "GL11",
+    "GP01",
+    "GP02",
+    "GP03",
+    "GP04",
+    "GQ02",
+    "GQ03",
+    "GQ04",
+    "GQ05",
+    "GQ06",
+    "GQ07",
+    "GQ08",
+    "GQ09",
+    "GQ10",
+    "GQ11",
+    "GQ12",
+    "GQ13",
+    "GQ14",
+    "GQ15",
+    "GQ16",
+    "GQ18",
+    "GQ20",
+    "GQ24",
+    "GS03",
+    "GS04",
+    "GS07",
+    "GS08",
+    "GS15",
+    "GS16",
+    "GT01",
+    "GV01",
+    "GV02",
+    "GV03",
+    "GV04",
+    "GV05",
+    "GV06",
+    "GV07",
+    "GV08",
+    "GV09",
+    "GV10",
+    "GV11",
+    "GV12",
+    "GV13",
+    "GV14",
+    "GV17",
+    "GV18",
+    "GV19",
+    "GV21",
+    "GV22",
+    "GV23",
+    "GV24",
+    "GV30",
+    "GV31",
+    "GV32",
+    "GV35",
+    "GV36",
+    "GV37",
+    "GV38",
+    "GV39",
+    "GV40",
+    "GV41",
+    "GV45",
+    "GV46",
+    "GV47",
+    "GV48",
+    "GV50",
+    "GV55",
+    "GV66",
+    "GV67",
+    "GV68",
+    "GV90"
+  ],
+  "release_claimable": false,
+  "clause_anchors": [
+    {
+      "id": "CLAUSE-24.7-TABLE10-P517",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 517"
+    },
+    {
+      "id": "CLAUSE-24.7-TABLE10-P518",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 518"
+    },
+    {
+      "id": "CLAUSE-24.7-TABLE10-P519",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 519"
+    },
+    {
+      "id": "CLAUSE-24.7-TABLE10-P520",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 520"
+    },
+    {
+      "id": "CLAUSE-24.7-TABLE10-P521",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 521"
+    }
+  ],
   "features": [
     {
       "id": "G002",
@@ -147,6 +304,50 @@
       "applicability": "APP-ALWAYS"
     },
     {
+      "id": "G030",
+      "name": "Null predicates",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 234,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G031",
+      "name": "Non-nullable value types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 235,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G032",
+      "name": "Truth value operations",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 236,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G033",
+      "name": "Extended truth value operations",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 237,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
       "id": "G036",
       "name": "Quantified edges",
       "runtime_support": "supported",
@@ -169,6 +370,105 @@
       "applicability": "APP-ALWAYS"
     },
     {
+      "id": "G038",
+      "name": "Regular value specification",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 238,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G039",
+      "name": "Extended value specification",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 239,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G041",
+      "name": "Basic binding table expressions",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 240,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G044",
+      "name": "List value constructors",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 241,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G045",
+      "name": "Extended list value constructors",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 242,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G048",
+      "name": "Path value constructors",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 243,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G049",
+      "name": "Record value constructors",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 244,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G050",
+      "name": "Field references",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 245,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G051",
+      "name": "Field dereferences",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 246,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
       "id": "G060",
       "name": "Bounded graph pattern quantifiers",
       "runtime_support": "supported",
@@ -186,6 +486,39 @@
       "claim_state": "implemented_unclaimed",
       "unsupported_rationale": "",
       "runtime_order": 63,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G080",
+      "name": "Let value variable statement",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 247,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G081",
+      "name": "Let value variable statement: value expression",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 248,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G082",
+      "name": "Let value variable statement: initializer",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 249,
       "clause_anchors": [],
       "evidence": [],
       "applicability": "APP-ALWAYS"
@@ -279,6 +612,17 @@
       "applicability": "APP-ALWAYS"
     },
     {
+      "id": "GA04",
+      "name": "Binding table function value expressions",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 250,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
       "id": "GA05",
       "name": "Cast specification",
       "runtime_support": "supported",
@@ -312,11 +656,33 @@
       "applicability": "APP-ALWAYS"
     },
     {
+      "id": "GA09",
+      "name": "Binding table function WHERE clause",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 251,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GC01",
+      "name": "Graph-type-like statements",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 252,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
       "id": "GC02",
       "name": "Graph schema management: IF [ NOT ] EXISTS",
       "runtime_support": "unsupported",
       "claim_state": "unsupported",
-      "unsupported_rationale": "CREATE/DROP SCHEMA is outside the current catalog claim (graph-schema vs graph-type vs graph)",
+      "unsupported_rationale": "CREATE/DROP SCHEMA is outside current runtime support (graph-schema vs graph-type vs graph)",
       "runtime_order": 73,
       "clause_anchors": [],
       "evidence": [],
@@ -325,9 +691,9 @@
     {
       "id": "GC03",
       "name": "Graph type: IF [ NOT ] EXISTS",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "The modifiers are observed by the parser, but GC03 depends on the withdrawn GG02 runtime inventory and unavailable GC04 graph management.",
       "runtime_order": 74,
       "clause_anchors": [],
       "evidence": [],
@@ -338,7 +704,7 @@
       "name": "Graph management",
       "runtime_support": "unsupported",
       "claim_state": "unsupported",
-      "unsupported_rationale": "CREATE GRAPH stays outside the current catalog claim (D1 single-graph embeddable cannot create a second graph); DROP GRAPH is the IM_DROP_GRAPH factory-reset extension, not GC04",
+      "unsupported_rationale": "CREATE GRAPH stays outside current runtime support because the current single-graph embeddable model cannot create a second graph; DROP GRAPH is the IM_DROP_GRAPH factory-reset extension, not GC04",
       "runtime_order": 75,
       "clause_anchors": [],
       "evidence": [],
@@ -349,7 +715,7 @@
       "name": "Graph management: IF [ NOT ] EXISTS",
       "runtime_support": "unsupported",
       "claim_state": "unsupported",
-      "unsupported_rationale": "CREATE GRAPH IF NOT EXISTS modifier remains outside the current catalog claim",
+      "unsupported_rationale": "CREATE GRAPH IF NOT EXISTS remains outside current runtime support",
       "runtime_order": 76,
       "clause_anchors": [],
       "evidence": [],
@@ -367,11 +733,33 @@
       "applicability": "APP-ALWAYS"
     },
     {
+      "id": "GD03",
+      "name": "Insert and replace statements",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 253,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GD04",
+      "name": "Insert statement",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 254,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
       "id": "GE04",
       "name": "Graph parameters",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Parameter syntax is observed, but graph reference values (GV60) are not implemented.",
       "runtime_order": 78,
       "clause_anchors": [],
       "evidence": [],
@@ -380,9 +768,9 @@
     {
       "id": "GE05",
       "name": "Binding table parameters",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Parameter syntax is observed, but binding table reference values (GV61) are not implemented.",
       "runtime_order": 79,
       "clause_anchors": [],
       "evidence": [],
@@ -556,9 +944,9 @@
     {
       "id": "GG01",
       "name": "Graph with an open graph type",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "The engine has an open graph mode, but the runtime inventory lacks the required GC04 graph management surface.",
       "runtime_order": 131,
       "clause_anchors": [],
       "evidence": [],
@@ -567,10 +955,43 @@
     {
       "id": "GG02",
       "name": "Graph with a closed graph type",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "The engine has a schema-bound graph mode, but the runtime inventory lacks the required GC04 graph management surface.",
       "runtime_order": 132,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG03",
+      "name": "Graph types with additional constraints",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 255,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG04",
+      "name": "Simple indexes",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 256,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG05",
+      "name": "Explicit index names",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 257,
       "clause_anchors": [],
       "evidence": [],
       "applicability": "APP-ALWAYS"
@@ -578,9 +999,9 @@
     {
       "id": "GG20",
       "name": "Explicit element type names",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Element type names are observed by the parser, but GG20 depends on the withdrawn GG02 runtime inventory.",
       "runtime_order": 133,
       "clause_anchors": [],
       "evidence": [],
@@ -589,10 +1010,32 @@
     {
       "id": "GG21",
       "name": "Explicit element type key label sets",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Explicit key label sets are observed by the parser, but GG21 depends on the withdrawn GG02 runtime inventory.",
       "runtime_order": 134,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG22",
+      "name": "Non-abstract element types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 258,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG23",
+      "name": "Abstract element types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 259,
       "clause_anchors": [],
       "evidence": [],
       "applicability": "APP-ALWAYS"
@@ -600,9 +1043,9 @@
     {
       "id": "GH02",
       "name": "Undirected edge patterns",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "The parser observes undirected-edge syntax, but runtime matching does not implement the complete undirected-edge behavior.",
       "runtime_order": 130,
       "clause_anchors": [],
       "evidence": [],
@@ -895,12 +1338,34 @@
       "applicability": "APP-ALWAYS"
     },
     {
+      "id": "GP17",
+      "name": "Return statement",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 260,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
       "id": "GP18",
       "name": "Catalog and data statement mixing",
       "runtime_support": "unsupported",
       "claim_state": "unsupported",
       "unsupported_rationale": "mixed catalog/data transaction behavior remains forbidden",
       "runtime_order": 150,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ01",
+      "name": "Basic query statement",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 261,
       "clause_anchors": [],
       "evidence": [],
       "applicability": "APP-ALWAYS"
@@ -1139,9 +1604,9 @@
     {
       "id": "GS04",
       "name": "SESSION RESET command: reset all characteristics",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "RESET ALL syntax is observed, but the runtime does not implement every required session reset operation (GS05 through GS08).",
       "runtime_order": 172,
       "clause_anchors": [],
       "evidence": [],
@@ -1240,7 +1705,7 @@
       "name": "SESSION SET command: session-local value parameters based on simple expressions",
       "runtime_support": "unsupported",
       "claim_state": "unsupported",
-      "unsupported_rationale": "selene-db evaluates SESSION SET VALUE against an empty binding so the RHS is restricted to a <value specification> (literal/parameter); the full <value expression> form (GS14) is not claimed",
+      "unsupported_rationale": "selene-db evaluates SESSION SET VALUE against an empty binding so the RHS is restricted to a <value specification> (literal/parameter); the full <value expression> form (GS14) remains runtime-unsupported",
       "runtime_order": 181,
       "clause_anchors": [],
       "evidence": [],
@@ -1768,8 +2233,19 @@
       "name": "Binding table reference value types",
       "runtime_support": "unsupported",
       "claim_state": "unsupported",
-      "unsupported_rationale": "binding table reference types require TABLE field-type descriptors and binding-table value semantics before claiming",
+      "unsupported_rationale": "binding table reference types require TABLE field-type descriptors and binding-table value semantics before runtime support can be added",
       "runtime_order": 229,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV65",
+      "name": "Dynamic union types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 262,
       "clause_anchors": [],
       "evidence": [],
       "applicability": "APP-ALWAYS"
@@ -1777,9 +2253,9 @@
     {
       "id": "GV66",
       "name": "Open dynamic union types",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Open dynamic union syntax is observed, but the underlying GV65 dynamic union type surface is not implemented.",
       "runtime_order": 230,
       "clause_anchors": [],
       "evidence": [],
@@ -1788,9 +2264,9 @@
     {
       "id": "GV67",
       "name": "Closed dynamic union types",
-      "runtime_support": "supported",
-      "claim_state": "implemented_unclaimed",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Closed dynamic union syntax is observed, but the underlying GV65 dynamic union type surface is not implemented.",
       "runtime_order": 231,
       "clause_anchors": [],
       "evidence": [],
@@ -1803,6 +2279,39 @@
       "claim_state": "implemented_unclaimed",
       "unsupported_rationale": "",
       "runtime_order": 232,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV70",
+      "name": "Path type",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 263,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV71",
+      "name": "Open path types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 264,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV72",
+      "name": "Closed path types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 265,
       "clause_anchors": [],
       "evidence": [],
       "applicability": "APP-ALWAYS"
@@ -1848,10 +2357,7 @@
     "GA05",
     "GA06",
     "GA07",
-    "GC03",
     "GD01",
-    "GE04",
-    "GE05",
     "GE06",
     "GE07",
     "GF01",
@@ -1888,11 +2394,6 @@
     "IM_DROP_GRAPH",
     "IM_ALTER_NODE_TYPE",
     "IM_ALTER_EDGE_TYPE",
-    "GH02",
-    "GG01",
-    "GG02",
-    "GG20",
-    "GG21",
     "GP01",
     "GP02",
     "GP03",
@@ -1916,7 +2417,6 @@
     "GQ20",
     "GQ24",
     "GS03",
-    "GS04",
     "GS07",
     "GS08",
     "GS15",
@@ -1959,8 +2459,6 @@
     "GV48",
     "GV50",
     "GV55",
-    "GV66",
-    "GV67",
     "GV68",
     "GV90"
   ],
@@ -1996,9 +2494,660 @@
     "GV25",
     "GV26",
     "GV60",
-    "GV61"
+    "GV61",
+    "GC03",
+    "GE04",
+    "GE05",
+    "GH02",
+    "GG01",
+    "GG02",
+    "GG20",
+    "GG21",
+    "GS04",
+    "GV66",
+    "GV67"
   ],
-  "implications": [],
+  "implications": [
+    {
+      "id": "IMP-G031-G030",
+      "source": "G031",
+      "target": "G030",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G033-G032",
+      "source": "G033",
+      "target": "G032",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G039-G080",
+      "source": "G039",
+      "target": "G080",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G041-G051",
+      "source": "G041",
+      "target": "G051",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G045-G044",
+      "source": "G045",
+      "target": "G044",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G048-G038",
+      "source": "G048",
+      "target": "G038",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G049-G038",
+      "source": "G049",
+      "target": "G038",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G050-G038",
+      "source": "G050",
+      "target": "G038",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G051-G050",
+      "source": "G051",
+      "target": "G050",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G061-G060",
+      "source": "G061",
+      "target": "G060",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G081-G082",
+      "source": "G081",
+      "target": "G082",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G082-G080",
+      "source": "G082",
+      "target": "G080",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GA04-GA09",
+      "source": "GA04",
+      "target": "GA09",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GC02-GC01",
+      "source": "GC02",
+      "target": "GC01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GC03-GG02",
+      "source": "GC03",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GC05-GC04",
+      "source": "GC05",
+      "target": "GC04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GD01-GT01",
+      "source": "GD01",
+      "target": "GT01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GD03-GD04",
+      "source": "GD03",
+      "target": "GD04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GE04-GV60",
+      "source": "GE04",
+      "target": "GV60",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GE05-GV61",
+      "source": "GE05",
+      "target": "GV61",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GE06-GV55",
+      "source": "GE06",
+      "target": "GV55",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GF04-GV55",
+      "source": "GF04",
+      "target": "GV55",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GF07-GV35",
+      "source": "GF07",
+      "target": "GV35",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG01-GC04",
+      "source": "GG01",
+      "target": "GC04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG02-GC04",
+      "source": "GG02",
+      "target": "GC04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG03-GG02",
+      "source": "GG03",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG04-GG02",
+      "source": "GG04",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG05-GC04",
+      "source": "GG05",
+      "target": "GC04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG20-GG02",
+      "source": "GG20",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG21-GG02",
+      "source": "GG21",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG22-GG02",
+      "source": "GG22",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG23-GG02",
+      "source": "GG23",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP02-GP01",
+      "source": "GP02",
+      "target": "GP01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP03-GP01",
+      "source": "GP03",
+      "target": "GP01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP05-GP17",
+      "source": "GP05",
+      "target": "GP17",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP06-GP05",
+      "source": "GP06",
+      "target": "GP05",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP07-GP05",
+      "source": "GP07",
+      "target": "GP05",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP08-GP17",
+      "source": "GP08",
+      "target": "GP17",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP08-GV61",
+      "source": "GP08",
+      "target": "GV61",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP09-GP08",
+      "source": "GP09",
+      "target": "GP08",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP10-GP08",
+      "source": "GP10",
+      "target": "GP08",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP11-GP17",
+      "source": "GP11",
+      "target": "GP17",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP11-GV60",
+      "source": "GP11",
+      "target": "GV60",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP12-GP11",
+      "source": "GP12",
+      "target": "GP11",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP13-GP11",
+      "source": "GP13",
+      "target": "GP11",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GQ05-GQ04",
+      "source": "GQ05",
+      "target": "GQ04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GQ07-GQ06",
+      "source": "GQ07",
+      "target": "GQ06",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GQ11-GQ10",
+      "source": "GQ11",
+      "target": "GQ10",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS04-GS05",
+      "source": "GS04",
+      "target": "GS05",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS04-GS06",
+      "source": "GS04",
+      "target": "GS06",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS04-GS07",
+      "source": "GS04",
+      "target": "GS07",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS04-GS08",
+      "source": "GS04",
+      "target": "GS08",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS07-GV40",
+      "source": "GS07",
+      "target": "GV40",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS10-GS02",
+      "source": "GS10",
+      "target": "GS02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS10-GS13",
+      "source": "GS10",
+      "target": "GS13",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS11-GS03",
+      "source": "GS11",
+      "target": "GS03",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS11-GS14",
+      "source": "GS11",
+      "target": "GS14",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS15-GV40",
+      "source": "GS15",
+      "target": "GV40",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GT03-GQ01",
+      "source": "GT03",
+      "target": "GQ01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV36-GV35",
+      "source": "GV36",
+      "target": "GV35",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV37-GV35",
+      "source": "GV37",
+      "target": "GV35",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV38-GV35",
+      "source": "GV38",
+      "target": "GV35",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV40-GV39",
+      "source": "GV40",
+      "target": "GV39",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV41-GV40",
+      "source": "GV41",
+      "target": "GV40",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV46-GV45",
+      "source": "GV46",
+      "target": "GV45",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV47-GV45",
+      "source": "GV47",
+      "target": "GV45",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV48-GV45",
+      "source": "GV48",
+      "target": "GV45",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV66-GV65",
+      "source": "GV66",
+      "target": "GV65",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV67-GV65",
+      "source": "GV67",
+      "target": "GV65",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV71-GV70",
+      "source": "GV71",
+      "target": "GV70",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV72-GV70",
+      "source": "GV72",
+      "target": "GV70",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    }
+  ],
   "implementation_defined_choices": [
     {
       "id": "IA001",

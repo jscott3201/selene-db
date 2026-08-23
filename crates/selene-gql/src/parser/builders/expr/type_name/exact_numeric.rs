@@ -23,7 +23,7 @@ pub(super) fn build_keyword_type_name(
             feature_id: selene_core::feature_register::FeatureId::GV15,
             display_name: "256 bit unsigned integer numbers",
             span: span(pair),
-            hint: "UINT256 is outside the selene-db D1 claim list",
+            hint: "UINT256 is runtime-unsupported",
         });
     }
     if matches!(
@@ -34,7 +34,7 @@ pub(super) fn build_keyword_type_name(
             feature_id: selene_core::feature_register::FeatureId::GV16,
             display_name: "256 bit signed integer numbers",
             span: span(pair),
-            hint: "INT256 is outside the selene-db D1 claim list",
+            hint: "INT256 is runtime-unsupported",
         });
     }
 

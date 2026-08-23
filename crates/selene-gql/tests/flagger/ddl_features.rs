@@ -5,7 +5,8 @@ use super::assert_read_plan;
 
 #[test]
 fn mutation_feature_is_supported() {
-    parse("MATCH (n) SET n.active = true RETURN n").expect("GD01 mutation is claimed");
+    parse("MATCH (n) SET n.active = true RETURN n")
+        .expect("GD01 mutation syntax is parser-compatibility accepted");
 }
 
 #[test]
@@ -125,15 +126,13 @@ fn non_iso_list_iteration_expressions_are_syntax_errors() {
 }
 
 #[test]
-fn closed_type_ddl_features_are_supported() {
-    // GG02 (closed graph type) + GG20 (explicit element type names) are claimed,
-    // as is GG21 (explicit element type key label sets, 813) — but the bare
-    // `:Name` forms below DON'T flag GG21 (only the explicit `=>` form does;
-    // see `explicit_key_label_set_flags_gg21`). This test only asserts parse
-    // acceptance of the implicit forms.
+fn closed_type_ddl_syntax_is_observed() {
+    // The parser still observes GG02/GG20/GG21 syntax after runtime-support
+    // withdrawal. Bare `:Name` forms do not flag GG21; only the explicit `=>`
+    // form does. This test asserts parse acceptance, not support or claim state.
     parse("CREATE NODE TYPE IF NOT EXISTS :Person (name :: STRING)")
-        .expect("GG02/GG20 are claimed");
-    parse("DROP EDGE TYPE IF EXISTS :KNOWS").expect("type DROP is claimed");
+        .expect("closed type syntax parses");
+    parse("DROP EDGE TYPE IF EXISTS :KNOWS").expect("type DROP syntax parses");
 }
 
 #[test]
@@ -285,8 +284,9 @@ fn drop_cascade_stamps_im_drop_cascade_but_restrict_and_default_do_not() {
 
 #[test]
 fn named_procedure_call_feature_is_supported() {
-    parse("CALL pkg.fn(1)").expect("GP04 named CALL is claimed");
-    parse("MATCH (n) CALL pkg.fn(n) RETURN n").expect("in-pipeline GP04 CALL is claimed");
+    parse("CALL pkg.fn(1)").expect("GP04 named CALL is parser-compatibility accepted");
+    parse("MATCH (n) CALL pkg.fn(n) RETURN n")
+        .expect("in-pipeline GP04 CALL is parser-compatibility accepted");
 }
 
 fn assert_feature(error: ParserError, expected: FeatureId) {

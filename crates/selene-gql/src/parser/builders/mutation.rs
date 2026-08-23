@@ -62,7 +62,7 @@ fn build_mutation_op(pair: Pair<'_, Rule>) -> Result<MutationStatement, ParserEr
             build_delete(inner, DeleteMode::Detach).map(MutationStatement::Delete)
         }
         Rule::delete_op => build_delete_op(inner).map(MutationStatement::Delete),
-        Rule::merge_op => Err(not_implemented(&inner, "MERGE is not claimed under D1")),
+        Rule::merge_op => Err(not_implemented(&inner, "MERGE is deferred")),
         _ => Err(unexpected_pair(inner, "expected mutation operation")),
     }
 }

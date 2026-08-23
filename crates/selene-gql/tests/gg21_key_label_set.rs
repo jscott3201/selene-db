@@ -1,14 +1,15 @@
 //! 813 — Feature GG21 "Explicit element type key label sets" (ISO/IEC
 //! 39075:2024 §18.2/18.3).
 //!
-//! selene-db claims GG21 as the honest *singleton* explicit-key-label-set
-//! surface (Option A): the type-DDL grammar parses the explicit `<...type key
-//! label set>` (`[ <label set phrase> ] <implies>`, the symbolic `=>` marker),
-//! the flagger stamps GG21, and the IL003 key-label-set cardinality cap is fixed
-//! at 1 (singleton). A cardinality other than 1 is rejected with the
-//! spec-defined GQLSTATUS (42012/42013 for nodes, 42014/42015 for edges); the
-//! separate-implied-label-set shape (`:Key => :Implied`) is an honest
-//! `FEATURE_NOT_SUPPORTED` (42N01), not a silent mis-identification.
+//! The temporary parser-compatibility set accepts GG21's *singleton*
+//! explicit-key-label-set surface (Option A): the type-DDL grammar parses the
+//! explicit `<...type key label set>` (`[ <label set phrase> ] <implies>`, the
+//! symbolic `=>` marker), the flagger stamps GG21, and the IL003 key-label-set
+//! cardinality cap is fixed at 1 (singleton). A cardinality other than 1 is
+//! rejected with the spec-defined GQLSTATUS (42012/42013 for nodes, 42014/42015
+//! for edges); the separate-implied-label-set shape (`:Key => :Implied`) is an
+//! honest `FEATURE_NOT_SUPPORTED` (42N01), not a silent mis-identification.
+//! The implication-closed profile does not report GG21 as runtime-supported.
 //!
 //! Because the singleton key label set equals the type-name label set, the
 //! explicit form is *observationally identical* to the implied (bare `:Name`)

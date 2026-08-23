@@ -309,7 +309,8 @@ pub enum ParserError {
     /// Source parsed at the grammar level, but no AST builder is implemented yet.
     ///
     /// Distinct from [`Self::SyntaxError`] (parse failed) and
-    /// [`Self::UnsupportedFeature`] (specific ISO feature not in the claim list).
+    /// [`Self::UnsupportedFeature`] (specific ISO feature outside the parser
+    /// compatibility set).
     /// This variant covers grammar surfaces selene-db will support but whose
     /// builders land in a later brief.
     #[error("not implemented: {message}")]

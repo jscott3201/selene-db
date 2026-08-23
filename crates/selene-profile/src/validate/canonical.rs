@@ -3,6 +3,7 @@
 use crate::{ApplicabilityExpression, Profile};
 
 pub(super) fn canonicalize(profile: &mut Profile) {
+    profile.selected_features.sort();
     profile
         .clause_anchors
         .sort_by(|left, right| left.id.cmp(&right.id));

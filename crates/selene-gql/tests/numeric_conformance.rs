@@ -1,7 +1,7 @@
 //! 128-bit and DECIMAL numeric-completeness conformance tests.
 //!
 //! The GQL Flagger advertises GV13/GV14 (128-bit integers) and GV17 (DECIMAL)
-//! as SUPPORTED. These end-to-end tests pin that the claim is honest across the
+//! as SUPPORTED. These end-to-end tests pin that the runtime inventory is accurate across the
 //! three reachable surfaces the deep-review ledger flagged (GQLRT-26 cross-type
 //! equality, GQLRT-27 aggregation, GQLRT-30 arithmetic): `Int128`, `Uint128`,
 //! and `Decimal` flow through `=`, `sum`/`avg`/`stddev`, and `+`/`-`/`*`

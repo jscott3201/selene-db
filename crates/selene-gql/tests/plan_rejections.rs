@@ -119,7 +119,7 @@ fn edge_without_target_is_rejected() {
 
 #[test]
 fn different_edges_match_mode_lowers_to_filter() {
-    // 812: G002 (DIFFERENT EDGES) is claimed (ISO §16.4 GR8(a)). The
+    // 812: G002 (DIFFERENT EDGES) is runtime-supported (ISO §16.4 GR8(a)). The
     // `reject_unsupported_clause` backstop now lets it pass; lowering installs
     // the pattern-wide `MatchModeFilter` wrapper. This pins that the (formerly
     // rejecting) planner path now lowers the mode instead of erroring.
@@ -137,7 +137,7 @@ fn different_edges_match_mode_lowers_to_filter() {
 
 #[test]
 fn repeatable_elements_match_mode_lowers_without_filter() {
-    // 812: G003 (REPEATABLE ELEMENTS) is claimed (ISO §16.4 GR8(b): BINDINGS =
+    // 812: G003 (REPEATABLE ELEMENTS) is runtime-supported (ISO §16.4 GR8(b): BINDINGS =
     // INNER), so lowering installs NO match-mode wrapper. The backstop lets it
     // pass; the tree is a bare Expand identical to the no-prefix default.
     let mut analyzed = analyzed("MATCH (a)-[:E]->(b) RETURN a");

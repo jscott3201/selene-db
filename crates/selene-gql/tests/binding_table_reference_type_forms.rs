@@ -13,7 +13,7 @@ fn binding_table_reference_type_forms_report_gv61_unsupported() {
         "RETURN NULL IS TYPED BINDING TABLE { id :: INT, label :: STRING } AS ok",
         "RETURN NULL IS TYPED TABLE { id :: INT } NOT NULL AS ok",
     ] {
-        let err = parse(source).expect_err("TABLE reference type remains unclaimed");
+        let err = parse(source).expect_err("TABLE reference type remains runtime-unsupported");
         let ParserError::UnsupportedFeature { feature_id, .. } = err else {
             panic!("{source} should report unsupported GV61, got {err:?}");
         };

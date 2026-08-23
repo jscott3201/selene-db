@@ -503,7 +503,7 @@ fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
     // Why: true backstop against any future `<match mode>` (ISO 39075:2024
     // §16.4) that reaches the planner without a lowering arm. Per the §16.4
     // Conformance Rules, G002 (DIFFERENT EDGES) and G003 (REPEATABLE ELEMENTS)
-    // are both claimed and lowered, so this guard lets them pass; it errors only
+    // are both runtime-supported and lowered, so this guard lets them pass; it errors only
     // on an unhandled mode so a future register change (registering a new mode
     // without wiring its runtime contract) cannot silently lower it. The match
     // is exhaustive so the compiler forces an explicit decision for any added

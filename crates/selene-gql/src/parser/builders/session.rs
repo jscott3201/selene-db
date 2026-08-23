@@ -71,7 +71,7 @@ fn build_session_set_binding_table_parameter(
     Err(unsupported_feature(
         &pair,
         feature_id,
-        "SESSION SET binding-table parameters are outside the current D1 claim",
+        "SESSION SET binding-table parameters are deferred",
     ))
 }
 
@@ -88,7 +88,7 @@ fn build_session_set_graph_parameter(pair: Pair<'_, Rule>) -> Result<Statement, 
     Err(unsupported_feature(
         &pair,
         feature_id,
-        "SESSION SET graph parameters are outside the current D1 graph claim",
+        "SESSION SET graph parameters are deferred",
     ))
 }
 
@@ -170,14 +170,14 @@ fn build_session_set_value(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
                 return Err(unsupported_feature(
                     &child,
                     FeatureId::GS11,
-                    "SESSION SET VALUE subquery initializers are outside the current D1 claim",
+                    "SESSION SET VALUE subquery initializers are outside the parser compatibility set",
                 ));
             }
             Rule::session_value_simple_expr => {
                 return Err(unsupported_feature(
                     &child,
                     FeatureId::GS14,
-                    "SESSION SET VALUE simple-expression initializers are outside the current D1 claim",
+                    "SESSION SET VALUE simple-expression initializers are outside the parser compatibility set",
                 ));
             }
             _ => return Err(unexpected_pair(child, "unexpected SESSION SET VALUE child")),
@@ -225,14 +225,14 @@ fn build_session_reset(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
             return Err(unsupported_feature(
                 &inner,
                 FeatureId::GS05,
-                "SESSION RESET SCHEMA is outside the current catalog claim",
+                "SESSION RESET SCHEMA is not runtime-supported",
             ));
         }
         Rule::session_reset_graph => {
             return Err(unsupported_feature(
                 &inner,
                 FeatureId::GS06,
-                "SESSION RESET GRAPH is outside the current D1 graph claim",
+                "SESSION RESET GRAPH is not runtime-supported",
             ));
         }
         Rule::session_reset_time_zone => SessionResetTarget::TimeZone,

@@ -1,10 +1,9 @@
 use super::*;
 
 #[test]
-fn implemented_session_features_are_supported() {
+fn implication_consistent_session_features_are_supported() {
     for id in [
         FeatureId::GS03,
-        FeatureId::GS04,
         FeatureId::GS07,
         FeatureId::GS08,
         FeatureId::GS15,
@@ -12,6 +11,17 @@ fn implemented_session_features_are_supported() {
     ] {
         assert!(SUPPORTED_FEATURES.contains(&id), "{id} must be supported");
     }
+}
+
+#[test]
+fn reset_all_remains_flagger_accepted_but_not_runtime_supported() {
+    assert!(FLAGGER_ACCEPTED_FEATURES.contains(&FeatureId::GS04));
+    assert!(!SUPPORTED_FEATURES.contains(&FeatureId::GS04));
+    assert!(
+        NOT_SUPPORTED_RATIONALE
+            .iter()
+            .any(|(feature, _)| *feature == FeatureId::GS04)
+    );
 }
 
 #[test]
@@ -29,7 +39,7 @@ fn deferred_session_features_have_d1_rationale() {
     ] {
         assert!(
             !SUPPORTED_FEATURES.contains(&id),
-            "{id} must not be claimed as supported"
+            "{id} must not be runtime-supported"
         );
         assert!(
             NOT_SUPPORTED_RATIONALE

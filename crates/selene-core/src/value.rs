@@ -196,9 +196,9 @@ impl Value {
     /// specific static value types" (§4.16.6.2), temporal durations only within
     /// one unit group (§4.16.6.3), and otherwise only identical values are
     /// essentially comparable (§4.4.2 NOTE 25). Absent Feature GA04, "Universal
-    /// comparison" — which this engine does not claim — §4.4.2 NOTE 26 leaves no
-    /// further comparability, so a cross-variant pair outside this family can
-    /// never compare equal.
+    /// comparison" — which the generated runtime inventory does not report as
+    /// supported — §4.4.2 NOTE 26 leaves no further comparability, so a
+    /// cross-variant pair outside this family can never compare equal.
     ///
     /// That is why this predicate is engine-wide rather than local to one
     /// consumer: query evaluation and index-drift classification have to agree

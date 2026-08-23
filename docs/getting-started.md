@@ -279,7 +279,7 @@ Ada (36)
 
 - `LabelSet::new()` plus `insert` lets a node carry multiple labels. Use `LabelSet::single(label)` when you only need one.
 - `PropertyMap::set` accepts any `Value` variant. The full type list is in [`selene-core/src/value.rs`](../crates/selene-core/src/value.rs); the mandatory ISO types `STRING`, `BOOLEAN`, `INT`, `FLOAT` correspond to `Value::String`, `Value::Bool`, `Value::Int`, `Value::Float`.
-- `(p:Person & Engineer)` requires both labels. `(p:Person | Engineer)` requires at least one. The GQL Flagger rejects label-expression forms outside the optional features selene-db claims; see [the GQL reference](gql-reference.md) for the full surface.
+- `(p:Person & Engineer)` requires both labels. `(p:Person | Engineer)` requires at least one. The GQL Flagger rejects label-expression forms outside the temporary parser-compatibility set; see [the GQL reference](gql-reference.md) for the parser and runtime surfaces.
 - `DbString::as_str()` returns the string slice for labels, property keys, and
   `Value::String` payloads. `db_string(...)` applies the IL013 per-string byte
   limit before constructing the owned database string.
@@ -370,7 +370,7 @@ This wiring is intentionally explicit so embedders can choose their own commit-t
 ## Where to next
 
 - [Embedding guide](embedding-guide.md) — long-running embedders, parameter binding, error handling, session reuse.
-- [GQL reference](gql-reference.md) — the ISO GQL surface selene-db supports, including which optional features are claimed.
+- [GQL reference](gql-reference.md) — the ISO GQL runtime-support and parser-compatibility surfaces.
 - [Architecture](architecture.md) — crate boundaries, threading model, snapshot semantics.
 - [Graph algorithms](graph-algorithms.md) — the native `selene-algorithms` API and `CALL algo.*` for PageRank, betweenness, Louvain, and the rest.
 - [Persistence and recovery](persistence-and-recovery.md) — WAL, snapshots, and the recovery flow.
