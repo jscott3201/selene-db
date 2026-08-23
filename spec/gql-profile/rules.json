@@ -1,0 +1,125 @@
+{
+  "format_version": 1,
+  "registry_version": 1,
+  "profile_id": "selene-gql-core-2.0",
+  "inventory_state": "seeded_incomplete",
+  "target": {
+    "kind": "profile_target_closure",
+    "expected_count": 138,
+    "feature_ids_hash": "bc4b60531a0d6a0f7e04dbad55bdd5ea7ed681b9029aa5204212f63496363cda"
+  },
+  "approved_domains": [
+    "CLAUSE-24.2",
+    "CLAUSE-24.3",
+    "CLAUSE-24.5",
+    "CLAUSE-24.6",
+    "CLAUSE-24.7",
+    "CLAUSE-24.7-TABLE10-P517",
+    "CLAUSE-24.7-TABLE10-P518",
+    "CLAUSE-24.7-TABLE10-P519",
+    "CLAUSE-24.7-TABLE10-P520",
+    "CLAUSE-24.7-TABLE10-P521",
+    "CLAUSE-ANNEX-B"
+  ],
+  "rules": [
+    {
+      "id": "RULE-24.2-001",
+      "label": "Minimum conformance inventory",
+      "clause_ids": ["CLAUSE-24.2"],
+      "applicability": { "kind": "always" },
+      "features": [],
+      "owner_milestone": "M01",
+      "owner_pr": "M01-PR05",
+      "requirements": [{ "id": "REQ-INVENTORY", "kind": "inventory" }]
+    },
+    {
+      "id": "RULE-24.3-G010",
+      "label": "Explicit WALK feature evidence",
+      "clause_ids": ["CLAUSE-24.3"],
+      "applicability": { "kind": "feature", "feature_id": "G010" },
+      "features": ["G010"],
+      "owner_milestone": "M01",
+      "owner_pr": "M01-PR05",
+      "requirements": [{ "id": "REQ-POSITIVE", "kind": "positive" }]
+    },
+    {
+      "id": "RULE-24.3-GC04",
+      "label": "Graph management feature blocker",
+      "clause_ids": ["CLAUSE-24.3"],
+      "applicability": { "kind": "feature", "feature_id": "GC04" },
+      "features": ["GC04"],
+      "owner_milestone": "M01",
+      "owner_pr": "M01-PR05",
+      "requirements": [{ "id": "REQ-SUPPORT", "kind": "inventory" }]
+    },
+    {
+      "id": "RULE-24.3-001",
+      "label": "Selected profile completeness",
+      "clause_ids": ["CLAUSE-24.3"],
+      "applicability": { "kind": "profile" },
+      "features": [],
+      "owner_milestone": "M01",
+      "owner_pr": "M01-PR05",
+      "requirements": [{ "id": "REQ-INVENTORY", "kind": "inventory" }]
+    },
+    {
+      "id": "RULE-24.5-001",
+      "label": "Implementation conformance inventory",
+      "clause_ids": ["CLAUSE-24.5"],
+      "applicability": { "kind": "always" },
+      "features": [],
+      "owner_milestone": "M01",
+      "owner_pr": "M01-PR05",
+      "requirements": [{ "id": "REQ-INVENTORY", "kind": "inventory" }]
+    },
+    {
+      "id": "RULE-24.6-GC04",
+      "label": "Flagger rejection for graph management",
+      "clause_ids": ["CLAUSE-24.6"],
+      "applicability": { "kind": "feature", "feature_id": "GC04" },
+      "features": ["GC04"],
+      "owner_milestone": "M01",
+      "owner_pr": "M01-PR05",
+      "requirements": [
+        { "id": "REQ-NEGATIVE", "kind": "negative" },
+        { "id": "REQ-STATUS", "kind": "exact_status" }
+      ]
+    },
+    {
+      "id": "RULE-24.7-001",
+      "label": "Alternative-choice requirements",
+      "clause_ids": ["CLAUSE-24.7"],
+      "applicability": { "kind": "profile" },
+      "features": [],
+      "owner_milestone": "M01",
+      "owner_pr": "M01-PR05",
+      "requirements": [{ "id": "REQ-INVENTORY", "kind": "inventory" }]
+    },
+    {
+      "id": "RULE-24.7-002",
+      "label": "Table 10 relationship evidence",
+      "clause_ids": [
+        "CLAUSE-24.7-TABLE10-P517",
+        "CLAUSE-24.7-TABLE10-P518",
+        "CLAUSE-24.7-TABLE10-P519",
+        "CLAUSE-24.7-TABLE10-P520",
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "applicability": { "kind": "profile" },
+      "features": [],
+      "owner_milestone": "M01",
+      "owner_pr": "M01-PR05",
+      "requirements": [{ "id": "REQ-INVENTORY", "kind": "inventory" }]
+    },
+    {
+      "id": "RULE-ANNEX-B-001",
+      "label": "Annex B final dispositions",
+      "clause_ids": ["CLAUSE-ANNEX-B"],
+      "applicability": { "kind": "annex_b" },
+      "features": [],
+      "owner_milestone": "M01",
+      "owner_pr": "M01-PR05",
+      "requirements": [{ "id": "REQ-INVENTORY", "kind": "inventory" }]
+    }
+  ]
+}

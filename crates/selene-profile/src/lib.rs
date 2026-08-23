@@ -7,6 +7,7 @@
 #![deny(missing_docs)]
 
 mod closure;
+mod conformance;
 mod generate;
 mod generated;
 mod inventory;
@@ -14,6 +15,12 @@ mod model;
 mod runtime;
 mod validate;
 
+pub use conformance::{
+    EvidenceDisposition, EvidenceExpectation, EvidenceRecord, EvidenceSource, EvidenceTarget,
+    ExpectedNullability, ExpectedOrder, ExpectedSideEffects, ExpectedStatus, ExpectedType,
+    FeatureScope, InventoryState, RequirementKind, RuleApplicability, RuleRecord, RuleRequirement,
+    RulesSource, ValidatedConformance, load_conformance, parse_conformance,
+};
 pub use generate::{check_repository, render_outputs, write_repository};
 pub use generated::{
     ANNEX_B_CATEGORY_COUNTS, ANNEX_B_IA, ANNEX_B_ID, ANNEX_B_IE, ANNEX_B_IL, ANNEX_B_IS,

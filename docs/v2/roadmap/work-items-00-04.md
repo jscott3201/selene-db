@@ -447,7 +447,7 @@ Replace the partial/misaligned implementation-defined ledger with exact IDs, app
 ## M01-PR04 — Generate Flagger, Feature Status, and Documentation from the Profile
 
 - **Owner:** M01
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / L
 - **Dependencies:** M01-PR02, M01-PR03
 - **Issues:** None
@@ -506,67 +506,124 @@ Cut over all parser/analyzer/runtime and documentation consumers to generated pr
 - No new direct use of generated internal arrays outside the profile API.
 
 <a id="m01-pr05"></a>
-## M01-PR05 — Add the Normative Rule/Evidence Harness and Claim Gate
+## M01-PR05 — Add the Static Conformance Rule and Evidence Registry
 
 - **Owner:** M01
 - **State:** Unmerged
-- **Risk / size:** High / L
+- **Risk / size:** High / M
 - **Dependencies:** M01-PR04
 - **Issues:** None
-- **Commit scope:** `test`
+- **Commit scope:** `profile`
 
-Create the rule-to-code-to-test evidence registry and a release gate that refuses conformance claims until every mandatory and selected feature rule has complete executable evidence.
+Create closed, independently versioned rule and evidence authorities with canonical hashes and a truthful incomplete seed linked to the canonical GQL profile.
 
 ### Scope
 
-- Define rule/evidence records for clause/rule identity, applicability, feature dependencies, implementation symbols, expected statuses, positive tests, negative tests, model/differential tests, persistence/crash tests, mutation tests, and current disposition.
-- Seed the registry with the target core profile and every known blocker rather than pretending completion.
-- Build a test harness that can select evidence by rule, feature, clause, milestone, or release claim.
-- Generate a traceability matrix and machine-readable claim manifest from actual test results and source/profile hashes.
-- Add a release gate that permits “ISO-aligned” publication with disclosed gaps but blocks stronger claim text unless evidence is complete.
-- Add source-reference checks that detect stale symbols/test names after refactors.
+- Define closed static records for rule identity, clause and feature applicability, owner, required evidence dimensions, expected status/type/nullability/order/side effects, planned registration identity, and current disposition.
+- Bind the independently versioned registries to the canonical profile and target closure with deterministic ordering and BLAKE3 hashes.
+- Seed only verified Clause 24.2, 24.3, 24.5, 24.6, 24.7/Table 10, and Annex B records; keep the inventory explicitly seeded-incomplete.
+- Keep all planned executable evidence pending under M01-PR06 and preserve every known inventory, profile, Annex B, and alternative-choice gap without inferring normative completeness.
 
 ### Non-goals
 
-- No attempt to finish all rule evidence in this PR.
+- No compiled evidence registration, fixture execution, result manifest, traceability-page generation, claim wording gate, or release workflow enforcement.
+- No attempt to finish the normative rule inventory or mark evidence green.
 - No external certification claim.
-- No embedding of full normative rule prose.
-- No replacement of ordinary unit/integration test organization.
+- No embedding of normative rule prose.
 
 ### Acceptance evidence
 
-- The harness can answer “what evidence supports feature X?” and “what blocks the target profile?” deterministically.
-- At least one positive, negative, status, and pending fixture demonstrates each evidence state.
-- Deleting or renaming a referenced test/symbol fails the source-reference check.
-- The release gate blocks a deliberately overstated claim and permits a truthful gap-disclosing profile artifact.
-- Generated matrix links every seeded rule to feature/profile applicability and owning milestone/PR.
-- Claim manifest includes repository SHA, profile hash, test command, result hash, and generation tool version.
+- Closed decode and semantic validation reject duplicate, dangling, unknown, stale-hash, malformed-owner, and contradictory complete/pending records.
+- The target boundary is exactly the canonical 138-feature closure and the inventory state is seeded_incomplete.
+- Semantic input reordering preserves canonical bytes and independent registry hashes.
+- Every planned executable contract remains pending with owner M01-PR06, and profile.release_claimable remains false.
+- The static APIs expose only validated records, canonical bytes, and hashes needed by M01-PR06.
 
 ### Tests and gates
 
-- Self-tests for evidence selection, stale references, pending/blocker logic, and claim wording gates.
-- Run the seeded conformance suite and generate a known-incomplete manifest.
-- Mutation tests for gate state transitions.
-- Golden tests for traceability matrix and claim manifest.
-- Release workflow dry run in non-publishing mode.
+- Focused closed-decode, duplicate/reference, applicability, owner/disposition, target-boundary, and stale-hash tests.
+- Canonical-reordering tests pin byte and hash stability.
+- Checked-in seed tests pin counts, pending ownership, and the non-claimable profile state.
 
 ### Review focus
 
-- The gate measures evidence, not feature labels.
-- Expected statuses/types/side effects are represented.
-- Stale references fail loudly.
-- Claim wording cannot be manually stronger than the manifest.
+- The seed does not imply a complete normative inventory or executed evidence.
+- Expected status/type/nullability/order/side-effect dimensions are typed and closed.
+- Canonical hashes are independent of semantic input order.
+- No executable harness or release-claim gate leaks into this PR.
 
 ### Stop conditions
 
-- Rule inventory scope cannot be verified for the selected profile.
-- The gate would require brittle parsing of Rust source instead of explicit evidence registration.
-- Release wording policy remains disputed.
+- The verified seed cannot be represented without copying normative prose.
+- Static registry validation requires parser, executor, persistence, or runtime identity changes.
+- The PR exceeds the D-021 size boundary after executable/gate work is removed.
 
 ### Bridge and deletion
 
-- The seeded registry is intentionally incomplete; every later PR must update its owned evidence records.
+- M01-PR06 owns compiled registration, fixture/source checks, execution, manifests, traceability generation, claim scripts, and release workflow enforcement.
 - M10-PR05 is the only PR allowed to transition the selected release claim to complete.
+
+<a id="m01-pr06"></a>
+## M01-PR06 — Add the Executable Evidence Harness and Release Claim Gate
+
+- **Owner:** M01
+- **State:** Unmerged
+- **Risk / size:** High / M
+- **Dependencies:** M01-PR05
+- **Issues:** None
+- **Commit scope:** `conformance`
+
+Bind the static conformance registries to compiled evidence, execute deterministic evidence selections, emit exact-revision result manifests and traceability, and enforce truthful non-publishing release claims.
+
+### Scope
+
+- Add explicit compiled typed registrations and `include_str!` fixtures for planned evidence; stale function, test, source, and fragment references fail compilation or registry validation without parsing Rust source.
+- Select evidence deterministically by rule, feature, clause, owner, claim, and sorted-ID shard, with exact once-only shard coverage.
+- Normalize actual outcomes and emit an external manifest bound to the exact repository SHA, static registry/profile hashes, test command, runner version, duration, shard, permitted claim, and sorted blockers.
+- Generate the checked-in traceability/blocker page from static sources and actual harness contracts.
+- Add clean-tree and exact-revision claim scripting plus a non-publishing release workflow job that currently requests only iso_aligned.
+
+### Non-goals
+
+- No complete normative inventory or selected-profile release transition.
+- No parser, analyzer, executor, persistence, or GQL production behavior change.
+- No tag, crate publication, or GitHub release operation in the claim job.
+
+### Acceptance evidence
+
+- Positive G010, negative GC04, exact 42N01, and pending inventory contracts are registered and exercised truthfully.
+- Deleting or renaming a function, fixture, source fragment, or registration fails compilation or cross-validation.
+- All selection dimensions are deterministic and sorted-ID sharding covers every executable record exactly once.
+- A fixed-provenance golden manifest excludes non-semantic duration and environment data from its result hash.
+- iso_aligned passes with exact blockers while selected_profile fails, and the claim script rejects dirty or wrong-revision trees.
+- The release claim job has no publication path and publish-crates depends on both release policy and the exact claim job.
+
+### Tests and gates
+
+- Compiled-registration mutation, missing-source, stale-fragment, and duplicate/unknown registration tests.
+- Selection and shard-coverage tests across rule, feature, clause, owner, and claim dimensions.
+- Positive, negative, exact-status, failure, pending, and overclaim runner tests.
+- Golden external manifest and generated traceability tests with fixed provenance and duration.
+- Wrong-revision, dirty-tree, non-publication workflow, and release dry-run tests.
+
+### Review focus
+
+- Registrations are explicit and compiled rather than discovered from Rust syntax.
+- Every failed executable blocks every claim and blockers cannot be omitted.
+- Manifests are exact-SHA, external, deterministic, and non-self-invalidating.
+- Release enforcement cannot publish or bypass the claim job on tags.
+
+### Stop conditions
+
+- Registration requires AST or regex-based Rust symbol discovery.
+- A machine manifest must be checked in with an embedded HEAD SHA.
+- The claim gate needs parser, executor, persistence, or production GQL behavior changes.
+- The PR cannot remain within D-021 after the static registry is already merged.
+
+### Bridge and deletion
+
+- M10-PR05 owns complete inventory, final Annex B, RELEASE-CONFORMANCE.json, wording freeze, and selected-profile transition.
+- Pending M01-PR06 registrations replace the M01-PR05 transition markers; no additional claim bridge is introduced.
 
 <a id="m02-pr01"></a>
 ## M02-PR01 — Add the `selene-catalog` and Stable `selene-db` Facade Skeleton

@@ -8,7 +8,7 @@
     "archive_branch": "archive/1.x-final",
     "archive_tag": "archive-v1-eol-2026-08-21",
     "milestone_count": 11,
-    "pr_count": 64,
+    "pr_count": 65,
     "issue_count": 7,
     "plan_version": 2,
     "line_in_sand": "1.x is EOL; no maintenance, compatibility, reader, or migration.",
@@ -121,7 +121,8 @@
         "M01-PR02",
         "M01-PR03",
         "M01-PR04",
-        "M01-PR05"
+        "M01-PR05",
+        "M01-PR06"
       ]
     },
     {
@@ -1336,21 +1337,101 @@
       ],
       "commit_scope": "gql",
       "file": "docs/v2/roadmap/work-items-00-04.md#m01-pr04",
-      "status": "Unmerged"
+      "status": "Merged"
     },
     {
       "id": "M01-PR05",
       "milestone": "M01",
       "number": 5,
-      "title": "Add the Normative Rule/Evidence Harness and Claim Gate",
-      "outcome": "Create the rule-to-code-to-test evidence registry and a release gate that refuses conformance claims until every mandatory and selected feature rule has complete executable evidence.",
+      "title": "Add the Static Conformance Rule and Evidence Registry",
+      "outcome": "Create closed, independently versioned rule and evidence authorities with canonical hashes and a truthful incomplete seed linked to the canonical GQL profile.",
       "dependencies": [
         "M01-PR04"
       ],
       "issues": [],
       "iso_anchors": [],
       "risk": "High",
-      "size": "L",
+      "size": "M",
+      "crates": [
+        "selene-profile"
+      ],
+      "expected_paths": [
+        "spec/gql-profile/profile.json",
+        "spec/gql-profile/rules.json",
+        "spec/gql-profile/evidence.json",
+        "spec/gql-profile/README.md",
+        "crates/selene-profile/src/conformance.rs",
+        "crates/selene-profile/src/conformance/**",
+        "crates/selene-profile/tests/conformance.rs"
+      ],
+      "scope": [
+        "Define closed static records for rule identity, clause and feature applicability, owner, required evidence dimensions, expected status/type/nullability/order/side effects, planned registration identity, and current disposition.",
+        "Bind the independently versioned registries to the canonical profile and target closure with deterministic ordering and BLAKE3 hashes.",
+        "Seed only verified Clause 24.2, 24.3, 24.5, 24.6, 24.7/Table 10, and Annex B records; keep the inventory explicitly seeded-incomplete.",
+        "Keep all planned executable evidence pending under M01-PR06 and preserve every known inventory, profile, Annex B, and alternative-choice gap without inferring normative completeness."
+      ],
+      "non_goals": [
+        "No compiled evidence registration, fixture execution, result manifest, traceability-page generation, claim wording gate, or release workflow enforcement.",
+        "No attempt to finish the normative rule inventory or mark evidence green.",
+        "No external certification claim.",
+        "No embedding of normative rule prose."
+      ],
+      "design": [
+        "Rule IDs are project-stable references combining clause and local ordinal where the standard lacks a machine ID; mapping documentation explains the convention.",
+        "Profile JSON remains the feature/profile/Annex B authority; rules own static rule identity and applicability, and evidence records extend existing profile evidence IDs.",
+        "Canonical hashes cover semantic ordering while profile runtime identity and cache keys remain unchanged.",
+        "Pending evidence is valid static source data and names M01-PR06 as its transition owner."
+      ],
+      "acceptance": [
+        "Closed decode and semantic validation reject duplicate, dangling, unknown, stale-hash, malformed-owner, and contradictory complete/pending records.",
+        "The target boundary is exactly the canonical 138-feature closure and the inventory state is seeded_incomplete.",
+        "Semantic input reordering preserves canonical bytes and independent registry hashes.",
+        "Every planned executable contract remains pending with owner M01-PR06, and profile.release_claimable remains false.",
+        "The static APIs expose only validated records, canonical bytes, and hashes needed by M01-PR06."
+      ],
+      "tests": [
+        "Focused closed-decode, duplicate/reference, applicability, owner/disposition, target-boundary, and stale-hash tests.",
+        "Canonical-reordering tests pin byte and hash stability.",
+        "Checked-in seed tests pin counts, pending ownership, and the non-claimable profile state."
+      ],
+      "benchmarks": [
+        "Record focused static registry load and hash-validation timing; no product benchmark target."
+      ],
+      "docs": [
+        "Document the three-source static authority, canonical hash contract, and M01-PR06 execution boundary."
+      ],
+      "review_focus": [
+        "The seed does not imply a complete normative inventory or executed evidence.",
+        "Expected status/type/nullability/order/side-effect dimensions are typed and closed.",
+        "Canonical hashes are independent of semantic input order.",
+        "No executable harness or release-claim gate leaks into this PR."
+      ],
+      "stop_conditions": [
+        "The verified seed cannot be represented without copying normative prose.",
+        "Static registry validation requires parser, executor, persistence, or runtime identity changes.",
+        "The PR exceeds the D-021 size boundary after executable/gate work is removed."
+      ],
+      "bridge": [
+        "M01-PR06 owns compiled registration, fixture/source checks, execution, manifests, traceability generation, claim scripts, and release workflow enforcement.",
+        "M10-PR05 is the only PR allowed to transition the selected release claim to complete."
+      ],
+      "commit_scope": "profile",
+      "file": "docs/v2/roadmap/work-items-00-04.md#m01-pr05",
+      "status": "Unmerged"
+    },
+    {
+      "id": "M01-PR06",
+      "milestone": "M01",
+      "number": 6,
+      "title": "Add the Executable Evidence Harness and Release Claim Gate",
+      "outcome": "Bind the static conformance registries to compiled evidence, execute deterministic evidence selections, emit exact-revision result manifests and traceability, and enforce truthful non-publishing release claims.",
+      "dependencies": [
+        "M01-PR05"
+      ],
+      "issues": [],
+      "iso_anchors": [],
+      "risk": "High",
+      "size": "M",
       "crates": [
         "selene-profile",
         "selene-testing",
@@ -1358,7 +1439,6 @@
         "CI"
       ],
       "expected_paths": [
-        "spec/gql-profile/rules.json",
         "spec/gql-profile/evidence.json",
         "crates/selene-testing/src/conformance/**",
         "scripts/check-conformance-claim.sh",
@@ -1366,65 +1446,63 @@
         ".github/workflows/release.yml"
       ],
       "scope": [
-        "Define rule/evidence records for clause/rule identity, applicability, feature dependencies, implementation symbols, expected statuses, positive tests, negative tests, model/differential tests, persistence/crash tests, mutation tests, and current disposition.",
-        "Seed the registry with the target core profile and every known blocker rather than pretending completion.",
-        "Build a test harness that can select evidence by rule, feature, clause, milestone, or release claim.",
-        "Generate a traceability matrix and machine-readable claim manifest from actual test results and source/profile hashes.",
-        "Add a release gate that permits “ISO-aligned” publication with disclosed gaps but blocks stronger claim text unless evidence is complete.",
-        "Add source-reference checks that detect stale symbols/test names after refactors."
+        "Add explicit compiled typed registrations and `include_str!` fixtures for planned evidence; stale function, test, source, and fragment references fail compilation or registry validation without parsing Rust source.",
+        "Select evidence deterministically by rule, feature, clause, owner, claim, and sorted-ID shard, with exact once-only shard coverage.",
+        "Normalize actual outcomes and emit an external manifest bound to the exact repository SHA, static registry/profile hashes, test command, runner version, duration, shard, permitted claim, and sorted blockers.",
+        "Generate the checked-in traceability/blocker page from static sources and actual harness contracts.",
+        "Add clean-tree and exact-revision claim scripting plus a non-publishing release workflow job that currently requests only iso_aligned."
       ],
       "non_goals": [
-        "No attempt to finish all rule evidence in this PR.",
-        "No external certification claim.",
-        "No embedding of full normative rule prose.",
-        "No replacement of ordinary unit/integration test organization."
+        "No complete normative inventory or selected-profile release transition.",
+        "No parser, analyzer, executor, persistence, or GQL production behavior change.",
+        "No tag, crate publication, or GitHub release operation in the claim job."
       ],
       "design": [
-        "Rule IDs are project-stable references combining clause and local ordinal where the standard lacks a machine ID; mapping documentation explains the convention.",
-        "Evidence references existing tests where valid and adds focused conformance tests where not.",
-        "A passing test alone is insufficient if expected GQLSTATUS, result type, ordering, or side effects are not asserted.",
-        "Claim manifests are signed by hashes and generated only from a clean source tree.",
-        "Unknown/stale evidence is a hard failure; pending evidence is a visible blocker, not a generator error."
+        "Registration symbols are produced by the same macro path as typed function pointers; fixture content is compile-time included.",
+        "Missing, unknown, stale, or failed executable evidence blocks every claim request; pending evidence remains a disclosed blocker.",
+        "Duration, host paths, timestamps, and environment are excluded from the semantic result hash.",
+        "iso_aligned may pass only with complete blocker disclosure; selected_profile additionally requires complete inventory, no blockers, final Annex B, green evidence, and release_claimable=true."
       ],
       "acceptance": [
-        "The harness can answer “what evidence supports feature X?” and “what blocks the target profile?” deterministically.",
-        "At least one positive, negative, status, and pending fixture demonstrates each evidence state.",
-        "Deleting or renaming a referenced test/symbol fails the source-reference check.",
-        "The release gate blocks a deliberately overstated claim and permits a truthful gap-disclosing profile artifact.",
-        "Generated matrix links every seeded rule to feature/profile applicability and owning milestone/PR.",
-        "Claim manifest includes repository SHA, profile hash, test command, result hash, and generation tool version."
+        "Positive G010, negative GC04, exact 42N01, and pending inventory contracts are registered and exercised truthfully.",
+        "Deleting or renaming a function, fixture, source fragment, or registration fails compilation or cross-validation.",
+        "All selection dimensions are deterministic and sorted-ID sharding covers every executable record exactly once.",
+        "A fixed-provenance golden manifest excludes non-semantic duration and environment data from its result hash.",
+        "iso_aligned passes with exact blockers while selected_profile fails, and the claim script rejects dirty or wrong-revision trees.",
+        "The release claim job has no publication path and publish-crates depends on both release policy and the exact claim job."
       ],
       "tests": [
-        "Self-tests for evidence selection, stale references, pending/blocker logic, and claim wording gates.",
-        "Run the seeded conformance suite and generate a known-incomplete manifest.",
-        "Mutation tests for gate state transitions.",
-        "Golden tests for traceability matrix and claim manifest.",
-        "Release workflow dry run in non-publishing mode."
+        "Compiled-registration mutation, missing-source, stale-fragment, and duplicate/unknown registration tests.",
+        "Selection and shard-coverage tests across rule, feature, clause, owner, and claim dimensions.",
+        "Positive, negative, exact-status, failure, pending, and overclaim runner tests.",
+        "Golden external manifest and generated traceability tests with fixed provenance and duration.",
+        "Wrong-revision, dirty-tree, non-publication workflow, and release dry-run tests."
       ],
       "benchmarks": [
-        "Record conformance-suite duration and shardability; keep routine PR subsets focused while release runs the complete selected profile."
+        "Record warm seeded-suite duration and shardability as harness evidence; do not add a product benchmark target."
       ],
       "docs": [
-        "Generate traceability/evidence and blockers pages.",
-        "Document the exact permissible release phrases for incomplete versus complete profiles."
+        "Generate the traceability and blocker page with exact permissible incomplete/complete wording.",
+        "Document claim script output and the bridge to M10-PR05."
       ],
       "review_focus": [
-        "The gate measures evidence, not feature labels.",
-        "Expected statuses/types/side effects are represented.",
-        "Stale references fail loudly.",
-        "Claim wording cannot be manually stronger than the manifest."
+        "Registrations are explicit and compiled rather than discovered from Rust syntax.",
+        "Every failed executable blocks every claim and blockers cannot be omitted.",
+        "Manifests are exact-SHA, external, deterministic, and non-self-invalidating.",
+        "Release enforcement cannot publish or bypass the claim job on tags."
       ],
       "stop_conditions": [
-        "Rule inventory scope cannot be verified for the selected profile.",
-        "The gate would require brittle parsing of Rust source instead of explicit evidence registration.",
-        "Release wording policy remains disputed."
+        "Registration requires AST or regex-based Rust symbol discovery.",
+        "A machine manifest must be checked in with an embedded HEAD SHA.",
+        "The claim gate needs parser, executor, persistence, or production GQL behavior changes.",
+        "The PR cannot remain within D-021 after the static registry is already merged."
       ],
       "bridge": [
-        "The seeded registry is intentionally incomplete; every later PR must update its owned evidence records.",
-        "M10-PR05 is the only PR allowed to transition the selected release claim to complete."
+        "M10-PR05 owns complete inventory, final Annex B, RELEASE-CONFORMANCE.json, wording freeze, and selected-profile transition.",
+        "Pending M01-PR06 registrations replace the M01-PR05 transition markers; no additional claim bridge is introduced."
       ],
-      "commit_scope": "test",
-      "file": "docs/v2/roadmap/work-items-00-04.md#m01-pr05",
+      "commit_scope": "conformance",
+      "file": "docs/v2/roadmap/work-items-00-04.md#m01-pr06",
       "status": "Unmerged"
     },
     {
@@ -6141,7 +6219,7 @@
       "outcome": "Complete rule evidence, feature implication closure, implementation-defined/extension disclosures, and claim wording for the exact 2.0 release profile—or explicitly ship as ISO-aligned with a generated blocker list if any mandatory evidence remains.",
       "dependencies": [
         "M10-PR04",
-        "M01-PR05"
+        "M01-PR06"
       ],
       "issues": [],
       "iso_anchors": [],

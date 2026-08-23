@@ -70,7 +70,7 @@
           "const": 11
         },
         "pr_count": {
-          "const": 64
+          "const": 65
         },
         "issue_count": {
           "const": 7
@@ -114,8 +114,8 @@
     },
     "pull_requests": {
       "type": "array",
-      "minItems": 64,
-      "maxItems": 64,
+      "minItems": 65,
+      "maxItems": 65,
       "items": {
         "$ref": "#/$defs/pull_request"
       }

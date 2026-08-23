@@ -139,6 +139,26 @@
   "release_claimable": false,
   "clause_anchors": [
     {
+      "id": "CLAUSE-24.2",
+      "citation": "ISO/IEC 39075:2024, Clause 24.2"
+    },
+    {
+      "id": "CLAUSE-24.3",
+      "citation": "ISO/IEC 39075:2024, Clause 24.3"
+    },
+    {
+      "id": "CLAUSE-24.5",
+      "citation": "ISO/IEC 39075:2024, Clause 24.5"
+    },
+    {
+      "id": "CLAUSE-24.6",
+      "citation": "ISO/IEC 39075:2024, Clause 24.6"
+    },
+    {
+      "id": "CLAUSE-24.7",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7"
+    },
+    {
       "id": "CLAUSE-24.7-TABLE10-P517",
       "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 517"
     },
@@ -5714,6 +5734,26 @@
       "id": "EVID-CATALOG-TRANSACTIONS",
       "reference": "crates/selene-gql/src/runtime/statement.rs",
       "description": "Catalog statements execute through the current write transaction path."
+    },
+    {
+      "id": "EVID-CONFORMANCE-G010-POSITIVE",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m01-pr06",
+      "description": "Planned positive explicit WALK evidence; M01-PR06 owns execution."
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-NEGATIVE",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m01-pr06",
+      "description": "Planned negative graph-management evidence; M01-PR06 owns execution."
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-STATUS",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m01-pr06",
+      "description": "Planned exact 42N01 graph-management evidence; M01-PR06 owns execution."
+    },
+    {
+      "id": "EVID-CONFORMANCE-INVENTORY-PENDING",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m01-pr06",
+      "description": "Pending incomplete-inventory evidence; M01-PR06 owns harness registration."
     },
     {
       "id": "EVID-DECIMAL-LIMITS",
