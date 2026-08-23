@@ -323,7 +323,7 @@ Create the leaf profile crate and schema that become the sole source of truth fo
 ## M01-PR02 — Encode Feature Taxonomy and Transitive Implication Closure
 
 - **Owner:** M01
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / L
 - **Dependencies:** M01-PR01
 - **Issues:** None
@@ -419,7 +419,7 @@ Replace the partial/misaligned implementation-defined ledger with exact IDs, app
 
 ### Tests and gates
 
-- Schema and completeness tests against the curated ID occurrence list.
+- Schema and completeness tests against an independent exact ID-only inventory oracle.
 - Golden generation tests.
 - Boundary tests for already-implemented choices such as result type exposure, default match mode, and cardinality limits.
 - Negative tests for unknown IDs and type-invalid values.
@@ -440,7 +440,7 @@ Replace the partial/misaligned implementation-defined ledger with exact IDs, app
 
 ### Bridge and deletion
 
-- Delete the old `feature_register/annex_b.rs` table or reduce it to generated re-exports in M01-PR04.
+- Delete the generated `ANNEX_B_REGISTER` compatibility bridge and thin `selene-core` re-exports in M01-PR04.
 - Every later PR that implements a pending decision must add its evidence ID.
 
 <a id="m01-pr04"></a>

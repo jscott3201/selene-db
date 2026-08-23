@@ -3,8 +3,9 @@
 //! Keep runtime consumers on this path until M01-PR04 removes the adapter.
 
 pub use selene_profile::{
-    ANNEX_B_REGISTER, AnnexBId, FLAGGER_ACCEPTED_FEATURES, FeatureId, ImplDefinedChoice,
-    NOT_SUPPORTED_RATIONALE, REFERENCED_FEATURES, SUPPORTED_FEATURES,
+    ANNEX_B_REGISTER, AnnexBDecision, AnnexBId, AnnexBRecord, AnnexBRegister, AnnexBValue,
+    ApplicabilityStatus, FLAGGER_ACCEPTED_FEATURES, FeatureId, NOT_SUPPORTED_RATIONALE,
+    REFERENCED_FEATURES, RuntimeDecisionStability, RuntimeDecisionVisibility, SUPPORTED_FEATURES,
 };
 
 /// True when `id` is in the existing runtime-supported feature set.

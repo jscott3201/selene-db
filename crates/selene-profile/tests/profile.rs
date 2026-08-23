@@ -34,16 +34,16 @@ fn checked_in_profile_loads_and_preserves_seed_contract() {
     let profile = parse_profile(SOURCE).expect("checked-in profile validates");
     assert_eq!(
         profile.hash(),
-        "97c5902a11725cf34e1edb08c9c3e4d397d9c33eda464d98eae171f258aaa447"
+        "f11ab8d5c6e04428a7dba2719547101bfae37aabe88b987c04f508ff5c3f947d"
     );
     assert_eq!(profile.profile().features.len(), 197);
     assert_eq!(profile.profile().implementation_extensions.len(), 11);
     assert_eq!(REFERENCED_FEATURES.len(), 208);
     assert_eq!(SUPPORTED_FEATURES.len(), 132);
     assert_eq!(NOT_SUPPORTED_RATIONALE.len(), 43);
-    assert_eq!(ANNEX_B_REGISTER.len(), 34);
-    assert_eq!(PROFILE_FORMAT_VERSION, 2);
-    assert_eq!(PROFILE_GENERATOR_VERSION, 1);
+    assert_eq!(ANNEX_B_REGISTER.len(), 117);
+    assert_eq!(PROFILE_FORMAT_VERSION, 3);
+    assert_eq!(PROFILE_GENERATOR_VERSION, 2);
     assert_eq!(PROFILE_ID, "selene-gql-core-2.0");
     assert_eq!(RELEASE_CLAIMABLE, profile.profile().release_claimable);
     assert!(!profile.profile().release_claimable);
@@ -126,15 +126,15 @@ fn format_and_generator_versions_are_incompatible_boundaries() {
     assert!(
         parse_value(&format)
             .unwrap_err()
-            .contains("format_version must be 2, got 1")
+            .contains("format_version must be 3, got 1")
     );
 
     let mut generator = source_value();
-    generator["generator_version"] = json!(2);
+    generator["generator_version"] = json!(1);
     assert!(
         parse_value(&generator)
             .unwrap_err()
-            .contains("generator_version must be 1, got 2")
+            .contains("generator_version must be 2, got 1")
     );
 }
 
@@ -274,11 +274,13 @@ fn implication_and_applicability_cycles_fail() {
     );
 
     let mut applicability = source_value();
-    applicability["applicability"] = json!([
-        {"id":"APP-A","expression":{"kind":"applicability","applicability_id":"APP-B"}},
-        {"id":"APP-ALWAYS","expression":{"kind":"always"}},
-        {"id":"APP-B","expression":{"kind":"applicability","applicability_id":"APP-A"}}
-    ]);
+    applicability["applicability"]
+        .as_array_mut()
+        .expect("applicability definitions")
+        .extend([
+            json!({"id":"APP-A","expression":{"kind":"applicability","applicability_id":"APP-B"}}),
+            json!({"id":"APP-B","expression":{"kind":"applicability","applicability_id":"APP-A"}}),
+        ]);
     let error = parse_value(&applicability).unwrap_err();
     assert!(
         error.contains("applicability cycle: APP-A -> APP-B -> APP-A"),
@@ -434,10 +436,10 @@ fn schema_closes_every_object_rule() {
     );
     assert_eq!(
         schema["$id"],
-        "https://selene-db.dev/schema/gql-profile-v2.json"
+        "https://selene-db.dev/schema/gql-profile-v3.json"
     );
-    assert_eq!(schema["properties"]["format_version"]["const"], 2);
-    assert_eq!(schema["properties"]["generator_version"]["const"], 1);
+    assert_eq!(schema["properties"]["format_version"]["const"], 3);
+    assert_eq!(schema["properties"]["generator_version"]["const"], 2);
     assert_eq!(
         schema["properties"]["selected_features"]["uniqueItems"],
         true

@@ -4,7 +4,7 @@ mod exec_common;
 
 use exec_common::{ExecFixture, execute_pattern, planned};
 use selene_core::Value;
-use selene_gql::{ExecutorError, execute_pipeline};
+use selene_gql::{AnalyzedType, ExecutorError, GqlType, execute_pipeline};
 
 fn execute_no_pattern(source: &str) -> selene_gql::BindingTable {
     let plan = planned(source);
@@ -35,6 +35,24 @@ fn project_replaces_schema_with_named_aliases() {
         })
         .collect::<Vec<_>>();
     assert_eq!(names, ["one", "two"]);
+}
+
+#[test]
+fn result_schema_exposes_declared_column_types_for_ia001() {
+    let table = execute_no_pattern("RETURN 1 AS one, 'two' AS two");
+
+    assert_eq!(
+        table
+            .schema()
+            .columns
+            .iter()
+            .map(|column| column.ty.clone())
+            .collect::<Vec<_>>(),
+        [
+            AnalyzedType::Resolved(GqlType::Integer),
+            AnalyzedType::Resolved(GqlType::String),
+        ]
+    );
 }
 
 #[test]

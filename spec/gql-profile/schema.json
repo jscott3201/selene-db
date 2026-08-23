@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://selene-db.dev/schema/gql-profile-v2.json",
+  "$id": "https://selene-db.dev/schema/gql-profile-v3.json",
   "title": "Selene DB GQL profile source",
   "type": "object",
   "additionalProperties": false,
   "required": ["format_version", "generator_version", "profile_id", "selected_features", "release_claimable", "clause_anchors", "features", "supported_feature_order", "unsupported_feature_order", "implications", "implementation_defined_choices", "implementation_dependent_notes", "implementation_extensions", "evidence", "applicability"],
   "properties": {
-    "format_version": {"const": 2},
-    "generator_version": {"const": 1},
+    "format_version": {"const": 3},
+    "generator_version": {"const": 2},
     "profile_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
     "selected_features": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}, "uniqueItems": true},
     "release_claimable": {"type": "boolean"},
@@ -16,7 +16,7 @@
     "supported_feature_order": {"type": "array", "items": {"$ref": "#/$defs/runtime_id"}, "uniqueItems": true},
     "unsupported_feature_order": {"type": "array", "items": {"$ref": "#/$defs/feature_id"}, "uniqueItems": true},
     "implications": {"type": "array", "items": {"$ref": "#/$defs/implication"}},
-    "implementation_defined_choices": {"type": "array", "items": {"$ref": "#/$defs/implementation_defined"}},
+    "implementation_defined_choices": {"type": "array", "items": {"$ref": "#/$defs/implementation_defined"}, "minItems": 117, "maxItems": 117},
     "implementation_dependent_notes": {"type": "array", "items": {"$ref": "#/$defs/implementation_dependent"}},
     "implementation_extensions": {"type": "array", "items": {"$ref": "#/$defs/extension"}},
     "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
@@ -27,9 +27,12 @@
     "feature_id": {"type": "string", "pattern": "^(?:[A-Z][0-9]{3}|[A-Z]{2}[0-9]{2})$"},
     "extension_id": {"type": "string", "pattern": "^IM_[A-Z0-9_]+$"},
     "runtime_id": {"type": "string", "pattern": "^(?:(?:[A-Z][0-9]{3}|[A-Z]{2}[0-9]{2})|IM_[A-Z0-9_]+)$"},
-    "impl_defined_id": {"type": "string", "pattern": "^[A-Z]{2}[0-9]{3}(?:-[A-Z]{2}[0-9]{3})?$"},
+    "impl_defined_id": {"type": "string", "pattern": "^I(?:A|D|E|L|S|V|W)[0-9]{3}$"},
     "runtime_support": {"enum": ["supported", "unsupported", "referenced"]},
     "claim_state": {"enum": ["unsupported", "implemented_unclaimed", "claimed_pending_evidence", "claimed"]},
+    "decision_stability": {"enum": ["stable", "provisional"]},
+    "decision_visibility": {"enum": ["public", "embedder", "internal"]},
+    "pending_owner": {"enum": ["M01-PR04", "M02-PR01", "M02-PR02", "M03-PR01", "M03-PR02", "M03-PR03", "M03-PR04", "M03-PR05", "M05-PR01", "M05-PR03", "M05-PR06", "M06-PR05", "M07-PR03", "M08-PR02", "M10-PR04"]},
     "runtime_order": {"type": "integer", "minimum": 0, "maximum": 65535},
     "clause_id": {"type": "string", "pattern": "^CLAUSE-[A-Z0-9_.-]+$"},
     "evidence_id": {"type": "string", "pattern": "^EVID-[A-Z0-9_.-]+$"},
@@ -63,13 +66,30 @@
     },
     "implementation_defined": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "choice", "settled_in", "runtime_order", "clause_anchors", "evidence", "applicability"],
+      "required": ["id", "topic", "decision", "runtime_order", "clause_anchors", "evidence", "applicability"],
       "properties": {
-        "id": {"$ref": "#/$defs/impl_defined_id"}, "choice": {"$ref": "#/$defs/nonempty"},
-        "settled_in": {"$ref": "#/$defs/nonempty"}, "runtime_order": {"$ref": "#/$defs/runtime_order"},
-        "clause_anchors": {"$ref": "#/$defs/clause_ids"}, "evidence": {"$ref": "#/$defs/evidence_ids"},
-        "applicability": {"$ref": "#/$defs/applicability_id"}
+        "id": {"$ref": "#/$defs/impl_defined_id"}, "topic": {"$ref": "#/$defs/nonempty"},
+        "decision": {"$ref": "#/$defs/implementation_defined_decision"},
+        "runtime_order": {"$ref": "#/$defs/runtime_order"}, "clause_anchors": {"$ref": "#/$defs/clause_ids"},
+        "evidence": {"$ref": "#/$defs/evidence_ids"}, "applicability": {"$ref": "#/$defs/applicability_id"}
       }
+    },
+    "implementation_defined_decision": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["disposition", "value", "rationale", "stability", "visibility"], "properties": {"disposition": {"const": "selected"}, "value": {"$ref": "#/$defs/implementation_defined_value"}, "rationale": {"$ref": "#/$defs/nonempty"}, "stability": {"$ref": "#/$defs/decision_stability"}, "visibility": {"$ref": "#/$defs/decision_visibility"}}},
+        {"type": "object", "additionalProperties": false, "required": ["disposition", "owner", "reason"], "properties": {"disposition": {"const": "pending"}, "owner": {"$ref": "#/$defs/pending_owner"}, "reason": {"$ref": "#/$defs/nonempty"}}},
+        {"type": "object", "additionalProperties": false, "required": ["disposition", "reason"], "properties": {"disposition": {"const": "not_applicable"}, "reason": {"$ref": "#/$defs/nonempty"}}}
+      ]
+    },
+    "implementation_defined_value": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "boolean"}, "value": {"type": "boolean"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "unsigned_integer"}, "value": {"type": "integer", "minimum": 0}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "identifier"}, "value": {"$ref": "#/$defs/nonempty"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "string"}, "value": {"$ref": "#/$defs/nonempty"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "ordered_identifier_list"}, "value": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/nonempty"}}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": {"type": {"const": "ordered_string_list"}, "value": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/nonempty"}}}}
+      ]
     },
     "implementation_dependent": {
       "type": "object", "additionalProperties": false,
@@ -93,10 +113,7 @@
     "evidence": {
       "type": "object", "additionalProperties": false,
       "required": ["id", "reference", "description"],
-      "properties": {
-        "id": {"$ref": "#/$defs/evidence_id"}, "reference": {"$ref": "#/$defs/nonempty"},
-        "description": {"$ref": "#/$defs/nonempty"}
-      }
+      "properties": {"id": {"$ref": "#/$defs/evidence_id"}, "reference": {"$ref": "#/$defs/nonempty"}, "description": {"$ref": "#/$defs/nonempty"}}
     },
     "applicability_definition": {
       "type": "object", "additionalProperties": false,
