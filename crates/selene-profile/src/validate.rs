@@ -1,5 +1,7 @@
 //! Closed decode, semantic validation, and canonical hashing.
 
+mod annex_b;
+mod applicability;
 mod canonical;
 pub(crate) mod dependencies;
 mod ids;
@@ -16,8 +18,8 @@ use ids::{
     valid_extension_id, valid_feature_id, valid_impl_defined_id, valid_prefixed, valid_profile_id,
 };
 
-const FORMAT_VERSION: u32 = 2;
-const GENERATOR_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 3;
+const GENERATOR_VERSION: u32 = 2;
 const MAX_APPLICABILITY_DEPTH: usize = 64;
 
 /// Profile loading, validation, or generation failure.
@@ -49,6 +51,7 @@ pub struct ValidatedProfile {
     canonical_json: Vec<u8>,
     hash: String,
     pub(crate) closure: ClosureGraph,
+    pub(crate) applicability: BTreeMap<String, bool>,
 }
 
 impl ValidatedProfile {
@@ -69,6 +72,12 @@ impl ValidatedProfile {
     pub fn hash(&self) -> &str {
         &self.hash
     }
+
+    /// Return the evaluated result of a known applicability expression.
+    #[must_use]
+    pub fn applicability(&self, id: &str) -> Option<bool> {
+        self.applicability.get(id).copied()
+    }
 }
 
 /// Load, decode, validate, and canonicalize a profile file.
@@ -83,7 +92,7 @@ pub fn load_profile(path: &Path) -> Result<ValidatedProfile, ProfileError> {
 /// Decode, validate, and canonicalize profile JSON.
 pub fn parse_profile(source: &str) -> Result<ValidatedProfile, ProfileError> {
     let mut profile: Profile = serde_json::from_str(source)?;
-    let closure = validate(&profile)?;
+    let (closure, applicability) = validate(&profile)?;
     canonical::canonicalize(&mut profile);
     let canonical_json = serde_json::to_vec(&profile)?;
     let hash = blake3::hash(&canonical_json).to_hex().to_string();
@@ -92,6 +101,7 @@ pub fn parse_profile(source: &str) -> Result<ValidatedProfile, ProfileError> {
         canonical_json,
         hash,
         closure,
+        applicability,
     })
 }
 
@@ -99,7 +109,7 @@ fn invalid(message: impl Into<String>) -> ProfileError {
     ProfileError::Invalid(message.into())
 }
 
-fn validate(profile: &Profile) -> Result<ClosureGraph, ProfileError> {
+fn validate(profile: &Profile) -> Result<(ClosureGraph, BTreeMap<String, bool>), ProfileError> {
     if profile.format_version != FORMAT_VERSION {
         return Err(invalid(format!(
             "format_version must be {FORMAT_VERSION}, got {}",
@@ -180,6 +190,7 @@ fn validate(profile: &Profile) -> Result<ClosureGraph, ProfileError> {
     )?;
 
     validate_ids(profile)?;
+    annex_b::validate_inventory(profile)?;
     runtime::validate(profile)?;
     validate_references(profile)?;
     let closure = ClosureGraph::build(
@@ -190,9 +201,11 @@ fn validate(profile: &Profile) -> Result<ClosureGraph, ProfileError> {
             .map(|edge| (edge.source.as_str(), edge.target.as_str())),
     )
     .map_err(invalid)?;
-    dependencies::validate(profile, &closure)?;
     validate_applicability_cycles(profile)?;
-    Ok(closure)
+    let applicability = applicability::evaluate(profile, &closure)?;
+    annex_b::validate_decisions(profile, &applicability)?;
+    dependencies::validate(profile, &closure)?;
+    Ok((closure, applicability))
 }
 
 fn unique_ids<'a>(kind: &str, ids: impl Iterator<Item = &'a str>) -> Result<(), ProfileError> {
@@ -227,8 +240,7 @@ fn validate_ids(profile: &Profile) -> Result<(), ProfileError> {
             item.id.as_str(),
             valid_impl_defined_id,
         )?;
-        require_text("implementation-defined choice", &item.choice)?;
-        require_text("implementation-defined owner", &item.settled_in)?;
+        require_text("implementation-defined topic", &item.topic)?;
     }
     for item in &profile.implementation_dependent_notes {
         require_id("implementation-dependent", item.id.as_str(), |id| {

@@ -24,10 +24,10 @@ pub const MAX_VECTOR_DIMENSION: usize = u16::MAX as usize;
 
 /// In-memory representation of a GQL value.
 ///
-/// IA001: default floating-point arithmetic is IEEE 754 binary64; `Float32`
-/// remains distinct for schema storage. Rust equality preserves GQL's
-/// `+0.0 == -0.0` behavior, while NaN ordering is handled by query-engine
-/// `ORDER BY` logic outside this crate.
+/// ID037: `Float` uses IEEE 754 binary64 storage, while `Float32` remains
+/// distinct with binary32 storage. Rust equality preserves GQL's
+/// `+0.0 == -0.0` behavior; IA025 NaN predicate and ordering behavior is
+/// handled by the query engine outside this crate.
 ///
 /// Value equality matches IEEE 754 for non-NaN AND treats all NaN bit-patterns
 /// as equal for round-trip integrity. This is the internal Rust-level equality

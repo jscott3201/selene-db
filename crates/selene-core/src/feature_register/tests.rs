@@ -135,32 +135,29 @@ fn every_referenced_feature_resolves_by_string() {
 fn annex_b_register_carries_no_pack_or_spec_05_residue() {
     // CORE-01: post-#196 the procedure-pack model is gone. No Annex B entry
     // may still name "pack" or point at the deleted spec 05 / spec 15.
-    for (id, choice) in ANNEX_B_REGISTER {
-        let haystacks = [choice.choice, choice.settled_in];
-        for text in haystacks {
-            let lower = text.to_ascii_lowercase();
-            assert!(
-                !lower.contains("pack"),
-                "Annex B {} still references a 'pack': {text:?}",
-                id.as_str()
-            );
-            assert!(
-                !lower.contains("spec 05") && !lower.contains("spec 15"),
-                "Annex B {} still points at a deleted spec: {text:?}",
-                id.as_str()
-            );
-        }
+    for record in ANNEX_B_REGISTER.iter() {
+        let text = format!("{} {:?}", record.topic, record.decision).to_ascii_lowercase();
+        assert!(
+            !text.contains("pack"),
+            "Annex B {} still references a pack",
+            record.id.as_str()
+        );
+        assert!(
+            !text.contains("spec 05") && !text.contains("spec 15"),
+            "Annex B {} still points at a deleted spec",
+            record.id.as_str()
+        );
     }
 }
 
 #[test]
 fn annex_b_register_has_no_duplicate_ids() {
     let mut seen = HashSet::new();
-    for (id, _) in ANNEX_B_REGISTER {
+    for record in ANNEX_B_REGISTER.iter() {
         assert!(
-            seen.insert(*id),
+            seen.insert(record.id),
             "{} appears more than once in ANNEX_B_REGISTER",
-            id.as_str()
+            record.id.as_str()
         );
     }
 }

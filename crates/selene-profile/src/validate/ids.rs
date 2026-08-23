@@ -29,17 +29,13 @@ pub(super) fn valid_extension_id(id: &str) -> bool {
 }
 
 pub(super) fn valid_impl_defined_id(id: &str) -> bool {
-    let valid_one = |value: &str| {
-        let bytes = value.as_bytes();
-        bytes.len() == 5
-            && bytes[..2].iter().all(u8::is_ascii_uppercase)
-            && bytes[2..].iter().all(u8::is_ascii_digit)
-    };
-    if let Some((start, end)) = id.split_once('-') {
-        valid_one(start) && valid_one(end)
-    } else {
-        valid_one(id)
-    }
+    let bytes = id.as_bytes();
+    bytes.len() == 5
+        && matches!(
+            (bytes[0], bytes[1]),
+            (b'I', b'A' | b'D' | b'E' | b'L' | b'S' | b'V' | b'W')
+        )
+        && bytes[2..].iter().all(u8::is_ascii_digit)
 }
 
 pub(super) fn valid_prefixed(id: &str, prefix: &str) -> bool {

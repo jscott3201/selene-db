@@ -56,7 +56,7 @@ fn session_defaults_are_registered_in_annex_b() {
         assert!(
             ANNEX_B_REGISTER
                 .iter()
-                .any(|(annex, _)| annex.as_str() == id),
+                .any(|record| record.id.as_str() == id),
             "{id} must be registered in Annex B"
         );
     }

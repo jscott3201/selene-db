@@ -158,6 +158,28 @@ fn claim_with_evidence(value: &mut Value, id: &str) {
     feature["evidence"] = json!(["EVID-TEST"]);
 }
 
+fn resolve_annex_b_for_release_fixture(value: &mut Value) {
+    for record in value["implementation_defined_choices"]
+        .as_array_mut()
+        .expect("Annex B records")
+    {
+        match record["decision"]["disposition"].as_str() {
+            Some("pending") => {
+                record["decision"] = json!({
+                    "disposition": "selected",
+                    "value": {"type": "boolean", "value": false},
+                    "rationale": "Synthetic release fixture selection.",
+                    "stability": "stable",
+                    "visibility": "internal"
+                });
+            }
+            Some("selected") => record["decision"]["stability"] = json!("stable"),
+            Some("not_applicable") => {}
+            other => panic!("unexpected decision {other:?}"),
+        }
+    }
+}
+
 fn set_runtime_unsupported(value: &mut Value, id: &str) {
     let feature = feature_mut(value, id);
     feature["runtime_support"] = json!("unsupported");
@@ -499,6 +521,10 @@ fn claimed_source_and_release_claimable_require_complete_evidence() {
     let mut release = source_value();
     release["release_claimable"] = json!(true);
     let error = parse_value(&release).unwrap_err();
+    assert!(error.contains("pending decision IA002"), "{error}");
+
+    resolve_annex_b_for_release_fixture(&mut release);
+    let error = parse_value(&release).unwrap_err();
     assert!(
         error.contains("release_claimable profile selene-gql-core-2.0"),
         "{error}"
@@ -529,6 +555,7 @@ fn generated_claim_matrix_pins_counts_blockers_and_boundary() {
 fn generated_claim_matrix_reports_a_valid_release_claimable_target() {
     let mut release = source_value();
     add_test_evidence(&mut release);
+    resolve_annex_b_for_release_fixture(&mut release);
     release["selected_features"] = json!(
         TARGET_FEATURE_CLOSURE
             .iter()

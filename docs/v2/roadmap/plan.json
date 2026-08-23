@@ -1164,7 +1164,7 @@
       ],
       "commit_scope": "profile",
       "file": "docs/v2/roadmap/work-items-00-04.md#m01-pr02",
-      "status": "Unmerged"
+      "status": "Merged"
     },
     {
       "id": "M01-PR03",
@@ -1185,10 +1185,10 @@
         "selene-gql"
       ],
       "expected_paths": [
-        "spec/gql-profile/implementation-defined.json",
-        "crates/selene-profile/src/annex_b.rs",
-        "crates/selene-core/src/feature_register/annex_b.rs",
-        "docs/gql/implementation-defined.md"
+        "spec/gql-profile/profile.json",
+        "spec/gql-profile/schema.json",
+        "crates/selene-profile/src/generated/annex_b*.rs",
+        "docs/gql/conformance/implementation-defined.md"
       ],
       "scope": [
         "Audit and encode every Annex B implementation-defined ID applicable to the selected profile or current extension surface.",
@@ -1205,9 +1205,9 @@
       ],
       "design": [
         "Each record includes ID, short decision area, clause occurrences, applicability, chosen value, rationale, stability class, evidence IDs, and user visibility.",
-        "Values are typed where possible: integer limits, enums, booleans, version tuples, or structured objects rather than free-form prose.",
+        "Decisions and their bounded values use closed tagged types rather than free-form prose or arbitrary JSON.",
         "The catalog profile fixes one synthetic root directory with schemas and no child directories; record the exact IL020 interpretation.",
-        "Unicode/collation choices include version identity and upgrade policy because they affect canonical names and persisted indexes.",
+        "Unicode/collation choices record only reproducible source-proven values; unresolved exact versions remain pending with an owning work item.",
         "Release documentation is generated and sorted by ID."
       ],
       "acceptance": [
@@ -1219,7 +1219,7 @@
         "A repository search finds no second hand-authored Annex B value table."
       ],
       "tests": [
-        "Schema and completeness tests against the curated ID occurrence list.",
+        "Schema and completeness tests against an independent exact ID-only inventory oracle.",
         "Golden generation tests.",
         "Boundary tests for already-implemented choices such as result type exposure, default match mode, and cardinality limits.",
         "Negative tests for unknown IDs and type-invalid values.",
@@ -1244,7 +1244,7 @@
         "Unicode/collation versioning cannot be made persistence-safe with the current plan."
       ],
       "bridge": [
-        "Delete the old `feature_register/annex_b.rs` table or reduce it to generated re-exports in M01-PR04.",
+        "Delete the generated `ANNEX_B_REGISTER` compatibility bridge and thin `selene-core` re-exports in M01-PR04.",
         "Every later PR that implements a pending decision must add its evidence ID."
       ],
       "commit_scope": "profile",
@@ -1542,7 +1542,7 @@
         "crates/selene-catalog/src/name.rs",
         "crates/selene-catalog/src/descriptor/**",
         "crates/selene-core/src/schema/**",
-        "spec/gql-profile/implementation-defined.json"
+        "spec/gql-profile/profile.json"
       ],
       "scope": [
         "Add opaque stable IDs for catalog, directory, schema, graph, graph type, binding table, procedure, index, and constraint objects with kind-safe wrappers.",
@@ -1903,7 +1903,7 @@
         "crates/selene-db/src/session/**",
         "crates/selene-db/src/auth.rs",
         "crates/selene-gql/src/runtime/session.rs",
-        "spec/gql-profile/implementation-defined.json"
+        "spec/gql-profile/profile.json"
       ],
       "scope": [
         "Define immutable/controlled `SessionContext` fields matching the selected embedded profile: authorization ID, principal, time-zone displacement, session schema, session graph, session parameters, active transaction, active request, and termination flag.",

@@ -136,16 +136,103 @@ pub struct Implication {
     pub evidence: Vec<EvidenceId>,
 }
 
-/// A selected implementation-defined value.
+/// Stability of a selected implementation-defined value.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionStability {
+    /// The value is an established profile contract.
+    Stable,
+    /// The value is selected but cannot support a release claim yet.
+    Provisional,
+}
+
+/// Audience that can observe or configure a selected value.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionVisibility {
+    /// The value is part of the public GQL-facing contract.
+    Public,
+    /// The value is selected through the embedder API or product boundary.
+    Embedder,
+    /// The value describes fixed engine behavior without a configuration API.
+    Internal,
+}
+
+/// Closed value forms used by selected implementation-defined decisions.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ImplementationDefinedValue {
+    /// Boolean selection.
+    Boolean {
+        /// Selected value.
+        value: bool,
+    },
+    /// Non-negative integer selection.
+    UnsignedInteger {
+        /// Selected value.
+        value: u64,
+    },
+    /// Identifier-like selection.
+    Identifier {
+        /// Selected identifier.
+        value: String,
+    },
+    /// Text selection that is not an identifier.
+    String {
+        /// Selected text.
+        value: String,
+    },
+    /// Semantically ordered identifier list.
+    OrderedIdentifierList {
+        /// Selected identifiers in profile order.
+        value: Vec<String>,
+    },
+    /// Semantically ordered text list.
+    OrderedStringList {
+        /// Selected values in profile order.
+        value: Vec<String>,
+    },
+}
+
+/// Closed disposition for one implementation-defined occurrence.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "disposition", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ImplementationDefinedDecision {
+    /// The target profile has selected a value.
+    Selected {
+        /// Typed selected value.
+        value: ImplementationDefinedValue,
+        /// Concise implementation-owned explanation.
+        rationale: String,
+        /// Contract maturity of the selected value.
+        stability: DecisionStability,
+        /// Audience that observes or controls the value.
+        visibility: DecisionVisibility,
+    },
+    /// The occurrence applies but an owning work item must select its value.
+    Pending {
+        /// Bounded 2.0 work-item owner.
+        owner: String,
+        /// Concise reason the value is unresolved.
+        reason: String,
+    },
+    /// The occurrence is absent from the selected feature and extension surface.
+    NotApplicable {
+        /// Concise source-backed reason.
+        reason: String,
+    },
+}
+
+/// One implementation-defined Annex B record.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImplementationDefinedChoiceRecord {
     /// Implementation-defined identifier.
     pub id: ImplDefinedId,
-    /// Existing choice text preserved for compatibility.
-    pub choice: String,
-    /// Existing ownership citation preserved for compatibility.
-    pub settled_in: String,
+    /// Short implementation-owned topic label.
+    pub topic: String,
+    /// Selected, pending, or not-applicable disposition.
+    pub decision: ImplementationDefinedDecision,
     /// Stable position in the compatibility array.
     pub runtime_order: u16,
     /// Applicable clause anchors.

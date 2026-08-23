@@ -1,5 +1,8 @@
 //! Deterministic checked-in Rust and Markdown generation.
 
+mod annex_b;
+mod report;
+
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -12,7 +15,7 @@ const SOURCE: &str = "spec/gql-profile/profile.json";
 /// Render every canonical source and generated output for a validated profile.
 pub fn render_outputs(profile: &ValidatedProfile) -> Result<Vec<(PathBuf, String)>, ProfileError> {
     let source = format!("{}\n", serde_json::to_string_pretty(profile.profile())?);
-    Ok(vec![
+    let mut outputs = vec![
         (PathBuf::from(SOURCE), source),
         (
             PathBuf::from("crates/selene-profile/src/generated/mod.rs"),
@@ -28,7 +31,7 @@ pub fn render_outputs(profile: &ValidatedProfile) -> Result<Vec<(PathBuf, String
         ),
         (
             PathBuf::from("crates/selene-profile/src/generated/annex_b.rs"),
-            render_annex_b(profile),
+            annex_b::render_index(profile),
         ),
         (
             PathBuf::from("crates/selene-profile/src/generated/profile_data.rs"),
@@ -42,7 +45,13 @@ pub fn render_outputs(profile: &ValidatedProfile) -> Result<Vec<(PathBuf, String
             PathBuf::from("docs/gql/conformance/features.md"),
             render_claim_matrix(profile),
         ),
-    ])
+        (
+            PathBuf::from("docs/gql/conformance/implementation-defined.md"),
+            report::render(profile),
+        ),
+    ];
+    outputs.extend(annex_b::render_categories(profile));
+    Ok(outputs)
 }
 
 /// Regenerate checked-in source, Rust, and Markdown from the profile JSON.
@@ -88,8 +97,17 @@ fn header(profile: &ValidatedProfile) -> String {
 fn render_mod(profile: &ValidatedProfile) -> String {
     let mut output = header(profile);
     output.push_str(
-        "mod annex_b;\nmod feature_data;\nmod feature_ids;\nmod profile_data;\n\n\
-         pub use annex_b::ANNEX_B_REGISTER;\n\
+        "mod annex_b;\nmod annex_b_ia;\nmod annex_b_id;\nmod annex_b_ie;\nmod annex_b_il;\nmod annex_b_is;\nmod annex_b_iv;\nmod annex_b_iw;\nmod feature_data;\nmod feature_ids;\nmod profile_data;\n\n\
+         pub use annex_b::{\n    \
+         ANNEX_B_CATEGORY_COUNTS, ANNEX_B_LOOKUP_TEST_VECTORS, ANNEX_B_REGISTER, annex_b_by_id,\n\
+         };\n\
+         pub use annex_b_ia::ANNEX_B_IA;\n\
+         pub use annex_b_id::ANNEX_B_ID;\n\
+         pub use annex_b_ie::ANNEX_B_IE;\n\
+         pub use annex_b_il::ANNEX_B_IL;\n\
+         pub use annex_b_is::ANNEX_B_IS;\n\
+         pub use annex_b_iv::ANNEX_B_IV;\n\
+         pub use annex_b_iw::ANNEX_B_IW;\n\
          pub use feature_data::{\n    \
          FLAGGER_ACCEPTED_FEATURES, NOT_SUPPORTED_RATIONALE, REFERENCED_FEATURES, SUPPORTED_FEATURES,\n\
          };\n\
@@ -255,34 +273,6 @@ fn render_feature_data(profile: &ValidatedProfile) -> String {
     output
 }
 
-fn render_annex_b(profile: &ValidatedProfile) -> String {
-    let mut output = header(profile);
-    output.push_str(
-        "use crate::runtime::{AnnexBId, ImplDefinedChoice};\n\n\
-         /// Partial implementation-defined inventory inherited from the 1.x register.\n\
-         #[rustfmt::skip]\n\
-         pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[\n",
-    );
-    let mut choices = profile
-        .profile()
-        .implementation_defined_choices
-        .iter()
-        .collect::<Vec<_>>();
-    choices.sort_by_key(|item| item.runtime_order);
-    for item in choices {
-        writeln!(
-            output,
-            "    (AnnexBId::new({:?}), ImplDefinedChoice {{ choice: {:?}, settled_in: {:?} }}),",
-            item.id.as_str(),
-            item.choice,
-            item.settled_in
-        )
-        .expect("writing to String cannot fail");
-    }
-    output.push_str("];\n");
-    output
-}
-
 fn render_profile_data(profile: &ValidatedProfile) -> String {
     let mut output = header(profile);
     output.push_str(
@@ -354,20 +344,9 @@ fn render_markdown(profile: &ValidatedProfile) -> String {
         .expect("writing to String cannot fail");
     }
     output.push_str(
-        "\n## Partial implementation-defined inventory\n\n\
-         This table preserves the existing incomplete Annex B register. M01-PR03 owns completeness and semantic correction.\n\n\
-         | ID | Choice | Existing owner |\n|---|---|---|\n",
+        "\n## Implementation-defined inventory\n\n\
+         The complete 117-ID audit report is generated at [`docs/gql/conformance/implementation-defined.md`](../../docs/gql/conformance/implementation-defined.md). Annex B is used as an inventory aid; the report is not normative text or a conformance claim.\n",
     );
-    for item in &profile.profile().implementation_defined_choices {
-        writeln!(
-            output,
-            "| {} | {} | {} |",
-            item.id.as_str(),
-            markdown(&item.choice),
-            markdown(&item.settled_in)
-        )
-        .expect("writing to String cannot fail");
-    }
     writeln!(
         output,
         "\nDirect selected features: {}. Complete target closure: {}. Direct implication edges: {}. Implementation-dependent notes: {}. Evidence references: {}.",
