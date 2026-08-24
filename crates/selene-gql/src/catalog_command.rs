@@ -1,14 +1,12 @@
 //! Storage-neutral database-catalog commands handed to the database facade.
 //!
-//! `CREATE/DROP SCHEMA` and `CREATE/DROP GRAPH` change catalog state that the
-//! lower engine does not own. The parser and planner reduce such a statement
-//! to a [`DatabaseCatalogCommand`]; the database facade resolves the carried
-//! reference against its typed catalog paths and dispatches to the same
-//! lifecycle service Rust callers use. The command deliberately carries
-//! unresolved, form-tagged spellings rather than resolved IDs: resolution
-//! happens under the facade's lifecycle writer lock so that a concurrent drop
-//! or recreate between parse and dispatch cannot be observed (no TOCTOU
-//! window), exactly as for Rust callers.
+//! Schema, graph, and graph-type lifecycle state belongs to the database
+//! catalog, not the lower engine. The parser and planner reduce those
+//! statements to a [`DatabaseCatalogCommand`]; the database facade resolves
+//! the carried references against its typed catalog paths and dispatches to the
+//! same lifecycle service Rust callers use. Commands retain unresolved,
+//! form-tagged spellings rather than resolved IDs. Resolution happens under the
+//! facade's lifecycle writer lock, preventing a concurrent drop/recreate window.
 //!
 //! A bare lower-engine session cannot honor these commands and reports a
 //! structured implementation-defined error instead of a silent no-op. The one
@@ -17,7 +15,7 @@
 //! the facade routes only the protected bootstrap graph to that path.
 
 use crate::{
-    DdlStatement, SourceSpan,
+    CatalogGraphTypeDefinition, DdlStatement, SourceSpan,
     ast::catalog_ref::{CatalogObjectReference, CatalogPathSegment},
 };
 
@@ -44,12 +42,12 @@ pub enum DatabaseCatalogCommand {
         span: SourceSpan,
     },
     /// `CREATE { [PROPERTY] GRAPH [IF NOT EXISTS] | OR REPLACE [PROPERTY]
-    /// GRAPH } <reference> <open graph type>`.
+    /// GRAPH } <reference> <graph type>`.
     ///
-    /// Only the open graph type form reaches this command; every `<of graph
-    /// type>` and `<graph source>` clause is rejected by the parser. The
-    /// grammar makes `IF NOT EXISTS` and `OR REPLACE` alternatives, so at most
-    /// one flag is set.
+    /// The graph type is open when `graph_type` is `None`, or a named closed
+    /// graph type otherwise. Inline/LIKE types and graph sources are rejected
+    /// before lowering. The grammar makes `IF NOT EXISTS` and `OR REPLACE`
+    /// alternatives, so at most one flag is set.
     CreateGraph {
         /// Absolute or current-schema-relative graph reference.
         reference: CatalogObjectReference,
@@ -58,12 +56,36 @@ pub enum DatabaseCatalogCommand {
         or_replace: bool,
         /// Whether `IF NOT EXISTS` was written.
         if_not_exists: bool,
+        /// Named closed graph type, or `None` for an open graph.
+        graph_type: Option<CatalogObjectReference>,
         /// Span of the whole statement.
         span: SourceSpan,
     },
     /// `DROP [PROPERTY] GRAPH [IF EXISTS] <reference>`.
     DropGraph {
         /// Absolute or current-schema-relative graph reference.
+        reference: CatalogObjectReference,
+        /// Whether `IF EXISTS` was written.
+        if_exists: bool,
+        /// Span of the whole statement.
+        span: SourceSpan,
+    },
+    /// `CREATE [PROPERTY] GRAPH TYPE` with a bounded nested definition.
+    CreateGraphType {
+        /// Absolute or current-schema-relative graph-type reference.
+        reference: CatalogObjectReference,
+        /// Property-free named node definitions with form-tagged names.
+        definition: CatalogGraphTypeDefinition,
+        /// Whether `OR REPLACE` was written.
+        or_replace: bool,
+        /// Whether `IF NOT EXISTS` was written.
+        if_not_exists: bool,
+        /// Span of the whole statement.
+        span: SourceSpan,
+    },
+    /// `DROP [PROPERTY] GRAPH TYPE [IF EXISTS] <reference>`.
+    DropGraphType {
+        /// Absolute or current-schema-relative graph-type reference.
         reference: CatalogObjectReference,
         /// Whether `IF EXISTS` was written.
         if_exists: bool,
@@ -100,11 +122,13 @@ impl DatabaseCatalogCommand {
                 reference,
                 or_replace,
                 if_not_exists,
+                graph_type,
                 span,
             } => Some(Self::CreateGraph {
                 reference: reference.clone(),
                 or_replace: *or_replace,
                 if_not_exists: *if_not_exists,
+                graph_type: graph_type.clone(),
                 span: *span,
             }),
             DdlStatement::DropGraph {
@@ -112,6 +136,28 @@ impl DatabaseCatalogCommand {
                 if_exists,
                 span,
             } => Some(Self::DropGraph {
+                reference: reference.clone(),
+                if_exists: *if_exists,
+                span: *span,
+            }),
+            DdlStatement::CreateGraphType {
+                reference,
+                definition,
+                or_replace,
+                if_not_exists,
+                span,
+            } => Some(Self::CreateGraphType {
+                reference: reference.clone(),
+                definition: definition.clone(),
+                or_replace: *or_replace,
+                if_not_exists: *if_not_exists,
+                span: *span,
+            }),
+            DdlStatement::DropGraphType {
+                reference,
+                if_exists,
+                span,
+            } => Some(Self::DropGraphType {
                 reference: reference.clone(),
                 if_exists: *if_exists,
                 span: *span,
@@ -127,7 +173,9 @@ impl DatabaseCatalogCommand {
             Self::CreateSchema { reference, .. }
             | Self::DropSchema { reference, .. }
             | Self::CreateGraph { reference, .. }
-            | Self::DropGraph { reference, .. } => reference,
+            | Self::DropGraph { reference, .. }
+            | Self::CreateGraphType { reference, .. }
+            | Self::DropGraphType { reference, .. } => reference,
         }
     }
 
@@ -138,7 +186,9 @@ impl DatabaseCatalogCommand {
             Self::CreateSchema { span, .. }
             | Self::DropSchema { span, .. }
             | Self::CreateGraph { span, .. }
-            | Self::DropGraph { span, .. } => *span,
+            | Self::DropGraph { span, .. }
+            | Self::CreateGraphType { span, .. }
+            | Self::DropGraphType { span, .. } => *span,
         }
     }
 
@@ -150,6 +200,8 @@ impl DatabaseCatalogCommand {
             Self::DropSchema { .. } => "DROP SCHEMA",
             Self::CreateGraph { .. } => "CREATE GRAPH",
             Self::DropGraph { .. } => "DROP GRAPH",
+            Self::CreateGraphType { .. } => "CREATE GRAPH TYPE",
+            Self::DropGraphType { .. } => "DROP GRAPH TYPE",
         }
     }
 

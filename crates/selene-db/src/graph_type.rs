@@ -1,13 +1,11 @@
 //! Facade-owned closed graph-type definitions.
 
-use std::collections::BTreeSet;
-
 use selene_core::{LabelSet, db_string};
 use selene_graph::{GraphTypeDef, NodeTypeDef, ValidationMode};
 
 use crate::{Error, PathSegment, Result};
 
-/// A named node type with one or more defining labels.
+/// A named node type with exactly one defining key label (IL003).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeTypeDefinition {
     name: PathSegment,
@@ -19,18 +17,12 @@ impl NodeTypeDefinition {
     ///
     /// # Errors
     ///
-    /// Returns an invalid-definition error when `labels` is empty or contains
-    /// the same canonical label more than once.
+    /// Returns an invalid-definition error unless `labels` contains exactly
+    /// one label.
     pub fn new(name: PathSegment, labels: Vec<PathSegment>) -> Result<Self> {
-        if labels.is_empty() {
+        if labels.len() != 1 {
             return Err(Error::invalid_graph_type(
-                "a node type requires at least one defining label",
-            ));
-        }
-        let unique = labels.iter().collect::<BTreeSet<_>>();
-        if unique.len() != labels.len() {
-            return Err(Error::invalid_graph_type(
-                "a node type cannot repeat a canonical label",
+                "IL003 requires exactly one node key label",
             ));
         }
         Ok(Self { name, labels })
@@ -114,5 +106,27 @@ impl GraphTypeBuilder {
                 .expect("static validation graph-type name is valid"),
         )?;
         Ok(definition)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn il003_requires_exactly_one_node_key_label() {
+        let name = PathSegment::regular("PersonType").unwrap();
+        assert!(NodeTypeDefinition::new(name.clone(), Vec::new()).is_err());
+        assert!(
+            NodeTypeDefinition::new(
+                name.clone(),
+                vec![
+                    PathSegment::regular("Person").unwrap(),
+                    PathSegment::regular("Employee").unwrap(),
+                ],
+            )
+            .is_err()
+        );
+        NodeTypeDefinition::new(name, vec![PathSegment::regular("Person").unwrap()]).unwrap();
     }
 }

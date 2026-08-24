@@ -377,6 +377,8 @@ fn push_ddl<'a>(statement: &'a DdlStatement, work: &mut Vec<Node<'a>>) {
         | DdlStatement::DropSchema { .. }
         | DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }
+        | DdlStatement::CreateGraphType { .. }
+        | DdlStatement::DropGraphType { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
         | DdlStatement::TruncateNodeType { .. }

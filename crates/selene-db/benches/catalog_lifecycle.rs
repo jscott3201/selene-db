@@ -173,6 +173,8 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
         let session = database.session();
         let schema_target = schema("gql_target");
         let graph_target = graph("gql_target", "g");
+        let graph_type_target = graph("gql_target", "shape");
+        let bound_graph_target = graph("gql_target", "typed_g");
         gql.bench_with_input(
             BenchmarkId::new("create_schema_gql", scale),
             &scale,
@@ -198,6 +200,30 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
             .create_schema(&schema_target, CreatePolicy::Strict)
             .expect("graph fixture schema creation succeeds");
         gql.bench_with_input(
+            BenchmarkId::new("create_graph_type_gql", scale),
+            &scale,
+            |b, _| {
+                b.iter_custom(|iterations| {
+                    let mut elapsed = Duration::ZERO;
+                    for _ in 0..iterations {
+                        let started = std::time::Instant::now();
+                        let outcome = session
+                            .execute("CREATE GRAPH TYPE /gql_target/shape { NODE TYPE Person () }")
+                            .expect("timed GQL graph-type create succeeds");
+                        elapsed += started.elapsed();
+                        assert_eq!(black_box(outcome), OMITTED);
+                        catalog
+                            .drop_graph_type(&graph_type_target, DropPolicy::Strict)
+                            .expect("untimed graph-type cleanup succeeds");
+                    }
+                    elapsed
+                });
+            },
+        );
+        session
+            .execute("CREATE GRAPH TYPE /gql_target/shape { NODE TYPE Person () }")
+            .expect("bound-graph fixture type creation succeeds");
+        gql.bench_with_input(
             BenchmarkId::new("create_graph_gql", scale),
             &scale,
             |b, _| {
@@ -213,6 +239,27 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
                         catalog
                             .drop_graph(&graph_target, DropPolicy::Strict)
                             .expect("untimed graph cleanup succeeds");
+                    }
+                    elapsed
+                });
+            },
+        );
+        gql.bench_with_input(
+            BenchmarkId::new("create_bound_graph_gql", scale),
+            &scale,
+            |b, _| {
+                b.iter_custom(|iterations| {
+                    let mut elapsed = Duration::ZERO;
+                    for _ in 0..iterations {
+                        let started = std::time::Instant::now();
+                        let outcome = session
+                            .execute("CREATE GRAPH /gql_target/typed_g TYPED /gql_target/shape")
+                            .expect("timed GQL bound graph create succeeds");
+                        elapsed += started.elapsed();
+                        assert_eq!(black_box(outcome), OMITTED);
+                        catalog
+                            .drop_graph(&bound_graph_target, DropPolicy::Strict)
+                            .expect("untimed bound-graph cleanup succeeds");
                     }
                     elapsed
                 });

@@ -340,12 +340,11 @@ fn unsupported_clauses_are_rejected_before_any_catalog_change() {
     for source in [
         "CREATE GRAPH g LIKE default",
         "CREATE GRAPH g ANY AS COPY OF default",
-        "CREATE GRAPH g TYPED t",
         "CREATE GRAPH g ::{(Person :Person)}",
         "CREATE OR REPLACE GRAPH g LIKE default",
         "CREATE OR REPLACE GRAPH TYPE t {(Person :Person)}",
         "CREATE GRAPH TYPE t {(Person :Person)}",
-        "DROP GRAPH TYPE t",
+        "CREATE GRAPH TYPE t COPY OF other",
         "CREATE SCHEMA /a NEXT CREATE GRAPH /a/g ANY",
     ] {
         let error = session.execute(source).unwrap_err();
@@ -610,6 +609,8 @@ fn named_graph_handles_still_reject_catalog_ddl() {
         "DROP SCHEMA /memory",
         "CREATE GRAPH h ANY",
         "DROP GRAPH g",
+        "CREATE GRAPH TYPE t { NODE TYPE Person () }",
+        "DROP GRAPH TYPE t",
         "DROP GRAPH default",
     ] {
         let error = handle.execute(source).unwrap_err();

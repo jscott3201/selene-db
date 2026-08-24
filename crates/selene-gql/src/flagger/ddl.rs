@@ -28,17 +28,25 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
                 record_feature(uses, FeatureId::GC02, *span);
             }
         }
-        // Section 12.4 CR1-CR3: CREATE GRAPH is GC04; the conditional modifier
-        // adds GC05; the only representable type clause is the open graph type
-        // (GG01). OR REPLACE is part of the section 12.4 format and gated by
-        // no feature of its own, so it rides on GC04 (CR1) and is not stamped.
+        // Section 12.4: CREATE GRAPH is GC04 and the conditional modifier adds
+        // GC05. The type clause records GG01 for an open graph or GG02 for a
+        // named closed graph. OR REPLACE has no feature of its own.
         DdlStatement::CreateGraph {
             if_not_exists,
+            graph_type,
             span,
             ..
         } => {
             record_feature(uses, FeatureId::GC04, *span);
-            record_feature(uses, FeatureId::GG01, *span);
+            record_feature(
+                uses,
+                if graph_type.is_some() {
+                    FeatureId::GG02
+                } else {
+                    FeatureId::GG01
+                },
+                *span,
+            );
             if *if_not_exists {
                 record_feature(uses, FeatureId::GC05, *span);
             }
@@ -59,6 +67,25 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
                 record_feature(uses, FeatureId::GC05, *span);
             }
             record_feature(uses, FeatureId::IM_DROP_GRAPH, *span);
+        }
+        DdlStatement::CreateGraphType {
+            if_not_exists,
+            span,
+            ..
+        } => {
+            record_feature(uses, FeatureId::GG02, *span);
+            record_feature(uses, FeatureId::GG20, *span);
+            if *if_not_exists {
+                record_feature(uses, FeatureId::GC03, *span);
+            }
+        }
+        DdlStatement::DropGraphType {
+            if_exists, span, ..
+        } => {
+            record_feature(uses, FeatureId::GG02, *span);
+            if *if_exists {
+                record_feature(uses, FeatureId::GC03, *span);
+            }
         }
         DdlStatement::CreateNodeType {
             key_label_set,

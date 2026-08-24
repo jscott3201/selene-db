@@ -28,8 +28,8 @@ pub use crate::ast::{
     call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem},
     catalog_ref::{CatalogObjectReference, CatalogPathSegment, IdentifierForm},
     ddl::{
-        DdlStatement, DropBehavior, EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint,
-        TypePropertyDef, ValidationMode,
+        CatalogGraphTypeDefinition, CatalogNodeTypeDefinition, DdlStatement, DropBehavior,
+        EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint, TypePropertyDef, ValidationMode,
     },
     expr::{
         BinaryOp, DecimalLiteralKind, ExistsBody, FloatLiteralKind, IntegerLiteralKind,

@@ -53,7 +53,7 @@ row, not formal conformance status.
 | Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is runtime-supported as feature `GQ15`. |
 | Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
-| DDL (`CREATE/DROP SCHEMA`, `CREATE/DROP GRAPH`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | Schema and open-graph management (`GC01`, `GC02`, `GC04`, `GC05`, `GG01`) execute through the `selene-db` facade catalog service. Closed graph types (`GG02`), inline and `LIKE` graph types (`GG03`, `GG04`), graph sources (`GG05`), and `CREATE/DROP GRAPH TYPE` are rejected with `42N01`. Both additive `ALTER` forms are implementation-defined surfaces. Type DDL is Flagger-accepted as part of the directly selected parser surface even though the runtime inventory reports `GG02`, `GG20`, and `GG21` as unsupported. |
+| DDL (`CREATE/DROP SCHEMA`, `CREATE/DROP GRAPH`, `CREATE/DROP GRAPH TYPE`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | Schema/graph management and a bounded named closed-graph path execute through the `selene-db` catalog service. The graph-type source accepts property-free named node types with implied singleton labels. Complete GC03/GG02/GG20/GG21 support remains unsupported: properties, edges/endpoints, explicit key labels, COPY OF/LIKE/external sources, and inline graph types are absent. Both additive `ALTER` forms are implementation-defined surfaces. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries are runtime-supported as `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not runtime-supported. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are runtime-supported (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
@@ -566,10 +566,9 @@ explicitly.
 
 ## 7. Schema (DDL)
 
-The engine has open (schema-on-read) and closed (schema-validated) graph modes,
-corresponding to GG01 and GG02. Open graphs are created from GQL through the
-`selene-db` facade; closed graphs can be created through the Rust catalog API
-today and from GQL once M02-PR04 part 2 lands.
+The engine has open (schema-on-read) and closed (schema-validated) graph modes.
+GQL can create open graphs and closed graphs bound to the bounded named
+graph-type source documented below.
 
 ### `CREATE SCHEMA` / `DROP SCHEMA`
 
@@ -593,6 +592,7 @@ bootstrap schema `/public` is an access-rule violation (`42000`).
 CREATE GRAPH /memory/episodes ANY
 CREATE PROPERTY GRAPH IF NOT EXISTS scratch TYPED ANY PROPERTY GRAPH
 CREATE OR REPLACE GRAPH /memory/episodes ANY
+CREATE GRAPH /memory/closed TYPED /memory/shape
 DROP GRAPH /memory/episodes
 DROP PROPERTY GRAPH IF EXISTS scratch
 ```
@@ -600,11 +600,12 @@ DROP PROPERTY GRAPH IF EXISTS scratch
 A graph reference is either absolute (`/schema/graph`) or a single name
 resolved against the current working schema, which the compatibility session
 fixes to `/selene/public` (§17.2 SR2a). The graph type clause is mandatory in
-ISO §12.4; only the `<open graph type>` (`[TYPED | ::] ANY [[PROPERTY] GRAPH]`,
-feature GG01) executes. `LIKE g` (GG04), `AS COPY OF g` (GG05), an inline
-graph type (GG03), a graph type reference (GG02), and `CREATE/DROP GRAPH
-TYPE` are rejected before planning with `42N01`; a `NEXT`-composed catalog
-statement is rejected the same way.
+ISO §12.4. The executable forms are the `<open graph type>` (`[TYPED | ::] ANY
+[[PROPERTY] GRAPH]`, feature GG01) and `[TYPED | ::] <graph type reference>`
+for a named closed graph. The graph and type must belong to the same schema.
+`LIKE g` (GG04), `AS COPY OF g` (GG05), and an inline graph type (GG03) are
+rejected before planning with `42N01`; a `NEXT`-composed catalog statement is
+rejected the same way.
 
 `CREATE GRAPH` and `DROP GRAPH` complete with `00001`. `DROP GRAPH IF EXISTS`
 on an absent graph completes with the warning `01G03` (§12.5 GR1). A strict
@@ -627,6 +628,40 @@ A `DROP GRAPH` whose reference resolves to the protected bootstrap graph
 removes this bridge together with the bootstrap catalog. Through a named
 `GraphHandle`, every catalog statement is rejected with `42N01`; use the facade
 `Session` or the Rust `Catalog` API.
+
+### `CREATE GRAPH TYPE` / `DROP GRAPH TYPE`
+
+```gql
+CREATE SCHEMA /memory
+CREATE GRAPH TYPE /memory/shape AS {
+    NODE TYPE Person (),
+    NODE TYPE Memory ()
+}
+CREATE GRAPH TYPE IF NOT EXISTS /memory/shape { NODE TYPE Event () }
+CREATE OR REPLACE PROPERTY GRAPH TYPE /memory/shape {
+    NODE TYPE Event ()
+}
+DROP PROPERTY GRAPH TYPE IF EXISTS /memory/shape
+DROP SCHEMA /memory
+```
+
+The accepted nested source contains one or more property-free named node types.
+`NODE` and `VERTEX` are equivalent node synonyms, `TYPE` is optional, and the
+empty parenthesized pattern may be replaced by the phrase form (`NODE TYPE
+Person`). Each type name supplies its one key label; regular/delimited spelling
+is preserved through facade `PathSegment` validation. Rust and GQL definitions
+reach the same `Catalog::create_graph_type` conversion and runtime definition.
+
+`IF NOT EXISTS` and `IF EXISTS` are no-ops only for the same-kind leaf. A
+missing parent or wrong-kind object is `42002`. `OR REPLACE` applies full
+`DROP GRAPH TYPE` RESTRICT, allocates a fresh identity, and publishes once. A
+referenced type cannot be dropped or replaced (`G1000`). Successful and no-op
+statements return the omitted-result condition `00001`.
+
+Properties, node labels other than the implied singleton, local aliases, edge
+types/endpoints, explicit key-label sets, COPY OF/LIKE/external sources, and
+inline graph types remain `42N01`. This keeps complete GC03, GG02, GG20, and
+GG21 runtime/conformance state unsupported.
 
 ### `CREATE NODE TYPE` / `CREATE EDGE TYPE`
 

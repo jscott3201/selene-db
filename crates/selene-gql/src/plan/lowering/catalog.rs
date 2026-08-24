@@ -24,7 +24,9 @@ pub(crate) fn lower_ddl(
         DdlStatement::CreateSchema { .. }
         | DdlStatement::DropSchema { .. }
         | DdlStatement::CreateGraph { .. }
-        | DdlStatement::DropGraph { .. } => CatalogOp::DatabaseCatalog(
+        | DdlStatement::DropGraph { .. }
+        | DdlStatement::CreateGraphType { .. }
+        | DdlStatement::DropGraphType { .. } => CatalogOp::DatabaseCatalog(
             DatabaseCatalogCommand::from_ddl(statement)
                 .expect("database-catalog DDL variants reduce to a command"),
         ),

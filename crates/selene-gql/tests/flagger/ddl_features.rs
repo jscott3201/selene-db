@@ -9,10 +9,9 @@ fn mutation_feature_is_supported() {
 }
 
 #[test]
-fn open_graph_management_is_admitted_and_closed_forms_are_feature_rejected() {
-    // GC04/GC05/GG01 are runtime-supported: the open graph type form parses
-    // and stamps the ISO features. The closed-type forms are rejected with the
-    // feature that owns the clause (ISO section 12.4 CR4-CR7).
+fn graph_management_records_open_and_named_closed_type_forms() {
+    // GC04/GC05/GG01 are runtime-supported. The bounded named closed-type form
+    // parses and stamps GG02 without claiming complete runtime support.
     let ids = |source: &str| {
         feature_walk(&parse(source).expect(source))
             .into_iter()
@@ -71,12 +70,7 @@ fn open_graph_management_is_admitted_and_closed_forms_are_feature_rejected() {
         "CREATE GRAPH demo TYPED socialNetworkGraphType",
         "CREATE GRAPH demo ::socialNetworkGraphType",
     ] {
-        let error = selene_gql::parse(source).expect_err(source);
-        assert_eq!(error.gqlstatus().as_str(), "42N01");
-        assert!(
-            matches!(error, ParserError::NotImplemented { .. }),
-            "{source}: expected NotImplemented, got {error:?}"
-        );
+        assert_eq!(ids(source), [FeatureId::GC04, FeatureId::GG02], "{source}");
     }
 }
 

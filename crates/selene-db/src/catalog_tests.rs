@@ -86,9 +86,14 @@ fn injected_staging_failures_cover_each_lifecycle_object_and_drop() {
         .create_schema(&schema_path, CreatePolicy::Strict)
         .unwrap();
     let type_path = graph("failures", "type");
-    assert_failure_preserves_outer_state(&catalog, FailurePoint::AfterDescriptorStaging, || {
-        catalog.create_graph_type(&type_path, test_graph_type(), CreatePolicy::Strict)
-    });
+    for point in [
+        FailurePoint::AfterDescriptorStaging,
+        FailurePoint::BeforePublication,
+    ] {
+        assert_failure_preserves_outer_state(&catalog, point, || {
+            catalog.create_graph_type(&type_path, test_graph_type(), CreatePolicy::Strict)
+        });
+    }
     catalog
         .create_graph_type(&type_path, test_graph_type(), CreatePolicy::Strict)
         .unwrap();
@@ -170,6 +175,94 @@ fn injected_failures_on_the_replace_path_keep_the_old_graph() {
         ErrorKind::StaleGraphHandle
     );
     assert_outer_complete(&catalog.inner.state.load_full());
+}
+
+#[test]
+fn injected_failures_on_graph_type_replace_keep_the_old_definition() {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    catalog
+        .create_schema(&schema("type_replace"), CreatePolicy::Strict)
+        .unwrap();
+    let path = graph("type_replace", "shape");
+    let CreateOutcome::Created(original) = catalog
+        .create_graph_type(&path, test_graph_type(), CreatePolicy::Strict)
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let reserved = catalog.inner.state.load().high_water.graph_type + 1;
+    for point in [
+        FailurePoint::AfterDescriptorStaging,
+        FailurePoint::BeforePublication,
+    ] {
+        assert_failure_preserves_outer_state(&catalog, point, || {
+            catalog.create_graph_type(&path, test_graph_type(), CreatePolicy::OrReplace)
+        });
+        assert_eq!(
+            catalog.snapshot().resolve_graph_type(&path).unwrap(),
+            original
+        );
+    }
+    let CreateOutcome::Replaced { dropped, created } = catalog
+        .create_graph_type(&path, test_graph_type(), CreatePolicy::OrReplace)
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(dropped, original);
+    assert_eq!(created.id.get(), reserved);
+    assert_ne!(created.id, dropped.id);
+    assert_outer_complete(&catalog.inner.state.load_full());
+}
+
+#[test]
+fn gql_and_rust_graph_types_publish_equal_descriptors_and_runtime_definitions() {
+    let via_gql = Database::builder().build();
+    let via_rust = Database::builder().build();
+    via_gql.session().execute("CREATE SCHEMA /equiv").unwrap();
+    via_gql
+        .session()
+        .execute("CREATE GRAPH TYPE /equiv/shape { NODE TYPE PersonType (:Person) }")
+        .unwrap_err();
+    via_gql
+        .session()
+        .execute("CREATE GRAPH TYPE /equiv/shape { NODE TYPE PersonType () }")
+        .unwrap();
+    let rust = via_rust.catalog();
+    rust.create_schema(&schema("equiv"), CreatePolicy::Strict)
+        .unwrap();
+    let rust_definition = crate::GraphTypeDefinition::builder()
+        .with_node_type(
+            crate::NodeTypeDefinition::new(
+                crate::PathSegment::regular("PersonType").unwrap(),
+                vec![crate::PathSegment::regular("PersonType").unwrap()],
+            )
+            .unwrap(),
+        )
+        .build()
+        .unwrap();
+    rust.create_graph_type(
+        &graph("equiv", "shape"),
+        rust_definition,
+        CreatePolicy::Strict,
+    )
+    .unwrap();
+
+    let gql_state = via_gql.catalog().inner.state.load_full();
+    let rust_state = rust.inner.state.load_full();
+    let gql_descriptor = gql_state
+        .catalog
+        .descriptors()
+        .find(|descriptor| descriptor.kind() == CatalogObjectKind::GraphType)
+        .unwrap();
+    let rust_descriptor = rust_state
+        .catalog
+        .descriptors()
+        .find(|descriptor| descriptor.kind() == CatalogObjectKind::GraphType)
+        .unwrap();
+    assert_eq!(gql_descriptor, rust_descriptor);
+    assert_eq!(gql_state.graph_types, rust_state.graph_types);
 }
 
 fn test_graph_type() -> crate::GraphTypeDefinition {
@@ -330,7 +423,19 @@ fn gql_catalog_statements_dispatch_outside_the_graph_request_lease() {
     };
     assert_eq!(session.execute("CREATE SCHEMA /lease").unwrap(), omitted);
     assert_eq!(
+        session
+            .execute("CREATE GRAPH TYPE /lease/shape { NODE TYPE Person () }")
+            .unwrap(),
+        omitted
+    );
+    assert_eq!(
         session.execute("CREATE GRAPH /lease/g ANY").unwrap(),
+        omitted
+    );
+    assert_eq!(
+        session
+            .execute("CREATE GRAPH /lease/typed_g TYPED /lease/shape")
+            .unwrap(),
         omitted
     );
     assert_eq!(session.execute("CREATE GRAPH h ANY").unwrap(), omitted);
@@ -339,7 +444,15 @@ fn gql_catalog_statements_dispatch_outside_the_graph_request_lease() {
         omitted
     );
     assert_eq!(session.execute("DROP GRAPH h").unwrap(), omitted);
+    assert_eq!(
+        session.execute("DROP GRAPH /lease/typed_g").unwrap(),
+        omitted
+    );
     assert_eq!(session.execute("DROP GRAPH /lease/g").unwrap(), omitted);
+    assert_eq!(
+        session.execute("DROP GRAPH TYPE /lease/shape").unwrap(),
+        omitted
+    );
     assert_eq!(session.execute("DROP SCHEMA /lease").unwrap(), omitted);
     assert!(matches!(
         session.execute("DROP GRAPH default").unwrap(),

@@ -1,4 +1,5 @@
-// corpus: negative
+// corpus: positive
 // feature: GG02
-// expects: parse-rejected(syntax)
+// also-covers: GC04
+// expects: parse-ok
 CREATE GRAPH demo TYPED socialNetworkGraphType

@@ -449,14 +449,39 @@ fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
         | DdlStatement::DropSchema {
             reference, span, ..
         }
-        | DdlStatement::CreateGraph {
+        | DdlStatement::DropGraph {
             reference, span, ..
         }
-        | DdlStatement::DropGraph {
+        | DdlStatement::DropGraphType {
             reference, span, ..
         } => {
             rebase_span(span, offset);
             rebase_span(&mut reference.span, offset);
+        }
+        DdlStatement::CreateGraph {
+            reference,
+            graph_type,
+            span,
+            ..
+        } => {
+            rebase_span(span, offset);
+            rebase_span(&mut reference.span, offset);
+            if let Some(graph_type) = graph_type {
+                rebase_span(&mut graph_type.span, offset);
+            }
+        }
+        DdlStatement::CreateGraphType {
+            reference,
+            definition,
+            span,
+            ..
+        } => {
+            rebase_span(span, offset);
+            rebase_span(&mut reference.span, offset);
+            rebase_span(&mut definition.span, offset);
+            for node_type in &mut definition.node_types {
+                rebase_span(&mut node_type.span, offset);
+            }
         }
         DdlStatement::DropNodeType { span, .. }
         | DdlStatement::DropEdgeType { span, .. }

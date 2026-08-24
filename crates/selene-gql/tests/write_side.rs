@@ -97,10 +97,12 @@ fn parse_finish_terminator() {
 
 #[test]
 fn parse_graph_ddl() {
-    // Open-graph management (GC04/GG01) parses; every closed-type clause is
-    // rejected with its owning feature (ISO section 12.4 CR4-CR7) and a
-    // missing type clause is a syntax error.
-    for source in ["CREATE GRAPH foo ANY", "CREATE GRAPH IF NOT EXISTS foo ANY"] {
+    for source in [
+        "CREATE GRAPH foo ANY",
+        "CREATE GRAPH IF NOT EXISTS foo ANY",
+        "CREATE GRAPH foo TYPED fooType",
+        "CREATE GRAPH foo ::fooType",
+    ] {
         let DdlStatement::CreateGraph {
             reference,
             if_not_exists,
@@ -113,8 +115,6 @@ fn parse_graph_ddl() {
         assert_eq!(if_not_exists, source.contains("IF NOT EXISTS"), "{source}");
     }
     for source in [
-        "CREATE GRAPH foo TYPED fooType",
-        "CREATE GRAPH foo ::fooType",
         "CREATE GRAPH /foo LIKE /bar",
         "CREATE GRAPH foo ANY AS COPY OF bar",
         "CREATE GRAPH foo {(Person :Person {name STRING})}",
