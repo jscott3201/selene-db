@@ -1997,6 +1997,7 @@ version = "2.0.0-alpha.1"
 dependencies = [
  "blake3",
  "proptest",
+ "selene-db",
  "selene-db-core",
  "selene-db-gql",
  "selene-db-graph",

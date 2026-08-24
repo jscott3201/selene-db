@@ -89,7 +89,16 @@ pub(super) enum ObservedStatus {
 #[serde(rename_all = "snake_case")]
 enum ObservedDimension {
     NotObserved,
+}
+
+/// Side-effect observation reported by an executable runner.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ObservedSideEffects {
+    /// The runner verified that no state was published.
     Forbidden,
+    /// The runner verified that the specified state was published.
+    Required,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -99,17 +108,24 @@ pub(super) struct Actual {
     result_type: ObservedDimension,
     nullability: ObservedDimension,
     ordering: ObservedDimension,
-    side_effects: ObservedDimension,
+    side_effects: ObservedSideEffects,
 }
 
 impl Actual {
+    /// A parser-only observation: nothing executed, so nothing mutated.
     pub(super) fn parser(status: ObservedStatus) -> Self {
+        Self::executed(status, ObservedSideEffects::Forbidden)
+    }
+
+    /// An observation from a runner that executed against a database and
+    /// checked the side-effect dimension itself.
+    pub(super) fn executed(status: ObservedStatus, side_effects: ObservedSideEffects) -> Self {
         Self {
             status,
             result_type: ObservedDimension::NotObserved,
             nullability: ObservedDimension::NotObserved,
             ordering: ObservedDimension::NotObserved,
-            side_effects: ObservedDimension::Forbidden,
+            side_effects,
         }
     }
 }
@@ -537,8 +553,13 @@ fn expectation_matches(expected: &EvidenceExpectation, actual: &Actual) -> bool 
             ExpectedOrder::NotApplicable | ExpectedOrder::Unspecified
         )
         && matches!(actual.ordering, ObservedDimension::NotObserved)
-        && matches!(expected.side_effects, ExpectedSideEffects::Forbidden)
-        && matches!(actual.side_effects, ObservedDimension::Forbidden)
+        && matches!(
+            (expected.side_effects, actual.side_effects),
+            (
+                ExpectedSideEffects::Forbidden,
+                ObservedSideEffects::Forbidden
+            ) | (ExpectedSideEffects::Required, ObservedSideEffects::Required)
+        )
 }
 
 fn validate_revision(revision: &str) -> Result<(), ConformanceError> {

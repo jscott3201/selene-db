@@ -42,21 +42,21 @@ fn checked_in_profile_loads_and_preserves_seed_contract() {
             .iter()
             .filter(|record| record.status == CapabilityStatus::Supported)
             .count(),
-        132
+        137
     );
     assert_eq!(
         capabilities()
             .iter()
             .filter(|record| record.status == CapabilityStatus::Unsupported)
             .count(),
-        43
+        39
     );
     assert_eq!(
         capabilities()
             .iter()
             .filter(|record| record.flagger_status == FlaggerStatus::Accepted)
             .count(),
-        143
+        147
     );
     assert_eq!(annex_b_records().count(), 117);
     assert_eq!(PROFILE_FORMAT_VERSION, 3);
@@ -64,8 +64,8 @@ fn checked_in_profile_loads_and_preserves_seed_contract() {
     assert_eq!(PROFILE_ID, "selene-gql-core-2.0");
     assert_eq!(RELEASE_CLAIMABLE, profile.profile().release_claimable);
     assert!(!profile.profile().release_claimable);
-    assert_eq!(DIRECT_SELECTED_FEATURES.len(), 132);
-    assert_eq!(TARGET_FEATURE_CLOSURE.len(), 138);
+    assert_eq!(DIRECT_SELECTED_FEATURES.len(), 136);
+    assert_eq!(TARGET_FEATURE_CLOSURE.len(), 141);
 
     assert!(
         profile
@@ -124,7 +124,7 @@ fn generated_runtime_records_cover_identity_status_relation_and_evidence() {
     assert_eq!(gp04.evidence_status, EvidenceStatus::Incomplete);
     assert_eq!(gp04.evidence_count, 0);
 
-    for id in ["GC04", "GV65"] {
+    for id in ["GV60", "GV65"] {
         assert_eq!(
             capability_by_id(id)
                 .expect("implied capability")
@@ -132,6 +132,10 @@ fn generated_runtime_records_cover_identity_status_relation_and_evidence() {
             ProfileRelation::Implied
         );
     }
+    let gc04 = capability_by_id("GC04").expect("GC04 capability");
+    assert_eq!(gc04.status, CapabilityStatus::Supported);
+    assert_eq!(gc04.profile_relation, ProfileRelation::Direct);
+    assert_eq!(gc04.flagger_status, FlaggerStatus::Accepted);
     assert_eq!(
         capability_by_id("GV65").expect("GV65 capability").status,
         CapabilityStatus::Referenced
@@ -158,7 +162,7 @@ fn generated_runtime_records_cover_identity_status_relation_and_evidence() {
     assert_eq!(json.claim_state, CapabilityClaimState::NotApplicable);
 
     for id in [
-        "GC03", "GE04", "GE05", "GH02", "GG01", "GG02", "GG20", "GG21", "GS04", "GV66", "GV67",
+        "GC03", "GE04", "GE05", "GH02", "GG02", "GG20", "GG21", "GS04", "GV66", "GV67",
     ] {
         let record = capability_by_id(id).expect("direct parser-visible capability");
         assert_eq!(record.status, CapabilityStatus::Unsupported, "{id}");
@@ -166,7 +170,7 @@ fn generated_runtime_records_cover_identity_status_relation_and_evidence() {
         assert_eq!(record.flagger_status, FlaggerStatus::Accepted, "{id}");
     }
 
-    for id in ["GC04", "GV65"] {
+    for id in ["GG03", "GG04", "GG05", "GV65"] {
         assert_eq!(
             capability_by_id(id)
                 .expect("implied capability")
@@ -522,8 +526,8 @@ fn markdown_generation_escapes_table_content() {
         .as_array_mut()
         .expect("features")
         .iter_mut()
-        .find(|item| item["id"] == "GC02")
-        .expect("GC02 is present");
+        .find(|item| item["id"] == "GC03")
+        .expect("GC03 is present");
     feature["unsupported_rationale"] = json!("use <name> & left | right");
 
     let profile = parse_value(&value).expect("fixture validates");

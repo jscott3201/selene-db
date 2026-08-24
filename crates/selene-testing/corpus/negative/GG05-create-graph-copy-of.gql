@@ -1,0 +1,4 @@
+// corpus: negative
+// feature: GG05
+// expects: parse-rejected(GG05)
+CREATE GRAPH demo ANY AS COPY OF source

@@ -31,7 +31,7 @@ fn checked_in_seed_pins_static_boundary_and_pending_ownership() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let registry = load_conformance(&root, &profile).expect("static registries validate");
     assert_eq!(registry.rules().rules.len(), 9);
-    assert_eq!(registry.evidence().evidence.len(), 4);
+    assert_eq!(registry.evidence().evidence.len(), 5);
     assert_eq!(
         registry.rules().inventory_state,
         InventoryState::SeededIncomplete
@@ -40,10 +40,10 @@ fn checked_in_seed_pins_static_boundary_and_pending_ownership() {
         expected_count,
         feature_ids_hash,
     } = &registry.rules().target;
-    assert_eq!(*expected_count, 138);
+    assert_eq!(*expected_count, 141);
     assert_eq!(
         feature_ids_hash,
-        "bc4b60531a0d6a0f7e04dbad55bdd5ea7ed681b9029aa5204212f63496363cda"
+        "b0808ed0e8bce27025cfab37c2038eadafdac1523513bf4e8f9bc416a4e698ea"
     );
     assert_eq!(
         registry
@@ -89,11 +89,11 @@ fn checked_in_seed_pins_static_boundary_and_pending_ownership() {
     assert_eq!(registry.evidence().rules_hash, registry.rules_hash());
     assert_eq!(
         registry.rules_hash(),
-        "6cb431ead227a47b778548f0bd75931434c589b9adb3809dc8f6ddcbcf16ff47"
+        "e0f287892538fc4542c728fe4efbc82a3d528642f4b46b29a1df0b0142478d77"
     );
     assert_eq!(
         registry.evidence_hash(),
-        "5ee61578e8bd46f704560a3bce1f7787ce85a2520cfa5d83586538841eba9b6c"
+        "409761dc867576999e5e8ee08d060da59d5aeb7d2af3d3816e0fda064740323f"
     );
     assert!(!profile.profile().release_claimable);
 
@@ -114,12 +114,16 @@ fn checked_in_seed_pins_static_boundary_and_pending_ownership() {
             .iter()
             .find(|item| item.id.as_str() == record.id)
             .expect("profile evidence authority");
-        assert_eq!(
-            authority.reference,
+        // GC04 evidence is executable and points at its compiled runners;
+        // the G010 and inventory records keep their M01-PR06 planning anchor.
+        let expected_reference = if record.id.starts_with("EVID-CONFORMANCE-GC04-") {
+            "crates/selene-testing/src/conformance/mod.rs"
+        } else {
             "docs/v2/roadmap/work-items-00-04.md#m01-pr06"
-        );
+        };
+        assert_eq!(authority.reference, expected_reference, "{}", record.id);
     }
-    assert_eq!(registered, 3);
+    assert_eq!(registered, 4);
     assert_eq!(pending, 1);
 }
 
@@ -263,7 +267,7 @@ fn stale_boundary_hash_and_contradictory_dispositions_fail() {
     }
 
     let (rules, mut evidence) = sources();
-    evidence["evidence"][2]["expected"]["status"]["gqlstatus"] = json!("42n01");
+    evidence["evidence"][3]["expected"]["status"]["gqlstatus"] = json!("42n01");
     assert!(
         parse(&rules, &evidence)
             .unwrap_err()
@@ -276,7 +280,7 @@ fn stale_boundary_hash_and_contradictory_dispositions_fail() {
         "disposition":"pending", "owner_pr":"M10-PR05", "reason":"test"
     });
     evidence["evidence"][2]["targets"] = evidence["evidence"][1]["targets"].clone();
-    evidence["evidence"][2]["expected"]["status"] = json!({"kind":"error"});
+    evidence["evidence"][2]["expected"] = evidence["evidence"][1]["expected"].clone();
     assert!(
         parse(&rules, &evidence)
             .unwrap_err()
@@ -291,7 +295,7 @@ fn stale_boundary_hash_and_contradictory_dispositions_fail() {
             "complete without",
         ),
         (
-            3,
+            4,
             json!("REG-INVENTORY"),
             json!({"disposition":"pending","owner_pr":"M10-PR05","reason":"test"}),
             "pending but has",
