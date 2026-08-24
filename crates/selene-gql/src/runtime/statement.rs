@@ -1,6 +1,11 @@
 //! Top-level statement executor.
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    mem,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
+    sync::Arc,
+    time::Instant,
+};
 
 use selene_core::{Change, metrics};
 use selene_graph::CommitOutcome;
@@ -191,19 +196,34 @@ impl Session<'_> {
         registry: &dyn ProcedureRegistry,
         request: RequestExecutionInput,
     ) -> Result<CatalogSessionOutput, ExecutorError> {
-        self.scalar_parameters = request
+        let scalar_parameters: std::collections::BTreeMap<_, _> = request
             .parameters
             .iter()
             .map(|(name, parameter)| (name.clone(), parameter.value().clone()))
             .collect();
-        self.parameters = self
-            .scalar_parameters
+        let parameters = scalar_parameters
             .iter()
             .map(|(name, value)| (name.clone(), SessionParameterValue::Scalar(value.clone())))
             .collect();
-        self.time_zone = Some(request.time_zone.clone());
-        self.request = Some(request);
-        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::CatalogSession)
+        let request_time_zone = request.time_zone.clone();
+        let prior_parameters = mem::replace(&mut self.parameters, parameters);
+        let prior_scalar_parameters = mem::replace(&mut self.scalar_parameters, scalar_parameters);
+        let prior_time_zone = self.time_zone.replace(request_time_zone);
+        let prior_request = self.request.replace(request);
+
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            self.execute_source_with_policy(source, registry, SourceExecutionPolicy::CatalogSession)
+        }));
+
+        self.parameters = prior_parameters;
+        self.scalar_parameters = prior_scalar_parameters;
+        self.time_zone = prior_time_zone;
+        self.request = prior_request;
+
+        match outcome {
+            Ok(result) => result,
+            Err(payload) => resume_unwind(payload),
+        }
     }
 
     fn execute_source_with_policy(
@@ -342,8 +362,18 @@ impl Session<'_> {
             ExecutorError::Analysis { source }
         })?;
         if let Some(request) = &self.request {
-            let snapshot = self.graph().read();
-            request::validate(request, &analyzed.parameters, &snapshot)?;
+            let validation = if let Some(txn) = self.active_txn.as_ref() {
+                request::validate(request, &analyzed.parameters, txn.read())
+            } else {
+                let snapshot = self.graph().read();
+                request::validate(request, &analyzed.parameters, &snapshot)
+            };
+            if let Err(error) = validation {
+                if self.active_txn.is_some() {
+                    self.aborted = true;
+                }
+                return Err(error);
+            }
         }
         let lowered = build_plan(&analyzed, registry, &self.caps).map_err(|source| {
             if self.active_txn.is_some() {

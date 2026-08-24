@@ -375,14 +375,17 @@ fn write_output_from_commit(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::{
+        collections::BTreeMap,
+        panic::{AssertUnwindSafe, catch_unwind},
+    };
 
     use selene_core::{GraphId, NodeId, Value, db_string};
     use selene_graph::SharedGraph;
 
     use crate::{
         EmptyProcedureRegistry, GqlType,
-        runtime::{RequestExecutionInput, RequestParameter, Session},
+        runtime::{RequestExecutionInput, RequestParameter, Session, StatementOutput},
     };
 
     fn seed_live_node(graph: &SharedGraph) {
@@ -396,6 +399,17 @@ mod tests {
             BTreeMap::from([(
                 db_string("value").unwrap(),
                 RequestParameter::new(GqlType::NodeRef, Value::NodeRef(NodeId::new(1))),
+            )]),
+            jiff::Timestamp::new(1_788_692_096, 0).unwrap(),
+            jiff::tz::TimeZone::UTC,
+        )
+    }
+
+    fn integer_request() -> RequestExecutionInput {
+        RequestExecutionInput::new(
+            BTreeMap::from([(
+                db_string("request_only").unwrap(),
+                RequestParameter::new(GqlType::Integer, Value::Int(11)),
             )]),
             jiff::Timestamp::new(1_788_692_096, 0).unwrap(),
             jiff::tz::TimeZone::UTC,
@@ -480,5 +494,43 @@ mod tests {
         let after = graph.read();
         assert_eq!(after.meta.generation, generation);
         assert_eq!(after.node_count(), 1);
+    }
+
+    #[test]
+    fn request_fields_restore_before_panic_resumes() {
+        let graph = SharedGraph::new(GraphId::new(81_104));
+        let mut session = Session::new(&graph);
+        session.bind_parameter(db_string("prior").unwrap(), Value::Int(7));
+        session
+            .execute_source("SESSION SET TIME ZONE '+03:00'", &EmptyProcedureRegistry)
+            .unwrap();
+        let mut session = session.with_before_statement_execution(|| {
+            panic!("injected request execution panic");
+        });
+
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            let _ = session.execute_source_catalog_request(
+                "RETURN $request_only",
+                &EmptyProcedureRegistry,
+                integer_request(),
+            );
+        }));
+        assert!(panic.is_err());
+
+        let output = session
+            .execute_source("RETURN $prior, CURRENT_TIMESTAMP", &EmptyProcedureRegistry)
+            .unwrap();
+        let StatementOutput::Rows(table) = output else {
+            panic!("expected row output");
+        };
+        assert_eq!(table.rows()[0].values().first(), Some(&Value::Int(7)));
+        let Some(Value::ZonedDateTime(current)) = table.rows()[0].values().get(1) else {
+            panic!("expected zoned current timestamp");
+        };
+        assert_eq!(current.offset().seconds(), 3 * 3_600);
+        let leaked = session
+            .execute_source("RETURN $request_only", &EmptyProcedureRegistry)
+            .unwrap_err();
+        assert_eq!(leaked.gqlstatus().as_str(), "22G03");
     }
 }

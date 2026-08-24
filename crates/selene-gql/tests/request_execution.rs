@@ -45,6 +45,14 @@ fn values(output: CatalogSessionOutput) -> Vec<Value> {
     table.rows()[0].values().to_vec()
 }
 
+fn statement_values(output: StatementOutput) -> Vec<Value> {
+    let StatementOutput::Rows(table) = output else {
+        panic!("expected row output");
+    };
+    assert_eq!(table.row_count(), 1);
+    table.rows()[0].values().to_vec()
+}
+
 #[test]
 fn parameter_name_helper_is_equivalent_to_source_grammar() {
     for name in ["value", "_2", "RETURN", "Δείγμα", "变量2"] {
@@ -294,4 +302,168 @@ fn explicit_requests_bypass_plan_caches_that_omit_the_parameter_contract() {
         .unwrap_err();
     assert_eq!(error.gqlstatus().as_str(), "22G03");
     assert_eq!(cache.stats(), Default::default());
+}
+
+#[test]
+fn request_fields_are_scoped_over_prior_parameters_and_time_zone() {
+    let graph = SharedGraph::new(GraphId::new(8105));
+    let timestamp = jiff::Timestamp::new(1_788_692_096, 0).unwrap();
+    let request_zone =
+        jiff::tz::TimeZone::fixed(jiff::tz::Offset::from_seconds(9 * 3_600).unwrap());
+    let mut session = Session::new(&graph);
+    session.bind_parameter(parameter_name("prior"), Value::Int(7));
+    session
+        .execute_source("SESSION SET TIME ZONE '+01:00'", &EmptyProcedureRegistry)
+        .unwrap();
+
+    let request_output = session
+        .execute_source_catalog_request(
+            "RETURN $prior, $request_only, CURRENT_TIMESTAMP",
+            &EmptyProcedureRegistry,
+            input(
+                [
+                    (
+                        "prior",
+                        RequestParameter::new(GqlType::Integer, Value::Int(99)),
+                    ),
+                    (
+                        "request_only",
+                        RequestParameter::new(GqlType::Integer, Value::Int(11)),
+                    ),
+                ],
+                timestamp,
+                request_zone.clone(),
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        values(request_output),
+        vec![
+            Value::Int(99),
+            Value::Int(11),
+            Value::ZonedDateTime(Box::new(timestamp.to_zoned(request_zone))),
+        ]
+    );
+
+    let ordinary = statement_values(
+        session
+            .execute_source("RETURN $prior, CURRENT_TIMESTAMP", &EmptyProcedureRegistry)
+            .unwrap(),
+    );
+    assert_eq!(ordinary[0], Value::Int(7));
+    let Value::ZonedDateTime(current) = &ordinary[1] else {
+        panic!("expected zoned current timestamp");
+    };
+    assert_eq!(current.offset().seconds(), 3_600);
+    let leaked = session
+        .execute_source("RETURN $request_only", &EmptyProcedureRegistry)
+        .unwrap_err();
+    assert_eq!(leaked.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
+fn request_fields_restore_after_returned_error() {
+    let graph = SharedGraph::new(GraphId::new(8106));
+    let timestamp = jiff::Timestamp::new(1_788_692_096, 0).unwrap();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(parameter_name("prior"), Value::Int(7));
+    session
+        .execute_source("SESSION SET TIME ZONE '+02:00'", &EmptyProcedureRegistry)
+        .unwrap();
+
+    let error = session
+        .execute_source_catalog_request(
+            "RETURN 1 / 0",
+            &EmptyProcedureRegistry,
+            input(
+                [(
+                    "request_only",
+                    RequestParameter::new(GqlType::Integer, Value::Int(11)),
+                )],
+                timestamp,
+                jiff::tz::TimeZone::UTC,
+            ),
+        )
+        .unwrap_err();
+    assert_eq!(error.gqlstatus().as_str(), "22012");
+
+    let ordinary = statement_values(
+        session
+            .execute_source("RETURN $prior, CURRENT_TIMESTAMP", &EmptyProcedureRegistry)
+            .unwrap(),
+    );
+    assert_eq!(ordinary[0], Value::Int(7));
+    let Value::ZonedDateTime(current) = &ordinary[1] else {
+        panic!("expected zoned current timestamp");
+    };
+    assert_eq!(current.offset().seconds(), 2 * 3_600);
+    let leaked = session
+        .execute_source("RETURN $request_only", &EmptyProcedureRegistry)
+        .unwrap_err();
+    assert_eq!(leaked.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
+fn ordinary_execution_uses_plan_cache_after_scoped_request() {
+    let graph = SharedGraph::new(GraphId::new(8107));
+    let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).expect("nonzero"));
+    session
+        .execute_source_catalog_request(
+            "RETURN 1",
+            &EmptyProcedureRegistry,
+            input(
+                [],
+                jiff::Timestamp::new(1_788_692_096, 0).unwrap(),
+                jiff::tz::TimeZone::UTC,
+            ),
+        )
+        .unwrap();
+    assert_eq!(session.plan_cache_stats().unwrap(), Default::default());
+
+    session
+        .execute_source("RETURN 1", &EmptyProcedureRegistry)
+        .unwrap();
+    session
+        .execute_source("RETURN 1", &EmptyProcedureRegistry)
+        .unwrap();
+    let stats = session.plan_cache_stats().unwrap();
+    assert_eq!(stats.misses, 1);
+    assert_eq!(stats.hits, 1);
+}
+
+#[test]
+fn transaction_local_reference_passes_preflight_without_publication() {
+    let graph = SharedGraph::new(GraphId::new(8108));
+    let generation = graph.read().meta.generation;
+    let mut session = Session::new(&graph);
+    session.start_transaction().unwrap();
+    session
+        .execute_source("INSERT (:Pending) FINISH", &EmptyProcedureRegistry)
+        .unwrap();
+
+    let output = session
+        .execute_source_catalog_request(
+            "RETURN $value",
+            &EmptyProcedureRegistry,
+            input(
+                [(
+                    "value",
+                    RequestParameter::new(
+                        GqlType::NodeRef,
+                        Value::NodeRef(selene_core::NodeId::new(1)),
+                    ),
+                )],
+                jiff::Timestamp::new(1_788_692_096, 0).unwrap(),
+                jiff::tz::TimeZone::UTC,
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        values(output),
+        vec![Value::NodeRef(selene_core::NodeId::new(1))]
+    );
+    session.rollback_transaction().unwrap();
+    let published = graph.read();
+    assert_eq!(published.meta.generation, generation);
+    assert_eq!(published.node_count(), 0);
 }
