@@ -75,23 +75,17 @@ fn graph_management_records_open_and_named_closed_type_forms() {
 }
 
 #[test]
-fn drop_graph_stamps_gc04_and_the_bridge_extension() {
-    // DROP GRAPH is ISO GC04 (+GC05 with IF EXISTS). IM_DROP_GRAPH stays
-    // stamped while the compatibility session may execute the statement as
-    // the bootstrap factory reset; M02-PR05 removes the bridge and the stamp.
+fn drop_graph_stamps_only_gc04_and_the_conditional_feature() {
     let ids = |source: &str| {
         feature_walk(&parse(source).expect(source))
             .into_iter()
             .map(|feature| feature.feature_id)
             .collect::<Vec<_>>()
     };
-    assert_eq!(
-        ids("DROP GRAPH demo"),
-        [FeatureId::GC04, FeatureId::IM_DROP_GRAPH]
-    );
+    assert_eq!(ids("DROP GRAPH demo"), [FeatureId::GC04]);
     assert_eq!(
         ids("DROP GRAPH IF EXISTS demo"),
-        [FeatureId::GC04, FeatureId::GC05, FeatureId::IM_DROP_GRAPH]
+        [FeatureId::GC04, FeatureId::GC05]
     );
 }
 

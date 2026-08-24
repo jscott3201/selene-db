@@ -302,7 +302,7 @@ fn direct_target_and_surviving_compatibility_order_preserve_m01_pr01() {
     let expected_survivors = base
         .iter()
         .copied()
-        .filter(|id| !downgraded.contains(id))
+        .filter(|id| !downgraded.contains(id) && *id != "IM_DROP_GRAPH")
         .collect::<Vec<_>>();
     assert_eq!(
         profile

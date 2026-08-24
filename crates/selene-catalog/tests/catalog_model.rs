@@ -4,10 +4,9 @@ use proptest::prelude::*;
 use selene_catalog::{
     BindingTableId, CatalogDescriptor, CatalogError, CatalogGeneration, CatalogId, CatalogName,
     CatalogObjectId, CatalogObjectKind, CatalogParent, CatalogPayload, CatalogSnapshotBuilder,
-    CatalogTransaction, ConstraintId, CoreGraphTypeBridge, CreationMetadata, DirectoryId, GraphId,
-    GraphTypeId, IndexId, ProcedureId, SchemaId,
+    CatalogTransaction, ConstraintId, CreationMetadata, DirectoryId, GraphId, GraphTypeId, IndexId,
+    ProcedureId, SchemaId,
 };
-use selene_core::GraphTypeId as CoreGraphTypeId;
 
 fn generation(raw: u64) -> CatalogGeneration {
     CatalogGeneration::new(raw).expect("test generation is nonzero")
@@ -341,14 +340,12 @@ fn descriptor_validation_checks_kind_payload_parent_and_user_names() {
 
 #[test]
 fn descriptors_round_trip_without_collapsing_identity_generation_or_display() {
-    let core_bridge = CoreGraphTypeBridge::new(CoreGraphTypeId::new(41).unwrap());
     let descriptor = CatalogDescriptor::graph_type(
         GraphTypeId::new(5).unwrap(),
         CatalogName::regular("Cafe\u{301}").unwrap(),
         SchemaId::new(3).unwrap(),
         generation(4),
         CreationMetadata::new(generation(2), Some("owner-a".to_owned())),
-        Some(core_bridge),
     )
     .unwrap();
     let json = serde_json::to_string(&descriptor).unwrap();
@@ -365,7 +362,6 @@ fn descriptors_round_trip_without_collapsing_identity_generation_or_display() {
         SchemaId::new(3).unwrap(),
         generation(4),
         CreationMetadata::new(generation(2), Some("owner-a".to_owned())),
-        Some(core_bridge),
     )
     .unwrap();
     assert_eq!(descriptor.name(), canonical_display.name());
@@ -378,7 +374,6 @@ fn descriptors_round_trip_without_collapsing_identity_generation_or_display() {
         SchemaId::new(3).unwrap(),
         generation(5),
         CreationMetadata::new(generation(2), Some("owner-a".to_owned())),
-        Some(core_bridge),
     )
     .unwrap();
     assert_ne!(descriptor, newer);
@@ -483,7 +478,6 @@ fn snapshot_validates_parents_payload_references_and_flat_root() {
                 SchemaId::new(1).unwrap(),
                 generation(1),
                 creation(1),
-                None,
             )
             .unwrap(),
         )

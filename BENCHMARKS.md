@@ -161,8 +161,9 @@ allocator metadata, `BTreeMap` node slack, and `Arc` control blocks.
 
 Bench bin: `catalog_lifecycle`. The quick profile measures absolute schema
 resolve, deterministic schema listing, outer snapshot clone, schema
-create/drop publication at 16 and 256 user schemas, and named graph open at 4
-and 32 registered graphs. The full profile adds 1,024 schemas and 128 graphs.
+create/drop publication at 16 and 256 user schemas, and selected session
+creation at 4 and 32 registered graphs. The full profile adds 1,024 schemas and
+128 graphs.
 The create and drop rows time only the named operation; the inverse operation
 restores the fixture outside the returned Criterion duration.
 
@@ -184,13 +185,28 @@ recorded baselines, not regression thresholds.
 | `catalog_lifecycle/read/clone_outer_snapshot` | 3.8280–4.1036 ns (16 schemas) | 3.8296–3.8889 ns (256 schemas) |
 | `catalog_lifecycle/outer_snapshot_publication/create_schema` | 3.0397–3.1255 µs (16 schemas) | 68.633–71.906 µs (256 schemas) |
 | `catalog_lifecycle/outer_snapshot_publication/drop_schema` | 3.0956–3.3848 µs (16 schemas) | 67.853–70.335 µs (256 schemas) |
-| `catalog_lifecycle/graph_selection/open_graph` | 116.55–135.69 ns (4 graphs) | 141.25–151.78 ns (32 graphs) |
+| prior named graph-open row (removed) | 116.55–135.69 ns (4 graphs) | 141.25–151.78 ns (32 graphs) |
+
+M02-PR05 selected-session evidence was recorded on 2026-08-24 on the same
+Apple M5 host with the worktree based on
+`cc740b8ba3d3f4c4a70957c3b83e4fe4701f3532`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle
+```
+
+The renamed row resolves the graph and constructs its stable-ID facade session.
+This is one 10-sample quick run, not a regression threshold.
+
+| Bench | 4 graphs | 32 graphs |
+|---|---:|---:|
+| `catalog_lifecycle/session_creation/resolve_graph` | 133.50–135.44 ns | 158.60–160.89 ns |
 
 #### M02-PR04 part 1 quick evidence
 
 The `catalog_lifecycle/gql_ddl` group issues the same schema and graph
-lifecycle commands as GQL database-catalog statements through the
-compatibility `Session`, at the same schema scales as the Rust-API publication
+lifecycle commands as GQL database-catalog statements through a selected
+facade `Session`, at the same schema scales as the Rust-API publication
 rows. Timed rows cover only the GQL statement; the inverse operation restores
 the fixture through the Rust API outside the returned duration. The
 `create_or_replace_graph_gql` row replaces the fixture graph on every

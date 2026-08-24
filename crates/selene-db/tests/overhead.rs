@@ -3,7 +3,7 @@
 use std::{hint::black_box, time::Instant};
 
 use selene_core::GraphId;
-use selene_db::Database;
+use selene_db::{CreatePolicy, Database, ObjectPath, SchemaPath};
 use selene_gql::{BuiltinProcedureRegistry, Session as LowerSession};
 use selene_graph::SharedGraph;
 
@@ -21,10 +21,19 @@ fn compare_facade_with_direct_lower_session() {
     let direct_graph = SharedGraph::new(GraphId::new(77));
     let direct_registry = BuiltinProcedureRegistry::new();
     let facade_database = Database::builder().build();
+    let schema = SchemaPath::regular("selene", "bench").unwrap();
+    let graph = ObjectPath::regular("selene", "bench", "main").unwrap();
+    let catalog = facade_database.catalog();
+    catalog
+        .create_schema(&schema, CreatePolicy::Strict)
+        .unwrap();
+    catalog
+        .create_graph(&graph, None, CreatePolicy::Strict)
+        .unwrap();
 
     for _ in 0..WARMUP_ITERATIONS {
         run_direct(&direct_graph, &direct_registry);
-        run_facade(&facade_database);
+        run_facade(&facade_database, &graph);
     }
 
     let direct_started = Instant::now();
@@ -35,7 +44,7 @@ fn compare_facade_with_direct_lower_session() {
 
     let facade_started = Instant::now();
     for _ in 0..MEASURED_ITERATIONS {
-        run_facade(&facade_database);
+        run_facade(&facade_database, &graph);
     }
     let facade = facade_started.elapsed();
 
@@ -59,8 +68,8 @@ fn run_direct(graph: &SharedGraph, registry: &BuiltinProcedureRegistry) {
     );
 }
 
-fn run_facade(database: &Database) {
-    let session = database.session();
+fn run_facade(database: &Database, graph: &ObjectPath) {
+    let session = database.session(graph).unwrap();
     black_box(
         session
             .execute(black_box(QUERY))

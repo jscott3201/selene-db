@@ -1,8 +1,8 @@
 # GQL reference
 
-This document is the query-author's reference for the GQL surface that
-selene-db exposes. It assumes you have read the README quickstart and can
-build a `SharedGraph` plus an `EmptyProcedureRegistry`.
+This document is the query-author's reference for the GQL surface exposed by
+the `selene-db` facade. It assumes you have read the README quickstart and have
+a selected facade session.
 
 The current engine implements selected ISO/IEC 39075:2024 GQL syntax and
 semantics plus namespaced extensions. It does not make a blanket minimum- or
@@ -18,25 +18,27 @@ durability and recovery see
 graph algorithms exposed via `CALL algo.*` see
 [`graph-algorithms.md`](graph-algorithms.md).
 
-The Rust API used in every example below is:
+The ordinary Rust entry point is:
 
 ```rust
-use selene_gql::{
-    EmptyProcedureRegistry, StatementOutput, analyze, execute_statement, parse, plan,
-};
-use selene_graph::SharedGraph;
+use selene_db::{CreatePolicy, Database, ObjectPath, SchemaPath};
 
-let registry = EmptyProcedureRegistry;
-let statement = parse(source)?;
-let analyzed = analyze(statement, &registry, None)?;
-let planned = plan(&analyzed, &registry)?;
-let mut session = selene_gql::Session::new(&graph);
-let output = execute_statement(&planned, &mut session, &registry)?;
+let database = Database::builder().build();
+let schema = SchemaPath::regular("selene", "memory")?;
+database
+    .catalog()
+    .create_schema(&schema, CreatePolicy::Strict)?;
+let graph = ObjectPath::regular("selene", "memory", "main")?;
+database
+    .catalog()
+    .create_graph(&graph, None, CreatePolicy::Strict)?;
+let session = database.session(&graph)?;
+let output = session.execute(source)?;
 ```
 
-The `optimize` pass is included internally by `plan`'s lowering pipeline;
-callers who want manual control can call `optimize(plan, &OptimizeContext)`
-between `plan` and `execute_statement`.
+Each call parses, analyzes, plans, and executes the source against the selected
+graph. Catalog statements are dispatched through the same database catalog
+service used by the Rust lifecycle API.
 
 ---
 
@@ -55,7 +57,7 @@ row, not formal conformance status.
 | Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
 | DDL (`CREATE/DROP SCHEMA`, `CREATE/DROP GRAPH`, `CREATE/DROP GRAPH TYPE`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | Schema/graph management and a bounded named closed-graph path execute through the `selene-db` catalog service. The graph-type source accepts property-free named node types with implied singleton labels. Complete GC03/GG02/GG20/GG21 support remains unsupported: properties, edges/endpoints, explicit key labels, COPY OF/LIKE/external sources, and inline graph types are absent. Both additive `ALTER` forms are implementation-defined surfaces. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries are runtime-supported as `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
-| Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not runtime-supported. |
+| Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Lower engine only | Feature `GT01` is implemented by the lower executor. Facade sessions reject stateful controls until M03 owns transaction state. Multi-graph transactions (`GT03`) are not runtime-supported. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are runtime-supported (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
 
@@ -583,8 +585,7 @@ mandatory and a bare name is a syntax error (`42001`). The facade catalog has
 one root directory with no child directories, so `/a/b` is an invalid reference
 (`42002`). Both statements complete with the omitted-result condition `00001`;
 the `IF [NOT] EXISTS` no-ops are silent and publish nothing. Dropping a schema
-that still contains objects is a dependent-object error (`G1000`); dropping the
-bootstrap schema `/public` is an access-rule violation (`42000`).
+that still contains objects is a dependent-object error (`G1000`).
 
 ### `CREATE GRAPH` / `DROP GRAPH`
 
@@ -598,8 +599,8 @@ DROP PROPERTY GRAPH IF EXISTS scratch
 ```
 
 A graph reference is either absolute (`/schema/graph`) or a single name
-resolved against the current working schema, which the compatibility session
-fixes to `/selene/public` (§17.2 SR2a). The graph type clause is mandatory in
+resolved against the selected session graph's schema (§17.2 SR2a). The graph
+type clause is mandatory in
 ISO §12.4. The executable forms are the `<open graph type>` (`[TYPED | ::] ANY
 [[PROPERTY] GRAPH]`, feature GG01) and `[TYPED | ::] <graph type reference>`
 for a named closed graph. The graph and type must belong to the same schema.
@@ -615,19 +616,15 @@ duplicate is `42N10`; a missing graph, missing schema, or wrong-kind object is
 `CREATE OR REPLACE GRAPH` (§12.4 GR2) drops an existing graph at the reference
 and creates the new one in a single catalog publication; the statement
 completes with `00001` whether the graph was created or replaced, and the
-replacement always has a new graph identity, so handles opened on the old graph
+replacement always has a new graph identity, so sessions opened on the old graph
 fail as stale. The effective drop is RESTRICT: a nonempty graph is `G1000`. An
 object of another kind at the reference is `42002`. `OR REPLACE` and
 `IF NOT EXISTS` are alternatives in the ISO format, so writing both is a syntax
-error. The protected bootstrap graph `/selene/public/default` cannot be
-replaced (`42000`); only `DROP GRAPH` takes the factory-reset bridge below.
-
-A `DROP GRAPH` whose reference resolves to the protected bootstrap graph
-`/selene/public/default` still performs the implementation-defined
-`IM_DROP_GRAPH` factory reset of that graph instead of removing it; M02-PR05
-removes this bridge together with the bootstrap catalog. Through a named
-`GraphHandle`, every catalog statement is rejected with `42N01`; use the facade
-`Session` or the Rust `Catalog` API.
+error. Dropping the selected graph is allowed when it is empty and makes the
+session stale. A nonempty selected graph still fails under RESTRICT. Bare lower
+executor sessions reject all database-catalog statements with the
+implementation-defined status `5GQL0`; use a facade session or the Rust
+`Catalog` API.
 
 ### `CREATE GRAPH TYPE` / `DROP GRAPH TYPE`
 
@@ -875,9 +872,12 @@ via `Arc`. There are no loadable third-party packs to register.
 
 ---
 
-## 9. Transaction control
+## 9. Transaction control (advanced lower engine)
 
-selene-db's default isolation is **serializable** (clause 4.6); the engine
+The facade does not yet retain explicit transaction state and rejects these
+controls. The lower executor implements them for advanced engine use.
+
+The lower engine's default isolation is **serializable** (clause 4.6); it
 uses strict-serializable under a single write lock per graph with
 lock-free reads. Generated Annex B records `IE002` and `IE004` settle this;
 `selene_profile::annex_b_by_id` provides direct lookup.
@@ -897,7 +897,7 @@ COMMIT
 ROLLBACK
 ```
 
-Inside an explicit transaction, multiple statements share one snapshot
+Inside an explicit lower-engine transaction, multiple statements share one snapshot
 and one write boundary. A failed statement marks the transaction aborted;
 subsequent statements (other than `ROLLBACK`) return
 `ExecutorError::InFailedTransaction`.

@@ -163,14 +163,19 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
     }
     publication.finish();
 
-    // GQL database-catalog DDL through the compatibility session at the same
-    // schema scales as the Rust-API publication rows, so the parse/resolve
-    // overhead of the router is directly comparable.
+    // GQL database-catalog DDL through a selected fixture graph at the same
+    // schema scales as the Rust-API publication rows.
     let mut gql = c.benchmark_group("catalog_lifecycle/gql_ddl");
     for &scale in catalog_scales() {
         let database = catalog_fixture(scale);
         let catalog = database.catalog();
-        let session = database.session();
+        let session_path = graph("schema_00000", "catalog_session");
+        catalog
+            .create_graph(&session_path, None, CreatePolicy::Strict)
+            .expect("selected-session fixture graph creation succeeds");
+        let session = database
+            .session(&session_path)
+            .expect("selected-session fixture resolves");
         let schema_target = schema("gql_target");
         let graph_target = graph("gql_target", "g");
         let graph_type_target = graph("gql_target", "shape");
@@ -319,16 +324,15 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
     }
     gql.finish();
 
-    let mut selection = c.benchmark_group("catalog_lifecycle/graph_selection");
+    let mut selection = c.benchmark_group("catalog_lifecycle/session_creation");
     for &scale in graph_scales() {
         let database = graph_fixture(scale);
-        let catalog = database.catalog();
         let target = graph("graphs", format!("graph_{:05}", scale / 2));
-        selection.bench_with_input(BenchmarkId::new("open_graph", scale), &scale, |b, _| {
+        selection.bench_with_input(BenchmarkId::new("resolve_graph", scale), &scale, |b, _| {
             b.iter(|| {
                 black_box(
-                    black_box(&catalog)
-                        .open_graph(black_box(&target))
+                    black_box(&database)
+                        .session(black_box(&target))
                         .expect("benchmark graph exists"),
                 )
             });

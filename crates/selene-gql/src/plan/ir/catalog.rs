@@ -16,9 +16,7 @@ pub enum CatalogOp {
     ///
     /// The graph-local executor cannot honor these: the database facade
     /// intercepts the plan before execution and dispatches the command to the
-    /// catalog service. A bare lower session reports a structured error, except
-    /// for `DROP GRAPH`, which it still executes as the `IM_DROP_GRAPH`
-    /// factory reset of its single bound graph.
+    /// catalog service. A bare lower session reports a structured error.
     DatabaseCatalog(DatabaseCatalogCommand),
     /// Create a node type.
     CreateNodeType {

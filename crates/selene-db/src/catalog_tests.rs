@@ -13,7 +13,7 @@ use selene_catalog::{CatalogObjectId, CatalogObjectKind, GraphId as LowerGraphId
 use super::*;
 use crate::{
     CreatePolicy, Database, DropPolicy, ErrorKind, ExecutionOutcome, GqlStatus, ObjectPath,
-    SchemaPath,
+    SchemaPath, database::HighWaterMarks,
 };
 
 fn schema(name: &str) -> SchemaPath {
@@ -22,6 +22,18 @@ fn schema(name: &str) -> SchemaPath {
 
 fn graph(schema: &str, name: &str) -> ObjectPath {
     ObjectPath::regular("selene", schema, name).unwrap()
+}
+
+fn catalog_session(database: &Database) -> crate::Session {
+    let catalog = database.catalog();
+    let path = graph("session_schema", "session_graph");
+    catalog
+        .create_schema(&schema("session_schema"), CreatePolicy::Strict)
+        .unwrap();
+    catalog
+        .create_graph(&path, None, CreatePolicy::Strict)
+        .unwrap();
+    database.session(&path).unwrap()
 }
 
 fn assert_outer_complete(state: &DatabaseState) {
@@ -72,6 +84,25 @@ fn assert_failure_preserves_outer_state<T: std::fmt::Debug>(
     assert_eq!(before.graph_types.len(), after.graph_types.len());
     assert_eq!(before.high_water, after.high_water);
     assert_outer_complete(&after);
+}
+
+#[test]
+fn database_starts_with_only_catalog_root_and_empty_runtime_maps() {
+    let database = Database::builder().build();
+    let state = database.catalog().inner.state.load_full();
+
+    assert_eq!(state.catalog.descriptors().count(), 2);
+    assert!(state.catalog.schemas().next().is_none());
+    assert!(state.graphs.is_empty());
+    assert!(state.graph_types.is_empty());
+    assert_eq!(
+        state.high_water,
+        HighWaterMarks {
+            schema: 0,
+            graph: 0,
+            graph_type: 0,
+        }
+    );
 }
 
 #[test]
@@ -149,7 +180,7 @@ fn injected_failures_on_the_replace_path_keep_the_old_graph() {
     else {
         unreachable!()
     };
-    let handle = catalog.open_graph(&path).unwrap();
+    let session = database.session(&path).unwrap();
     let reserved = catalog.inner.state.load().high_water.graph + 1;
     for point in [
         FailurePoint::AfterDescriptorStaging,
@@ -160,7 +191,7 @@ fn injected_failures_on_the_replace_path_keep_the_old_graph() {
             catalog.create_graph(&path, None, CreatePolicy::OrReplace)
         });
         assert_eq!(catalog.snapshot().resolve_graph(&path).unwrap(), original);
-        handle.execute("RETURN 1").unwrap();
+        session.execute("RETURN 1").unwrap();
     }
     let CreateOutcome::Replaced { dropped, created } = catalog
         .create_graph(&path, None, CreatePolicy::OrReplace)
@@ -171,8 +202,8 @@ fn injected_failures_on_the_replace_path_keep_the_old_graph() {
     assert_eq!(dropped, original);
     assert_eq!(created.id.get(), reserved);
     assert_eq!(
-        handle.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphHandle
+        session.execute("RETURN 1").unwrap_err().kind(),
+        ErrorKind::StaleGraphSelection
     );
     assert_outer_complete(&catalog.inner.state.load_full());
 }
@@ -220,13 +251,13 @@ fn injected_failures_on_graph_type_replace_keep_the_old_definition() {
 fn gql_and_rust_graph_types_publish_equal_descriptors_and_runtime_definitions() {
     let via_gql = Database::builder().build();
     let via_rust = Database::builder().build();
-    via_gql.session().execute("CREATE SCHEMA /equiv").unwrap();
-    via_gql
-        .session()
+    let session = catalog_session(&via_gql);
+    let _rust_session = catalog_session(&via_rust);
+    session.execute("CREATE SCHEMA /equiv").unwrap();
+    session
         .execute("CREATE GRAPH TYPE /equiv/shape { NODE TYPE PersonType (:Person) }")
         .unwrap_err();
-    via_gql
-        .session()
+    session
         .execute("CREATE GRAPH TYPE /equiv/shape { NODE TYPE PersonType () }")
         .unwrap();
     let rust = via_rust.catalog();
@@ -371,7 +402,7 @@ fn concurrent_readers_observe_only_complete_outer_publications() {
 #[test]
 fn concurrent_readers_observe_only_complete_publications_from_gql_ddl() {
     let database = Database::builder().build();
-    let session = database.session();
+    let session = catalog_session(&database);
     let start = Arc::new(Barrier::new(2));
     let finished = Arc::new(AtomicBool::new(false));
     let reader_inner = Arc::clone(&database.catalog().inner);
@@ -413,11 +444,11 @@ fn concurrent_readers_observe_only_complete_publications_from_gql_ddl() {
 /// released. The test-only lease accounting in `lock_lifecycle_writer` panics
 /// if any `Catalog` mutation runs under a same-thread graph request lease, so
 /// this test passing proves hard constraint A for each statement kind,
-/// including the bootstrap `DROP GRAPH` bridge.
+/// including a drop of a graph other than the selected graph.
 #[test]
 fn gql_catalog_statements_dispatch_outside_the_graph_request_lease() {
     let database = Database::builder().build();
-    let session = database.session();
+    let session = catalog_session(&database);
     let omitted = ExecutionOutcome::OmittedResult {
         status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
     };
@@ -454,10 +485,6 @@ fn gql_catalog_statements_dispatch_outside_the_graph_request_lease() {
         omitted
     );
     assert_eq!(session.execute("DROP SCHEMA /lease").unwrap(), omitted);
-    assert!(matches!(
-        session.execute("DROP GRAPH default").unwrap(),
-        ExecutionOutcome::Written(_)
-    ));
     assert_eq!(crate::database::GraphRequestDepth::current(), 0);
 }
 
@@ -466,10 +493,20 @@ fn gql_catalog_statements_dispatch_outside_the_graph_request_lease() {
 fn lease_accounting_catches_catalog_mutation_under_a_request_lease() {
     let database = Database::builder().build();
     let catalog = database.catalog();
+    catalog
+        .create_schema(&schema("lease"), CreatePolicy::Strict)
+        .unwrap();
+    let path = graph("lease", "selected");
+    let CreateOutcome::Created(created) = catalog
+        .create_graph(&path, None, CreatePolicy::Strict)
+        .unwrap()
+    else {
+        unreachable!()
+    };
     let inner = Arc::clone(&catalog.inner);
-    let path = graph("public", "default");
+    let id = LowerGraphId::new(created.id.get()).unwrap();
     inner
-        .with_graph_request(bootstrap_graph_id(), &path, |_| {
+        .with_graph_request(id, &path, |_| {
             catalog.create_schema(&schema("under_lease"), CreatePolicy::Strict)
         })
         .unwrap();
@@ -501,7 +538,7 @@ fn serialized_concurrent_writers_publish_unique_ids_without_lost_updates() {
         })
         .collect::<BTreeSet<_>>();
     assert_eq!(ids.len(), 8);
-    assert_eq!(catalog.snapshot().schemas().unwrap().len(), 9);
+    assert_eq!(catalog.snapshot().schemas().unwrap().len(), 8);
 }
 
 #[test]
@@ -531,7 +568,7 @@ fn active_request_finishes_before_drop_and_drop_observes_its_write() {
             request_release.wait();
             let mut session = selene_gql::Session::new(shared);
             session
-                .execute_source_named_graph("INSERT (:Person)", &request_inner.procedures)
+                .execute_source_catalog_session("INSERT (:Person)", &request_inner.procedures)
                 .map_err(Error::from_engine)
         })
     });
@@ -578,7 +615,7 @@ fn active_request_finishes_before_replace_and_replace_observes_its_write() {
             request_release.wait();
             let mut session = selene_gql::Session::new(shared);
             session
-                .execute_source_named_graph("INSERT (:Person)", &request_inner.procedures)
+                .execute_source_catalog_session("INSERT (:Person)", &request_inner.procedures)
                 .map_err(Error::from_engine)
         })
     });

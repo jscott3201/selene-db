@@ -1,7 +1,7 @@
 //! Bounded catalog mutation sequences checked against a simple set model.
 //!
 //! Operations 0-3 use the Rust lifecycle API; operations 4-7 issue the same
-//! commands as GQL database-catalog statements through the compatibility
+//! commands as GQL database-catalog statements through a selected fixture
 //! session. Both arms must agree with one set model.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,7 +32,13 @@ proptest! {
     ) {
         let database = Database::builder().build();
         let catalog = database.catalog();
-        let session = database.session();
+        catalog
+            .create_schema(&schema("control"), CreatePolicy::Strict)
+            .unwrap();
+        catalog
+            .create_graph(&graph("control", "session"), None, CreatePolicy::Strict)
+            .unwrap();
+        let session = database.session(&graph("control", "session")).unwrap();
         let mut model: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
         for (operation, schema_index, graph_index) in commands {
@@ -139,7 +145,7 @@ proptest! {
                 .into_iter()
                 .filter_map(|descriptor| {
                     let name = descriptor.path.schema().canonical();
-                    (name != "public").then(|| name.to_owned())
+                    (name != "control").then(|| name.to_owned())
                 })
                 .collect::<BTreeSet<_>>();
             prop_assert_eq!(actual_schemas, model.keys().cloned().collect());

@@ -1,10 +1,10 @@
-//! `CREATE OR REPLACE GRAPH` through the compatibility session and the Rust
+//! `CREATE OR REPLACE GRAPH` through a selected session and the Rust
 //! `CreatePolicy::OrReplace` policy (ISO/IEC 39075:2024 §12.4 GR2).
 //!
 //! Replacement is one publication: the old graph is dropped under the
 //! `DROP GRAPH` admission and the new graph is created with a fresh identity
 //! in the same state swap. These tests pin the outcomes, statuses, identity
-//! and generation accounting, handle staleness, bootstrap protection, and
+//! and generation accounting, session staleness, current-graph replacement, and
 //! Rust/GQL symmetry.
 
 use selene_db::{
@@ -23,6 +23,19 @@ fn schema(name: &str) -> SchemaPath {
 
 fn graph(schema: &str, name: &str) -> ObjectPath {
     ObjectPath::regular("selene", schema, name).unwrap()
+}
+
+fn fixture() -> (Database, ObjectPath) {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    let path = graph("session_schema", "session_graph");
+    catalog
+        .create_schema(&schema("session_schema"), CreatePolicy::Strict)
+        .unwrap();
+    catalog
+        .create_graph(&path, None, CreatePolicy::Strict)
+        .unwrap();
+    (database, path)
 }
 
 fn person_type() -> GraphTypeDefinition {
@@ -55,8 +68,8 @@ fn resolve(catalog: &Catalog, path: &ObjectPath) -> GraphDescriptor {
 
 #[test]
 fn or_replace_creates_when_absent_and_replaces_with_a_fresh_identity() {
-    let database = Database::builder().build();
-    let session = database.session();
+    let (database, session_path) = fixture();
+    let session = database.session(&session_path).unwrap();
     let catalog = database.catalog();
     session.execute("CREATE SCHEMA /memory").unwrap();
     let path = graph("memory", "episodes");
@@ -74,8 +87,7 @@ fn or_replace_creates_when_absent_and_replaces_with_a_fresh_identity() {
         catalog.snapshot().generation().get(),
         before.generation().get() + 1
     );
-    let old_handle = catalog.open_graph(&path).unwrap();
-    assert_eq!(old_handle.id(), first.id);
+    let old_session = database.session(&path).unwrap();
 
     // Existing and empty: replaced in exactly one publication.
     let before = catalog.snapshot();
@@ -101,15 +113,14 @@ fn or_replace_creates_when_absent_and_replaces_with_a_fresh_identity() {
         "the old descriptor is gone from the same publication"
     );
 
-    // Old handles are stale; a new handle works on the new graph.
+    // Old sessions are stale; a new session works on the new graph.
     assert_eq!(
-        old_handle.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphHandle
+        old_session.execute("RETURN 1").unwrap_err().kind(),
+        ErrorKind::StaleGraphSelection
     );
-    let new_handle = catalog.open_graph(&path).unwrap();
-    assert_eq!(new_handle.id(), second.id);
+    let new_session = database.session(&path).unwrap();
     assert_eq!(
-        new_handle.execute("INSERT (:Note)").unwrap(),
+        new_session.execute("INSERT (:Note)").unwrap(),
         ExecutionOutcome::Written(WriteSummary::new(1, None))
     );
     // The retained pre-replace snapshot still resolves the old identity.
@@ -118,8 +129,8 @@ fn or_replace_creates_when_absent_and_replaces_with_a_fresh_identity() {
 
 #[test]
 fn every_or_replace_spelling_executes_and_repeats_with_increasing_ids() {
-    let database = Database::builder().build();
-    let session = database.session();
+    let (database, session_path) = fixture();
+    let session = database.session(&session_path).unwrap();
     let catalog = database.catalog();
     session.execute("CREATE SCHEMA /s").unwrap();
     let mut last_id = None;
@@ -145,27 +156,27 @@ fn every_or_replace_spelling_executes_and_repeats_with_increasing_ids() {
         assert!(descriptor.graph_type.is_none(), "{source}");
         last_id = Some(descriptor.id);
     }
-    // The current-schema-relative spelling replaces in /selene/public.
+    // The current-schema-relative spelling resolves beside the selected graph.
     session.execute("CREATE GRAPH local_g ANY").unwrap();
-    let first = resolve(&catalog, &graph("public", "local_g"));
+    let first = resolve(&catalog, &graph("session_schema", "local_g"));
     assert_eq!(
         session
             .execute("CREATE OR REPLACE GRAPH local_g ANY")
             .unwrap(),
         OMITTED
     );
-    assert!(resolve(&catalog, &graph("public", "local_g")).id > first.id);
+    assert!(resolve(&catalog, &graph("session_schema", "local_g")).id > first.id);
 }
 
 #[test]
 fn or_replace_failures_publish_nothing_and_keep_the_old_graph() {
-    let database = Database::builder().build();
-    let session = database.session();
+    let (database, session_path) = fixture();
+    let session = database.session(&session_path).unwrap();
     let catalog = database.catalog();
     session.execute("CREATE SCHEMA /memory").unwrap();
     session.execute("CREATE GRAPH /memory/full ANY").unwrap();
-    catalog
-        .open_graph(&graph("memory", "full"))
+    database
+        .session(&graph("memory", "full"))
         .unwrap()
         .execute("INSERT (:Person)-[:KNOWS]->(:Person)")
         .unwrap();
@@ -192,8 +203,8 @@ fn or_replace_failures_publish_nothing_and_keep_the_old_graph() {
     assert_unpublished(&catalog, &before, source);
     assert_eq!(resolve(&catalog, &graph("memory", "full")).id, full.id);
     assert_eq!(
-        catalog
-            .open_graph(&graph("memory", "full"))
+        database
+            .session(&graph("memory", "full"))
             .unwrap()
             .execute("MATCH (n) RETURN n")
             .unwrap(),
@@ -261,52 +272,40 @@ fn or_replace_failures_publish_nothing_and_keep_the_old_graph() {
 }
 
 #[test]
-fn or_replace_never_replaces_or_resets_the_bootstrap_graph() {
-    let database = Database::builder().build();
-    let session = database.session();
+fn or_replace_of_the_current_graph_invalidates_the_selected_session() {
+    let (database, session_path) = fixture();
+    let session = database.session(&session_path).unwrap();
     let catalog = database.catalog();
-    session.execute("INSERT (:Person)").unwrap();
-    let bootstrap = resolve(&catalog, &graph("public", "default"));
+    let original = resolve(&catalog, &session_path);
     let before = catalog.snapshot();
-    for source in [
-        "CREATE OR REPLACE GRAPH default ANY",
-        "CREATE OR REPLACE GRAPH /public/default ANY",
-        "CREATE OR REPLACE PROPERTY GRAPH `default` TYPED ANY PROPERTY GRAPH",
-        "CREATE OR REPLACE GRAPH \"default\" ANY",
-    ] {
-        let error = session.execute(source).unwrap_err();
-        assert_error(
-            &error,
-            ErrorKind::ProtectedCatalogObject,
-            GqlStatus::SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION,
-            source,
-        );
-        assert_unpublished(&catalog, &before, source);
-        assert_eq!(
-            resolve(&catalog, &graph("public", "default")).id,
-            bootstrap.id,
-            "{source}"
-        );
-        // Unlike the DROP GRAPH bridge, nothing is factory-reset.
-        assert_eq!(
-            session.execute("MATCH (n) RETURN n").unwrap(),
-            ExecutionOutcome::Rows { row_count: 1 },
-            "{source}"
-        );
-    }
-    // The bridge is DROP GRAPH only: the same reference still resets there.
-    assert!(matches!(
-        session.execute("DROP GRAPH default").unwrap(),
-        ExecutionOutcome::Written(_)
-    ));
-    assert_unpublished(&catalog, &before, "DROP GRAPH default");
+    assert_eq!(
+        session
+            .execute("CREATE OR REPLACE GRAPH session_graph ANY")
+            .unwrap(),
+        OMITTED
+    );
+    let replacement = resolve(&catalog, &session_path);
+    assert!(replacement.id > original.id);
+    assert_eq!(
+        catalog.snapshot().generation().get(),
+        before.generation().get() + 1
+    );
+    assert_eq!(
+        session.execute("RETURN 1").unwrap_err().kind(),
+        ErrorKind::StaleGraphSelection
+    );
+    database
+        .session(&session_path)
+        .unwrap()
+        .execute("RETURN 1")
+        .unwrap();
 }
 
 #[test]
 fn rust_or_replace_matches_gql_and_reports_the_same_failures() {
-    let via_gql = Database::builder().build();
-    let via_rust = Database::builder().build();
-    let session = via_gql.session();
+    let (via_gql, gql_session_path) = fixture();
+    let (via_rust, _) = fixture();
+    let session = via_gql.session(&gql_session_path).unwrap();
     let rust = via_rust.catalog();
     let path = graph("memory", "episodes");
 
@@ -360,12 +359,12 @@ fn rust_or_replace_matches_gql_and_reports_the_same_failures() {
 
     // Negative symmetry.
     via_gql
-        .catalog()
-        .open_graph(&path)
+        .session(&path)
         .unwrap()
         .execute("INSERT (:Person)")
         .unwrap();
-    rust.open_graph(&path)
+    via_rust
+        .session(&path)
         .unwrap()
         .execute("INSERT (:Person)")
         .unwrap();
@@ -384,7 +383,7 @@ fn rust_or_replace_matches_gql_and_reports_the_same_failures() {
         )
         .unwrap();
     type RustCall = Box<dyn Fn(&Catalog) -> Error>;
-    let cases: [(&str, RustCall); 4] = [
+    let cases: [(&str, RustCall); 3] = [
         (
             "CREATE OR REPLACE GRAPH /memory/episodes ANY",
             Box::new(|catalog| {
@@ -406,14 +405,6 @@ fn rust_or_replace_matches_gql_and_reports_the_same_failures() {
             Box::new(|catalog| {
                 catalog
                     .create_graph(&graph("absent", "g"), None, CreatePolicy::OrReplace)
-                    .unwrap_err()
-            }),
-        ),
-        (
-            "CREATE OR REPLACE GRAPH /public/default ANY",
-            Box::new(|catalog| {
-                catalog
-                    .create_graph(&graph("public", "default"), None, CreatePolicy::OrReplace)
                     .unwrap_err()
             }),
         ),

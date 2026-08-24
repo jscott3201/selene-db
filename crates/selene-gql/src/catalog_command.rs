@@ -9,10 +9,7 @@
 //! facade's lifecycle writer lock, preventing a concurrent drop/recreate window.
 //!
 //! A bare lower-engine session cannot honor these commands and reports a
-//! structured implementation-defined error instead of a silent no-op. The one
-//! pre-existing exception is `DROP GRAPH`, which the lower engine still
-//! executes as the `IM_DROP_GRAPH` factory reset of its single bound graph;
-//! the facade routes only the protected bootstrap graph to that path.
+//! structured implementation-defined error instead of a silent no-op.
 
 use crate::{
     CatalogGraphTypeDefinition, DdlStatement, SourceSpan,

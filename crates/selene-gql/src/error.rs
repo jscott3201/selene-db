@@ -22,9 +22,7 @@ impl GqlStatus {
     pub const GRAPH_DOES_NOT_EXIST: Self = Self(*b"01G03");
     /// Maps to GQLSTATUS 42000 per ISO/IEC 39075:2024 section 23.1 Table 8:
     /// the class-level "syntax error or access rule violation" condition.
-    /// selene-db reports it when a catalog statement targets a protected
-    /// bootstrap object; ISO leaves access rules to the implementation
-    /// (IE005).
+    /// ISO leaves access rules to the implementation (IE005).
     pub const SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION: Self = Self(*b"42000");
     /// Maps to GQLSTATUS 42001 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const SYNTAX_ERROR: Self = Self(*b"42001");

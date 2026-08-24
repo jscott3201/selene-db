@@ -1850,8 +1850,6 @@ dependencies = [
  "criterion",
  "mimalloc",
  "proptest",
- "selene-db-core",
- "selene-db-profile",
  "serde",
  "serde_json",
  "unicode-ident",

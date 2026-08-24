@@ -2423,7 +2423,6 @@
     "IM_TYPED_PARAMS",
     "IM_TRUNCATE",
     "IM_DROP_CASCADE",
-    "IM_DROP_GRAPH",
     "IM_ALTER_NODE_TYPE",
     "IM_ALTER_EDGE_TYPE",
     "GG01",
@@ -5691,8 +5690,8 @@
     {
       "id": "IM_DROP_GRAPH",
       "name": "selene-db DROP GRAPH factory-reset extension",
-      "runtime_support": "supported",
-      "unsupported_rationale": "",
+      "runtime_support": "unsupported",
+      "unsupported_rationale": "DROP GRAPH removes catalog-owned graphs through the database facade and is no longer reinterpreted as a lower-engine factory reset.",
       "runtime_order": 127,
       "clause_anchors": [],
       "evidence": [],

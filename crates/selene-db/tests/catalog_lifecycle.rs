@@ -2,8 +2,8 @@
 
 use selene_db::{
     Catalog, CatalogPath, CatalogReadSnapshot, CreateOutcome, CreatePolicy, Database, DropOutcome,
-    DropPolicy, ErrorKind, ExecutionOutcome, GqlStatus, GraphHandle, GraphTypeDefinition,
-    NodeTypeDefinition, ObjectPath, PathSegment, SchemaPath, Session,
+    DropPolicy, ErrorKind, ExecutionOutcome, GqlStatus, GraphTypeDefinition, NodeTypeDefinition,
+    ObjectPath, PathSegment, SchemaPath, Session,
 };
 
 fn schema(name: &str) -> SchemaPath {
@@ -35,7 +35,7 @@ fn person_type() -> GraphTypeDefinition {
 }
 
 #[test]
-fn multiple_schemas_resolve_list_and_open_same_named_graphs() {
+fn multiple_schemas_resolve_list_and_select_same_named_graphs() {
     let database = Database::builder().build();
     let catalog = database.catalog();
     for name in ["zeta", "alpha"] {
@@ -54,20 +54,20 @@ fn multiple_schemas_resolve_list_and_open_same_named_graphs() {
         .into_iter()
         .map(|descriptor| descriptor.path.schema().canonical().to_owned())
         .collect::<Vec<_>>();
-    assert_eq!(names, ["alpha", "public", "zeta"]);
+    assert_eq!(names, ["alpha", "zeta"]);
     for name in ["alpha", "zeta"] {
         let path = object(name, "shared");
         assert_eq!(snapshot.graphs(&schema(name)).unwrap().len(), 1);
         assert_eq!(snapshot.resolve_graph(&path).unwrap().path, path);
-        catalog
-            .open_graph(&path)
+        database
+            .session(&path)
             .unwrap()
             .execute("INSERT (:Marker)")
             .unwrap();
     }
     assert_eq!(
-        catalog
-            .open_graph(&object("alpha", "shared"))
+        database
+            .session(&object("alpha", "shared"))
             .unwrap()
             .execute("MATCH (n) RETURN n")
             .unwrap(),
@@ -415,7 +415,7 @@ fn restrict_reports_graph_schema_and_graph_type_dependencies() {
         ErrorKind::CatalogRestrictViolation
     );
 
-    let graph = catalog.open_graph(&object("restricted", "one")).unwrap();
+    let graph = database.session(&object("restricted", "one")).unwrap();
     graph.execute("INSERT (:Person)").unwrap();
     let nonempty = catalog
         .drop_graph(&object("restricted", "one"), DropPolicy::Strict)
@@ -427,8 +427,8 @@ fn restrict_reports_graph_schema_and_graph_type_dependencies() {
     catalog
         .create_graph(&edge_path, None, CreatePolicy::Strict)
         .unwrap();
-    catalog
-        .open_graph(&edge_path)
+    database
+        .session(&edge_path)
         .unwrap()
         .execute("INSERT (:A)-[:E]->(:B)")
         .unwrap();
@@ -440,7 +440,7 @@ fn restrict_reports_graph_schema_and_graph_type_dependencies() {
 }
 
 #[test]
-fn bound_graph_enforces_declared_node_types_and_named_policy() {
+fn bound_graph_enforces_declared_node_types() {
     let database = Database::builder().build();
     let catalog = database.catalog();
     catalog
@@ -459,16 +459,14 @@ fn bound_graph_enforces_declared_node_types_and_named_policy() {
         CreateOutcome::AlreadyExists(_) | CreateOutcome::Replaced { .. } => unreachable!(),
     };
     assert!(graph_descriptor.graph_type.is_some());
-    let graph = catalog.open_graph(&graph_path).unwrap();
+    let graph = database.session(&graph_path).unwrap();
     graph.execute("INSERT (:Person)").unwrap();
     let violation = graph.execute("INSERT (:Undeclared)").unwrap_err();
     assert_eq!(violation.gqlstatus(), Some(GqlStatus::GRAPH_TYPE_VIOLATION));
-    let ddl = graph.execute("DROP GRAPH g").unwrap_err();
-    assert_eq!(ddl.kind(), ErrorKind::FeatureNotSupported);
 }
 
 #[test]
-fn old_handle_never_aliases_same_path_recreation() {
+fn old_session_never_aliases_same_path_recreation() {
     let database = Database::builder().build();
     let catalog = database.catalog();
     catalog
@@ -481,11 +479,11 @@ fn old_handle_never_aliases_same_path_recreation() {
     let CreateOutcome::Created(first_descriptor) = first else {
         unreachable!()
     };
-    let old = catalog.open_graph(&path).unwrap();
+    let old = database.session(&path).unwrap();
     catalog.drop_graph(&path, DropPolicy::Strict).unwrap();
     assert_eq!(
         old.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphHandle
+        ErrorKind::StaleGraphSelection
     );
     let CreateOutcome::Created(second_descriptor) = catalog
         .create_graph(&path, None, CreatePolicy::Strict)
@@ -496,11 +494,11 @@ fn old_handle_never_aliases_same_path_recreation() {
     assert_ne!(first_descriptor.id, second_descriptor.id);
     assert_eq!(
         old.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphHandle
+        ErrorKind::StaleGraphSelection
     );
     assert_eq!(
-        catalog
-            .open_graph(&path)
+        database
+            .session(&path)
             .unwrap()
             .execute("RETURN 1")
             .unwrap(),
@@ -509,32 +507,39 @@ fn old_handle_never_aliases_same_path_recreation() {
 }
 
 #[test]
-fn bootstrap_objects_are_protected_and_session_uses_registry_default() {
+fn initial_catalog_is_empty_and_first_user_ids_start_at_one() {
     let database = Database::builder().build();
     let catalog = database.catalog();
-    assert_eq!(
-        catalog
-            .drop_graph(&object("public", "default"), DropPolicy::IfExists)
-            .unwrap_err()
-            .kind(),
-        ErrorKind::ProtectedCatalogObject
-    );
-    assert_eq!(
-        catalog
-            .drop_schema(&schema("public"), DropPolicy::IfExists)
-            .unwrap_err()
-            .kind(),
-        ErrorKind::ProtectedCatalogObject
-    );
-    database.session().execute("INSERT (:Bootstrap)").unwrap();
-    assert_eq!(
-        catalog
-            .open_graph(&object("public", "default"))
-            .unwrap()
-            .execute("MATCH (n:Bootstrap) RETURN n")
-            .unwrap(),
-        ExecutionOutcome::Rows { row_count: 1 }
-    );
+    let initial = catalog.snapshot();
+    assert_eq!(initial.generation().get(), 1);
+    assert!(initial.schemas().unwrap().is_empty());
+
+    let CreateOutcome::Created(created_schema) = catalog
+        .create_schema(&schema("first"), CreatePolicy::Strict)
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let type_name = PathSegment::regular("Person").unwrap();
+    let definition = GraphTypeDefinition::builder()
+        .with_node_type(NodeTypeDefinition::new(type_name.clone(), vec![type_name]).unwrap())
+        .build()
+        .unwrap();
+    let CreateOutcome::Created(created_type) = catalog
+        .create_graph_type(&object("first", "shape"), definition, CreatePolicy::Strict)
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let CreateOutcome::Created(created_graph) = catalog
+        .create_graph(&object("first", "graph"), None, CreatePolicy::Strict)
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(created_schema.id.get(), 1);
+    assert_eq!(created_type.id.get(), 1);
+    assert_eq!(created_graph.id.get(), 1);
 }
 
 #[test]
@@ -544,6 +549,5 @@ fn shared_facade_handles_are_send_and_sync() {
     assert_send_sync::<Database>();
     assert_send_sync::<Catalog>();
     assert_send_sync::<CatalogReadSnapshot>();
-    assert_send_sync::<GraphHandle>();
     assert_send_sync::<Session>();
 }

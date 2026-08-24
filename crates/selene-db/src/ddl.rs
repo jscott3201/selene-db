@@ -1,4 +1,4 @@
-//! Router for GQL database-catalog statements executed by the compatibility
+//! Router for GQL database-catalog statements executed by a selected
 //! [`Session`](crate::Session).
 //!
 //! The lower engine reduces schema, graph, and graph-type lifecycle statements
@@ -21,11 +21,8 @@
 //!   catalog has directory depth 0 (IL020), and its root is a directory, not a
 //!   schema (§17.1 SR2a).
 //!
-//! The current working schema of the compatibility session is fixed to the
-//! bootstrap schema `/selene/public`. This is the ISO `INI_SCHEMA` shape of
-//! §22.1 for a session that never executed `SESSION SET SCHEMA`; there is no
-//! setter because the facade never accepts configuration it would ignore.
-//! M03-PR01's session context replaces this constant.
+//! The selected graph's schema is the current working schema. The facade has no
+//! schema-switching command or persistent session context; M03 owns those.
 //!
 //! Each segment becomes a [`PathSegment`] through the regular or delimited
 //! constructor. That constructor is the only name-validation choke point; the
@@ -44,22 +41,11 @@
 //! drops an existing graph under the `DROP GRAPH` admission and publishes the
 //! replacement in one state swap (§12.4 GR2), completing with `00001` whether
 //! the graph was created or replaced. A nonempty graph is `G1000`, an object
-//! of another kind is `42002`, and a reference that resolves to the protected
-//! bootstrap graph is `42000`: the factory-reset bridge below applies to
-//! `DROP GRAPH` only, so the bootstrap graph can be reset but never replaced.
+//! of another kind is `42002`.
 //! Graph-type replacement uses the same policy and the full
 //! [`Catalog::drop_graph_type`] RESTRICT admission. A referenced type is
 //! `G1000`; an accepted replacement receives a fresh identity in one outer
 //! state swap.
-//!
-//! # Bootstrap `DROP GRAPH` bridge
-//!
-//! A `DROP GRAPH` whose reference resolves to the protected bootstrap graph
-//! (`/selene/public/default`, however it is spelled) keeps the compatibility
-//! session's pre-existing factory reset through the lower engine. The
-//! decision is by resolved stable identity, not spelling. Every other
-//! reference goes to [`Catalog::drop_graph`]. M02-PR05 deletes this bridge
-//! together with the bootstrap catalog.
 //!
 //! # Lock order
 //!
@@ -78,15 +64,14 @@ use selene_gql::{
 use crate::{
     Catalog, CreateOutcome, CreatePolicy, DropOutcome, DropPolicy, Error, ExecutionOutcome,
     GqlStatus, GraphTypeDefinition, NodeTypeDefinition, ObjectPath, PathSegment, Result,
-    SchemaPath,
-    database::{DatabaseInner, bootstrap_graph_id},
+    SchemaPath, database::DatabaseInner,
 };
 
-/// Execute one database-catalog command for the compatibility session.
+/// Execute one database-catalog command for a selected session.
 pub(crate) fn execute(
     inner: &Arc<DatabaseInner>,
+    current_schema: &SchemaPath,
     command: DatabaseCatalogCommand,
-    source: &str,
 ) -> Result<ExecutionOutcome> {
     let catalog = Catalog::new(Arc::clone(inner));
     let outcome = match command {
@@ -95,7 +80,7 @@ pub(crate) fn execute(
             if_not_exists,
             ..
         } => {
-            let path = resolve_schema(inner, &reference)?;
+            let path = resolve_schema(current_schema, &reference)?;
             match catalog.create_schema(&path, create_policy(if_not_exists))? {
                 // Schemas have no OR REPLACE form; the arm is exhaustive only.
                 CreateOutcome::Created(_)
@@ -108,7 +93,7 @@ pub(crate) fn execute(
             if_exists,
             ..
         } => {
-            let path = resolve_schema(inner, &reference)?;
+            let path = resolve_schema(current_schema, &reference)?;
             match catalog.drop_schema(&path, drop_policy(if_exists))? {
                 // ISO/IEC 39075:2024 section 12.3 GR1 defines no warning for
                 // an absent schema under IF EXISTS.
@@ -122,10 +107,10 @@ pub(crate) fn execute(
             graph_type,
             ..
         } => {
-            let path = resolve_graph(inner, &reference)?;
+            let path = resolve_graph(current_schema, &reference)?;
             let graph_type = graph_type
                 .as_ref()
-                .map(|reference| resolve_graph(inner, reference))
+                .map(|reference| resolve_graph(current_schema, reference))
                 .transpose()?;
             let policy = if or_replace {
                 CreatePolicy::OrReplace
@@ -145,10 +130,7 @@ pub(crate) fn execute(
             if_exists,
             ..
         } => {
-            let path = resolve_graph(inner, &reference)?;
-            if resolves_to_bootstrap_graph(&catalog, &path) {
-                return inner.execute_graph(bootstrap_graph_id(), &path, source, false);
-            }
+            let path = resolve_graph(current_schema, &reference)?;
             match catalog.drop_graph(&path, drop_policy(if_exists))? {
                 DropOutcome::Dropped(_) => omitted(),
                 // Section 12.5 GR1: a completion condition, not an exception.
@@ -164,7 +146,7 @@ pub(crate) fn execute(
             if_not_exists,
             ..
         } => {
-            let path = resolve_graph(inner, &reference)?;
+            let path = resolve_graph(current_schema, &reference)?;
             let definition = graph_type_definition(definition)?;
             let policy = if or_replace {
                 CreatePolicy::OrReplace
@@ -182,7 +164,7 @@ pub(crate) fn execute(
             if_exists,
             ..
         } => {
-            let path = resolve_graph(inner, &reference)?;
+            let path = resolve_graph(current_schema, &reference)?;
             match catalog.drop_graph_type(&path, drop_policy(if_exists))? {
                 DropOutcome::Dropped(_) | DropOutcome::NotFound => omitted(),
             }
@@ -216,23 +198,15 @@ const fn drop_policy(if_exists: bool) -> DropPolicy {
     }
 }
 
-/// Decide the bootstrap bridge by stable identity.
-///
-/// The bootstrap graph is protected from drop and rename, so a lookup outside
-/// the lifecycle lock cannot be invalidated by a concurrent lifecycle change:
-/// the identity at this path is either the fixed bootstrap ID or it is not.
-fn resolves_to_bootstrap_graph(catalog: &Catalog, path: &ObjectPath) -> bool {
-    catalog
-        .snapshot()
-        .resolve_graph(path)
-        .is_ok_and(|descriptor| descriptor.id.get() == bootstrap_graph_id().get())
-}
-
-fn resolve_schema(inner: &DatabaseInner, reference: &CatalogObjectReference) -> Result<SchemaPath> {
+fn resolve_schema(
+    current_schema: &SchemaPath,
+    reference: &CatalogObjectReference,
+) -> Result<SchemaPath> {
     match reference.segments.as_slice() {
-        [schema] if reference.absolute => {
-            Ok(SchemaPath::new(catalog_segment(inner)?, segment(schema)?))
-        }
+        [schema] if reference.absolute => Ok(SchemaPath::new(
+            current_schema.catalog().clone(),
+            segment(schema)?,
+        )),
         [_] => Err(invalid_reference(
             reference,
             "a schema reference must be absolute",
@@ -244,18 +218,18 @@ fn resolve_schema(inner: &DatabaseInner, reference: &CatalogObjectReference) -> 
     }
 }
 
-fn resolve_graph(inner: &DatabaseInner, reference: &CatalogObjectReference) -> Result<ObjectPath> {
+fn resolve_graph(
+    current_schema: &SchemaPath,
+    reference: &CatalogObjectReference,
+) -> Result<ObjectPath> {
     match reference.segments.as_slice() {
-        [graph] if !reference.absolute => {
-            let schema = current_working_schema(inner)?;
-            Ok(ObjectPath::new(
-                schema.catalog.clone(),
-                schema.schema.clone(),
-                segment(graph)?,
-            ))
-        }
+        [graph] if !reference.absolute => Ok(ObjectPath::new(
+            current_schema.catalog.clone(),
+            current_schema.schema.clone(),
+            segment(graph)?,
+        )),
         [schema, graph] => Ok(ObjectPath::new(
-            catalog_segment(inner)?,
+            current_schema.catalog().clone(),
             segment(schema)?,
             segment(graph)?,
         )),
@@ -268,18 +242,6 @@ fn resolve_graph(inner: &DatabaseInner, reference: &CatalogObjectReference) -> R
             "the catalog has no child directories (maximum directory depth 0)",
         )),
     }
-}
-
-/// The fixed current working schema of the compatibility session.
-fn current_working_schema(inner: &DatabaseInner) -> Result<SchemaPath> {
-    Ok(SchemaPath::new(
-        catalog_segment(inner)?,
-        PathSegment::regular(inner.bootstrap.schema_name())?,
-    ))
-}
-
-fn catalog_segment(inner: &DatabaseInner) -> Result<PathSegment> {
-    PathSegment::regular(inner.bootstrap.catalog_name())
 }
 
 /// The single name-validation choke point for GQL-originated segments.

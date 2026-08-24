@@ -1,6 +1,7 @@
 # Embedding Guide
 
-This guide is for engineers integrating `selene-db` into a Rust application. It assumes you have already read `docs/getting-started.md` (or the README quickstart) and now want the full embedder workflow: workspace dependencies, the transaction model, the GQL pipeline, persistence, authorization, multi-tenancy, error handling, and embedding patterns.
+This guide is for engineers integrating `selene-db` into a Rust application. It
+covers the facade first, then segregates lower engine APIs for advanced work.
 
 selene-db is a single native graph engine — there is no extension/procedure-pack model. Graph algorithms are inlined in the mandatory `selene-algorithms` crate and exposed both as a native Rust API and via `CALL algo.*`; see [`docs/graph-algorithms.md`](graph-algorithms.md).
 
@@ -42,7 +43,7 @@ The crate set is layered so transitive footprint stays small:
 
 | Tier | What you can do | Crates to add |
 |:---|:---|:---|
-| Stable facade | Manage schemas and named graphs, then execute GQL through stable-ID graph handles | `selene-db` |
+| Stable facade | Manage schemas and named graphs, then execute GQL through selected stable-ID sessions | `selene-db` |
 | Core graph | Open a `SharedGraph`, mutate via `Mutator`, read snapshots | `selene-core`, `selene-graph` |
 | Core graph + GQL | Run ISO GQL statements (no `CALL`, no persistence) | + `selene-gql` |
 | Core graph + persistence | Direct mutation with WAL + snapshot recovery | + `selene-persist` |
@@ -57,7 +58,7 @@ selene-db = { version = "2.0.0-alpha.1" }
 ```
 
 The facade owns one in-memory catalog. Create a schema and graph through the
-catalog lifecycle service, then keep the returned graph handle for requests:
+catalog lifecycle service, then select the graph when constructing a session:
 
 ```rust
 use selene_db::{CreatePolicy, Database, ObjectPath, SchemaPath};
@@ -70,20 +71,24 @@ fn main() -> Result<(), selene_db::Error> {
 
     let path = ObjectPath::regular("selene", "memory", "episodes")?;
     catalog.create_graph(&path, None, CreatePolicy::Strict)?;
-    let graph = catalog.open_graph(&path)?;
-    graph.execute("INSERT (:Episode { summary: 'catalog lifecycle' })")?;
-    graph.execute("MATCH (e:Episode) RETURN e")?;
+    let session = database.session(&path)?;
+    session.execute("INSERT (:Episode { summary: 'catalog lifecycle' })")?;
+    session.execute("MATCH (e:Episode) RETURN e")?;
     Ok(())
 }
 ```
 
-`GraphHandle` stores catalog identity and re-resolves the runtime graph for each
-request. Dropping and recreating the same path does not make an old handle refer
-to the replacement. `Database::session()` remains the temporary bridge to
-`/selene/public/default` until M02-PR05 removes it. Persistence configuration,
-parameters, facade transactions, and row-value materialization are not exposed
-through the facade yet. The lower-crate sections below are advanced engine APIs
-and do not carry the facade's 2.x stability promise.
+The session stores the selected catalog identity and re-resolves the runtime
+graph for each request. Dropping and recreating the same path does not make an
+old session refer to the replacement. Persistence configuration, parameters,
+facade transactions, and row-value materialization are not exposed through the
+facade yet.
+
+## Advanced lower-engine APIs
+
+The remaining crate-assembly sections are for engine development. They are not
+the normal application entry point and do not carry the facade's 2.x stability
+promise.
 
 ### 2.1 Plain core graph
 
@@ -263,7 +268,8 @@ tx.rollback();
 
 `rollback` drops the transaction without publishing. The pending change list is discarded; the `ArcSwap` snapshot still points at the pre-transaction graph, so readers never observed the uncommitted state.
 
-A transaction also rolls back if you simply `drop(tx)` without calling `commit`: the snapshot is never published, the write lock is released.
+A transaction also rolls back when `tx` is dropped without calling `commit`:
+the snapshot is never published, and the write lock is released.
 
 ### 4.5 Concurrency invariants
 

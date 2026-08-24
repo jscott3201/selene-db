@@ -52,13 +52,6 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             }
         }
         // Section 12.5 CR1-CR2: DROP GRAPH is GC04 (+GC05 with IF EXISTS).
-        // IM_DROP_GRAPH is still stamped as well: the Flagger is static and
-        // cannot know whether the reference resolves to the protected bootstrap
-        // graph, which the compatibility session factory-resets through the
-        // lower engine instead of dropping. Until M02-PR05 deletes that bridge,
-        // every DROP GRAPH may take the implementation-defined processing
-        // alternative, which is exactly what section 24.6 asks a Flagger to
-        // report. The stamp is removed together with the bridge.
         DdlStatement::DropGraph {
             if_exists, span, ..
         } => {
@@ -66,7 +59,6 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             if *if_exists {
                 record_feature(uses, FeatureId::GC05, *span);
             }
-            record_feature(uses, FeatureId::IM_DROP_GRAPH, *span);
         }
         DdlStatement::CreateGraphType {
             if_not_exists,
