@@ -1010,7 +1010,7 @@ Replace ad hoc session fields with one explicit context carrying authorization, 
 ## M03-PR02 — Implement `RequestContext`, Typed Parameters, Timestamp, and Request Outcome
 
 - **Owner:** M03
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / M
 - **Dependencies:** M03-PR01
 - **Issues:** None
