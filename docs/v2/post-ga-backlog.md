@@ -1,6 +1,6 @@
 # Post-GA and deferred backlog
 
-These items are outside the 64-work-item initial program. Their absence is a
+These items are outside the 65-work-item initial program. Their absence is a
 scope decision, not work to absorb opportunistically.
 
 | Deferred item | Boundary |

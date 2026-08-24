@@ -1,7 +1,7 @@
 # Selene DB 2.0 program
 
 This directory is the tracked program-of-record for Selene DB 2.0. It contains
-11 milestones, 64 PR-sized work items, 22 finalized decisions, and one owner for
+11 milestones, 65 PR-sized work items, 22 finalized decisions, and one owner for
 each of the seven open issues recorded at installation.
 
 ## Read in this order
