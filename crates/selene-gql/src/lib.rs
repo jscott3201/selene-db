@@ -7,6 +7,7 @@
 
 pub mod analyze;
 pub mod ast;
+pub mod catalog_command;
 pub mod diagnostic;
 pub mod error;
 mod flagger;
@@ -25,6 +26,7 @@ pub use crate::analyze::{
 };
 pub use crate::ast::{
     call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem},
+    catalog_ref::{CatalogObjectReference, CatalogPathSegment, IdentifierForm},
     ddl::{
         DdlStatement, DropBehavior, EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint,
         TypePropertyDef, ValidationMode,
@@ -53,6 +55,7 @@ pub use crate::ast::{
     types::{BindingTableType, GqlType, RecordType},
     util::{EmptyVecError, NonEmpty, Vec2OrMore},
 };
+pub use crate::catalog_command::DatabaseCatalogCommand;
 pub use crate::diagnostic::DiagnosticReport;
 pub use crate::error::{GqlStatus, ParserError};
 pub use crate::flagger::{FeatureUse, feature_walk};
@@ -80,10 +83,10 @@ pub use crate::procedure_registry::{
 pub use crate::runtime::{
     AdaptiveOptimizer, Binding, BindingTable, BindingTableRegistry, BuiltinProcedureRegistry,
     CallPlanCache, CallPlanCacheStats, CallPlanKey, DataExceptionSubclass, ExecutorError,
-    ExecutorWarning, GraphContext, MaintenanceContext, MutationContext, PlanCache, PlanCacheStats,
-    ProcedureContext, RollbackOutcome, Session, SessionParameterValue, SharedPlanCache,
-    SharedPlanCacheStats, StatementOutput, TransactionOutcome, TxContext, WarningSink,
-    WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
+    ExecutorWarning, FacadeOutput, GraphContext, MaintenanceContext, MutationContext, PlanCache,
+    PlanCacheStats, ProcedureContext, RollbackOutcome, Session, SessionParameterValue,
+    SharedPlanCache, SharedPlanCacheStats, StatementOutput, TransactionOutcome, TxContext,
+    WarningSink, WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
 };
 pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken, NodeScanBudget};
 

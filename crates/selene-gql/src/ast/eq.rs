@@ -287,9 +287,22 @@ fn scrub_mutation_pipeline(pipeline: &mut MutationPipeline) {
 
 fn scrub_ddl(statement: &mut DdlStatement) {
     match statement {
-        DdlStatement::CreateGraph { span, .. }
-        | DdlStatement::DropGraph { span, .. }
-        | DdlStatement::DropNodeType { span, .. }
+        DdlStatement::CreateSchema {
+            reference, span, ..
+        }
+        | DdlStatement::DropSchema {
+            reference, span, ..
+        }
+        | DdlStatement::CreateGraph {
+            reference, span, ..
+        }
+        | DdlStatement::DropGraph {
+            reference, span, ..
+        } => {
+            *span = SourceSpan::default();
+            reference.span = SourceSpan::default();
+        }
+        DdlStatement::DropNodeType { span, .. }
         | DdlStatement::DropEdgeType { span, .. }
         | DdlStatement::TruncateNodeType { span, .. }
         | DdlStatement::TruncateEdgeType { span, .. }

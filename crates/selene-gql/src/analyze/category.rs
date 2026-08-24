@@ -52,7 +52,9 @@ const fn classify_ddl(statement: &DdlStatement) -> StatementCategory {
         | DdlStatement::ShowEdgeTypes(_)
         | DdlStatement::ShowIndexes(_)
         | DdlStatement::ShowProcedures(_) => StatementCategory::ReadOnly,
-        DdlStatement::CreateGraph { .. }
+        DdlStatement::CreateSchema { .. }
+        | DdlStatement::DropSchema { .. }
+        | DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }
         | DdlStatement::CreateNodeType { .. }
         | DdlStatement::CreateEdgeType { .. }

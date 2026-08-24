@@ -407,8 +407,7 @@ fn walk_catalog_exprs(
                     | changed
             })
         }
-        CatalogOp::CreateGraph { .. }
-        | CatalogOp::DropGraph { .. }
+        CatalogOp::DatabaseCatalog(_)
         | CatalogOp::DropNodeType { .. }
         | CatalogOp::DropEdgeType { .. }
         | CatalogOp::TruncateNodeType { .. }

@@ -20,6 +20,10 @@ fn assert_unsupported(source: &str, expected: FeatureId) {
     assert_eq!(feature_id, expected, "{source}");
 }
 
+fn assert_parses(source: &str) {
+    parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+}
+
 fn assert_not_implemented(source: &str) {
     let error = selene_gql::parse(source).expect_err(source);
     assert!(
@@ -113,6 +117,9 @@ fn guarded_ddl_keywords_still_accept_implemented_forms() {
         "SHOW INDEXES",
         "SHOW PROCEDURES",
         "DROP GRAPH IF EXISTS g",
+        "CREATE SCHEMA IF NOT EXISTS /foo",
+        "DROP SCHEMA IF EXISTS /foo",
+        "CREATE PROPERTY GRAPH IF NOT EXISTS /foo/g TYPED ANY PROPERTY GRAPH",
         "CREATE INDEX IF NOT EXISTS idx ON :Sensor(ts, value)",
         "DROP INDEX IF EXISTS idx",
     ] {
@@ -125,28 +132,30 @@ fn guarded_or_replace_keywords_still_preserve_not_implemented_rejection() {
     for source in [
         "CREATE OR REPLACE NODE TYPE :Person ()",
         "CREATE OR REPLACE EDGE TYPE :KNOWS ()",
-        "CREATE OR REPLACE GRAPH g",
+        "CREATE OR REPLACE GRAPH g ANY",
+        "CREATE SCHEMA /foo NEXT CREATE SCHEMA /bar",
+        "CREATE GRAPH TYPE t {(Person :Person)}",
     ] {
         assert_not_implemented(source);
     }
 }
 
 #[test]
-fn guarded_schema_keywords_still_preserve_unsupported_feature_rejection() {
+fn guarded_catalog_keywords_admit_iso_forms_and_reject_deferred_clauses() {
     for source in [
         "CREATE SCHEMA /foo",
         "CREATE SCHEMA IF NOT EXISTS /foo",
-        "CREATE SCHEMA /foo NEXT CREATE SCHEMA /bar",
+        "DROP SCHEMA /foo",
+        "CREATE GRAPH g ANY",
+        "CREATE GRAPH IF NOT EXISTS g ANY",
+        "DROP PROPERTY GRAPH IF EXISTS /foo/g",
     ] {
-        assert_unsupported(source, FeatureId::GC02);
+        assert_parses(source);
     }
-
-    for source in [
-        "CREATE GRAPH g",
-        "CREATE GRAPH IF NOT EXISTS g",
-        "CREATE GRAPH g LIKE other",
-        "CREATE GRAPH g AS COPY OF other",
-    ] {
-        assert_unsupported(source, FeatureId::GC04);
+    // ISO section 12.4 makes the graph type clause mandatory.
+    for source in ["CREATE GRAPH g", "CREATE GRAPH IF NOT EXISTS g"] {
+        assert_syntax_error(source);
     }
+    assert_unsupported("CREATE GRAPH g LIKE other", FeatureId::GG04);
+    assert_unsupported("CREATE GRAPH g AS COPY OF other", FeatureId::GG05);
 }

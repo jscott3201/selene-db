@@ -8,10 +8,12 @@
 /// section 23.1's implementation-defined ranges.
 pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("00000", "successful-completion"),
+    ("00001", "successful-completion-omitted-result"),
     ("08000", "connection-exception"),
     ("0G003", "zero-identifier"),
     ("0G008", "compact-key-value-length-mismatch"),
     ("0G009", "overlapping-diff"),
+    ("01G03", "graph-does-not-exist"),
     ("01G11", "null-value-eliminated-in-set-function"),
     ("01N01", "validation-mode-relaxed-write"),
     ("22000", "data-exception"),
@@ -63,6 +65,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("2DN01", "session-closed"),
     ("40000", "transaction-rollback"),
     ("40003", "statement-completion-unknown"),
+    ("42000", "syntax-error-or-access-rule-violation"),
     ("42001", "invalid-syntax"),
     ("42002", "invalid-reference"),
     (
@@ -91,6 +94,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("5GQL2", "operation-cancelled"),
     ("5GQL3", "deadline-exceeded"),
     ("5GQL0", "implementation-defined-error"),
+    ("G1000", "dependent-object-error"),
     ("G1001", "dependent-object-still-exists"),
     ("G2000", "graph-type-violation"),
 ];

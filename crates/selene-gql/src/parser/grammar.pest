@@ -18,7 +18,7 @@
 
 // -- Top-level ------------------------------------------------------
 
-gql_program = { SOI ~ (explain_stmt | create_schema_command | ddl_statement | transaction_control | session_command | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+gql_program = { SOI ~ (explain_stmt | catalog_statement_chain | ddl_statement | transaction_control | session_command | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
 
 explain_stmt = { explain_kw ~ explainable_statement }
 explainable_statement = { ddl_statement | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
@@ -29,11 +29,34 @@ explain_kw = @{ ^"EXPLAIN" ~ !(LETTER | NUMBER | "_") }
 ddl_statement = { create_node_type | alter_node_type | drop_node_type | truncate_node_type | show_node_types
               | create_edge_type | alter_edge_type | drop_edge_type | truncate_edge_type | show_edge_types
               | show_indexes | show_procedures
+              | create_schema | drop_schema
+              | create_graph_type_guard | drop_graph_type_guard
               | create_graph | drop_graph | create_index | drop_index }
 
-create_schema_command = { create_schema ~ (next_kw ~ create_schema)* }
-create_schema = { ddl_create_kw ~ ddl_schema_kw ~ if_not_exists? ~ schema_name }
-schema_name = { ("/" ~ ident)+ | ident }
+// -- Database-catalog statements (ISO/IEC 39075:2024 section 12.2-12.5) ------
+//
+// ISO section 12.1 composes <simple catalog-modifying statement>s with NEXT.
+// The chain is recognised only so its rejection is a structured 42N01
+// not-implemented diagnostic instead of a bare syntax error at the NEXT token;
+// the builder never produces an AST for it.
+catalog_statement_chain = { database_catalog_statement ~ (next_kw ~ database_catalog_statement)+ }
+database_catalog_statement = _{ create_schema | drop_schema | create_graph | drop_graph }
+
+// <catalog schema parent and name> ::= <absolute directory path> <schema name>
+// (section 17.1). The leading solidus is mandatory; a bare name is a syntax
+// error. Directory segments beyond the root are accepted here and rejected as
+// invalid references (42002) by the facade, whose catalog has directory depth 0.
+create_schema = { ddl_create_kw ~ ddl_schema_kw ~ if_not_exists? ~ absolute_catalog_path }
+drop_schema   = { ddl_drop_kw ~ ddl_schema_kw ~ if_exists? ~ absolute_catalog_path }
+// Compound-atomic: no whitespace between the solidus and its segment, and
+// none between segments, so `/a /b` is two tokens rather than one path.
+absolute_catalog_path = ${ ("/" ~ ident)+ }
+// <catalog graph parent and name> ::= [ <catalog object parent reference> ]
+// <graph name> (section 17.2). A bare identifier is resolved against the
+// current working schema (SR 2a); a delimited identifier is admitted through
+// `ident`. Predefined references (CURRENT_SCHEMA, HOME_SCHEMA, `.`, `..`) are
+// reserved words or unparseable here and cannot name a graph.
+graph_reference = { absolute_catalog_path | ident }
 
 create_node_type = {
     ddl_create_kw ~ or_replace? ~ ddl_node_kw ~ ddl_type_kw ~ if_not_exists? ~
@@ -96,22 +119,46 @@ default_value = _{ record_constructor | literal }
 edge_endpoint_clause = { from_kw ~ label_list ~ ddl_to_kw ~ label_list }
 label_list           = { ":" ~ ident ~ ("," ~ ":" ~ ident)* }
 
+// <create graph statement> ::=
+//   CREATE { [ PROPERTY ] GRAPH [ IF NOT EXISTS ] | OR REPLACE [ PROPERTY ] GRAPH }
+//   <catalog graph parent and name> { <open graph type> | <of graph type> } [ <graph source> ]
+// The type clause is mandatory in ISO; it is optional here only so the builder
+// can report its absence as a precise 42001 with the statement span. Every
+// <of graph type> alternative and <graph source> is parsed so the builder can
+// reject it with the owning feature ID (GG02/GG03/GG04/GG05) rather than a
+// bare syntax error; none of them reaches the AST.
 create_graph = {
-    ddl_create_kw ~ or_replace? ~ ddl_graph_kw ~ if_not_exists? ~
-    create_graph_name ~ create_graph_source? ~ create_graph_copy?
+    ddl_create_kw ~ (or_replace ~ ddl_property_kw? ~ ddl_graph_kw | ddl_property_kw? ~ ddl_graph_kw ~ if_not_exists?) ~
+    graph_reference ~ create_graph_type_clause? ~ graph_source?
 }
-create_graph_name = { ("/" ~ ident)+ | ident }
-create_graph_source = {
-    ddl_any_kw
-  | ddl_like_kw ~ create_graph_name
-  | create_graph_type_ref
-}
-create_graph_type_ref = { typed_marker? ~ (create_graph_type_literal | ident) }
+// `ANY` is not in the global `keyword` rule, so the open form must be tried
+// before the bare graph-type reference or `ANY` would lex as a type name.
+create_graph_type_clause = { open_graph_type | graph_type_like_graph | graph_type_inline | graph_type_reference }
+// <open graph type> ::= [ <typed> ] ANY [ [ PROPERTY ] GRAPH ]
+open_graph_type = { typed_marker? ~ ddl_any_kw ~ (ddl_property_kw? ~ ddl_graph_kw)? }
+// <graph type like graph> ::= LIKE <graph expression> (Feature GG04)
+graph_type_like_graph = { ddl_like_kw ~ graph_reference }
+// [ <typed> ] [ [ PROPERTY ] GRAPH ] <nested graph type specification> (Feature GG03)
+graph_type_inline = { typed_marker? ~ (ddl_property_kw? ~ ddl_graph_kw)? ~ create_graph_type_literal }
+// [ <typed> ] <graph type reference> (Feature GG02)
+graph_type_reference = { typed_marker? ~ graph_reference }
 create_graph_type_literal = { "{" ~ create_graph_type_element ~ ("," ~ create_graph_type_element)* ~ "}" }
 create_graph_type_element = { "(" ~ ident ~ (":" ~ ident)? ~ create_graph_type_props? ~ ")" }
 create_graph_type_props = { "{" ~ type_prop_def_list? ~ "}" }
-create_graph_copy = { as_kw ~ ddl_copy_kw ~ ddl_of_kw ~ create_graph_name }
-drop_graph   = { ddl_drop_kw ~ ddl_graph_kw ~ if_exists? ~ ident }
+// <graph source> ::= AS COPY OF <graph expression> (Feature GG05)
+graph_source = { as_kw ~ ddl_copy_kw ~ ddl_of_kw ~ graph_reference }
+// <drop graph statement> ::= DROP [ PROPERTY ] GRAPH [ IF EXISTS ] <catalog graph parent and name>
+drop_graph   = { ddl_drop_kw ~ ddl_property_kw? ~ ddl_graph_kw ~ if_exists? ~ graph_reference }
+// CREATE/DROP [PROPERTY] GRAPH TYPE (section 12.6/12.7) are recognised ahead of
+// the graph statements only to reject them with a structured 42N01 that names
+// M02-PR04 part 2. TYPE is a non-reserved word (section 21.3), so it is not
+// added to the global `keyword` rule; the consequence is that a graph literally
+// named `type` must be written as a delimited identifier in these statements.
+// The tail deliberately swallows the rest of the statement: the guard exists to
+// classify the statement, not to validate graph-type syntax.
+create_graph_type_guard = { ddl_create_kw ~ or_replace? ~ ddl_property_kw? ~ ddl_graph_kw ~ ddl_type_kw ~ graph_type_guard_tail }
+drop_graph_type_guard   = { ddl_drop_kw ~ ddl_property_kw? ~ ddl_graph_kw ~ ddl_type_kw ~ graph_type_guard_tail }
+graph_type_guard_tail = @{ (!EOI ~ ANY)* }
 create_index = { ddl_create_kw ~ ddl_index_kw ~ if_not_exists? ~ ident ~ ddl_on_kw ~ ":" ~ ident ~ "(" ~ prop_ident ~ ("," ~ prop_ident)* ~ ")" }
 drop_index   = { ddl_drop_kw ~ ddl_index_kw ~ if_exists? ~ ident }
 
@@ -126,6 +173,7 @@ ddl_edge_kw = @{ ^"EDGE" ~ !(LETTER | NUMBER | "_") }
 ddl_type_kw = @{ ^"TYPE" ~ !(LETTER | NUMBER | "_") }
 ddl_types_kw = @{ ^"TYPES" ~ !(LETTER | NUMBER | "_") }
 ddl_graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
+ddl_property_kw = @{ ^"PROPERTY" ~ !(LETTER | NUMBER | "_") }
 ddl_index_kw = @{ ^"INDEX" ~ !(LETTER | NUMBER | "_") }
 ddl_indexes_kw = @{ ^"INDEXES" ~ !(LETTER | NUMBER | "_") }
 ddl_procedures_kw = @{ ^"PROCEDURES" ~ !(LETTER | NUMBER | "_") }

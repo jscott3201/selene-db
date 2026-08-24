@@ -1,6 +1,7 @@
 //! Public GQL abstract syntax tree types.
 
 pub mod call;
+pub mod catalog_ref;
 pub mod ddl;
 pub mod eq;
 pub mod expr;
@@ -15,6 +16,7 @@ pub mod util;
 mod walk;
 
 pub use call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem};
+pub use catalog_ref::{CatalogObjectReference, CatalogPathSegment, IdentifierForm};
 pub use ddl::{
     DdlStatement, DropBehavior, EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint,
     TypePropertyDef, ValidationMode,

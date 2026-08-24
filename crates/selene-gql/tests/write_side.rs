@@ -97,12 +97,22 @@ fn parse_finish_terminator() {
 
 #[test]
 fn parse_graph_ddl() {
-    // CREATE GRAPH stays parse-rejected under D1 single-graph (GC04 unsupported
-    // — cannot create a second graph).
+    // Open-graph management (GC04/GG01) parses; every closed-type clause is
+    // rejected with its owning feature (ISO section 12.4 CR4-CR7) and a
+    // missing type clause is a syntax error.
+    for source in ["CREATE GRAPH foo ANY", "CREATE GRAPH IF NOT EXISTS foo ANY"] {
+        let DdlStatement::CreateGraph {
+            reference,
+            if_not_exists,
+            ..
+        } = parse_ddl(source)
+        else {
+            panic!("expected CREATE GRAPH DDL for {source}");
+        };
+        assert_eq!(reference.leaf().name.as_str(), "foo");
+        assert_eq!(if_not_exists, source.contains("IF NOT EXISTS"), "{source}");
+    }
     for source in [
-        "CREATE GRAPH foo",
-        "CREATE GRAPH IF NOT EXISTS foo",
-        "CREATE GRAPH foo ANY",
         "CREATE GRAPH foo TYPED fooType",
         "CREATE GRAPH foo ::fooType",
         "CREATE GRAPH /foo LIKE /bar",
@@ -112,13 +122,21 @@ fn parse_graph_ddl() {
         let error = selene_gql::parse(source).expect_err(source);
         assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }
-    // DROP GRAPH now parses (BRIEF-152): it is the IM_DROP_GRAPH factory-reset
-    // extension, reaching the executor instead of dying in the flagger. Under
-    // D1 the parsed name is informational and IF EXISTS is trivially satisfied.
-    for source in ["DROP GRAPH foo", "DROP GRAPH IF EXISTS foo"] {
-        let DdlStatement::DropGraph { if_exists, .. } = parse_ddl(source) else {
+    for source in ["CREATE GRAPH foo", "CREATE GRAPH IF NOT EXISTS foo"] {
+        let error = selene_gql::parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus(), GqlStatus::SYNTAX_ERROR);
+    }
+    for source in ["DROP GRAPH foo", "DROP GRAPH IF EXISTS /s/foo"] {
+        let DdlStatement::DropGraph {
+            reference,
+            if_exists,
+            ..
+        } = parse_ddl(source)
+        else {
             panic!("expected DROP GRAPH DDL for {source}");
         };
+        assert_eq!(reference.leaf().name.as_str(), "foo");
+        assert_eq!(reference.absolute, source.contains("/s/"), "{source}");
         assert_eq!(if_exists, source.contains("IF EXISTS"), "{source}");
     }
 }

@@ -54,8 +54,8 @@ fn bench_profile_conformance(c: &mut Criterion) {
                     .expect("direct-selected GE04/GE05 parameter syntax is admitted"),
             );
             std::hint::black_box(
-                selene_gql::parse("CREATE GRAPH demo")
-                    .expect_err("implied unsupported GC04 is rejected"),
+                selene_gql::parse("CREATE GRAPH demo LIKE other")
+                    .expect_err("referenced-only GG04 is rejected"),
             );
         });
     });

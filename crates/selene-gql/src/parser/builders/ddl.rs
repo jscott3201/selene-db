@@ -13,16 +13,21 @@ use crate::{
 };
 
 use super::{
-    Rule, db_string_from_str, db_string_pair, expr, first_child, keyword_starts_with,
-    keyword_tokens_eq, span, unexpected_pair,
+    Rule, catalog_ddl, db_string_pair, expr, first_child, keyword_starts_with, keyword_tokens_eq,
+    span, unexpected_pair,
 };
 
 pub(super) fn build_ddl_statement(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::ddl_statement);
     let inner = first_child(pair)?;
     match inner.as_rule() {
-        Rule::create_graph => build_create_graph(inner),
-        Rule::drop_graph => build_drop_graph(inner),
+        Rule::create_schema => catalog_ddl::build_create_schema(inner),
+        Rule::drop_schema => catalog_ddl::build_drop_schema(inner),
+        Rule::create_graph => catalog_ddl::build_create_graph(inner),
+        Rule::drop_graph => catalog_ddl::build_drop_graph(inner),
+        Rule::create_graph_type_guard | Rule::drop_graph_type_guard => {
+            Err(catalog_ddl::reject_graph_type_statement(&inner))
+        }
         Rule::create_node_type => build_create_node_type(inner),
         Rule::alter_node_type => build_alter_node_type(inner),
         Rule::create_edge_type => build_create_edge_type(inner),
@@ -56,56 +61,6 @@ fn is_ddl_keyword_token(rule: Rule) -> bool {
             | Rule::ddl_extends_kw
             | Rule::ddl_on_kw
     )
-}
-
-fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
-    let source_span = span(&pair);
-    let mut name = None;
-    let mut or_replace = false;
-    let mut if_not_exists = false;
-
-    for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::or_replace => or_replace = true,
-            Rule::if_not_exists => if_not_exists = true,
-            Rule::create_graph_name if name.is_none() => {
-                let name_span = span(&child);
-                name = Some(db_string_from_str(child.as_str(), name_span, "graph name")?);
-            }
-            Rule::create_graph_source | Rule::create_graph_copy => {}
-            rule if is_ddl_keyword_token(rule) => {}
-            _ => return Err(unexpected_pair(child, "unexpected CREATE GRAPH child")),
-        }
-    }
-
-    Ok(DdlStatement::CreateGraph {
-        name: name.ok_or_else(|| {
-            ParserError::syntax("CREATE GRAPH is missing name", source_span, None)
-        })?,
-        or_replace,
-        if_not_exists,
-        span: source_span,
-    })
-}
-
-fn build_drop_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
-    let source_span = span(&pair);
-    let mut name = None;
-    let mut if_exists = false;
-    for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::if_exists => if_exists = true,
-            Rule::ident => name = Some(db_string_pair(child)?),
-            rule if is_ddl_keyword_token(rule) => {}
-            _ => return Err(unexpected_pair(child, "unexpected DROP GRAPH child")),
-        }
-    }
-    Ok(DdlStatement::DropGraph {
-        name: name
-            .ok_or_else(|| ParserError::syntax("DROP GRAPH is missing name", source_span, None))?,
-        if_exists,
-        span: source_span,
-    })
 }
 
 fn build_create_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {

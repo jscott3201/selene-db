@@ -9,11 +9,26 @@ fn mutation_feature_is_supported() {
 }
 
 #[test]
-fn create_graph_is_rejected_before_planning() {
-    // GG01 is directly selected, but CREATE GRAPH also reaches the implied
-    // unsupported GC04 graph-management capability. DROP GRAPH remains
-    // IM_DROP_GRAPH.
-    let source = "CREATE GRAPH demo";
+fn open_graph_management_is_admitted_and_closed_forms_are_feature_rejected() {
+    // GC04/GC05/GG01 are runtime-supported: the open graph type form parses
+    // and stamps the ISO features. The closed-type forms are rejected with the
+    // feature that owns the clause (ISO section 12.4 CR4-CR7).
+    let ids = |source: &str| {
+        feature_walk(&parse(source).expect(source))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids("CREATE GRAPH demo ANY"),
+        [FeatureId::GC04, FeatureId::GG01]
+    );
+    assert_eq!(
+        ids("CREATE GRAPH IF NOT EXISTS demo ANY"),
+        [FeatureId::GC04, FeatureId::GG01, FeatureId::GC05]
+    );
+
+    let source = "CREATE GRAPH /demo LIKE /source";
     let error = parse(source).expect_err(source);
     let ParserError::UnsupportedFeature {
         feature_id,
@@ -24,51 +39,60 @@ fn create_graph_is_rejected_before_planning() {
     else {
         panic!("expected UnsupportedFeature for {source:?}");
     };
-    let record = capability(FeatureId::GC04).expect("GC04 capability");
-    assert_eq!(feature_id, FeatureId::GC04);
+    let record = capability(FeatureId::GG04).expect("GG04 capability");
+    assert_eq!(feature_id, FeatureId::GG04);
     assert_eq!(display_name, record.name);
-    assert_eq!(span, SourceSpan::new(0, source.len() as u32));
+    assert_eq!(display_name, "Graph type like a graph");
+    assert_eq!(span, SourceSpan::new(19, 12));
     assert_eq!(hint, record.non_support_rationale);
 
-    for source in [
-        "CREATE GRAPH IF NOT EXISTS demo",
-        "CREATE GRAPH demo ANY",
-        "CREATE GRAPH demo TYPED socialNetworkGraphType",
-        "CREATE GRAPH demo ::socialNetworkGraphType",
-        "CREATE GRAPH demo ::{(City :City {name STRING})}",
-        "CREATE GRAPH /demo LIKE /source",
-        "CREATE GRAPH demo ANY AS COPY OF source",
-        "CREATE GRAPH demo {(Person :Person {lastname STRING, joined DATE})} AS COPY OF source",
+    for (source, expected) in [
+        (
+            "CREATE GRAPH demo ::{(City :City {name STRING})}",
+            FeatureId::GG03,
+        ),
+        ("CREATE GRAPH demo ANY AS COPY OF source", FeatureId::GG05),
+        (
+            "CREATE GRAPH demo {(Person :Person {lastname STRING, joined DATE})} AS COPY OF source",
+            FeatureId::GG05,
+        ),
     ] {
         let error = selene_gql::parse(source).expect_err(source);
         assert_eq!(error.gqlstatus().as_str(), "42N01");
-        assert_feature(error, FeatureId::GC04);
+        assert_feature(error, expected);
+    }
+    for source in [
+        "CREATE GRAPH demo TYPED socialNetworkGraphType",
+        "CREATE GRAPH demo ::socialNetworkGraphType",
+    ] {
+        let error = selene_gql::parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus().as_str(), "42N01");
+        assert!(
+            matches!(error, ParserError::NotImplemented { .. }),
+            "{source}: expected NotImplemented, got {error:?}"
+        );
     }
 }
 
 #[test]
-fn drop_graph_stamps_im_drop_graph_and_parses() {
-    // BRIEF-152 / audit Item 10: DROP GRAPH ships as the IM_DROP_GRAPH
-    // factory-reset extension (a supported vendor flag), so it parses through to
-    // the executor instead of dying in the flagger like CREATE GRAPH. IF EXISTS
-    // is informational under D1 and adds no extra flag.
+fn drop_graph_stamps_gc04_and_the_bridge_extension() {
+    // DROP GRAPH is ISO GC04 (+GC05 with IF EXISTS). IM_DROP_GRAPH stays
+    // stamped while the compatibility session may execute the statement as
+    // the bootstrap factory reset; M02-PR05 removes the bridge and the stamp.
     let ids = |source: &str| {
         feature_walk(&parse(source).expect(source))
             .into_iter()
             .map(|feature| feature.feature_id)
             .collect::<Vec<_>>()
     };
-    for source in ["DROP GRAPH demo", "DROP GRAPH IF EXISTS demo"] {
-        let observed = ids(source);
-        assert!(
-            observed.contains(&FeatureId::IM_DROP_GRAPH),
-            "{source} must flag IM_DROP_GRAPH"
-        );
-        assert!(
-            !observed.contains(&FeatureId::GC04),
-            "{source} must NOT flag GC04 (that stays CREATE GRAPH only)"
-        );
-    }
+    assert_eq!(
+        ids("DROP GRAPH demo"),
+        [FeatureId::GC04, FeatureId::IM_DROP_GRAPH]
+    );
+    assert_eq!(
+        ids("DROP GRAPH IF EXISTS demo"),
+        [FeatureId::GC04, FeatureId::GC05, FeatureId::IM_DROP_GRAPH]
+    );
 }
 
 #[test]
@@ -86,7 +110,7 @@ fn intersect_and_except_composite_set_ops_are_supported() {
 #[test]
 fn or_replace_catalog_ddl_is_not_implemented() {
     for source in [
-        "CREATE OR REPLACE GRAPH demo",
+        "CREATE OR REPLACE GRAPH demo ANY",
         "CREATE OR REPLACE NODE TYPE :Person (name :: STRING)",
         "CREATE OR REPLACE EDGE TYPE :KNOWS (FROM :Person TO :Person)",
     ] {

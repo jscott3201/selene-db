@@ -2,28 +2,59 @@
 
 use selene_core::DbString;
 
-use crate::ast::{expr::ValueExpr, span::SourceSpan, types::GqlType};
+use crate::ast::{
+    catalog_ref::CatalogObjectReference, expr::ValueExpr, span::SourceSpan, types::GqlType,
+};
 
 /// Data-definition statement.
+///
+/// The first four variants are database-catalog statements (ISO/IEC
+/// 39075:2024 §12.2–§12.5). They carry unresolved references and are executed
+/// by the database facade, not by the graph-local executor.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
 pub enum DdlStatement {
-    /// `CREATE GRAPH`.
-    CreateGraph {
-        /// Graph name.
-        name: DbString,
-        /// `OR REPLACE`.
-        or_replace: bool,
-        /// `IF NOT EXISTS`.
+    /// `CREATE SCHEMA [IF NOT EXISTS] <catalog schema parent and name>` (§12.2).
+    CreateSchema {
+        /// Absolute schema reference; the grammar requires the leading `/`.
+        reference: CatalogObjectReference,
+        /// `IF NOT EXISTS` (Feature GC02).
         if_not_exists: bool,
         /// Source span.
         span: SourceSpan,
     },
-    /// `DROP GRAPH`.
+    /// `DROP SCHEMA [IF EXISTS] <catalog schema parent and name>` (§12.3).
+    DropSchema {
+        /// Absolute schema reference; the grammar requires the leading `/`.
+        reference: CatalogObjectReference,
+        /// `IF EXISTS` (Feature GC02).
+        if_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `CREATE [PROPERTY] GRAPH [IF NOT EXISTS] <reference> <open graph type>`
+    /// (§12.4).
+    ///
+    /// Only the `<open graph type>` form (`[TYPED | ::] ANY [[PROPERTY]
+    /// GRAPH]`, Feature GG01) is representable. The builder rejects every
+    /// `<of graph type>` form (GG02/GG03/GG04) and `<graph source>` (GG05)
+    /// with a feature-cited diagnostic, so no clause the facade cannot honor
+    /// survives into the AST.
+    CreateGraph {
+        /// Absolute or current-schema-relative graph reference.
+        reference: CatalogObjectReference,
+        /// `OR REPLACE`; rejected by the Flagger as not implemented.
+        or_replace: bool,
+        /// `IF NOT EXISTS` (Feature GC05).
+        if_not_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `DROP [PROPERTY] GRAPH [IF EXISTS] <reference>` (§12.5).
     DropGraph {
-        /// Graph name.
-        name: DbString,
-        /// `IF EXISTS`.
+        /// Absolute or current-schema-relative graph reference.
+        reference: CatalogObjectReference,
+        /// `IF EXISTS` (Feature GC05).
         if_exists: bool,
         /// Source span.
         span: SourceSpan,
@@ -180,7 +211,9 @@ impl DdlStatement {
     #[must_use]
     pub const fn span(&self) -> SourceSpan {
         match self {
-            Self::CreateGraph { span, .. }
+            Self::CreateSchema { span, .. }
+            | Self::DropSchema { span, .. }
+            | Self::CreateGraph { span, .. }
             | Self::DropGraph { span, .. }
             | Self::CreateNodeType { span, .. }
             | Self::CreateEdgeType { span, .. }

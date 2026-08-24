@@ -122,16 +122,16 @@ mod tests {
             display_name,
             span: rejected_span,
             hint,
-        } = check_feature(FeatureId::GC04, span).expect_err("implied unsupported capability")
+        } = check_feature(FeatureId::GV65, span).expect_err("implied unsupported capability")
         else {
             panic!("expected unsupported-feature error");
         };
-        assert_eq!(feature_id, FeatureId::GC04);
-        assert_eq!(display_name, capability(FeatureId::GC04).unwrap().name);
+        assert_eq!(feature_id, FeatureId::GV65);
+        assert_eq!(display_name, capability(FeatureId::GV65).unwrap().name);
         assert_eq!(rejected_span, span);
         assert_eq!(
             hint,
-            capability(FeatureId::GC04).unwrap().non_support_rationale
+            capability(FeatureId::GV65).unwrap().non_support_rationale
         );
     }
 }
