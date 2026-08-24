@@ -116,7 +116,7 @@ fn or_replace_creates_when_absent_and_replaces_with_a_fresh_identity() {
     // Old sessions are stale; a new session works on the new graph.
     assert_eq!(
         old_session.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
     let new_session = database.session(&path).unwrap();
     assert_eq!(
@@ -292,7 +292,7 @@ fn or_replace_of_the_current_graph_invalidates_the_selected_session() {
     );
     assert_eq!(
         session.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
     database
         .session(&session_path)

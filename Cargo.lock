@@ -1822,6 +1822,7 @@ dependencies = [
  "selene-db-core",
  "selene-db-gql",
  "selene-db-graph",
+ "selene-db-profile",
 ]
 
 [[package]]

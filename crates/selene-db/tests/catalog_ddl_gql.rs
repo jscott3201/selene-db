@@ -116,7 +116,7 @@ fn absolute_and_current_schema_relative_references_round_trip() {
     );
     assert_eq!(
         handle.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
 }
 
@@ -463,7 +463,7 @@ fn gql_drop_of_current_graph_obeys_restrict_and_invalidates_the_session() {
     assert!(catalog.snapshot().resolve_graph(&session_path).is_err());
     assert_eq!(
         session.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
 
     catalog
@@ -471,7 +471,7 @@ fn gql_drop_of_current_graph_obeys_restrict_and_invalidates_the_session() {
         .unwrap();
     assert_eq!(
         session.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
     database
         .session(&session_path)
@@ -492,7 +492,7 @@ fn old_sessions_stay_stale_across_gql_drop_and_same_path_recreate() {
     assert_eq!(session.execute("DROP GRAPH g").unwrap(), OMITTED);
     assert_eq!(
         old.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
     // The identical source recreates the path with a fresh identity.
     assert_eq!(session.execute("CREATE GRAPH g ANY").unwrap(), OMITTED);
@@ -501,7 +501,7 @@ fn old_sessions_stay_stale_across_gql_drop_and_same_path_recreate() {
     assert!(second.id > first.id);
     assert_eq!(
         old.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
     let fresh = database.session(&path).unwrap();
     fresh.execute("RETURN 1").unwrap();
@@ -708,6 +708,7 @@ fn facade_statuses_match_engine_statuses_where_both_exist() {
         assert!(selene_core::gqlstatus_name(facade.as_str()).is_some());
     }
     assert_eq!(ErrorKind::StaleGraphSelection.gqlstatus(), None);
+    assert_eq!(ErrorKind::StaleSessionReference.gqlstatus(), None);
 }
 
 #[test]

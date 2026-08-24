@@ -11,7 +11,11 @@ use selene_catalog::{
 use selene_gql::BuiltinProcedureRegistry;
 use selene_graph::{GraphTypeDef, SharedGraph};
 
-use crate::{Catalog, DatabaseConfig, Error, ObjectPath, Result, Session};
+use crate::{
+    AuthorizationDecision, AuthorizationRequest, Catalog, CatalogReadSnapshot, DatabaseConfig,
+    Error, GraphDescriptor, ObjectPath, Principal, Result, SchemaDescriptor, Session,
+    SessionContext, SessionOptions, session_context::SessionContextParts,
+};
 
 const CATALOG_NAME: &str = "selene";
 
@@ -42,9 +46,75 @@ impl Database {
     /// Returns a structured catalog error when the path, its parents, or its
     /// object kind do not identify a current graph.
     pub fn session(&self, path: &ObjectPath) -> Result<Session> {
-        let descriptor = self.catalog().snapshot().resolve_graph(path)?;
-        let id = GraphId::new(descriptor.id.get()).map_err(Error::from_catalog_invariant)?;
-        Ok(Session::new(Arc::clone(&self.inner), id, descriptor.path))
+        self.session_with_options(path, SessionOptions::default())
+    }
+
+    /// Open a session with embedder-provided principal and policy hooks.
+    ///
+    /// Principal resolution runs before one catalog snapshot is loaded. Current
+    /// and home references are copied from that snapshot, which is released
+    /// before policy evaluation. Neither hook runs under a catalog lifecycle
+    /// lock or graph request lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured facade diagnostic for principal resolution,
+    /// authorization denial, invalid home declarations, or an invalid current
+    /// graph reference.
+    pub fn session_with_options(
+        &self,
+        path: &ObjectPath,
+        options: SessionOptions,
+    ) -> Result<Session> {
+        let SessionOptions {
+            authorization_id,
+            principal_provider,
+            authorization_policy,
+        } = options;
+        let principal = match authorization_id.as_ref() {
+            Some(id) => principal_provider
+                .resolve(id)
+                .map_err(Error::principal_provider_failure)?
+                .ok_or_else(Error::principal_not_found)
+                .map(Some)?,
+            None => None,
+        };
+
+        let snapshot = self.catalog().snapshot();
+        let current_graph = snapshot.resolve_graph(path)?;
+        let current_schema = snapshot
+            .resolve_schema(&current_graph.path.schema_path())
+            .map_err(Error::invalid_session_reference)?;
+        let (home_schema, home_graph) = resolve_principal_homes(&snapshot, principal.as_ref())?;
+        let catalog_generation = snapshot.generation();
+        drop(snapshot);
+
+        let request = AuthorizationRequest::new(
+            authorization_id.as_ref(),
+            principal.as_ref(),
+            home_schema.as_ref(),
+            home_graph.as_ref(),
+            &current_schema,
+            &current_graph,
+        );
+        match authorization_policy
+            .authorize(&request)
+            .map_err(Error::authorization_policy_failure)?
+        {
+            AuthorizationDecision::Allow => {}
+            AuthorizationDecision::Deny => return Err(Error::authorization_denied()),
+        }
+
+        let context = SessionContext::new(SessionContextParts {
+            authorization_id,
+            principal,
+            home_schema,
+            home_graph,
+            current_schema,
+            current_graph,
+            catalog_generation,
+        });
+        Ok(Session::new(Arc::clone(&self.inner), context))
     }
 
     /// Open the database-owned catalog lifecycle service.
@@ -58,6 +128,58 @@ impl Database {
     pub fn config(&self) -> &DatabaseConfig {
         &self.inner.config
     }
+}
+
+fn resolve_principal_homes(
+    snapshot: &CatalogReadSnapshot,
+    principal: Option<&Principal>,
+) -> Result<(Option<SchemaDescriptor>, Option<GraphDescriptor>)> {
+    let Some(principal) = principal else {
+        return Ok((None, None));
+    };
+    let home_schema_path = principal.home_schema();
+    let home_graph_path = principal.home_graph();
+    if home_graph_path.is_some() && home_schema_path.is_none() {
+        return Err(Error::invalid_principal_home(
+            "a principal home graph requires a home schema",
+        ));
+    }
+    if let (Some(schema), Some(graph)) = (home_schema_path, home_graph_path)
+        && graph.schema_path() != *schema
+    {
+        return Err(Error::invalid_principal_home(
+            "the principal home graph is outside the home schema",
+        ));
+    }
+
+    let home_schema = home_schema_path
+        .map(|path| {
+            snapshot.resolve_schema(path).map_err(|source| {
+                Error::invalid_principal_home_source(
+                    "the principal home schema is not a current schema",
+                    source,
+                )
+            })
+        })
+        .transpose()?;
+    let home_graph = home_graph_path
+        .map(|path| {
+            snapshot.resolve_graph(path).map_err(|source| {
+                Error::invalid_principal_home_source(
+                    "the principal home graph is not a current graph",
+                    source,
+                )
+            })
+        })
+        .transpose()?;
+    if let (Some(schema), Some(graph)) = (&home_schema, &home_graph)
+        && graph.path.schema_path() != schema.path
+    {
+        return Err(Error::invalid_principal_home(
+            "the resolved principal home graph is outside the home schema",
+        ));
+    }
+    Ok((home_schema, home_graph))
 }
 
 /// Construction funnel for [`Database`].

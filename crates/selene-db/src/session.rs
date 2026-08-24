@@ -1,24 +1,26 @@
-//! Lifetime-free selected-graph facade session and request leases.
+//! Facade session context and selected-graph request leases.
 
-use std::sync::Arc;
+use std::{cell::Cell, marker::PhantomData, sync::Arc};
 
 use selene_catalog::GraphId as LowerGraphId;
 use selene_gql::CatalogSessionOutput;
 
 use crate::{
-    Error, ExecutionOutcome, ObjectPath, Result, SchemaPath, database::DatabaseInner, ddl,
+    CatalogReadSnapshot, Error, ExecutionOutcome, ObjectPath, Result, SessionContext,
+    database::DatabaseInner, ddl,
 };
 
 /// Movable session selected to one catalog graph identity.
 ///
-/// The session owns its database and stores no runtime graph handle. Each call
-/// revalidates the selected stable identity under a temporary graph lifecycle
-/// read lease, then creates a fresh lower executor session. A drop or
-/// replacement makes the session stale; recreating the same path never rebinds
-/// it to the replacement.
+/// The session owns its database and an immutable [`SessionContext`], but no
+/// runtime graph handle or catalog snapshot. Each call validates every copied
+/// home/current stable identity, then rechecks the selected graph under a
+/// temporary lifecycle read lease. A same-path recreation never rebinds the
+/// session.
 ///
-/// The session is stateless between requests. Persistent transaction and
-/// request context belong to M03.
+/// A session is `Send` but intentionally not `Sync`. The current `execute(&self)`
+/// signature is a compatibility boundary; request and transaction slots remain
+/// vacant and carry no hidden interior-mutable state.
 ///
 /// Transaction and `SESSION` controls return feature-not-supported instead of
 /// reporting state that would disappear after the call. Database-catalog
@@ -30,24 +32,23 @@ use crate::{
 /// [`Catalog`](crate::Catalog) call.
 pub struct Session {
     inner: Arc<DatabaseInner>,
-    graph_id: LowerGraphId,
-    graph_path: ObjectPath,
-    schema_path: SchemaPath,
+    context: SessionContext,
+    not_sync: PhantomData<Cell<()>>,
 }
 
 impl Session {
-    pub(crate) fn new(
-        inner: Arc<DatabaseInner>,
-        graph_id: LowerGraphId,
-        graph_path: ObjectPath,
-    ) -> Self {
-        let schema_path = graph_path.schema_path();
+    pub(crate) fn new(inner: Arc<DatabaseInner>, context: SessionContext) -> Self {
         Self {
             inner,
-            graph_id,
-            graph_path,
-            schema_path,
+            context,
+            not_sync: PhantomData,
         }
+    }
+
+    /// Return immutable typed inspection of this session's creation context.
+    #[must_use]
+    pub const fn context(&self) -> &SessionContext {
+        &self.context
     }
 
     /// Parse, plan, and execute one GQL statement.
@@ -58,18 +59,51 @@ impl Session {
     /// # Errors
     ///
     /// Returns a facade-owned diagnostic for invalid GQL, unsupported stateful
-    /// controls, a stale graph selection, analysis/planning failures, or
+    /// controls, a stale context reference, analysis/planning failures, or
     /// execution failures.
     pub fn execute(&self, source: &str) -> Result<ExecutionOutcome> {
-        match self
-            .inner
-            .execute_catalog_session(self.graph_id, &self.graph_path, source)?
-        {
+        self.validate_context_references()?;
+        let current_graph = self.context.current_graph();
+        let graph_id = LowerGraphId::new(current_graph.id.get()).map_err(|source| {
+            Error::invalid_session_reference(Error::from_catalog_invariant(source))
+        })?;
+        let audit_bytes = self
+            .context
+            .principal()
+            .and_then(crate::Principal::audit_bytes_arc);
+        match self.inner.execute_catalog_session(
+            graph_id,
+            &current_graph.path,
+            audit_bytes,
+            source,
+        )? {
             CatalogSessionOutput::Statement(output) => ExecutionOutcome::from_engine(output),
             CatalogSessionOutput::DatabaseCatalog(command) => {
-                ddl::execute(&self.inner, &self.schema_path, command)
+                ddl::execute(&self.inner, &self.context.current_schema().path, command)
             }
             _ => Err(Error::unsupported_engine_outcome()),
+        }
+    }
+
+    fn validate_context_references(&self) -> Result<()> {
+        let snapshot = CatalogReadSnapshot {
+            state: self.inner.state.load_full(),
+        };
+        let references_are_current = snapshot
+            .matches_schema_reference(self.context.current_schema())
+            && snapshot.matches_graph_reference(self.context.current_graph())
+            && self
+                .context
+                .home_schema()
+                .is_none_or(|schema| snapshot.matches_schema_reference(schema))
+            && self
+                .context
+                .home_graph()
+                .is_none_or(|graph| snapshot.matches_graph_reference(graph));
+        if references_are_current {
+            Ok(())
+        } else {
+            Err(Error::stale_session_reference())
         }
     }
 }
@@ -84,10 +118,15 @@ impl DatabaseInner {
         &self,
         id: LowerGraphId,
         path: &ObjectPath,
+        audit_bytes: Option<Arc<[u8]>>,
         source: &str,
     ) -> Result<CatalogSessionOutput> {
         self.with_graph_request(id, path, |graph| {
-            selene_gql::Session::new(graph)
+            let mut session = match audit_bytes {
+                Some(audit_bytes) => selene_gql::Session::with_principal(graph, audit_bytes),
+                None => selene_gql::Session::new(graph),
+            };
+            session
                 .execute_source_catalog_session(source, &self.procedures)
                 .map_err(Error::from_engine)
         })
@@ -96,7 +135,7 @@ impl DatabaseInner {
     pub(crate) fn with_graph_request<T>(
         &self,
         id: LowerGraphId,
-        path: &impl std::fmt::Display,
+        _path: &impl std::fmt::Display,
         execute: impl FnOnce(&selene_graph::SharedGraph) -> Result<T>,
     ) -> Result<T> {
         let observed = self.state.load_full();
@@ -104,7 +143,7 @@ impl DatabaseInner {
             .graphs
             .get(&id)
             .cloned()
-            .ok_or_else(|| Error::stale_graph(path))?;
+            .ok_or_else(Error::stale_session_reference)?;
         #[cfg(test)]
         let _depth = crate::database::GraphRequestDepth::enter();
         let _lease = instance.lifecycle.read();
@@ -114,7 +153,7 @@ impl DatabaseInner {
             .get(&id)
             .is_none_or(|registered| !Arc::ptr_eq(registered, &instance))
         {
-            return Err(Error::stale_graph(path));
+            return Err(Error::stale_session_reference());
         }
         execute(&instance.graph)
     }

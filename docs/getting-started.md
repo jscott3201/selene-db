@@ -102,9 +102,12 @@ replacement.
 
 ## Current facade boundaries
 
-The facade session is owned, lifetime-free, and stateless between requests. It
-does not yet expose parameters, transactions, session controls, cancellation,
-authentication, time-zone state, persistence configuration, or row-value
+The facade session is owned, lifetime-free, `Send`, and intentionally not
+`Sync`. `Session::context()` exposes immutable current/home catalog references,
+optional embedder-provided authorization and principal data, generated profile
+identity, UTC and empty-parameter defaults, and vacant request/transaction
+slots. It does not yet expose parameter mutation, transactions, session
+controls, cancellation, persistence configuration, or row-value
 materialization. Stateful controls return a structured error rather than being
 accepted without durable session state.
 

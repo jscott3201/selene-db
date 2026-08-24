@@ -146,7 +146,7 @@ fn graph_drop_clears_procedure_state_only_after_successful_publication() {
     catalog.drop_graph(&path, DropPolicy::Strict).unwrap();
     assert_eq!(
         session.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
     catalog
         .create_graph(&path, None, CreatePolicy::Strict)

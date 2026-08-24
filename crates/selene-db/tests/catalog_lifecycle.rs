@@ -483,7 +483,7 @@ fn old_session_never_aliases_same_path_recreation() {
     catalog.drop_graph(&path, DropPolicy::Strict).unwrap();
     assert_eq!(
         old.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
     let CreateOutcome::Created(second_descriptor) = catalog
         .create_graph(&path, None, CreatePolicy::Strict)
@@ -494,7 +494,7 @@ fn old_session_never_aliases_same_path_recreation() {
     assert_ne!(first_descriptor.id, second_descriptor.id);
     assert_eq!(
         old.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
     assert_eq!(
         database
@@ -543,11 +543,12 @@ fn initial_catalog_is_empty_and_first_user_ids_start_at_one() {
 }
 
 #[test]
-fn shared_facade_handles_are_send_and_sync() {
+fn shared_handles_are_send_sync_and_session_is_send() {
     fn assert_send_sync<T: Send + Sync>() {}
+    fn assert_send_static<T: Send + 'static>() {}
 
     assert_send_sync::<Database>();
     assert_send_sync::<Catalog>();
     assert_send_sync::<CatalogReadSnapshot>();
-    assert_send_sync::<Session>();
+    assert_send_static::<Session>();
 }

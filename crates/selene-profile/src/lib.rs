@@ -40,7 +40,8 @@ pub use runtime::{
     AnnexBDecision, AnnexBId, AnnexBRecord, AnnexBValue, ApplicabilityStatus, CapabilityClaimState,
     CapabilityRecord, CapabilityStatus, DecisionStability as RuntimeDecisionStability,
     DecisionVisibility as RuntimeDecisionVisibility, EvidenceStatus, FeatureId, FeatureSurface,
-    FlaggerStatus, ProfileIdentity, ProfileRelation,
+    FixedTimeZoneDisplacement, FlaggerStatus, ProfileIdentity, ProfileRelation, SessionDefaults,
+    SessionUserDeclaredType,
 };
 pub use validate::{ProfileError, ValidatedProfile, load_profile, parse_profile};
 
@@ -48,6 +49,12 @@ pub use validate::{ProfileError, ValidatedProfile, load_profile, parse_profile};
 #[must_use]
 pub const fn current_profile_identity() -> ProfileIdentity {
     generated::PROFILE_IDENTITY
+}
+
+/// Return the typed defaults copied into each new facade session context.
+#[must_use]
+pub const fn current_session_defaults() -> SessionDefaults {
+    generated::SESSION_DEFAULTS
 }
 
 /// Return every ISO feature and extension in deterministic runtime order.

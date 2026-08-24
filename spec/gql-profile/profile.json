@@ -3604,7 +3604,7 @@
           "type": "identifier",
           "value": "embedder_supplied_opaque_bytes"
         },
-        "rationale": "The embedder optionally supplies opaque principal bytes that are forwarded to commits.",
+        "rationale": "The embedder may attach opaque audit bytes to a principal for forwarding to commits; these bytes are separate from string authorization and principal identifiers.",
         "stability": "stable",
         "visibility": "embedder"
       },
@@ -3621,16 +3621,21 @@
       "id": "ID002",
       "topic": "Principal home schema and graph",
       "decision": {
-        "disposition": "pending",
-        "owner": "M03-PR01",
-        "reason": "SessionContext will own principal defaults after the catalog-first facade exists."
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "provider-supplied optional home schema and graph paths"
+        },
+        "rationale": "Session creation resolves provider-declared home paths to stable catalog identities and rejects missing or incoherent homes.",
+        "stability": "stable",
+        "visibility": "embedder"
       },
       "runtime_order": 22,
       "clause_anchors": [
         "CLAUSE-ANNEX-B"
       ],
       "evidence": [
-        "EVID-PLAN-M03-PR01"
+        "EVID-SESSION-PRINCIPAL"
       ],
       "applicability": "APP-ALWAYS"
     },
@@ -3638,16 +3643,21 @@
       "id": "ID003",
       "topic": "Authorization privileges",
       "decision": {
-        "disposition": "pending",
-        "owner": "M03-PR01",
-        "reason": "The embedded principal contract does not yet include an authorization privilege model."
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "embedded AuthorizationPolicy hook with local allow-all default"
+        },
+        "rationale": "An embedder policy authorizes session creation through facade-only descriptors; Selene supplies no privilege language, role catalog, or authentication service.",
+        "stability": "stable",
+        "visibility": "embedder"
       },
       "runtime_order": 23,
       "clause_anchors": [
         "CLAUSE-ANNEX-B"
       ],
       "evidence": [
-        "EVID-PLAN-M03-PR01"
+        "EVID-SESSION-API"
       ],
       "applicability": "APP-ALWAYS"
     },
@@ -3994,16 +4004,21 @@
       "id": "ID061",
       "topic": "SESSION_USER declared type",
       "decision": {
-        "disposition": "pending",
-        "owner": "M03-PR01",
-        "reason": "The future principal and session context must define the exposed SESSION_USER representation."
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "STRING"
+        },
+        "rationale": "PrincipalId uses database-string semantics. This selects the declared type without claiming runtime support for the SESSION_USER expression.",
+        "stability": "stable",
+        "visibility": "public"
       },
       "runtime_order": 39,
       "clause_anchors": [
         "CLAUSE-ANNEX-B"
       ],
       "evidence": [
-        "EVID-PLAN-M03-PR01"
+        "EVID-SESSION-PRINCIPAL"
       ],
       "applicability": "APP-ALWAYS"
     },
@@ -5145,16 +5160,22 @@
       "id": "IV015",
       "topic": "Authorization identifier syntax",
       "decision": {
-        "disposition": "pending",
-        "owner": "M03-PR01",
-        "reason": "Opaque principal bytes are accepted, but no GQL authorization identifier syntax is selected."
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "non-empty UTF-8 database string subject to IL013"
+        },
+        "rationale": "AuthorizationId and PrincipalId accept non-empty UTF-8 text up to the database-string byte limit and remain distinct from optional audit bytes.",
+        "stability": "stable",
+        "visibility": "public"
       },
       "runtime_order": 94,
       "clause_anchors": [
         "CLAUSE-ANNEX-B"
       ],
       "evidence": [
-        "EVID-PLAN-M03-PR01"
+        "EVID-SESSION-PRINCIPAL",
+        "EVID-STRING-LIMIT"
       ],
       "applicability": "APP-ALWAYS"
     },
@@ -5212,13 +5233,14 @@
         "value": {
           "type": "ordered_identifier_list",
           "value": [
-            "Session::new",
-            "Session::with_principal",
-            "Session::execute_source"
+            "Database::session",
+            "Database::session_with_options",
+            "Session::context",
+            "Session::execute"
           ]
         },
-        "rationale": "The in-process embedder creates and drops Session values and submits requests through Rust methods.",
-        "stability": "provisional",
+        "rationale": "The stable facade creates database-owned sessions, exposes immutable context inspection, and submits one GQL source statement through Session::execute.",
+        "stability": "stable",
         "visibility": "embedder"
       },
       "runtime_order": 97,
@@ -5237,10 +5259,10 @@
         "disposition": "selected",
         "value": {
           "type": "identifier",
-          "value": "embedder maps principals to opaque bytes"
+          "value": "embedder maps authorization strings to principals; optional audit bytes are separate"
         },
-        "rationale": "Selene stores no user directory; the embedder owns identity lifecycle and supplies principal bytes.",
-        "stability": "provisional",
+        "rationale": "PrincipalProvider performs the embedder-owned string identifier mapping. Selene stores no user directory, and Principal audit bytes remain an independent optional commit field.",
+        "stability": "stable",
         "visibility": "embedder"
       },
       "runtime_order": 98,
@@ -5986,18 +6008,18 @@
     },
     {
       "id": "EVID-SESSION-API",
-      "reference": "crates/selene-gql/src/runtime/session.rs",
-      "description": "In-process session lifecycle and request API."
+      "reference": "crates/selene-db/src/session.rs",
+      "description": "Stable facade session context inspection and one-statement execution boundary."
     },
     {
       "id": "EVID-SESSION-DEFAULTS",
-      "reference": "crates/selene-gql/src/runtime/session.rs",
-      "description": "Empty parameter maps and UTC session default."
+      "reference": "crates/selene-db/src/session_context.rs",
+      "description": "Generated profile identity, UTC displacement, empty parameters, and vacant context slots copied at session creation."
     },
     {
       "id": "EVID-SESSION-PRINCIPAL",
-      "reference": "crates/selene-gql/src/runtime/session.rs",
-      "description": "Optional embedder-supplied opaque principal bytes."
+      "reference": "crates/selene-db/src/auth.rs",
+      "description": "Facade authorization and principal string types, local provider and policy hooks, declared homes, and optional audit bytes."
     },
     {
       "id": "EVID-STRING-CONCAT",

@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use selene_catalog::{
     CatalogDescriptor as LowerDescriptor, CatalogObjectId, CatalogObjectKind, CatalogParent,
-    CatalogPayload, GraphTypeId as LowerGraphTypeId, SchemaId as LowerSchemaId,
+    CatalogPayload, GraphId as LowerGraphId, GraphTypeId as LowerGraphTypeId,
+    SchemaId as LowerSchemaId,
 };
 
 use crate::{Error, ObjectPath, PathSegment, Result, SchemaPath, database::DatabaseState};
@@ -186,6 +187,30 @@ impl CatalogReadSnapshot {
                 .then(left.id.cmp(&right.id))
         });
         Ok(summaries)
+    }
+
+    pub(crate) fn matches_schema_reference(&self, expected: &SchemaDescriptor) -> bool {
+        let Ok(id) = LowerSchemaId::new(expected.id.0) else {
+            return false;
+        };
+        self.state
+            .catalog
+            .descriptor(CatalogObjectId::Schema(id))
+            .and_then(|descriptor| schema_summary(&self.state, descriptor).ok())
+            .as_ref()
+            == Some(expected)
+    }
+
+    pub(crate) fn matches_graph_reference(&self, expected: &GraphDescriptor) -> bool {
+        let Ok(id) = LowerGraphId::new(expected.id.0) else {
+            return false;
+        };
+        self.state
+            .catalog
+            .descriptor(CatalogObjectId::Graph(id))
+            .and_then(|descriptor| graph_summary(&self.state, descriptor).ok())
+            .as_ref()
+            == Some(expected)
     }
 }
 

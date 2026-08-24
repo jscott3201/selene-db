@@ -161,9 +161,9 @@ allocator metadata, `BTreeMap` node slack, and `Arc` control blocks.
 
 Bench bin: `catalog_lifecycle`. The quick profile measures absolute schema
 resolve, deterministic schema listing, outer snapshot clone, schema
-create/drop publication at 16 and 256 user schemas, and selected session
-creation at 4 and 32 registered graphs. The full profile adds 1,024 schemas and
-128 graphs.
+create/drop publication at 16 and 256 user schemas, and default/authenticated
+session-context creation at 4 and 32 registered graphs. The full profile adds
+1,024 schemas and 128 graphs.
 The create and drop rows time only the named operation; the inverse operation
 restores the fixture outside the returned Criterion duration.
 
@@ -201,6 +201,25 @@ This is one 10-sample quick run, not a regression threshold.
 | Bench | 4 graphs | 32 graphs |
 |---|---:|---:|
 | `catalog_lifecycle/session_creation/resolve_graph` | 133.50–135.44 ns | 158.60–160.89 ns |
+
+M03-PR01 session-context evidence was recorded on 2026-08-24 with Apple M5 (10
+cores, 16 GiB), macOS 26.7 build 25G220, rustc 1.97.1, and the worktree based on
+`002174a5ff2c5134467d4aa5bbbe8906f8c94a74`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter default_context
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter authenticated_allow_context
+```
+
+The default row resolves and copies the anonymous `SessionContext`. The
+authenticated row also invokes a local principal provider and the explicit
+allow-all policy. These are 10-sample Criterion confidence intervals from one
+quick run, not regression thresholds.
+
+| Bench | 4 graphs | 32 graphs |
+|---|---:|---:|
+| `catalog_lifecycle/session_creation/default_context` | 243.66–246.63 ns | 272.00–281.33 ns |
+| `catalog_lifecycle/session_creation/authenticated_allow_context` | 282.04–312.81 ns | 317.94–348.64 ns |
 
 #### M02-PR04 part 1 quick evidence
 
