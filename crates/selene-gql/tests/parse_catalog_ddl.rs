@@ -201,6 +201,7 @@ fn create_graph_accepts_every_open_graph_type_spelling() {
             reference,
             or_replace,
             if_not_exists,
+            graph_type,
             span,
         } = parse_ddl(source)
         else {
@@ -210,6 +211,7 @@ fn create_graph_accepts_every_open_graph_type_spelling() {
         assert_eq!(segments(&reference), [("g", IdentifierForm::Regular)]);
         assert!(!or_replace, "{source}");
         assert_eq!(if_not_exists, source.contains("IF NOT EXISTS"), "{source}");
+        assert!(graph_type.is_none(), "{source}");
         assert_eq!(span, full_span(source), "{source}");
     }
 }
@@ -306,7 +308,10 @@ fn create_graph_unsupported_clauses_are_rejected_with_their_feature() {
         "CREATE GRAPH g t",
         "CREATE GRAPH g /s/t",
     ] {
-        assert_not_implemented(source, "GG02");
+        let DdlStatement::CreateGraph { graph_type, .. } = parse_ddl(source) else {
+            panic!("{source}: expected CREATE GRAPH");
+        };
+        assert!(graph_type.is_some(), "{source}");
     }
 }
 
@@ -449,25 +454,20 @@ fn drop_graph_accepts_property_if_exists_and_both_reference_forms() {
 }
 
 #[test]
-fn graph_type_statements_are_guarded_until_part_two() {
-    for source in [
-        "CREATE GRAPH TYPE t {(Person :Person)}",
-        "CREATE PROPERTY GRAPH TYPE IF NOT EXISTS /s/t AS COPY OF u",
-        "CREATE OR REPLACE GRAPH TYPE t LIKE g",
-        "CREATE GRAPH TYPE",
-        "DROP GRAPH TYPE t",
-        "DROP PROPERTY GRAPH TYPE IF EXISTS /s/t",
-    ] {
-        let error = assert_not_implemented(source, "GRAPH TYPE");
-        let ParserError::NotImplemented { span, hint, .. } = error else {
-            unreachable!()
-        };
-        assert_eq!(span, full_span(source), "{source}");
-        assert!(
-            hint.as_deref().is_some_and(|hint| hint.contains("part 2")),
-            "{source}"
-        );
-    }
+fn graph_type_statements_use_strict_grammar_without_stealing_graph_names() {
+    assert!(matches!(
+        parse_ddl("CREATE GRAPH TYPE t { NODE TYPE Person () }"),
+        DdlStatement::CreateGraphType { .. }
+    ));
+    assert!(matches!(
+        parse_ddl("DROP PROPERTY GRAPH TYPE IF EXISTS /s/t"),
+        DdlStatement::DropGraphType {
+            if_exists: true,
+            ..
+        }
+    ));
+    assert_not_implemented("CREATE GRAPH TYPE t COPY OF u", "COPY OF");
+    assert_syntax("CREATE GRAPH TYPE");
     // TYPE is not reserved: a graph named `types` is still a graph.
     let DdlStatement::CreateGraph { reference, .. } = parse_ddl("CREATE GRAPH types ANY") else {
         panic!("expected CREATE GRAPH");
@@ -521,13 +521,16 @@ fn catalog_keywords_require_word_boundaries() {
     }
     // `ANYX`, `TYPEDANY`, and `TYPEX` are identifiers: the first two read as a
     // closed graph type reference and the third names a graph whose type
-    // clause `t` is a reference (GG02, not implemented), never as keywords.
+    // clause `t` is a reference, never as keywords.
     for source in [
         "CREATE GRAPH g ANYX",
         "CREATE GRAPH g TYPEDANY",
         "CREATE GRAPH TYPEX t",
     ] {
-        assert_not_implemented(source, "GG02");
+        let DdlStatement::CreateGraph { graph_type, .. } = parse_ddl(source) else {
+            panic!("{source}: expected CREATE GRAPH");
+        };
+        assert!(graph_type.is_some(), "{source}");
     }
 }
 

@@ -293,14 +293,39 @@ fn scrub_ddl(statement: &mut DdlStatement) {
         | DdlStatement::DropSchema {
             reference, span, ..
         }
-        | DdlStatement::CreateGraph {
+        | DdlStatement::DropGraph {
             reference, span, ..
         }
-        | DdlStatement::DropGraph {
+        | DdlStatement::DropGraphType {
             reference, span, ..
         } => {
             *span = SourceSpan::default();
             reference.span = SourceSpan::default();
+        }
+        DdlStatement::CreateGraph {
+            reference,
+            graph_type,
+            span,
+            ..
+        } => {
+            *span = SourceSpan::default();
+            reference.span = SourceSpan::default();
+            if let Some(graph_type) = graph_type {
+                graph_type.span = SourceSpan::default();
+            }
+        }
+        DdlStatement::CreateGraphType {
+            reference,
+            definition,
+            span,
+            ..
+        } => {
+            *span = SourceSpan::default();
+            reference.span = SourceSpan::default();
+            definition.span = SourceSpan::default();
+            for node_type in &mut definition.node_types {
+                node_type.span = SourceSpan::default();
+            }
         }
         DdlStatement::DropNodeType { span, .. }
         | DdlStatement::DropEdgeType { span, .. }

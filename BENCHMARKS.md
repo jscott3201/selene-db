@@ -200,6 +200,11 @@ isolates the per-request parse/analyze/plan cost of the fresh lower session
 (there is no plan cache on this path), which is the constant difference
 between a GQL row and its Rust-API counterpart.
 
+The group also includes `create_graph_type_gql` and `create_bound_graph_gql`.
+The first times the bounded property-free node definition and removes it through
+the Rust API outside the timed interval. The second resolves that named type and
+constructs a closed graph; graph cleanup is outside the timed interval.
+
 Recorded on 2026-08-23 with Apple M5 (10 cores, 16 GiB), macOS 26.7 build
 25G220, rustc 1.97.1, and the worktree at `ac93178f` plus the
 `CREATE OR REPLACE GRAPH` repair:
@@ -223,6 +228,19 @@ command measured it at 59.478–60.154 µs.
 | `catalog_lifecycle/gql_ddl/drop_graph_gql` | 50.772–51.826 µs | 104.27–104.74 µs |
 | `catalog_lifecycle/gql_ddl/create_or_replace_graph_gql` | 62.227–84.952 µs | 113.69–115.11 µs |
 | `catalog_lifecycle/gql_ddl/create_graph_if_not_exists_noop_gql` | 30.446–31.413 µs | 29.980–30.527 µs |
+
+The graph-type rows were recorded on 2026-08-24 on the same host, from the
+M02-PR04 part 2 worktree based on `1fab61fadfa5dd14f8f14df0f5b0952c2dc2ecce`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter create_graph_type_gql
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter create_bound_graph_gql
+```
+
+| Bench | 16 schemas | 256 schemas |
+|---|---:|---:|
+| `catalog_lifecycle/gql_ddl/create_graph_type_gql` | 41.415–70.516 µs | 111.64–147.30 µs |
+| `catalog_lifecycle/gql_ddl/create_bound_graph_gql` | 40.340–41.438 µs | 95.606–98.579 µs |
 
 ## §1 selene-core
 

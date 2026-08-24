@@ -25,9 +25,8 @@ pub(super) fn build_ddl_statement(pair: Pair<'_, Rule>) -> Result<DdlStatement, 
         Rule::drop_schema => catalog_ddl::build_drop_schema(inner),
         Rule::create_graph => catalog_ddl::build_create_graph(inner),
         Rule::drop_graph => catalog_ddl::build_drop_graph(inner),
-        Rule::create_graph_type_guard | Rule::drop_graph_type_guard => {
-            Err(catalog_ddl::reject_graph_type_statement(&inner))
-        }
+        Rule::create_graph_type => catalog_ddl::build_create_graph_type(inner),
+        Rule::drop_graph_type => catalog_ddl::build_drop_graph_type(inner),
         Rule::create_node_type => build_create_node_type(inner),
         Rule::alter_node_type => build_alter_node_type(inner),
         Rule::create_edge_type => build_create_edge_type(inner),

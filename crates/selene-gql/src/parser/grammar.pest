@@ -30,7 +30,7 @@ ddl_statement = { create_node_type | alter_node_type | drop_node_type | truncate
               | create_edge_type | alter_edge_type | drop_edge_type | truncate_edge_type | show_edge_types
               | show_indexes | show_procedures
               | create_schema | drop_schema
-              | create_graph_type_guard | drop_graph_type_guard
+              | create_graph_type | drop_graph_type
               | create_graph | drop_graph | create_index | drop_index }
 
 // -- Database-catalog statements (ISO/IEC 39075:2024 section 12.2-12.5) ------
@@ -40,7 +40,7 @@ ddl_statement = { create_node_type | alter_node_type | drop_node_type | truncate
 // not-implemented diagnostic instead of a bare syntax error at the NEXT token;
 // the builder never produces an AST for it.
 catalog_statement_chain = { database_catalog_statement ~ (next_kw ~ database_catalog_statement)+ }
-database_catalog_statement = _{ create_schema | drop_schema | create_graph | drop_graph }
+database_catalog_statement = _{ create_schema | drop_schema | create_graph_type | drop_graph_type | create_graph | drop_graph }
 
 // <catalog schema parent and name> ::= <absolute directory path> <schema name>
 // (section 17.1). The leading solidus is mandatory; a bare name is a syntax
@@ -123,13 +123,12 @@ label_list           = { ":" ~ ident ~ ("," ~ ":" ~ ident)* }
 //   CREATE { [ PROPERTY ] GRAPH [ IF NOT EXISTS ] | OR REPLACE [ PROPERTY ] GRAPH }
 //   <catalog graph parent and name> { <open graph type> | <of graph type> } [ <graph source> ]
 // The type clause is mandatory in ISO; it is optional here only so the builder
-// can report its absence as a precise 42001 with the statement span. Every
-// <of graph type> alternative and <graph source> is parsed so the builder can
-// reject it with the owning feature ID (GG02/GG03/GG04/GG05) rather than a
-// bare syntax error; none of them reaches the AST.
+// can report its absence as a precise 42001 with the statement span. Named
+// graph-type references reach the AST. Inline/LIKE types and graph sources are
+// parsed so the builder can reject them with GG03/GG04/GG05.
 create_graph = {
     ddl_create_kw ~ (or_replace ~ ddl_property_kw? ~ ddl_graph_kw | ddl_property_kw? ~ ddl_graph_kw ~ if_not_exists?) ~
-    graph_reference ~ create_graph_type_clause? ~ graph_source?
+    !ddl_type_kw ~ graph_reference ~ create_graph_type_clause? ~ graph_source?
 }
 // `ANY` is not in the global `keyword` rule, so the open form must be tried
 // before the bare graph-type reference or `ANY` would lex as a type name.
@@ -139,26 +138,99 @@ open_graph_type = { typed_marker? ~ ddl_any_kw ~ (ddl_property_kw? ~ ddl_graph_k
 // <graph type like graph> ::= LIKE <graph expression> (Feature GG04)
 graph_type_like_graph = { ddl_like_kw ~ graph_reference }
 // [ <typed> ] [ [ PROPERTY ] GRAPH ] <nested graph type specification> (Feature GG03)
-graph_type_inline = { typed_marker? ~ (ddl_property_kw? ~ ddl_graph_kw)? ~ create_graph_type_literal }
+graph_type_inline = { typed_marker? ~ (ddl_property_kw? ~ ddl_graph_kw)? ~ nested_graph_type_specification }
 // [ <typed> ] <graph type reference> (Feature GG02)
 graph_type_reference = { typed_marker? ~ graph_reference }
-create_graph_type_literal = { "{" ~ create_graph_type_element ~ ("," ~ create_graph_type_element)* ~ "}" }
-create_graph_type_element = { "(" ~ ident ~ (":" ~ ident)? ~ create_graph_type_props? ~ ")" }
-create_graph_type_props = { "{" ~ type_prop_def_list? ~ "}" }
 // <graph source> ::= AS COPY OF <graph expression> (Feature GG05)
 graph_source = { as_kw ~ ddl_copy_kw ~ ddl_of_kw ~ graph_reference }
 // <drop graph statement> ::= DROP [ PROPERTY ] GRAPH [ IF EXISTS ] <catalog graph parent and name>
-drop_graph   = { ddl_drop_kw ~ ddl_property_kw? ~ ddl_graph_kw ~ if_exists? ~ graph_reference }
-// CREATE/DROP [PROPERTY] GRAPH TYPE (section 12.6/12.7) are recognised ahead of
-// the graph statements only to reject them with a structured 42N01 that names
-// M02-PR04 part 2. TYPE is a non-reserved word (section 21.3), so it is not
-// added to the global `keyword` rule; the consequence is that a graph literally
-// named `type` must be written as a delimited identifier in these statements.
-// The tail deliberately swallows the rest of the statement: the guard exists to
-// classify the statement, not to validate graph-type syntax.
-create_graph_type_guard = { ddl_create_kw ~ or_replace? ~ ddl_property_kw? ~ ddl_graph_kw ~ ddl_type_kw ~ graph_type_guard_tail }
-drop_graph_type_guard   = { ddl_drop_kw ~ ddl_property_kw? ~ ddl_graph_kw ~ ddl_type_kw ~ graph_type_guard_tail }
-graph_type_guard_tail = @{ (!EOI ~ ANY)* }
+drop_graph   = { ddl_drop_kw ~ ddl_property_kw? ~ ddl_graph_kw ~ if_exists? ~ !ddl_type_kw ~ graph_reference }
+
+// ISO/IEC 39075:2024 section 12.6/12.7. The nested graph-type grammar below
+// observes adjacent valid forms so the builder can distinguish the executable
+// node-only subset from unsupported properties, labels, aliases, key-label
+// sets, edge types, COPY OF, and LIKE sources. Malformed forms remain syntax
+// errors rather than being consumed by a catch-all guard.
+create_graph_type = {
+    ddl_create_kw ~
+    (or_replace ~ ddl_property_kw? ~ ddl_graph_kw ~ ddl_type_kw |
+     ddl_property_kw? ~ ddl_graph_kw ~ ddl_type_kw ~ if_not_exists?) ~
+    graph_reference ~ graph_type_source
+}
+drop_graph_type = {
+    ddl_drop_kw ~ ddl_property_kw? ~ ddl_graph_kw ~ ddl_type_kw ~ if_exists? ~ graph_reference
+}
+graph_type_source = { graph_type_copy_source | graph_type_like_graph | graph_type_nested_source }
+graph_type_copy_source = { as_kw? ~ ddl_copy_kw ~ ddl_of_kw ~ graph_reference }
+graph_type_nested_source = { as_kw? ~ nested_graph_type_specification }
+
+// Nested graph-type sources are brace-delimited element lists.
+nested_graph_type_specification = {
+    "{" ~ graph_type_element_specification ~ ("," ~ graph_type_element_specification)* ~ "}"
+}
+graph_type_element_specification = { graph_type_node_specification | graph_type_edge_specification }
+
+graph_type_node_specification = { graph_type_node_pattern | graph_type_node_phrase }
+graph_type_node_pattern = {
+    (node_synonym ~ ddl_type_kw? ~ ident)? ~
+    "(" ~ graph_type_local_alias? ~ graph_type_node_filler? ~ ")"
+}
+graph_type_node_phrase = {
+    node_synonym ~ ddl_type_kw? ~ graph_type_node_phrase_filler ~ (as_kw ~ graph_type_local_alias)?
+}
+graph_type_node_phrase_filler = { ident ~ graph_type_node_filler? | graph_type_node_filler }
+graph_type_local_alias = { ident }
+graph_type_node_filler = {
+    graph_type_node_key_label_set ~ graph_type_node_implied_content? |
+    graph_type_node_implied_content
+}
+graph_type_node_key_label_set = { graph_type_label_set_phrase? ~ implies }
+graph_type_node_implied_content = {
+    graph_type_label_set_phrase ~ graph_type_property_types? |
+    graph_type_property_types
+}
+
+// Edge forms are observed only to return a complete-capability 42N01. Keeping
+// their structure here prevents malformed bracket/endpoint shapes from being
+// misreported as supported syntax.
+graph_type_edge_specification = { graph_type_edge_pattern | graph_type_edge_phrase }
+graph_type_edge_pattern = {
+    (graph_type_edge_kind? ~ edge_synonym ~ ddl_type_kw? ~ ident)? ~
+    (graph_type_node_reference ~ graph_type_arc_right ~ graph_type_node_reference |
+     graph_type_node_reference ~ graph_type_arc_left ~ graph_type_node_reference |
+     graph_type_node_reference ~ graph_type_arc_undirected ~ graph_type_node_reference)
+}
+graph_type_edge_phrase = {
+    graph_type_edge_kind ~ edge_synonym ~ ddl_type_kw? ~ graph_type_edge_phrase_filler ~
+    ddl_connecting_kw ~ graph_type_endpoint_pair
+}
+graph_type_edge_phrase_filler = { ident ~ graph_type_edge_filler? | graph_type_edge_filler }
+graph_type_edge_filler = {
+    graph_type_edge_key_label_set ~ graph_type_edge_implied_content? |
+    graph_type_edge_implied_content
+}
+graph_type_edge_key_label_set = { graph_type_label_set_phrase? ~ implies }
+graph_type_edge_implied_content = {
+    graph_type_label_set_phrase ~ graph_type_property_types? |
+    graph_type_property_types
+}
+graph_type_node_reference = { "(" ~ (ident | graph_type_node_filler)? ~ ")" }
+graph_type_arc_right = { "-[" ~ graph_type_edge_filler ~ "]->" }
+graph_type_arc_left = { "<-[" ~ graph_type_edge_filler ~ "]-" }
+graph_type_arc_undirected = { "~[" ~ graph_type_edge_filler ~ "]~" }
+graph_type_edge_kind = { ddl_directed_kw | ddl_undirected_kw }
+graph_type_endpoint_pair = {
+    "(" ~ ident ~ (ddl_to_kw | "->" | "~") ~ ident ~ ")" |
+    "(" ~ ident ~ "<-" ~ ident ~ ")"
+}
+
+graph_type_label_set_phrase = {
+    ddl_label_kw ~ ident |
+    ddl_labels_kw ~ graph_type_label_set_specification |
+    (":" | is_kw) ~ graph_type_label_set_specification
+}
+graph_type_label_set_specification = { ident ~ ("&" ~ ident)* }
+graph_type_property_types = { "{" ~ type_prop_def_list? ~ "}" }
 create_index = { ddl_create_kw ~ ddl_index_kw ~ if_not_exists? ~ ident ~ ddl_on_kw ~ ":" ~ ident ~ "(" ~ prop_ident ~ ("," ~ prop_ident)* ~ ")" }
 drop_index   = { ddl_drop_kw ~ ddl_index_kw ~ if_exists? ~ ident }
 
@@ -189,6 +261,11 @@ ddl_immutable_kw = @{ ^"IMMUTABLE" ~ !(LETTER | NUMBER | "_") }
 ddl_unique_kw = @{ ^"UNIQUE" ~ !(LETTER | NUMBER | "_") }
 ddl_indexed_kw = @{ ^"INDEXED" ~ !(LETTER | NUMBER | "_") }
 ddl_to_kw = @{ ^"TO" ~ !(LETTER | NUMBER | "_") }
+ddl_label_kw = @{ ^"LABEL" ~ !(LETTER | NUMBER | "_") }
+ddl_labels_kw = @{ ^"LABELS" ~ !(LETTER | NUMBER | "_") }
+ddl_connecting_kw = @{ ^"CONNECTING" ~ !(LETTER | NUMBER | "_") }
+ddl_directed_kw = @{ ^"DIRECTED" ~ !(LETTER | NUMBER | "_") }
+ddl_undirected_kw = @{ ^"UNDIRECTED" ~ !(LETTER | NUMBER | "_") }
 ddl_any_kw = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
 ddl_like_kw = @{ ^"LIKE" ~ !(LETTER | NUMBER | "_") }
 ddl_copy_kw = @{ ^"COPY" ~ !(LETTER | NUMBER | "_") }

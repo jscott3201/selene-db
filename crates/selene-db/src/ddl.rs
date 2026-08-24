@@ -1,12 +1,11 @@
 //! Router for GQL database-catalog statements executed by the compatibility
 //! [`Session`](crate::Session).
 //!
-//! The lower engine reduces `CREATE/DROP SCHEMA` and `CREATE/DROP GRAPH` to a
-//! storage-neutral [`DatabaseCatalogCommand`] and hands it back before any
-//! execution context exists. This module resolves the carried reference to a
-//! typed catalog path and dispatches to the same [`Catalog`] methods Rust
-//! callers use, so both paths produce field-equivalent descriptors and
-//! identical diagnostics.
+//! The lower engine reduces schema, graph, and graph-type lifecycle statements
+//! to a storage-neutral [`DatabaseCatalogCommand`] and hands it back before any
+//! execution context exists. This module resolves the carried references and
+//! node definitions to facade-owned path/definition types, then dispatches to
+//! the same [`Catalog`] methods Rust callers use.
 //!
 //! # Reference resolution
 //!
@@ -14,8 +13,9 @@
 //! rules are:
 //!
 //! - schema reference `/x` → `/<catalog>/x`;
-//! - absolute graph reference `/x/g` → `/<catalog>/x/g`;
-//! - relative graph reference `g` → `/<catalog>/<current working schema>/g`
+//! - absolute graph or graph-type reference `/x/g` → `/<catalog>/x/g`;
+//! - relative graph or graph-type reference `g` →
+//!   `/<catalog>/<current working schema>/g`
 //!   (ISO/IEC 39075:2024 §17.2 SR2a);
 //! - any other segment count is an invalid reference (`42002`): the facade
 //!   catalog has directory depth 0 (IL020), and its root is a directory, not a
@@ -47,6 +47,10 @@
 //! of another kind is `42002`, and a reference that resolves to the protected
 //! bootstrap graph is `42000`: the factory-reset bridge below applies to
 //! `DROP GRAPH` only, so the bootstrap graph can be reset but never replaced.
+//! Graph-type replacement uses the same policy and the full
+//! [`Catalog::drop_graph_type`] RESTRICT admission. A referenced type is
+//! `G1000`; an accepted replacement receives a fresh identity in one outer
+//! state swap.
 //!
 //! # Bootstrap `DROP GRAPH` bridge
 //!
@@ -67,11 +71,14 @@
 
 use std::{fmt::Write as _, sync::Arc};
 
-use selene_gql::{CatalogObjectReference, CatalogPathSegment, DatabaseCatalogCommand};
+use selene_gql::{
+    CatalogGraphTypeDefinition, CatalogObjectReference, CatalogPathSegment, DatabaseCatalogCommand,
+};
 
 use crate::{
     Catalog, CreateOutcome, CreatePolicy, DropOutcome, DropPolicy, Error, ExecutionOutcome,
-    GqlStatus, ObjectPath, PathSegment, Result, SchemaPath,
+    GqlStatus, GraphTypeDefinition, NodeTypeDefinition, ObjectPath, PathSegment, Result,
+    SchemaPath,
     database::{DatabaseInner, bootstrap_graph_id},
 };
 
@@ -112,15 +119,20 @@ pub(crate) fn execute(
             reference,
             or_replace,
             if_not_exists,
+            graph_type,
             ..
         } => {
             let path = resolve_graph(inner, &reference)?;
+            let graph_type = graph_type
+                .as_ref()
+                .map(|reference| resolve_graph(inner, reference))
+                .transpose()?;
             let policy = if or_replace {
                 CreatePolicy::OrReplace
             } else {
                 create_policy(if_not_exists)
             };
-            match catalog.create_graph(&path, None, policy)? {
+            match catalog.create_graph(&path, graph_type.as_ref(), policy)? {
                 // Section 12.4 GR2: OR REPLACE effectively executes DROP GRAPH
                 // first; the whole statement still completes as one 00001.
                 CreateOutcome::Created(_)
@@ -143,6 +155,36 @@ pub(crate) fn execute(
                 DropOutcome::NotFound => ExecutionOutcome::OmittedResult {
                     status: GqlStatus::GRAPH_DOES_NOT_EXIST,
                 },
+            }
+        }
+        DatabaseCatalogCommand::CreateGraphType {
+            reference,
+            definition,
+            or_replace,
+            if_not_exists,
+            ..
+        } => {
+            let path = resolve_graph(inner, &reference)?;
+            let definition = graph_type_definition(definition)?;
+            let policy = if or_replace {
+                CreatePolicy::OrReplace
+            } else {
+                create_policy(if_not_exists)
+            };
+            match catalog.create_graph_type(&path, definition, policy)? {
+                CreateOutcome::Created(_)
+                | CreateOutcome::AlreadyExists(_)
+                | CreateOutcome::Replaced { .. } => omitted(),
+            }
+        }
+        DatabaseCatalogCommand::DropGraphType {
+            reference,
+            if_exists,
+            ..
+        } => {
+            let path = resolve_graph(inner, &reference)?;
+            match catalog.drop_graph_type(&path, drop_policy(if_exists))? {
+                DropOutcome::Dropped(_) | DropOutcome::NotFound => omitted(),
             }
         }
         _ => return Err(Error::unsupported_engine_outcome()),
@@ -246,6 +288,15 @@ fn segment(segment: &CatalogPathSegment) -> Result<PathSegment> {
         selene_gql::IdentifierForm::Regular => PathSegment::regular(segment.name.as_str()),
         selene_gql::IdentifierForm::Delimited => PathSegment::delimited(segment.name.as_str()),
     }
+}
+
+fn graph_type_definition(source: CatalogGraphTypeDefinition) -> Result<GraphTypeDefinition> {
+    let mut builder = GraphTypeDefinition::builder();
+    for node in source.node_types {
+        let name = segment(&node.name)?;
+        builder = builder.with_node_type(NodeTypeDefinition::new(name.clone(), vec![name])?);
+    }
+    builder.build()
 }
 
 fn invalid_reference(reference: &CatalogObjectReference, detail: &str) -> Error {

@@ -34,15 +34,11 @@ pub enum CreatePolicy {
     /// Return [`CreateOutcome::AlreadyExists`] for the requested kind only.
     IfNotExists,
     /// Drop an existing object of the requested kind and create the new one in
-    /// the same publication (ISO/IEC 39075:2024 section 12.4 GR2).
+    /// the same publication (ISO/IEC 39075:2024 sections 12.4 and 12.6).
     ///
-    /// Only [`Catalog::create_graph`] implements this policy. The drop half
-    /// runs exactly the [`Catalog::drop_graph`] admission: RESTRICT on a
-    /// nonempty graph, protection of the bootstrap graph, and the lifecycle
-    /// write lease. `CREATE SCHEMA` has no `OR REPLACE` form (section 12.2)
-    /// and graph-type replacement waits for graph-type statements, so
-    /// [`Catalog::create_schema`] and [`Catalog::create_graph_type`] report
-    /// `FeatureNotSupported` for it regardless of whether the object exists.
+    /// [`Catalog::create_graph`] applies the full graph-drop admission.
+    /// [`Catalog::create_graph_type`] applies `DROP GRAPH TYPE` RESTRICT and
+    /// refuses a referenced type. `CREATE SCHEMA` has no `OR REPLACE` form.
     OrReplace,
 }
 
@@ -154,16 +150,20 @@ impl Catalog {
         definition: GraphTypeDefinition,
         policy: CreatePolicy,
     ) -> Result<CreateOutcome<GraphTypeDescriptor>> {
-        reject_replace(policy, "graph type")?;
         let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         let schema = require_schema(&base, &path.schema_path())?;
+        let mut replaced = None;
         if let Some(existing) = base.catalog.schema_object(schema, &path.object.0) {
             if existing.kind() != CatalogObjectKind::GraphType {
                 return Err(Error::wrong_kind(path, "graph type", existing.kind()));
             }
             let summary = graph_type_summary(&base, existing)?;
-            return duplicate_outcome(policy, summary, path, "graph type");
+            if policy != CreatePolicy::OrReplace {
+                return duplicate_outcome(policy, summary, path, "graph type");
+            }
+            let id = self.graph_type_drop_admission(&base, path, existing)?;
+            replaced = Some((id, summary));
         }
         let raw = next_id(base.high_water.graph_type, "graph type")?;
         let id = LowerGraphTypeId::new(raw).map_err(Error::from_catalog_invariant)?;
@@ -171,6 +171,9 @@ impl Catalog {
         let core_id = CoreGraphTypeId::new(raw).map_err(Error::invalid_graph_type_source)?;
         let mut transaction =
             CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
+        if let Some((dropped, _)) = &replaced {
+            transaction.remove(CatalogObjectId::GraphType(*dropped));
+        }
         let descriptor = LowerDescriptor::graph_type(
             id,
             path.object.0.clone(),
@@ -186,6 +189,9 @@ impl Catalog {
         self.inner.after_descriptor_staging()?;
         let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
         let mut graph_types = base.graph_types.clone();
+        if let Some((dropped, _)) = &replaced {
+            graph_types.remove(dropped);
+        }
         graph_types.insert(id, runtime);
         let mut high_water = base.high_water;
         high_water.graph_type = raw;
@@ -198,7 +204,10 @@ impl Catalog {
         let created = created_summary(&next, CatalogObjectId::GraphType(id), graph_type_summary)?;
         self.inner.before_publication()?;
         self.inner.state.store(next);
-        Ok(CreateOutcome::Created(created))
+        match replaced {
+            Some((_, dropped)) => Ok(CreateOutcome::Replaced { dropped, created }),
+            None => Ok(CreateOutcome::Created(created)),
+        }
     }
 
     /// Create an open graph or a graph constrained by a same-schema graph type.
@@ -346,19 +355,7 @@ impl Catalog {
         if descriptor.kind() != CatalogObjectKind::GraphType {
             return Err(Error::wrong_kind(path, "graph type", descriptor.kind()));
         }
-        let CatalogObjectId::GraphType(id) = descriptor.id() else {
-            unreachable!("kind and typed ID agree")
-        };
-        let references = base
-            .catalog
-            .descriptors()
-            .filter(|candidate| {
-                matches!(candidate.payload(), CatalogPayload::Graph { graph_type: Some(target) } if *target == id)
-            })
-            .count();
-        if references != 0 {
-            return Err(Error::referenced_graph_type(path, references));
-        }
+        let id = self.graph_type_drop_admission(&base, path, descriptor)?;
         let summary = graph_type_summary(&base, descriptor)?;
         let mut transaction =
             CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
@@ -375,6 +372,29 @@ impl Catalog {
         });
         self.inner.state.store(next);
         Ok(DropOutcome::Dropped(summary))
+    }
+
+    /// Apply the dependency check shared by DROP and OR REPLACE.
+    fn graph_type_drop_admission(
+        &self,
+        base: &DatabaseState,
+        path: &ObjectPath,
+        descriptor: &LowerDescriptor,
+    ) -> Result<LowerGraphTypeId> {
+        let CatalogObjectId::GraphType(id) = descriptor.id() else {
+            unreachable!("kind and typed ID agree")
+        };
+        let references = base
+            .catalog
+            .descriptors()
+            .filter(|candidate| {
+                matches!(candidate.payload(), CatalogPayload::Graph { graph_type: Some(target) } if *target == id)
+            })
+            .count();
+        if references != 0 {
+            return Err(Error::referenced_graph_type(path, references));
+        }
+        Ok(id)
     }
 
     /// Drop an empty, non-bootstrap schema under RESTRICT semantics.
@@ -485,8 +505,8 @@ fn duplicate_outcome<T>(
     match policy {
         CreatePolicy::Strict => Err(Error::already_exists(path)),
         CreatePolicy::IfNotExists => Ok(CreateOutcome::AlreadyExists(value)),
-        // Graph replacement is handled before this point; every other kind
-        // rejects the policy up front, so this arm is defensive only.
+        // Graph and graph-type replacement are handled before this point;
+        // schema replacement is rejected up front.
         CreatePolicy::OrReplace => Err(Error::unsupported_create_policy(kind)),
     }
 }

@@ -26,6 +26,8 @@ pub(crate) fn bind_ddl_statement(
         | DdlStatement::DropSchema { .. }
         | DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }
+        | DdlStatement::CreateGraphType { .. }
+        | DdlStatement::DropGraphType { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
         | DdlStatement::TruncateNodeType { .. }

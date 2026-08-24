@@ -237,7 +237,6 @@ fn or_replace_failures_publish_nothing_and_keep_the_old_graph() {
     for source in [
         "CREATE OR REPLACE GRAPH /memory/full LIKE default",
         "CREATE OR REPLACE GRAPH /memory/full ANY AS COPY OF default",
-        "CREATE OR REPLACE GRAPH /memory/full TYPED shape",
         "CREATE OR REPLACE GRAPH /memory/full ::{(Person :Person)}",
     ] {
         let error = session.execute(source).unwrap_err();
@@ -433,7 +432,7 @@ fn rust_or_replace_matches_gql_and_reports_the_same_failures() {
 }
 
 #[test]
-fn or_replace_is_rejected_for_schemas_and_graph_types_without_publishing() {
+fn or_replace_is_rejected_for_schemas_and_supported_for_graph_types() {
     let database = Database::builder().build();
     let catalog = database.catalog();
     catalog
@@ -453,16 +452,6 @@ fn or_replace_is_rejected_for_schemas_and_graph_types_without_publishing() {
                 .create_schema(&schema("fresh"), CreatePolicy::OrReplace)
                 .unwrap_err(),
         ),
-        (
-            "absent graph type",
-            catalog
-                .create_graph_type(
-                    &graph("memory", "shape"),
-                    person_type(),
-                    CreatePolicy::OrReplace,
-                )
-                .unwrap_err(),
-        ),
     ] {
         assert_error(
             &error,
@@ -474,6 +463,31 @@ fn or_replace_is_rejected_for_schemas_and_graph_types_without_publishing() {
         assert_unpublished(&catalog, &before, label);
     }
     assert!(catalog.snapshot().resolve_schema(&schema("fresh")).is_err());
+    let CreateOutcome::Created(first_type) = catalog
+        .create_graph_type(
+            &graph("memory", "shape"),
+            person_type(),
+            CreatePolicy::OrReplace,
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let CreateOutcome::Replaced {
+        dropped,
+        created: second_type,
+    } = catalog
+        .create_graph_type(
+            &graph("memory", "shape"),
+            person_type(),
+            CreatePolicy::OrReplace,
+        )
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(dropped, first_type);
+    assert!(second_type.id > first_type.id);
     // Dropping a replaced graph afterwards works like any other drop.
     catalog
         .create_graph(&graph("memory", "g"), None, CreatePolicy::OrReplace)

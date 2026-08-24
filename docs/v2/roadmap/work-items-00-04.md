@@ -819,7 +819,7 @@ Introduce one transactional catalog service for creating, resolving, opening, an
 ## M02-PR04 — Implement GQL Catalog DDL over the Catalog Service
 
 - **Owner:** M02
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / L
 - **Dependencies:** M02-PR03, M01-PR04
 - **Issues:** None

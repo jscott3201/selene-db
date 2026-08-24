@@ -1,8 +1,8 @@
 # Catalog lifecycle and read-snapshot contract
 
 M02-PR02 defines catalog identity and immutable metadata. M02-PR03 adds the
-in-memory lifecycle service and named runtime graph registry. M02-PR04 part 1
-routes GQL `CREATE/DROP SCHEMA` and `CREATE/DROP GRAPH` through that service.
+in-memory lifecycle service and named runtime graph registry. M02-PR04 routes
+GQL schema, graph, and graph-type lifecycle statements through that service.
 Catalog changes are not durable yet; M09 owns their persisted representation
 and recovery.
 
@@ -141,18 +141,16 @@ alive. Rust callers can:
 requested kind exists at the same canonical path. An object of another kind in
 the schema's shared namespace is still `CatalogObjectWrongKind`.
 
-`CreatePolicy::OrReplace` is implemented by `create_graph` only. When a graph
-exists at the path it is dropped under the full `drop_graph` admission (writer
-mutex, the target's lifecycle write lease, registration recheck, RESTRICT on
-live nodes or edges, bootstrap protection) and the new graph is created with a
-fresh identity in the same publication: one `DatabaseState` swap removes the old
-descriptor and instance, adds the new pair, and advances the generation once.
-The outcome is `CreateOutcome::Replaced { dropped, created }`; an absent path is
-an ordinary `Created`. A failure at any point publishes nothing, so the old
-graph stays registered and its handles stay valid. `create_schema` (no
-`OR REPLACE` form in ISO §12.2) and `create_graph_type` (graph-type statements
-are part 2) report `FeatureNotSupported` for the policy whether or not the
-object exists.
+`CreatePolicy::OrReplace` is implemented by `create_graph` and
+`create_graph_type`. Graph replacement applies the full `drop_graph` admission:
+writer mutex, target lifecycle write lease, registration recheck, RESTRICT on
+live nodes or edges, and bootstrap protection. Graph-type replacement applies
+the dependency check from `drop_graph_type` and rejects a type referenced by any
+graph. Both paths publish a fresh identity in one `DatabaseState` swap and
+return `CreateOutcome::Replaced { dropped, created }`; an absent path is an
+ordinary `Created`. A prepublication failure preserves the old descriptor,
+runtime object, and high-water state. `create_schema` rejects the policy because
+ISO §12.2 has no schema replacement form.
 
 `DropPolicy::Strict` reports a missing object as a structured error.
 `DropPolicy::IfExists` returns `DropOutcome::NotFound`. Duplicate and missing
@@ -173,12 +171,14 @@ another schema. All drops are RESTRICT. The service rejects:
 - a graph type referenced by one or more graphs; and
 - the bootstrap `/selene/public` schema or `/selene/public/default` graph.
 
-One graph type may constrain multiple graphs. The M02-PR03 public definition
-surface supports property-free named node types with one or more defining
-labels. Conversion to `selene_graph::GraphTypeDef`, validation, the temporary
-`CoreGraphTypeBridge`, and core ID conversion stay private. Property definitions
-and named edge endpoints are deferred rather than exposing lower schema types or
-claiming full schema-builder parity.
+One graph type may constrain multiple graphs. The public definition surface
+supports property-free named node types with exactly one key label (IL003). GQL
+graph-type definitions derive that label from the node type name. Conversion to
+`selene_graph::GraphTypeDef`, validation, the temporary `CoreGraphTypeBridge`,
+and core ID conversion stay private. Properties, edges/endpoints, explicit key
+labels, aliases, and COPY OF/LIKE/external graph-type sources remain
+unsupported. GC03, GG02, GG20, and GG21 therefore remain unsupported
+complete-capability claims despite this executable subset.
 
 ## Graph handles and drop ordering
 
@@ -199,11 +199,12 @@ under the bootstrap graph's request lease. A plan that is exactly one
 database-catalog operation is returned to the facade as a storage-neutral
 `DatabaseCatalogCommand` before any execution context or write transaction
 exists; the facade releases the lease and then dispatches to
-`Catalog::{create_schema, drop_schema, create_graph, drop_graph}`. No second
-parse happens on the non-catalog path, and no `Catalog` method is ever called
-under a graph request lease (drop takes the lifecycle writer and then the
-target's lifecycle write lease, so that would self-deadlock; test builds assert
-the lease depth is zero at every lifecycle entry).
+`Catalog::{create_schema, drop_schema, create_graph, drop_graph,
+create_graph_type, drop_graph_type}`. No second parse happens on the non-catalog
+path, and no `Catalog` method is ever called under a graph request lease (drop
+takes the lifecycle writer and then the target's lifecycle write lease, so that
+would self-deadlock; test builds assert the lease depth is zero at every
+lifecycle entry).
 
 Graph drop acquires locks in this order: catalog writer, target lifecycle write
 lease, then graph state. It rechecks registration after obtaining the lifecycle
@@ -227,8 +228,9 @@ compatibility session resolves GQL references as follows:
 
 - schema reference `/x` (ISO §17.1 `<absolute directory path> <schema name>`)
   → `SchemaPath /selene/x`; a bare `CREATE SCHEMA x` is a syntax error;
-- absolute graph reference `/x/g` → `ObjectPath /selene/x/g`;
-- relative graph reference `g` → `/selene/<current working schema>/g`
+- absolute graph or graph-type reference `/x/g` → `ObjectPath /selene/x/g`;
+- relative graph or graph-type reference `g` →
+  `/selene/<current working schema>/g`
   (§17.2 SR2a);
 - one absolute segment (`/g`), three or more segments, and every other shape
   are invalid references (`42002`): the root is a directory, not a schema
@@ -260,10 +262,11 @@ the same GQLSTATUS for Rust and GQL callers; the code is selected by
 | Case | Outcome / `ErrorKind` | GQLSTATUS | Grounding |
 |---|---|---|---|
 | successful create/drop | `OmittedResult` | `00001` | §12.1 GR2 |
-| `CREATE OR REPLACE GRAPH`, whether the graph was created or replaced | `OmittedResult`, one publication | `00001` | §12.4 GR2: `DROP GRAPH` is effectively executed first |
+| `CREATE OR REPLACE GRAPH` or `CREATE OR REPLACE GRAPH TYPE`, whether created or replaced | `OmittedResult`, one publication | `00001` | §12.4/§12.6 effective drop then create |
 | `CREATE OR REPLACE GRAPH` on a nonempty graph | `CatalogRestrictViolation`, no publication | `G1000` | the effective `DROP GRAPH` is RESTRICT |
+| `CREATE OR REPLACE GRAPH TYPE` on a referenced type | `CatalogRestrictViolation`, no publication | `G1000` | the effective `DROP GRAPH TYPE` is RESTRICT |
 | `CREATE OR REPLACE GRAPH` on the bootstrap graph | `ProtectedCatalogObject`, no publication, no reset | `42000` | the factory-reset bridge is `DROP GRAPH` only |
-| `CREATE … IF NOT EXISTS` on an existing object, `DROP SCHEMA IF EXISTS` on a missing schema | `OmittedResult`, no publication | `00001` | §12.2/§12.3/§12.4 GR1 define no warning |
+| `CREATE … IF NOT EXISTS` on an existing object, `DROP SCHEMA/GRAPH TYPE IF EXISTS` on a missing object | `OmittedResult`, no publication | `00001` | §12.2-§12.4/§12.6-§12.7 define no warning |
 | `DROP GRAPH IF EXISTS` on a missing graph | `OmittedResult`, no publication | `01G03` | §12.5 GR1 |
 | strict duplicate | `CatalogObjectAlreadyExists` | `42N10` | implementation subclass (IE005) |
 | missing object or parent, directory depth, root-as-schema | `CatalogObjectNotFound` | `42002` | Table 8 invalid reference; §23.2 GR2d |
@@ -271,7 +274,7 @@ the same GQLSTATUS for Rust and GQL callers; the code is selected by
 | RESTRICT: nonempty graph or schema, referenced graph type | `CatalogRestrictViolation` | `G1000` | Table 8 dependent object error (class); not `G1001` |
 | protected bootstrap schema or graph | `ProtectedCatalogObject` | `42000` | Table 8 class; access rule is IE005 |
 | name outside the identifier profile | `InvalidCatalogName` | `42001` | invalid syntax |
-| `LIKE`, `AS COPY OF`, inline or referenced graph type, `GRAPH TYPE` statements, `NEXT` chains | `FeatureNotSupported` | `42N01` | GG04, GG05, GG03, GG02, not implemented |
+| graph/graph-type `LIKE`, graph or graph-type `COPY OF`, inline graph types, unsupported graph-type elements/sources, `NEXT` chains | `FeatureNotSupported` | `42N01` | GG03-GG05 and the complete GG02/GG21 boundary |
 | `OR REPLACE` on `CREATE NODE TYPE` / `CREATE EDGE TYPE` | `FeatureNotSupported` | `42N01` | element-type DDL is not an ISO statement; §12.4/§12.6 define `OR REPLACE` for graph and graph-type statements only |
 
 A no-op outcome retains the same outer allocation and catalog generation. An
@@ -306,9 +309,9 @@ remain unchanged when publication does not occur.
 
 ## Later owners
 
-- M02-PR04 part 1 delivered `CREATE/DROP SCHEMA` and `CREATE/DROP GRAPH` with
-  the open graph type. Part 2 owns `CREATE/DROP GRAPH TYPE` and
-  `CREATE GRAPH … <of graph type>` (GG02/GC03/GG20/GG21).
+- M02-PR04 delivers schema, graph, and the bounded graph-type lifecycle. The
+  graph-type source is limited to property-free named node types with implied
+  singleton labels; complete GG02/GC03/GG20/GG21 behavior remains deferred.
 - M02-PR05 owns bootstrap-catalog, `DROP GRAPH` bridge, and
   `CoreGraphTypeBridge` deletion.
 - M03 owns persistent sessions and transaction pinning.

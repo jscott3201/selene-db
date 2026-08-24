@@ -185,6 +185,7 @@ fn database_catalog_ddl_lowers_to_its_storage_neutral_command() {
             reference: reference.clone(),
             or_replace: true,
             if_not_exists: true,
+            graph_type: None,
             span: selene_gql::SourceSpan::new(0, 1),
         }),
         scopes: selene_gql::BindingScopeTree::new(selene_gql::SourceSpan::new(0, 1)),
@@ -202,6 +203,7 @@ fn database_catalog_ddl_lowers_to_its_storage_neutral_command() {
             reference,
             or_replace: true,
             if_not_exists: true,
+            graph_type: None,
             span: selene_gql::SourceSpan::new(0, 1),
         })
     );

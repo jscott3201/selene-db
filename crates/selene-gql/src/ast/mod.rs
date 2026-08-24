@@ -18,8 +18,8 @@ mod walk;
 pub use call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem};
 pub use catalog_ref::{CatalogObjectReference, CatalogPathSegment, IdentifierForm};
 pub use ddl::{
-    DdlStatement, DropBehavior, EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint,
-    TypePropertyDef, ValidationMode,
+    CatalogGraphTypeDefinition, CatalogNodeTypeDefinition, DdlStatement, DropBehavior,
+    EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint, TypePropertyDef, ValidationMode,
 };
 pub use eq::structurally_eq;
 pub use expr::{
