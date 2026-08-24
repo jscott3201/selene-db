@@ -883,7 +883,7 @@ Route CREATE/DROP SCHEMA, GRAPH, and GRAPH TYPE syntax through semantic resoluti
 ## M02-PR05 — Cut Over Public Construction and Sessions to the Catalog-First Facade
 
 - **Owner:** M02
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / L
 - **Dependencies:** M02-PR04
 - **Issues:** None
