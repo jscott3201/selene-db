@@ -2,8 +2,6 @@
 
 use std::sync::Arc;
 
-use selene_core::Change;
-
 use crate::{ExecutionOutcome, Result, database::DatabaseInner};
 
 /// Movable session that owns its database through shared ownership.
@@ -32,22 +30,6 @@ impl Session {
     /// Returns a facade-owned diagnostic for invalid GQL, unsupported stateful
     /// controls, analysis/planning failures, or execution failures.
     pub fn execute(&self, source: &str) -> Result<ExecutionOutcome> {
-        let mut session = selene_gql::Session::new(&self.inner.bootstrap.graph);
-        let output = session
-            .execute_source_stateless(source, &self.inner.procedures)
-            .map_err(crate::Error::from_engine)?;
-
-        if let selene_gql::StatementOutput::Written(write) = &output
-            && write
-                .changes
-                .iter()
-                .any(|change| matches!(change, Change::GraphReset {}))
-        {
-            self.inner
-                .procedures
-                .forget_graph(self.inner.bootstrap.catalog.graph_id());
-        }
-
-        ExecutionOutcome::from_engine(output)
+        self.inner.execute_bootstrap(source)
     }
 }

@@ -162,6 +162,21 @@ impl Session<'_> {
         self.execute_source_with_policy(source, registry, SourceExecutionPolicy::Stateless)
     }
 
+    /// Execute one source statement under the named-graph facade policy.
+    ///
+    /// The policy permits ordinary stateless reads and data mutations, but
+    /// rejects catalog, transaction-control, and session-control categories
+    /// after the existing single parse/analyze/plan pass. Catalog DDL is routed
+    /// through the database catalog service by M02-PR04.
+    #[doc(hidden)]
+    pub fn execute_source_named_graph(
+        &mut self,
+        source: &str,
+        registry: &dyn ProcedureRegistry,
+    ) -> Result<StatementOutput, ExecutorError> {
+        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::NamedGraph)
+    }
+
     fn execute_source_with_policy(
         &mut self,
         source: &str,
@@ -373,6 +388,7 @@ impl Session<'_> {
 enum SourceExecutionPolicy {
     Stateful,
     Stateless,
+    NamedGraph,
 }
 
 fn execute_source_plan(
@@ -397,6 +413,19 @@ fn ensure_source_policy(
     {
         return Err(ExecutorError::FeatureNotSupportedYet {
             feature: "stateful control in the stateless facade",
+            span: SourceSpan::default(),
+        });
+    }
+    if policy == SourceExecutionPolicy::NamedGraph
+        && matches!(
+            plan.category,
+            StatementCategory::CatalogModifying
+                | StatementCategory::TransactionControl
+                | StatementCategory::SessionControl
+        )
+    {
+        return Err(ExecutorError::FeatureNotSupportedYet {
+            feature: "catalog or stateful control through a named graph handle",
             span: SourceSpan::default(),
         });
     }

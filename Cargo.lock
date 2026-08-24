@@ -1813,6 +1813,11 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 name = "selene-db"
 version = "2.0.0-alpha.1"
 dependencies = [
+ "arc-swap",
+ "criterion",
+ "mimalloc",
+ "parking_lot",
+ "proptest",
  "selene-db-catalog",
  "selene-db-core",
  "selene-db-gql",

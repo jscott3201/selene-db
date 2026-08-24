@@ -157,6 +157,35 @@ allocator metadata, `BTreeMap` node slack, and `Arc` control blocks.
 | 100 | 103 | 197.40 B | 101 | 95.80 B |
 | 1,000 | 1,003 | 197.94 B | 1,001 | 95.98 B |
 
+### Catalog lifecycle facade
+
+Bench bin: `catalog_lifecycle`. The quick profile measures absolute schema
+resolve, deterministic schema listing, outer snapshot clone, schema
+create/drop publication at 16 and 256 user schemas, and named graph open at 4
+and 32 registered graphs. The full profile adds 1,024 schemas and 128 graphs.
+The create and drop rows time only the named operation; the inverse operation
+restores the fixture outside the returned Criterion duration.
+
+M02-PR03 quick evidence was recorded on 2026-08-23 with Apple M5 (10 cores,
+16 GiB), macOS 26.7 build 25G220, rustc 1.97.1, and the worktree based on
+`69c95581f30a83c67502a61135ac17bc83862643`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle
+```
+
+These are 10-sample Criterion confidence intervals from one quick run. They are
+recorded baselines, not regression thresholds.
+
+| Bench | Small scale | Large scale |
+|---|---:|---:|
+| `catalog_lifecycle/read/resolve_schema` | 74.176–78.665 ns (16 schemas) | 143.43–151.37 ns (256 schemas) |
+| `catalog_lifecycle/read/list_schemas` | 820.21–908.02 ns (16 schemas) | 16.063–17.124 µs (256 schemas) |
+| `catalog_lifecycle/read/clone_outer_snapshot` | 3.8280–4.1036 ns (16 schemas) | 3.8296–3.8889 ns (256 schemas) |
+| `catalog_lifecycle/outer_snapshot_publication/create_schema` | 3.0397–3.1255 µs (16 schemas) | 68.633–71.906 µs (256 schemas) |
+| `catalog_lifecycle/outer_snapshot_publication/drop_schema` | 3.0956–3.3848 µs (16 schemas) | 67.853–70.335 µs (256 schemas) |
+| `catalog_lifecycle/graph_selection/open_graph` | 116.55–135.69 ns (4 graphs) | 141.25–151.78 ns (32 graphs) |
+
 ## §1 selene-core
 
 Bench bins: `value_clone`, `vector_wgpu`. `value_clone` measures `Value` /
