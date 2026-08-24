@@ -7,14 +7,14 @@
 use std::rc::Rc;
 
 use selene_core::{CancellationToken, NodeScanBudget};
-use selene_graph::CommitOutcome;
+use selene_graph::{CommitOutcome, SeleneGraph};
 
-use super::session::materialize_parameter_values;
+use super::{request, session::materialize_parameter_values};
 use crate::{
     ExecutionPlan, GqlStatus, ProcedureRegistry, SourceSpan,
     runtime::{
-        BindingTable, BindingTableRegistry, ExecutorError, ExecutorWarning, Session,
-        StatementOutput, TxContext, WriteOutcome, execute_plan, pipeline,
+        BindingTable, BindingTableRegistry, ExecutorError, ExecutorWarning, RequestExecutionInput,
+        Session, StatementOutput, TxContext, WriteOutcome, execute_plan, pipeline,
     },
 };
 
@@ -25,7 +25,13 @@ pub(super) fn execute_read_only(
 ) -> Result<StatementOutput, ExecutorError> {
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
+    if let Some(txn) = session.active_txn.as_ref() {
+        validate_request_references(session.request.as_ref(), txn.read())?;
+    } else {
+        validate_request_references(session.request.as_ref(), snapshot.as_ref())?;
+    }
     let session_tz = session.effective_time_zone();
+    let request_timestamp = session.effective_request_timestamp();
     let binding_tables = Rc::new(BindingTableRegistry::new());
     let parameters = materialize_parameter_values(
         &session.parameters,
@@ -43,6 +49,7 @@ pub(super) fn execute_read_only(
             providers,
             parameters,
             Rc::clone(&binding_tables),
+            request_timestamp,
         )
         .with_resource_limits(
             cancellation.as_ref(),
@@ -64,6 +71,7 @@ pub(super) fn execute_read_only(
             providers,
             parameters,
             Rc::clone(&binding_tables),
+            request_timestamp,
         )
         .with_resource_limits(
             cancellation.as_ref(),
@@ -105,7 +113,9 @@ pub(super) fn execute_maintenance(
     }
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
+    validate_request_references(session.request.as_ref(), snapshot.as_ref())?;
     let session_tz = session.effective_time_zone();
+    let request_timestamp = session.effective_request_timestamp();
     let binding_tables = Rc::new(BindingTableRegistry::new());
     let parameters = materialize_parameter_values(
         &session.parameters,
@@ -122,6 +132,7 @@ pub(super) fn execute_maintenance(
         providers,
         parameters,
         Rc::clone(&binding_tables),
+        request_timestamp,
     )
     .with_resource_limits(
         cancellation.as_ref(),
@@ -142,9 +153,22 @@ fn execute_inside_explicit_tx(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
+    if let Some(request) = session.request.as_ref() {
+        let txn = session
+            .active_txn
+            .as_ref()
+            .ok_or(ExecutorError::ImplementationDefined {
+                detail: "explicit-TX path entered without active transaction",
+            })?;
+        if let Err(error) = request::validate_references(request, txn.read()) {
+            session.aborted = true;
+            return Err(error);
+        }
+    }
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let session_tz = session.effective_time_zone();
+    let request_timestamp = session.effective_request_timestamp();
     let binding_tables = Rc::new(BindingTableRegistry::new());
     let parameters = materialize_parameter_values(
         &session.parameters,
@@ -167,6 +191,7 @@ fn execute_inside_explicit_tx(
         providers,
         parameters,
         Rc::clone(&binding_tables),
+        request_timestamp,
     )
     .with_resource_limits(
         cancellation.as_ref(),
@@ -198,6 +223,7 @@ fn execute_auto_commit(
     let snapshot = session.graph().read();
     let principal = session.principal();
     let session_tz = session.effective_time_zone();
+    let request_timestamp = session.effective_request_timestamp();
     let binding_tables = Rc::new(BindingTableRegistry::new());
     let parameters = materialize_parameter_values(
         &session.parameters,
@@ -205,9 +231,10 @@ fn execute_auto_commit(
         &binding_tables,
     );
     let mut txn = session.graph().begin_write();
+    let reference_result = validate_request_references(session.request.as_ref(), txn.read());
     let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
-    let result = {
+    let result = reference_result.and_then(|()| {
         let mut ctx = TxContext::write_with_owned_parameters_and_registry(
             snapshot,
             &plan.impl_defined_caps,
@@ -216,6 +243,7 @@ fn execute_auto_commit(
             providers,
             parameters,
             Rc::clone(&binding_tables),
+            request_timestamp,
         )
         .with_resource_limits(
             cancellation.as_ref(),
@@ -231,7 +259,7 @@ fn execute_auto_commit(
                 note_output_rows(plan, &ctx, table.row_count())?;
                 Ok(table)
             })
-    };
+    });
     match result {
         Ok(table) => {
             let outcome = txn.commit_with_principal(principal).map_err(|source| {
@@ -248,6 +276,15 @@ fn execute_auto_commit(
             Err(error)
         }
     }
+}
+
+fn validate_request_references(
+    request_input: Option<&RequestExecutionInput>,
+    graph: &SeleneGraph,
+) -> Result<(), ExecutorError> {
+    request_input.map_or(Ok(()), |request| {
+        request::validate_references(request, graph)
+    })
 }
 
 fn emit_commit_warnings(outcome: &CommitOutcome, session: &Session<'_>) {
@@ -334,4 +371,114 @@ fn write_output_from_commit(
         Some(table)
     };
     StatementOutput::Written(WriteOutcome::from_commit(outcome, rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use selene_core::{GraphId, NodeId, Value, db_string};
+    use selene_graph::SharedGraph;
+
+    use crate::{
+        EmptyProcedureRegistry, GqlType,
+        runtime::{RequestExecutionInput, RequestParameter, Session},
+    };
+
+    fn seed_live_node(graph: &SharedGraph) {
+        Session::new(graph)
+            .execute_source("INSERT (:Live) FINISH", &EmptyProcedureRegistry)
+            .unwrap();
+    }
+
+    fn node_request() -> RequestExecutionInput {
+        RequestExecutionInput::new(
+            BTreeMap::from([(
+                db_string("value").unwrap(),
+                RequestParameter::new(GqlType::NodeRef, Value::NodeRef(NodeId::new(1))),
+            )]),
+            jiff::Timestamp::new(1_788_692_096, 0).unwrap(),
+            jiff::tz::TimeZone::UTC,
+        )
+    }
+
+    fn delete_live_node(graph: &SharedGraph) {
+        Session::new(graph)
+            .execute_source("MATCH (n:Live) DELETE n FINISH", &EmptyProcedureRegistry)
+            .unwrap();
+    }
+
+    #[test]
+    fn read_revalidates_references_against_its_exact_snapshot() {
+        let graph = SharedGraph::new(GraphId::new(81_101));
+        seed_live_node(&graph);
+        let mut session = Session::new(&graph).with_before_statement_execution(|| {
+            delete_live_node(&graph);
+        });
+
+        let error = session
+            .execute_source_catalog_request(
+                "RETURN $value",
+                &EmptyProcedureRegistry,
+                node_request(),
+            )
+            .unwrap_err();
+
+        assert_eq!(error.gqlstatus().as_str(), "42002");
+        assert_eq!(graph.read().node_count(), 0);
+    }
+
+    #[test]
+    fn auto_commit_reference_failure_rolls_back_without_publication() {
+        let graph = SharedGraph::new(GraphId::new(81_102));
+        seed_live_node(&graph);
+        let before = graph.read();
+        let generation = before.meta.generation;
+        let next_node_id = before.meta.next_node_id;
+        drop(before);
+        let mut session = Session::new(&graph).with_before_statement_execution(|| {
+            delete_live_node(&graph);
+        });
+
+        let error = session
+            .execute_source_catalog_request(
+                "INSERT (:ShouldNotPublish) FINISH",
+                &EmptyProcedureRegistry,
+                node_request(),
+            )
+            .unwrap_err();
+
+        assert_eq!(error.gqlstatus().as_str(), "42002");
+        let after = graph.read();
+        assert_eq!(after.meta.generation, generation + 1);
+        assert_eq!(after.meta.next_node_id, next_node_id);
+        assert_eq!(after.node_count(), 0);
+    }
+
+    #[test]
+    fn explicit_transaction_reference_failure_aborts_before_mutation() {
+        let graph = SharedGraph::new(GraphId::new(81_103));
+        seed_live_node(&graph);
+        let generation = graph.read().meta.generation;
+        let mut session = Session::new(&graph);
+        session.start_transaction().unwrap();
+        session
+            .execute_source("MATCH (n:Live) DELETE n FINISH", &EmptyProcedureRegistry)
+            .unwrap();
+
+        let error = session
+            .execute_source_catalog_request(
+                "INSERT (:ShouldNotPublish) FINISH",
+                &EmptyProcedureRegistry,
+                node_request(),
+            )
+            .unwrap_err();
+
+        assert_eq!(error.gqlstatus().as_str(), "42002");
+        assert!(session.is_aborted());
+        session.rollback_transaction().unwrap();
+        let after = graph.read();
+        assert_eq!(after.meta.generation, generation);
+        assert_eq!(after.node_count(), 1);
+    }
 }

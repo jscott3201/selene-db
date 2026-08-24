@@ -82,6 +82,23 @@ pub fn parse(source: &str) -> Result<Statement, ParserError> {
     })
 }
 
+/// Return whether `name` is the decoded spelling of a GQL parameter name.
+///
+/// Names omit the leading `$`. This uses the parser's `param_ref` rule, so
+/// Unicode letters and numbers, underscores, and keyword spellings stay in
+/// lockstep with source parsing.
+#[must_use]
+pub fn is_parameter_name(name: &str) -> bool {
+    if name.is_empty() || name.starts_with('$') {
+        return false;
+    }
+    let source = format!("${name}");
+    GqlParser::parse(Rule::param_ref, &source)
+        .ok()
+        .and_then(|mut pairs| pairs.next())
+        .is_some_and(|pair| pair.as_str().len() == source.len())
+}
+
 /// Red-zone for the parser's [`stacker::maybe_grow`] backstop.
 ///
 /// Sized larger than [`PARSE_STACK_SEGMENT`] minus a small margin so the grow

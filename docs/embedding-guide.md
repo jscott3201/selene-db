@@ -80,9 +80,20 @@ fn main() -> Result<(), selene_db::Error> {
 
 The session stores the selected catalog identity and re-resolves the runtime
 graph for each request. Dropping and recreating the same path does not make an
-old session refer to the replacement. Persistence configuration, parameters,
-facade transactions, and row-value materialization are not exposed through the
-facade yet.
+old session refer to the replacement. `Session::execute(source)` remains the
+empty-parameter compatibility entry point. `Session::execute_request(Request)`
+adds deterministic typed parameters, one immutable request timestamp, an
+observable `RequestContext`, and a `RequestOutcome` that covers returned
+validation, compilation, catalog-dispatch, and runtime failures.
+
+Session parameters are controlled upserts. A request snapshots them, then
+shadows exact case-sensitive names with its `RequestParams`; it never mutates
+the session dictionary. Graph-backed values are checked against the selected
+graph before execution. Binding-table references are rejected until M03-PR03
+defines the request-owned table registry. The session is `Send` but not `Sync`,
+so an embedder must serialize access rather than issue concurrent requests.
+Persistence configuration, facade transactions, cancellation, session
+set/reset/close controls, and row-value materialization are not exposed yet.
 
 ## Advanced lower-engine APIs
 

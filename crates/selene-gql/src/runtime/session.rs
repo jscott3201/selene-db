@@ -12,7 +12,8 @@ use crate::{
     plan::ImplDefinedCaps,
     runtime::{
         BindingTable, BindingTableRegistry, CallPlanCache, ExecutorError, ExecutorWarning,
-        PlanCache, PlanCacheStats, SharedPlanCache, WarningSink, WriteOutcome,
+        PlanCache, PlanCacheStats, RequestExecutionInput, SharedPlanCache, WarningSink,
+        WriteOutcome,
     },
 };
 
@@ -59,6 +60,10 @@ pub struct Session<'g> {
     /// `SESSION RESET TIME ZONE` clears it back to `None`. The threaded value
     /// is consumed by the section 20.27 current-datetime functions.
     pub(crate) time_zone: Option<jiff::tz::TimeZone>,
+    /// Explicit facade request metadata; direct lower sessions leave this absent.
+    pub(crate) request: Option<RequestExecutionInput>,
+    #[cfg(test)]
+    pub(crate) before_statement_execution: Option<Box<dyn FnOnce() + 'g>>,
     /// Session termination flag (ISO/IEC 39075:2024 section 7.3).
     ///
     /// Set by `SESSION CLOSE`; once set, every subsequent `execute_source`
@@ -165,6 +170,9 @@ impl<'g> Session<'g> {
             warning_sink: None,
             index_selection: true,
             time_zone: None,
+            request: None,
+            #[cfg(test)]
+            before_statement_execution: None,
             closed: false,
             caps: ImplDefinedCaps::DEFAULT,
         }
@@ -192,6 +200,9 @@ impl<'g> Session<'g> {
             warning_sink: None,
             index_selection: true,
             time_zone: None,
+            request: None,
+            #[cfg(test)]
+            before_statement_execution: None,
             closed: false,
             caps: ImplDefinedCaps::DEFAULT,
         }
@@ -364,6 +375,14 @@ impl<'g> Session<'g> {
         self.time_zone.clone().unwrap_or(jiff::tz::TimeZone::UTC)
     }
 
+    /// Return one timestamp for the statement, preserving an explicit facade request instant.
+    #[must_use]
+    pub(crate) fn effective_request_timestamp(&self) -> jiff::Timestamp {
+        self.request
+            .as_ref()
+            .map_or_else(jiff::Timestamp::now, |request| request.timestamp)
+    }
+
     /// Reset every session characteristic (ISO feature GS04).
     ///
     /// Clears all session parameters and resets the time zone to its default.
@@ -490,6 +509,19 @@ impl<'g> Session<'g> {
     #[must_use]
     pub(crate) const fn graph(&self) -> &'g SharedGraph {
         self.graph
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_before_statement_execution(mut self, hook: impl FnOnce() + 'g) -> Self {
+        self.before_statement_execution = Some(Box::new(hook));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_before_statement_execution(&mut self) {
+        if let Some(hook) = self.before_statement_execution.take() {
+            hook();
+        }
     }
 
     /// Clone the principal bytes for a commit boundary.

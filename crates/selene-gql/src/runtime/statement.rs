@@ -20,7 +20,10 @@ use crate::{
     optimize,
     parser::parse,
     plan::plan_with_caps as build_plan,
-    runtime::{BindingTable, CallPlanKey, ExecutorError, Session},
+    runtime::{
+        BindingTable, CallPlanKey, ExecutorError, RequestExecutionInput, Session,
+        SessionParameterValue, request,
+    },
 };
 
 /// Result of a selected catalog session's single parse/analyze/plan pass.
@@ -180,6 +183,29 @@ impl Session<'_> {
         self.execute_source_with_policy(source, registry, SourceExecutionPolicy::CatalogSession)
     }
 
+    /// Execute one facade request with an explicit parameter and temporal snapshot.
+    #[doc(hidden)]
+    pub fn execute_source_catalog_request(
+        &mut self,
+        source: &str,
+        registry: &dyn ProcedureRegistry,
+        request: RequestExecutionInput,
+    ) -> Result<CatalogSessionOutput, ExecutorError> {
+        self.scalar_parameters = request
+            .parameters
+            .iter()
+            .map(|(name, parameter)| (name.clone(), parameter.value().clone()))
+            .collect();
+        self.parameters = self
+            .scalar_parameters
+            .iter()
+            .map(|(name, value)| (name.clone(), SessionParameterValue::Scalar(value.clone())))
+            .collect();
+        self.time_zone = Some(request.time_zone.clone());
+        self.request = Some(request);
+        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::CatalogSession)
+    }
+
     fn execute_source_with_policy(
         &mut self,
         source: &str,
@@ -187,6 +213,7 @@ impl Session<'_> {
         policy: SourceExecutionPolicy,
     ) -> Result<CatalogSessionOutput, ExecutorError> {
         let profile_identity = current_profile_identity();
+        let explicit_request = self.request.is_some();
         // ISO/IEC 39075:2024 section 6 GR3 + section 7.3: once a session is
         // closed by `SESSION CLOSE`, every subsequent GQL-request is rejected.
         // This is the spec request boundary; embedders that drop the `Session`
@@ -203,7 +230,8 @@ impl Session<'_> {
             .active_txn
             .as_ref()
             .is_some_and(|txn| txn.has_schema_changes());
-        if !active_txn_has_schema_changes
+        if !explicit_request
+            && !active_txn_has_schema_changes
             && let Some(cached) = self
                 .plan_cache
                 .as_mut()
@@ -212,10 +240,10 @@ impl Session<'_> {
             return execute_source_plan(&cached, self, registry, policy);
         }
 
-        let shared_plan_cache = (!active_txn_has_schema_changes)
+        let shared_plan_cache = (!explicit_request && !active_txn_has_schema_changes)
             .then(|| self.shared_plan_cache.as_ref().map(Arc::clone))
             .flatten();
-        let call_plan_cache = (!active_txn_has_schema_changes)
+        let call_plan_cache = (!explicit_request && !active_txn_has_schema_changes)
             .then(|| self.call_plan_cache.as_ref().map(Arc::clone))
             .flatten();
         let cache_graph_id = if shared_plan_cache.is_some() || call_plan_cache.is_some() {
@@ -313,6 +341,10 @@ impl Session<'_> {
             }
             ExecutorError::Analysis { source }
         })?;
+        if let Some(request) = &self.request {
+            let snapshot = self.graph().read();
+            request::validate(request, &analyzed.parameters, &snapshot)?;
+        }
         let lowered = build_plan(&analyzed, registry, &self.caps).map_err(|source| {
             if self.active_txn.is_some() {
                 self.aborted = true;
@@ -326,7 +358,10 @@ impl Session<'_> {
         let plan = Arc::new(self.optimize_plan(lowered));
         ensure_source_policy(&plan, policy)?;
         let source_arc = Arc::<str>::from(source);
-        if !active_txn_has_schema_changes && let Some(cache) = self.plan_cache.as_mut() {
+        if !explicit_request
+            && !active_txn_has_schema_changes
+            && let Some(cache) = self.plan_cache.as_mut()
+        {
             cache.insert(
                 Arc::clone(&source_arc),
                 Arc::clone(&plan),
@@ -417,6 +452,8 @@ fn execute_source_plan(
     {
         return Ok(CatalogSessionOutput::DatabaseCatalog(command.clone()));
     }
+    #[cfg(test)]
+    session.run_before_statement_execution();
     execute_statement(plan, session, registry).map(CatalogSessionOutput::Statement)
 }
 

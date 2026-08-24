@@ -34,6 +34,7 @@ mod plan_runner;
 mod property_filter_rows;
 mod questioned;
 mod repeat;
+mod request;
 mod scan;
 mod scan_bind;
 mod scan_resolve;
@@ -57,10 +58,12 @@ pub use call_plan_cache::{CallPlanCache, CallPlanCacheStats, CallPlanKey};
 pub use context::{AdaptiveOptimizer, EvalCtx, TxContext};
 pub use context_tiers::{GraphContext, MaintenanceContext, MutationContext, ProcedureContext};
 pub use error::{DataExceptionSubclass, ExecutorError, ExecutorWarning, WarningSink};
+pub use parameter_type::validate_parameter_value;
 pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;
 pub use plan_cache::{PlanCache, PlanCacheStats, SharedPlanCache, SharedPlanCacheStats};
 pub(crate) use plan_runner::execute_plan;
+pub use request::{RequestExecutionInput, RequestParameter};
 pub use session::{RollbackOutcome, Session, SessionParameterValue, TransactionOutcome};
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{

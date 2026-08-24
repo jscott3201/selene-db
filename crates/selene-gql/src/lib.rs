@@ -21,7 +21,7 @@ pub use crate::analyze::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl,
     BindingDeclKind, BindingId, BindingScope, BindingScopeTree, BindingUse, BindingUseKind,
     ConditionClause, ElementKind, ExpectedType, ExprId, ExprIdLookup, ExprTypeTable,
-    InvalidLabelForm, MutationWriteSet, ScopeId, ScopeKind, Side, StatementCategory,
+    InvalidLabelForm, MutationWriteSet, ParameterUse, ScopeId, ScopeKind, Side, StatementCategory,
     TypeMismatchContext, WriteKind, WriteSetEntry, analyze,
 };
 pub use crate::ast::{
@@ -59,7 +59,7 @@ pub use crate::catalog_command::DatabaseCatalogCommand;
 pub use crate::diagnostic::DiagnosticReport;
 pub use crate::error::{GqlStatus, ParserError};
 pub use crate::flagger::{FeatureUse, feature_walk};
-pub use crate::parser::{parse, parse_many, parse_with_source};
+pub use crate::parser::{is_parameter_name, parse, parse_many, parse_with_source};
 pub use crate::plan::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
     BuildSide, CatalogOp, CompositeIndexHandle, DeleteTargetPlan, EdgeMatch, EmptyIndexCatalog,
@@ -84,9 +84,10 @@ pub use crate::runtime::{
     AdaptiveOptimizer, Binding, BindingTable, BindingTableRegistry, BuiltinProcedureRegistry,
     CallPlanCache, CallPlanCacheStats, CallPlanKey, CatalogSessionOutput, DataExceptionSubclass,
     ExecutorError, ExecutorWarning, GraphContext, MaintenanceContext, MutationContext, PlanCache,
-    PlanCacheStats, ProcedureContext, RollbackOutcome, Session, SessionParameterValue,
-    SharedPlanCache, SharedPlanCacheStats, StatementOutput, TransactionOutcome, TxContext,
-    WarningSink, WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
+    PlanCacheStats, ProcedureContext, RequestExecutionInput, RequestParameter, RollbackOutcome,
+    Session, SessionParameterValue, SharedPlanCache, SharedPlanCacheStats, StatementOutput,
+    TransactionOutcome, TxContext, WarningSink, WriteOutcome, execute_pattern, execute_pipeline,
+    execute_statement, validate_parameter_value,
 };
 pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken, NodeScanBudget};
 

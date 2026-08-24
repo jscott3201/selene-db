@@ -157,6 +157,7 @@ fn m03_session_records_are_selected_without_claiming_session_user_execution() {
             "Database::session_with_options",
             "Session::context",
             "Session::execute",
+            "Session::execute_request",
         ]
     );
     let AnnexBDecision::Selected { rationale, .. } =

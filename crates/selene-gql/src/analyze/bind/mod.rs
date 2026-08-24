@@ -36,7 +36,7 @@ pub(crate) fn bind_statement(
     mut stmt: Statement,
     registry: &dyn ProcedureRegistry,
 ) -> Result<AnalyzedStatement, AnalysisError> {
-    parameters::apply_statement_parameter_declarations(&mut stmt)?;
+    let parameters = parameters::apply_statement_parameter_declarations(&mut stmt)?;
     let mut ctx = BindContext::new(stmt.span(), registry);
     let bind_result = (|| -> Result<(), AnalysisError> {
         match &mut stmt {
@@ -91,7 +91,7 @@ pub(crate) fn bind_statement(
     bind_result?;
     let category = category::classify(&stmt, registry);
     let write_set = statement_write_set(&stmt).then(|| ctx.write_set.clone());
-    Ok(ctx.finish(stmt, category, write_set))
+    Ok(ctx.finish(stmt, parameters, category, write_set))
 }
 
 fn bind_explain_inner(
@@ -192,6 +192,7 @@ impl<'ctx> BindContext<'ctx> {
     fn finish(
         self,
         stmt: Statement,
+        parameters: Vec<crate::analyze::ParameterUse>,
         category: StatementCategory,
         write_set: Option<MutationWriteSet>,
     ) -> AnalyzedStatement {
@@ -199,6 +200,7 @@ impl<'ctx> BindContext<'ctx> {
             stmt,
             self.scopes,
             self.references,
+            parameters,
             self.expr_types,
             self.expr_ids,
             category,

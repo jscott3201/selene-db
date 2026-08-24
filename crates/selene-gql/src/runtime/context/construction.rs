@@ -23,6 +23,7 @@ struct TxContextParts<'a, 'g> {
     providers: &'a [Arc<dyn IndexProvider>],
     parameters: Cow<'a, BTreeMap<DbString, Value>>,
     binding_tables: Rc<BindingTableRegistry>,
+    request_timestamp: jiff::Timestamp,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
     maintenance_graph: Option<&'g SharedGraph>,
@@ -36,6 +37,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
+        request_timestamp: jiff::Timestamp,
     ) -> TxContextParts<'a, 'g> {
         TxContextParts {
             snapshot,
@@ -44,6 +46,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             parameters,
             binding_tables,
+            request_timestamp,
             reopt_hook: None,
             write_txn: None,
             maintenance_graph: None,
@@ -71,7 +74,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             write_txn: parts.write_txn,
             maintenance_graph: parts.maintenance_graph,
             session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
+            request_timestamp: parts.request_timestamp,
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
@@ -107,6 +110,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             Cow::Borrowed(parameters),
             Rc::new(BindingTableRegistry::new()),
+            jiff::Timestamp::now(),
         ))
     }
 
@@ -144,6 +148,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             Cow::Borrowed(parameters),
             Rc::new(BindingTableRegistry::new()),
+            jiff::Timestamp::now(),
         );
         parts.reopt_hook = Some(reopt_hook);
         Self::from_parts(parts)
@@ -183,6 +188,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             Cow::Borrowed(parameters),
             Rc::new(BindingTableRegistry::new()),
+            jiff::Timestamp::now(),
         );
         parts.write_txn = Some(txn);
         Self::from_parts(parts)
@@ -195,6 +201,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
+        request_timestamp: jiff::Timestamp,
     ) -> Self {
         Self::from_parts(Self::base_parts(
             snapshot,
@@ -203,9 +210,13 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             parameters,
             binding_tables,
+            request_timestamp,
         ))
     }
 
+    // Category constructors enumerate request-owned state explicitly; hiding
+    // the timestamp in ambient state would break the request-time invariant.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_with_owned_parameters_and_registry(
         snapshot: Arc<SeleneGraph>,
         impl_defined_caps: &'a ImplDefinedCaps,
@@ -214,6 +225,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
+        request_timestamp: jiff::Timestamp,
     ) -> Self {
         let mut parts = Self::base_parts(
             snapshot,
@@ -222,11 +234,13 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             parameters,
             binding_tables,
+            request_timestamp,
         );
         parts.write_txn = Some(txn);
         Self::from_parts(parts)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn maintenance_with_owned_parameters_and_registry(
         snapshot: Arc<SeleneGraph>,
         impl_defined_caps: &'a ImplDefinedCaps,
@@ -235,6 +249,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
+        request_timestamp: jiff::Timestamp,
     ) -> Self {
         let mut parts = Self::base_parts(
             snapshot,
@@ -243,6 +258,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             parameters,
             binding_tables,
+            request_timestamp,
         );
         parts.maintenance_graph = Some(graph);
         Self::from_parts(parts)

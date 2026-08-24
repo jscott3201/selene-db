@@ -24,7 +24,7 @@ use selene_graph::GraphTypeDef;
 
 use crate::{ProcedureRegistry, Statement};
 
-pub use ast::{AnalyzedStatement, AnalyzedStatementKind};
+pub use ast::{AnalyzedStatement, AnalyzedStatementKind, ParameterUse};
 pub use binding::{BindingDecl, BindingDeclKind, BindingId, BindingUse, BindingUseKind};
 pub use category::StatementCategory;
 pub use error::{
