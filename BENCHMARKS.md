@@ -221,6 +221,41 @@ quick run, not regression thresholds.
 | `catalog_lifecycle/session_creation/default_context` | 243.66–246.63 ns | 272.00–281.33 ns |
 | `catalog_lifecycle/session_creation/authenticated_allow_context` | 282.04–312.81 ns | 317.94–348.64 ns |
 
+#### M03-PR02 request setup evidence
+
+The request rows measure facade parse/analyze/preflight/plan/execute setup on a
+fresh empty graph. `minimal_execute` retains the compatibility
+`Session::execute("RETURN 1")` call. The parameter rows construct an explicit
+`Request` from a cloned `RequestParams`, merge it with the session dictionary,
+validate all supplied declarations, and execute `RETURN 1`; unused bindings are
+allowed by the request contract.
+
+Recorded on 2026-08-24 with Apple M5 (4 performance and 6 efficiency cores, 16
+GiB), macOS 26.7 build 25G220, rustc 1.97.1, and mimalloc. The baseline row was
+run before request lifecycle changes at
+`0071db54fc0360b6d14b65db4eae2eec21b76efa`. Current rows use the M03-PR02
+worktree based on that SHA:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/request/minimal_execute
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/request_setup
+```
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/request/minimal_execute` (base) | 8.1383–8.3502 µs |
+| `catalog_lifecycle/request/minimal_execute` (current, five repeats) | 17.695–18.865 µs; 38.052–39.029 µs; 37.151–37.882 µs; 29.840–30.434 µs; 37.182–38.677 µs |
+| `catalog_lifecycle/request_setup/0` (three repeats) | 29.854–30.338 µs; 36.303–39.293 µs; 28.723–29.008 µs |
+| `catalog_lifecycle/request_setup/10` (three repeats) | 30.931–34.076 µs; 37.855–39.264 µs; 18.247–19.338 µs |
+| `catalog_lifecycle/request_setup/100` (three repeats) | 43.875–44.334 µs; 50.982–51.597 µs; 31.325–31.812 µs |
+| `catalog_lifecycle/request_setup/1000` (three repeats) | 197.69–201.31 µs; 202.95–209.45 µs; 184.76–191.45 µs |
+
+The current rows varied substantially across repeated quick runs. These
+measurements do not support an improvement claim. The facade request path
+deliberately bypasses the source-plan cache so every call has the analyzed
+parameter-use contract needed for preflight; a later cache design must retain
+that contract rather than skip request validation.
+
 #### M02-PR04 part 1 quick evidence
 
 The `catalog_lifecycle/gql_ddl` group issues the same schema and graph

@@ -56,6 +56,12 @@ pub enum ErrorKind {
     CatalogInvariant,
     /// The source is not valid GQL.
     InvalidGql,
+    /// A decoded request/session parameter name does not match GQL `$name` spelling.
+    InvalidParameterName,
+    /// A request parameter dictionary contains the same exact name twice.
+    DuplicateParameter,
+    /// A request was started while this single-session slot was occupied.
+    RequestAlreadyActive,
     /// The requested GQL feature is not supported by this facade mode.
     FeatureNotSupported,
     /// Parsing, analysis, planning, or execution failed for another reason.
@@ -131,7 +137,7 @@ impl ErrorKind {
     #[must_use]
     pub const fn gqlstatus(self) -> Option<GqlStatus> {
         match self {
-            Self::InvalidCatalogName => Some(GqlStatus::SYNTAX_ERROR),
+            Self::InvalidCatalogName | Self::InvalidParameterName => Some(GqlStatus::SYNTAX_ERROR),
             Self::CatalogObjectNotFound
             | Self::CatalogObjectWrongKind
             | Self::CatalogReferenceViolation => Some(GqlStatus::INVALID_REFERENCE),
@@ -150,6 +156,8 @@ impl ErrorKind {
             | Self::InvalidGraphType
             | Self::CatalogInvariant
             | Self::InvalidGql
+            | Self::DuplicateParameter
+            | Self::RequestAlreadyActive
             | Self::FeatureNotSupported
             | Self::Execution => None,
         }
@@ -357,6 +365,46 @@ impl Error {
         Self::facade(
             ErrorKind::StaleSessionReference,
             "a session catalog reference is stale or invalidated",
+        )
+    }
+
+    pub(crate) fn invalid_parameter_name(name: &str) -> Self {
+        Self::facade(
+            ErrorKind::InvalidParameterName,
+            format!("invalid parameter name {name:?}: expected decoded GQL $name spelling"),
+        )
+    }
+
+    pub(crate) fn invalid_parameter_name_source(
+        name: &str,
+        source: selene_core::CoreError,
+    ) -> Self {
+        Self::with_source(
+            ErrorKind::InvalidParameterName,
+            format!("invalid parameter name {name:?}"),
+            source,
+        )
+    }
+
+    pub(crate) fn duplicate_parameter(name: &str) -> Self {
+        Self::facade(
+            ErrorKind::DuplicateParameter,
+            format!("duplicate request parameter name {name:?}"),
+        )
+    }
+
+    pub(crate) fn request_already_active() -> Self {
+        Self::facade(
+            ErrorKind::RequestAlreadyActive,
+            "a request is already active on this session",
+        )
+    }
+
+    pub(crate) fn invalid_request_time_zone(source: jiff::Error) -> Self {
+        Self::with_source(
+            ErrorKind::CatalogInvariant,
+            "the session time-zone displacement is outside the runtime range",
+            source,
         )
     }
 

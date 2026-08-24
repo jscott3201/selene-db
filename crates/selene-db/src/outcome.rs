@@ -2,12 +2,12 @@
 
 use crate::GqlStatus;
 
-/// Summary returned by [`Session::execute`](crate::Session::execute).
+/// Statement summary returned by successful facade execution.
 ///
-/// M02-PR01 does not expose row values. A row-bearing statement reports only
-/// cardinality, while a committed write reports its change count and optional
-/// returned-row count. A database-catalog statement reports the ISO
-/// completion condition of its omitted result.
+/// [`Session::execute`](crate::Session::execute) returns this value directly;
+/// [`RequestOutcome`](crate::RequestOutcome) retains it for a successful
+/// explicit request. Row-bearing statements report cardinality rather than row
+/// values. Writes report change and optional returned-row counts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ExecutionOutcome {

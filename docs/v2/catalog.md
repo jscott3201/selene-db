@@ -100,18 +100,24 @@ database plus a `SessionContext`; it does not store or expose a lower graph
 handle. The type is owned, lifetime-free, `Send`, and intentionally not `Sync`.
 Concurrent use of one session is outside the current contract.
 
-`Session::context()` exposes immutable typed inspection. The context copies:
+`Session::context()` exposes immutable dependency data plus controlled session
+state. It copies:
 
 - optional authorization ID and resolved principal;
 - optional home schema and graph descriptors;
 - required current schema and graph descriptors;
 - the creation catalog generation and stable reference dependencies;
-- generated profile identity, UTC displacement, and empty parameter state; and
-- vacant request/transaction slots and active termination state.
+- generated profile identity and UTC displacement; and
+- initially empty parameters, vacant request/transaction slots, and active
+  termination state.
 
-It retains no `CatalogReadSnapshot`, graph instance, lifecycle lease, or lower
-session. Parameter mutation, occupied slots, transaction behavior, and
-termination transitions are deferred to later M03 work.
+The parameter count and request-slot inspection are dynamic. While a request is
+active, `request_slot()` returns `RequestSlotState::Active` and
+`current_request()` returns the associated `Arc<RequestContext>`. The context
+holds only the merged typed parameter snapshot and request timestamp. Neither
+the session nor request context retains a `CatalogReadSnapshot`, graph instance,
+lifecycle lease, lower transaction context, binding registry, or execution
+stack. Facade transaction behavior and termination transitions remain deferred.
 
 An explicit authorization ID is resolved by `PrincipalProvider`. Provider
 `None` is an error for that explicit ID. Optional principal home paths resolve
@@ -148,16 +154,27 @@ not clear that state.
 
 ## GQL catalog dispatch
 
-A selected session parses, analyzes, and plans each source once under the graph
-request lease. Ordinary data statements execute through that lower pipeline. A
-plan containing one database-catalog command is returned to the facade before
-execution; the request lease is released, and the facade dispatches the command
-to the same `Catalog` lifecycle service used by Rust callers. Catalog mutation
-therefore never occurs while a graph request read lease is held.
+A selected session associates one immutable request context before validating
+copied catalog references or parsing. After parse and analysis, request
+preflight checks every source parameter use and every supplied graph-backed
+value before planning or execution. Ordinary data statements then execute under
+the graph request lease. A plan containing one database-catalog command returns
+to the facade before execution; the graph lease is released, the facade
+dispatches through the same `Catalog` lifecycle service used by Rust callers,
+and the request context remains active until dispatch completes. Catalog
+mutation therefore never occurs while a graph request read lease is held.
 
-Transaction and session controls remain rejected at the facade boundary. Later
-M03 slices own request behavior, parameter mutation, transactions, and session
-close. A bare lower executor session rejects every database-catalog command
+Parameter names omit `$`, preserve exact Unicode spelling, and are
+case-sensitive. `GeneralParameter` carries both its declared `GqlType` and
+`Value`. Request bindings shadow the session snapshot without modifying it.
+Preflight rejects unbound uses, source/request declaration mismatches, stale or
+foreign graph, node, edge, and path references, and nested invalid references.
+`TableRef` parameters are rejected until M03-PR03 defines their request-scoped
+registry.
+
+Transaction and session controls remain rejected at the facade boundary.
+M03-PR04 owns transactions; M03-PR05 owns session set/reset/close behavior. A
+bare lower executor session rejects every database-catalog command
 with the implementation-defined status `5GQL0`; it does not reinterpret `DROP
 GRAPH` as a storage reset.
 
@@ -181,8 +198,12 @@ still rejected by RESTRICT.
 ## Outcomes and statuses
 
 Successful database-catalog statements return
-`ExecutionOutcome::OmittedResult`. Rust and GQL lifecycle calls share the same
-structured facade errors and GQLSTATUS mapping.
+`ExecutionOutcome::OmittedResult`. `Session::execute_request` retains that
+summary in `RequestOutcome::Succeeded`; validation, compilation, dispatch, and
+runtime errors use `RequestOutcome::Failed`. The legacy `Session::execute`
+adapter preserves its existing `Result<ExecutionOutcome>` signature. Rust and
+GQL lifecycle calls share the same structured facade errors and GQLSTATUS
+mapping.
 
 | Case | Outcome or error | GQLSTATUS |
 |---|---|---|
@@ -208,8 +229,10 @@ Catalog lifecycle changes currently have no WAL, snapshot encoding, recovery,
 or crash contract. Existing lower `Mutator::factory_reset` remains available
 for engine and recovery use, but it is not a GQL database-catalog route.
 
-- Later M03 work owns request state, parameter mutation, cancellation,
-  transaction pinning, and close transitions.
+- M03-PR03 owns execution context/stack and binding-table parameter support.
+- M03-PR04 owns transaction pinning; M03-PR05 owns session controls.
+- M05 owns replacing the temporary facade re-export of lower `Value` and
+  `GqlType` semantic types.
 - Later milestones may broaden catalog object families without changing
   selected graph identity semantics.
 - M09 owns persisted descriptor encoding, WAL and snapshot records, and

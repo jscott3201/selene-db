@@ -10,8 +10,8 @@ use std::{hint::black_box, sync::Arc, time::Duration};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_db::{
     AllowAllAuthorizationPolicy, AuthHookError, AuthorizationId, CreatePolicy, Database,
-    DropPolicy, ExecutionOutcome, GqlStatus, ObjectPath, Principal, PrincipalId, PrincipalProvider,
-    SchemaPath, SessionOptions,
+    DropPolicy, ExecutionOutcome, GeneralParameter, GqlStatus, GqlType, ObjectPath, Principal,
+    PrincipalId, PrincipalProvider, Request, RequestParams, SchemaPath, SessionOptions, Value,
 };
 
 const OMITTED: ExecutionOutcome = ExecutionOutcome::OmittedResult {
@@ -383,6 +383,52 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
         );
     }
     selection.finish();
+
+    let database = graph_fixture(1);
+    let session = database
+        .session(&graph("graphs", "graph_00000"))
+        .expect("minimal request fixture resolves");
+    c.bench_function("catalog_lifecycle/request/minimal_execute", |b| {
+        b.iter(|| {
+            assert_eq!(
+                black_box(&session)
+                    .execute(black_box("RETURN 1"))
+                    .expect("minimal request succeeds"),
+                ExecutionOutcome::Rows { row_count: 1 }
+            );
+        });
+    });
+
+    let mut request_setup = c.benchmark_group("catalog_lifecycle/request_setup");
+    for parameter_count in [0_usize, 10, 100, 1_000] {
+        let mut parameters = RequestParams::new();
+        for index in 0..parameter_count {
+            parameters
+                .insert(
+                    &format!("parameter_{index:04}"),
+                    GeneralParameter::new(GqlType::Integer, Value::Int(index as i64))
+                        .expect("benchmark parameter type is valid"),
+                )
+                .expect("benchmark parameter name is unique and valid");
+        }
+        request_setup.bench_with_input(
+            BenchmarkId::from_parameter(parameter_count),
+            &parameters,
+            |b, parameters| {
+                b.iter(|| {
+                    let outcome = black_box(&session).execute_request(Request::with_params(
+                        black_box("RETURN 1"),
+                        black_box(parameters.clone()),
+                    ));
+                    assert_eq!(
+                        black_box(outcome.execution()),
+                        Some(&ExecutionOutcome::Rows { row_count: 1 })
+                    );
+                });
+            },
+        );
+    }
+    request_setup.finish();
 }
 
 criterion_group! {

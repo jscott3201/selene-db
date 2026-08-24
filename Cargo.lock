@@ -1815,6 +1815,7 @@ version = "2.0.0-alpha.1"
 dependencies = [
  "arc-swap",
  "criterion",
+ "jiff",
  "mimalloc",
  "parking_lot",
  "proptest",

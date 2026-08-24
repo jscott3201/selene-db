@@ -100,16 +100,59 @@ Each session retains the selected graph's stable catalog identity. Dropping and
 recreating the same path makes the old session stale; it never switches to the
 replacement.
 
+## Execute an explicit request
+
+`Session::execute_request` accepts a typed request dictionary and returns one
+`RequestOutcome` for validation, compilation, catalog dispatch, or runtime
+completion. Parameter names omit `$` and are exact and case-sensitive.
+
+```rust
+# use selene_db::{CreatePolicy, Database, ObjectPath, SchemaPath};
+use selene_db::{GeneralParameter, GqlType, Request, RequestParams, Value};
+# fn example() -> Result<(), selene_db::Error> {
+# let database = Database::builder().build();
+# let catalog = database.catalog();
+# let schema = SchemaPath::regular("selene", "memory")?;
+# catalog.create_schema(&schema, CreatePolicy::Strict)?;
+# let graph = ObjectPath::regular("selene", "memory", "people")?;
+# catalog.create_graph(&graph, None, CreatePolicy::Strict)?;
+# let session = database.session(&graph)?;
+session.set_parameter(
+    "limit",
+    GeneralParameter::new(GqlType::Integer, Value::Int(10))?,
+)?;
+
+let mut parameters = RequestParams::new();
+parameters.insert(
+    "limit",
+    GeneralParameter::new(GqlType::Integer, Value::Int(2))?,
+)?;
+let request = Request::with_params("RETURN $limit :: INTEGER", parameters);
+let outcome = session.execute_request(request);
+assert_eq!(
+    outcome.context().parameters().get("limit").unwrap().value(),
+    &Value::Int(2),
+);
+outcome.into_result()?;
+# Ok(())
+# }
+```
+
+Request bindings shadow the session snapshot without changing the session map.
+Every context captures one request timestamp. Graph, node, edge, and path
+references are checked against the selected graph before execution. Table
+parameters remain unsupported until M03-PR03 and fail before execution.
+
 ## Current facade boundaries
 
 The facade session is owned, lifetime-free, `Send`, and intentionally not
-`Sync`. `Session::context()` exposes immutable current/home catalog references,
-optional embedder-provided authorization and principal data, generated profile
-identity, UTC and empty-parameter defaults, and vacant request/transaction
-slots. It does not yet expose parameter mutation, transactions, session
-controls, cancellation, persistence configuration, or row-value
-materialization. Stateful controls return a structured error rather than being
-accepted without durable session state.
+`Sync`; callers must serialize access rather than issue concurrent requests.
+`Session::context()` exposes immutable current/home catalog references,
+authorization and principal data, profile identity, time-zone displacement,
+the current parameter count, and request/transaction slots. It does not expose
+transactions, session controls, cancellation, persistence configuration, or
+row-value materialization. Stateful controls return a structured error rather
+than being accepted without durable session state.
 
 See the [Embedding Guide](embedding-guide.md) for lifecycle and integration
 details, and the [GQL Reference](gql-reference.md) for supported language forms.

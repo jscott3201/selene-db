@@ -5236,10 +5236,11 @@
             "Database::session",
             "Database::session_with_options",
             "Session::context",
-            "Session::execute"
+            "Session::execute",
+            "Session::execute_request"
           ]
         },
-        "rationale": "The stable facade creates database-owned sessions, exposes immutable context inspection, and submits one GQL source statement through Session::execute.",
+        "rationale": "The stable facade creates database-owned sessions, exposes controlled context inspection, and submits an explicit Request through Session::execute_request; Session::execute remains the source-compatible adapter.",
         "stability": "stable",
         "visibility": "embedder"
       },
@@ -5329,9 +5330,9 @@
         "disposition": "selected",
         "value": {
           "type": "identifier",
-          "value": "Rust Result with typed success or error"
+          "value": "typed RequestOutcome success or error with Rust Result compatibility adapter"
         },
-        "rationale": "Session and transaction methods return typed Result values directly to the embedder.",
+        "rationale": "Request execution returns a typed RequestOutcome covering validation through runtime; Session::execute and transaction methods retain typed Result compatibility.",
         "stability": "stable",
         "visibility": "embedder"
       },
@@ -5341,6 +5342,7 @@
       ],
       "evidence": [
         "EVID-DIAGNOSTICS",
+        "EVID-SESSION-API",
         "EVID-TRANSACTIONS"
       ],
       "applicability": "APP-ALWAYS"
@@ -5352,9 +5354,9 @@
         "disposition": "selected",
         "value": {
           "type": "identifier",
-          "value": "Session parameter maps plus request bindings"
+          "value": "deterministic typed session snapshot plus exact-name request bindings"
         },
-        "rationale": "Session owns named typed parameter maps that seed each request context.",
+        "rationale": "Session owns a controlled typed dictionary; each request snapshots it and shadows exact names with its deterministic typed request dictionary.",
         "stability": "provisional",
         "visibility": "embedder"
       },
@@ -5363,6 +5365,7 @@
         "CLAUSE-ANNEX-B"
       ],
       "evidence": [
+        "EVID-REQUEST-PARAMETERS",
         "EVID-SESSION-DEFAULTS"
       ],
       "applicability": "APP-SESSION-PARAMETERS"
@@ -6002,6 +6005,11 @@
       "description": "Property map u32 entry-count bound."
     },
     {
+      "id": "EVID-REQUEST-PARAMETERS",
+      "reference": "crates/selene-db/src/params.rs",
+      "description": "Facade typed parameter construction, exact-name dictionaries, and deterministic session/request overlay."
+    },
+    {
       "id": "EVID-RESULT-DESCRIPTORS",
       "reference": "crates/selene-gql/src/plan/ir/mod.rs",
       "description": "Public binding-table columns expose analyzer-inferred types."
@@ -6014,7 +6022,7 @@
     {
       "id": "EVID-SESSION-DEFAULTS",
       "reference": "crates/selene-db/src/session_context.rs",
-      "description": "Generated profile identity, UTC displacement, empty parameters, and vacant context slots copied at session creation."
+      "description": "Generated profile identity, UTC displacement, and initial empty-parameter and vacant-slot defaults copied at session creation."
     },
     {
       "id": "EVID-SESSION-PRINCIPAL",

@@ -6,21 +6,28 @@ use selene_catalog::GraphId as LowerGraphId;
 use selene_gql::CatalogSessionOutput;
 
 use crate::{
-    CatalogReadSnapshot, Error, ExecutionOutcome, ObjectPath, Result, SessionContext,
-    database::DatabaseInner, ddl,
+    CatalogReadSnapshot, Error, ExecutionOutcome, GeneralParameter, ObjectPath, Request,
+    RequestContext, RequestOutcome, RequestParams, RequestTimestamp, Result, SessionContext,
+    database::DatabaseInner, ddl, params::validated_parameter_name,
 };
 
 /// Movable session selected to one catalog graph identity.
 ///
-/// The session owns its database and an immutable [`SessionContext`], but no
+/// The session owns its database and a controlled [`SessionContext`], but no
 /// runtime graph handle or catalog snapshot. Each call validates every copied
 /// home/current stable identity, then rechecks the selected graph under a
 /// temporary lifecycle read lease. A same-path recreation never rebinds the
 /// session.
 ///
-/// A session is `Send` but intentionally not `Sync`. The current `execute(&self)`
-/// signature is a compatibility boundary; request and transaction slots remain
-/// vacant and carry no hidden interior-mutable state.
+/// A session is `Send` but intentionally not `Sync`. It accepts one request at a
+/// time and retains the actual active [`RequestContext`] in its request slot.
+/// Sharing it across threads requires caller-owned synchronization; the facade
+/// does not claim concurrent request execution.
+///
+/// ```compile_fail
+/// fn require_sync<T: Sync>() {}
+/// require_sync::<selene_db::Session>();
+/// ```
 ///
 /// Transaction and `SESSION` controls return feature-not-supported instead of
 /// reporting state that would disappear after the call. Database-catalog
@@ -45,16 +52,44 @@ impl Session {
         }
     }
 
-    /// Return immutable typed inspection of this session's creation context.
+    /// Return typed inspection of this session's dependencies and controlled state.
     #[must_use]
     pub const fn context(&self) -> &SessionContext {
         &self.context
     }
 
+    /// Bind or replace one typed session parameter for subsequent requests.
+    ///
+    /// Request-scoped parameters shadow this dictionary by exact name without
+    /// mutating it. A request already in progress keeps its immutable snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-name diagnostic when `name` would not parse after `$`.
+    pub fn set_parameter(
+        &self,
+        name: &str,
+        parameter: GeneralParameter,
+    ) -> Result<Option<GeneralParameter>> {
+        let name = validated_parameter_name(name)?;
+        Ok(self.context.set_parameter(name, parameter))
+    }
+
+    /// Remove one exact-name session parameter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-name diagnostic when `name` would not parse after `$`.
+    pub fn remove_parameter(&self, name: &str) -> Result<Option<GeneralParameter>> {
+        let name = validated_parameter_name(name)?;
+        Ok(self.context.remove_parameter(name.as_str()))
+    }
+
     /// Parse, plan, and execute one GQL statement.
     ///
-    /// The result is summary-only. Row values, parameters, and facade
-    /// transactions are added by later milestones.
+    /// This compatibility entry point executes a [`Request`] with no
+    /// request-scoped bindings and converts its [`RequestOutcome`] back to the
+    /// existing `Result` shape. Session bindings still seed the request.
     ///
     /// # Errors
     ///
@@ -62,6 +97,48 @@ impl Session {
     /// controls, a stale context reference, analysis/planning failures, or
     /// execution failures.
     pub fn execute(&self, source: &str) -> Result<ExecutionOutcome> {
+        self.execute_request(Request::new(source)).into_result()
+    }
+
+    /// Execute one source statement with an explicit immutable request context.
+    ///
+    /// Session parameters are snapshotted first, then request parameters shadow
+    /// exact names. The associated context remains active through graph
+    /// execution and post-lease catalog dispatch. Every returned failure uses
+    /// [`RequestOutcome::Failed`]. Panics are not caught; the request guard clears
+    /// the slot while unwinding.
+    #[must_use]
+    pub fn execute_request(&self, request: Request) -> RequestOutcome {
+        self.execute_request_with(request, RequestTimestamp::capture(), |_| {})
+    }
+
+    fn execute_request_with(
+        &self,
+        request: Request,
+        timestamp: RequestTimestamp,
+        active_hook: impl FnOnce(&Self),
+    ) -> RequestOutcome {
+        let merged =
+            RequestParams::overlay(&self.context.parameter_snapshot(), request.parameters());
+        let context = Arc::new(RequestContext::new(merged, timestamp));
+        let guard = match self.context.activate_request(Arc::clone(&context)) {
+            Ok(guard) => guard,
+            Err(error) => return RequestOutcome::Failed { context, error },
+        };
+        active_hook(self);
+        let result = self.execute_active_request(&request, &context);
+        drop(guard);
+        match result {
+            Ok(outcome) => RequestOutcome::Succeeded { context, outcome },
+            Err(error) => RequestOutcome::Failed { context, error },
+        }
+    }
+
+    fn execute_active_request(
+        &self,
+        request: &Request,
+        context: &RequestContext,
+    ) -> Result<ExecutionOutcome> {
         self.validate_context_references()?;
         let current_graph = self.context.current_graph();
         let graph_id = LowerGraphId::new(current_graph.id.get()).map_err(|source| {
@@ -71,11 +148,13 @@ impl Session {
             .context
             .principal()
             .and_then(crate::Principal::audit_bytes_arc);
-        match self.inner.execute_catalog_session(
+        let input = context.lower_input(self.context.time_zone().seconds())?;
+        match self.inner.execute_catalog_request(
             graph_id,
             &current_graph.path,
             audit_bytes,
-            source,
+            request.source(),
+            input,
         )? {
             CatalogSessionOutput::Statement(output) => ExecutionOutcome::from_engine(output),
             CatalogSessionOutput::DatabaseCatalog(command) => {
@@ -114,12 +193,13 @@ impl DatabaseInner {
     ///
     /// A database-catalog command is returned unexecuted. The facade dispatches
     /// it only after this method releases the graph lease.
-    fn execute_catalog_session(
+    fn execute_catalog_request(
         &self,
         id: LowerGraphId,
         path: &ObjectPath,
         audit_bytes: Option<Arc<[u8]>>,
         source: &str,
+        request: selene_gql::RequestExecutionInput,
     ) -> Result<CatalogSessionOutput> {
         self.with_graph_request(id, path, |graph| {
             let mut session = match audit_bytes {
@@ -127,7 +207,7 @@ impl DatabaseInner {
                 None => selene_gql::Session::new(graph),
             };
             session
-                .execute_source_catalog_session(source, &self.procedures)
+                .execute_source_catalog_request(source, &self.procedures, request)
                 .map_err(Error::from_engine)
         })
     }
@@ -156,5 +236,75 @@ impl DatabaseInner {
             return Err(Error::stale_session_reference());
         }
         execute(&instance.graph)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{panic::AssertUnwindSafe, sync::Arc};
+
+    use crate::{
+        CreatePolicy, Database, ErrorKind, ObjectPath, Request, RequestOutcome, RequestSlotState,
+        RequestTimestamp, SchemaPath,
+    };
+
+    fn session() -> super::Session {
+        let database = Database::builder().build();
+        let catalog = database.catalog();
+        let schema = SchemaPath::regular("selene", "request_guard").unwrap();
+        let graph = ObjectPath::regular("selene", "request_guard", "main").unwrap();
+        catalog
+            .create_schema(&schema, CreatePolicy::Strict)
+            .unwrap();
+        catalog
+            .create_graph(&graph, None, CreatePolicy::Strict)
+            .unwrap();
+        database.session(&graph).unwrap()
+    }
+
+    #[test]
+    fn active_slot_holds_actual_context_and_rejects_reentry() {
+        let session = session();
+        let timestamp = RequestTimestamp::from_parts(1_788_692_096, 123_456_789);
+        let outcome =
+            session.execute_request_with(Request::new("RETURN 1"), timestamp, |session| {
+                assert_eq!(session.context().request_slot(), RequestSlotState::Active);
+                let active = session
+                    .context()
+                    .current_request()
+                    .expect("request is associated");
+                assert_eq!(active.timestamp(), timestamp);
+
+                let nested = session.execute_request(Request::new("RETURN 2"));
+                assert_eq!(
+                    nested.error().map(crate::Error::kind),
+                    Some(ErrorKind::RequestAlreadyActive)
+                );
+                let still_active = session.context().current_request().unwrap();
+                assert!(Arc::ptr_eq(&active, &still_active));
+            });
+
+        assert!(matches!(outcome, RequestOutcome::Succeeded { .. }));
+        assert_eq!(session.context().request_slot(), RequestSlotState::Vacant);
+        assert!(session.context().current_request().is_none());
+    }
+
+    #[test]
+    fn panic_propagates_clears_slot_and_session_is_reusable() {
+        let session = session();
+        let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            session.execute_request_with(
+                Request::new("RETURN 1"),
+                RequestTimestamp::from_parts(1_788_692_096, 0),
+                |_| panic!("injected request panic"),
+            )
+        }));
+
+        assert!(panic.is_err());
+        assert_eq!(session.context().request_slot(), RequestSlotState::Vacant);
+        assert!(matches!(
+            session.execute_request(Request::new("RETURN 1")),
+            RequestOutcome::Succeeded { .. }
+        ));
     }
 }

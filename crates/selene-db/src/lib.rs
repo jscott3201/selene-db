@@ -6,9 +6,10 @@
 //! re-exported here.
 //!
 //! The current facade owns one in-memory catalog with named schemas, graphs, and
-//! closed graph types. A [`Session`] owns an immutable [`SessionContext`] with
-//! copied catalog/profile defaults and optional embedder-provided authorization.
-//! Parameter mutation, request state, transactions, termination transitions,
+//! closed graph types. A [`Session`] holds copied catalog/profile defaults,
+//! optional embedder-provided authorization, a controlled typed parameter map,
+//! and one active-request slot. [`RequestOutcome`] retains the immutable context
+//! used by each explicit [`Request`]. Transactions, termination transitions,
 //! persistence, and row-value materialization are deferred.
 //!
 //! # Quickstart
@@ -104,7 +105,9 @@ mod ddl;
 mod error;
 mod graph_type;
 mod outcome;
+mod params;
 mod path;
+mod request;
 mod session;
 mod session_context;
 
@@ -123,7 +126,17 @@ pub use database::{Database, DatabaseBuilder};
 pub use error::{Error, ErrorKind, GqlStatus};
 pub use graph_type::{GraphTypeBuilder, GraphTypeDefinition, NodeTypeDefinition};
 pub use outcome::{ExecutionOutcome, WriteSummary};
+pub use params::{GeneralParameter, RequestParams};
 pub use path::{CatalogPath, ObjectPath, PathSegment, SchemaPath};
+pub use request::{Request, RequestContext, RequestOutcome, RequestTimestamp};
+/// GQL value type intentionally re-exported for typed request parameters.
+///
+/// M05 owns replacing this temporary lower semantic bridge.
+pub use selene_core::Value;
+/// Parsed GQL type intentionally re-exported for typed request parameters.
+///
+/// M05 owns replacing this temporary lower semantic bridge.
+pub use selene_gql::GqlType;
 pub use session::Session;
 pub use session_context::{
     ProfileIdentity, RequestSlotState, SessionContext, SessionDependencySummary, SessionParameters,

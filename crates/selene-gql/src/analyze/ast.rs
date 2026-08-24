@@ -23,6 +23,8 @@ pub struct AnalyzedStatement {
     pub scopes: BindingScopeTree,
     /// Resolved binding references in source-walk order.
     pub references: Vec<BindingUse>,
+    /// Parameter references in source order after declaration inheritance.
+    pub parameters: Vec<ParameterUse>,
     /// Inferred expression type cells.
     pub expr_types: ExprTypeTable,
     /// Expression-node to type-cell lookup for the owned statement AST.
@@ -36,10 +38,14 @@ pub struct AnalyzedStatement {
 }
 
 impl AnalyzedStatement {
+    // The constructor keeps every analyzer-owned table explicit so a new table
+    // cannot silently inherit a default outside the bind pass.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         statement: Statement,
         scopes: BindingScopeTree,
         references: Vec<BindingUse>,
+        parameters: Vec<ParameterUse>,
         expr_types: ExprTypeTable,
         expr_ids: ExprIdLookup,
         category: StatementCategory,
@@ -50,6 +56,7 @@ impl AnalyzedStatement {
             statement: AnalyzedStatementKind::from_statement(statement),
             scopes,
             references,
+            parameters,
             expr_types,
             expr_ids,
             span,
@@ -63,6 +70,17 @@ impl AnalyzedStatement {
     pub fn root_scope(&self) -> ScopeId {
         self.scopes.root()
     }
+}
+
+/// One source parameter reference available to request preflight.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParameterUse {
+    /// Exact decoded name without the leading `$`.
+    pub name: DbString,
+    /// Source span of this occurrence.
+    pub span: SourceSpan,
+    /// Inline type, including a declaration inherited from another occurrence.
+    pub declared_type: Option<GqlType>,
 }
 
 /// Top-level analyzed statement shape.

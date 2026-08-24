@@ -1,10 +1,13 @@
-//! Immutable facade session context and dependency inspection.
+//! Facade session state and immutable dependency inspection.
 
+use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+
+use selene_core::DbString;
 use selene_profile::{current_profile_identity, current_session_defaults};
 
 use crate::{
-    AuthorizationId, CatalogGeneration, GraphDescriptor, GraphId, Principal, SchemaDescriptor,
-    SchemaId,
+    AuthorizationId, CatalogGeneration, Error, GeneralParameter, GraphDescriptor, GraphId,
+    Principal, RequestContext, Result, SchemaDescriptor, SchemaId,
 };
 
 /// Facade-owned copy of the generated profile identity.
@@ -72,16 +75,16 @@ impl TimeZoneDisplacement {
     }
 }
 
-/// Immutable inspection of session parameter state.
+/// Snapshot inspection of session parameter state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionParameters {
     count: u64,
 }
 
 impl SessionParameters {
-    fn from_profile() -> Self {
+    fn from_count(count: usize) -> Self {
         Self {
-            count: current_session_defaults().initial_parameter_count(),
+            count: count as u64,
         }
     }
 
@@ -104,6 +107,8 @@ impl SessionParameters {
 pub enum RequestSlotState {
     /// No request is active.
     Vacant,
+    /// One request context is associated with the session.
+    Active,
 }
 
 /// Session transaction-slot inspection state.
@@ -174,11 +179,35 @@ pub(crate) struct SessionContextParts {
     pub(crate) catalog_generation: CatalogGeneration,
 }
 
-/// Immutable creation snapshot and inactive state slots for one session.
+#[derive(Default)]
+struct SessionState {
+    parameters: BTreeMap<DbString, GeneralParameter>,
+    active_request: Option<Arc<RequestContext>>,
+}
+
+pub(crate) struct ActiveRequestGuard<'a> {
+    state: &'a RefCell<SessionState>,
+    context: Arc<RequestContext>,
+}
+
+impl Drop for ActiveRequestGuard<'_> {
+    fn drop(&mut self) {
+        let mut state = self.state.borrow_mut();
+        if state
+            .active_request
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, &self.context))
+        {
+            state.active_request = None;
+        }
+    }
+}
+
+/// Immutable creation dependencies and controlled state for one session.
 ///
-/// The context owns only facade descriptors and scalar metadata. It retains no
-/// catalog read snapshot, runtime graph allocation, lifecycle lease, or lower
-/// engine handle.
+/// The context owns facade descriptors, typed parameters, and at most one
+/// request context. It retains no catalog read snapshot, runtime graph
+/// allocation, lifecycle lease, or lower engine handle.
 pub struct SessionContext {
     authorization_id: Option<AuthorizationId>,
     principal: Option<Principal>,
@@ -189,8 +218,7 @@ pub struct SessionContext {
     catalog_generation: CatalogGeneration,
     dependencies: SessionDependencySummary,
     time_zone: TimeZoneDisplacement,
-    parameters: SessionParameters,
-    request_slot: RequestSlotState,
+    state: RefCell<SessionState>,
     transaction_slot: TransactionSlotState,
     termination: SessionTerminationState,
 }
@@ -215,8 +243,7 @@ impl SessionContext {
             catalog_generation: parts.catalog_generation,
             dependencies,
             time_zone: TimeZoneDisplacement::from_profile(),
-            parameters: SessionParameters::from_profile(),
-            request_slot: RequestSlotState::Vacant,
+            state: RefCell::new(SessionState::default()),
             transaction_slot: TransactionSlotState::Vacant,
             termination: SessionTerminationState::Active,
         }
@@ -282,16 +309,26 @@ impl SessionContext {
         self.time_zone
     }
 
-    /// Return immutable session parameter inspection.
+    /// Return a count snapshot of the current session parameter dictionary.
     #[must_use]
-    pub const fn parameters(&self) -> &SessionParameters {
-        &self.parameters
+    pub fn parameters(&self) -> SessionParameters {
+        SessionParameters::from_count(self.state.borrow().parameters.len())
     }
 
-    /// Return the inactive request slot state.
+    /// Return whether a request context is currently associated with the session.
     #[must_use]
-    pub const fn request_slot(&self) -> RequestSlotState {
-        self.request_slot
+    pub fn request_slot(&self) -> RequestSlotState {
+        if self.state.borrow().active_request.is_some() {
+            RequestSlotState::Active
+        } else {
+            RequestSlotState::Vacant
+        }
+    }
+
+    /// Clone the actual active request context, when the slot is occupied.
+    #[must_use]
+    pub fn current_request(&self) -> Option<Arc<RequestContext>> {
+        self.state.borrow().active_request.as_ref().map(Arc::clone)
     }
 
     /// Return the inactive transaction slot state.
@@ -304,5 +341,37 @@ impl SessionContext {
     #[must_use]
     pub const fn termination(&self) -> SessionTerminationState {
         self.termination
+    }
+
+    pub(crate) fn parameter_snapshot(&self) -> BTreeMap<DbString, GeneralParameter> {
+        self.state.borrow().parameters.clone()
+    }
+
+    pub(crate) fn set_parameter(
+        &self,
+        name: DbString,
+        parameter: GeneralParameter,
+    ) -> Option<GeneralParameter> {
+        self.state.borrow_mut().parameters.insert(name, parameter)
+    }
+
+    pub(crate) fn remove_parameter(&self, name: &str) -> Option<GeneralParameter> {
+        self.state.borrow_mut().parameters.remove(name)
+    }
+
+    pub(crate) fn activate_request(
+        &self,
+        context: Arc<RequestContext>,
+    ) -> Result<ActiveRequestGuard<'_>> {
+        let mut state = self.state.borrow_mut();
+        if state.active_request.is_some() {
+            return Err(Error::request_already_active());
+        }
+        state.active_request = Some(Arc::clone(&context));
+        drop(state);
+        Ok(ActiveRequestGuard {
+            state: &self.state,
+            context,
+        })
     }
 }

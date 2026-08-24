@@ -190,6 +190,7 @@ fn database_catalog_ddl_lowers_to_its_storage_neutral_command() {
         }),
         scopes: selene_gql::BindingScopeTree::new(selene_gql::SourceSpan::new(0, 1)),
         references: Vec::new(),
+        parameters: Vec::new(),
         expr_types: selene_gql::ExprTypeTable::default(),
         expr_ids: selene_gql::ExprIdLookup::default(),
         span: selene_gql::SourceSpan::new(0, 1),
