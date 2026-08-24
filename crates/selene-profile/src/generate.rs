@@ -2,6 +2,7 @@
 
 mod annex_b;
 mod report;
+mod session_defaults;
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -36,6 +37,10 @@ pub fn render_outputs(profile: &ValidatedProfile) -> Result<Vec<(PathBuf, String
         (
             PathBuf::from("crates/selene-profile/src/generated/profile_data.rs"),
             render_profile_data(profile),
+        ),
+        (
+            PathBuf::from("crates/selene-profile/src/generated/session_defaults.rs"),
+            session_defaults::render(profile)?,
         ),
         (
             PathBuf::from("spec/gql-profile/registry.md"),
@@ -97,7 +102,7 @@ fn header(profile: &ValidatedProfile) -> String {
 fn render_mod(profile: &ValidatedProfile) -> String {
     let mut output = header(profile);
     output.push_str(
-        "mod annex_b;\nmod annex_b_ia;\nmod annex_b_id;\nmod annex_b_ie;\nmod annex_b_il;\nmod annex_b_is;\nmod annex_b_iv;\nmod annex_b_iw;\nmod feature_data;\nmod feature_ids;\nmod profile_data;\n\n\
+        "mod annex_b;\nmod annex_b_ia;\nmod annex_b_id;\nmod annex_b_ie;\nmod annex_b_il;\nmod annex_b_is;\nmod annex_b_iv;\nmod annex_b_iw;\nmod feature_data;\nmod feature_ids;\nmod profile_data;\nmod session_defaults;\n\n\
          pub use annex_b::{\n    \
          ANNEX_B_CATEGORY_COUNTS, ANNEX_B_LOOKUP_TEST_VECTORS, annex_b_by_id, annex_b_records,\n\
          };\n\
@@ -109,7 +114,8 @@ fn render_mod(profile: &ValidatedProfile) -> String {
          pub use annex_b_iv::ANNEX_B_IV;\n\
          pub use annex_b_iw::ANNEX_B_IW;\n\
          pub(crate) use feature_data::{CAPABILITY_RECORDS, capability_by_id};\n\
-         pub use profile_data::{DIRECT_SELECTED_FEATURES, TARGET_FEATURE_CLOSURE};\n\n",
+         pub use profile_data::{DIRECT_SELECTED_FEATURES, TARGET_FEATURE_CLOSURE};\n\
+         pub(crate) use session_defaults::SESSION_DEFAULTS;\n\n",
     );
     writeln!(
         output,

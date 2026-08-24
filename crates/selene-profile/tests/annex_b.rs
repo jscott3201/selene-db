@@ -115,6 +115,59 @@ fn exact_inventory_categories_register_and_lookup_are_complete() {
 }
 
 #[test]
+fn m03_session_records_are_selected_without_claiming_session_user_execution() {
+    let selected_identifier = |id| {
+        let record = annex_b_by_id(id).expect("session record exists");
+        let AnnexBDecision::Selected {
+            value: AnnexBValue::Identifier(value),
+            ..
+        } = record.decision
+        else {
+            panic!("{id} must select an identifier value");
+        };
+        value
+    };
+
+    assert_eq!(
+        selected_identifier("ID002"),
+        "provider-supplied optional home schema and graph paths"
+    );
+    assert_eq!(
+        selected_identifier("ID003"),
+        "embedded AuthorizationPolicy hook with local allow-all default"
+    );
+    assert_eq!(selected_identifier("ID061"), "STRING");
+    assert_eq!(
+        selected_identifier("IV015"),
+        "non-empty UTF-8 database string subject to IL013"
+    );
+
+    let iw001 = annex_b_by_id("IW001").expect("IW001 exists");
+    let AnnexBDecision::Selected {
+        value: AnnexBValue::OrderedIdentifierList(entry_points),
+        ..
+    } = iw001.decision
+    else {
+        panic!("IW001 must select facade entry points");
+    };
+    assert_eq!(
+        entry_points,
+        [
+            "Database::session",
+            "Database::session_with_options",
+            "Session::context",
+            "Session::execute",
+        ]
+    );
+    let AnnexBDecision::Selected { rationale, .. } =
+        annex_b_by_id("ID061").expect("ID061 exists").decision
+    else {
+        unreachable!()
+    };
+    assert!(rationale.contains("without claiming runtime support"));
+}
+
+#[test]
 fn malformed_range_duplicate_missing_and_extra_ids_fail() {
     let mut range = source_value();
     record_mut(&mut range, "IA001")["id"] = json!("IA001-IA002");

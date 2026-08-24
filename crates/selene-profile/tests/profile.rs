@@ -6,9 +6,10 @@ use std::path::PathBuf;
 use selene_profile::{
     CapabilityClaimState, CapabilityStatus, ClaimState, DIRECT_SELECTED_FEATURES, EvidenceStatus,
     FeatureId, FeatureSurface, FlaggerStatus, PROFILE_FORMAT_VERSION, PROFILE_GENERATOR_VERSION,
-    PROFILE_HASH, PROFILE_ID, ProfileRelation, RELEASE_CLAIMABLE, TARGET_FEATURE_CLOSURE,
-    annex_b_records, capabilities, capability_by_id, check_repository, current_profile_identity,
-    parse_profile, render_outputs, write_repository,
+    PROFILE_HASH, PROFILE_ID, ProfileRelation, RELEASE_CLAIMABLE, SessionUserDeclaredType,
+    TARGET_FEATURE_CLOSURE, annex_b_records, capabilities, capability_by_id, check_repository,
+    current_profile_identity, current_session_defaults, parse_profile, render_outputs,
+    write_repository,
 };
 use serde_json::{Value, json};
 
@@ -28,6 +29,15 @@ fn feature_mut(value: &mut Value, index: usize) -> &mut serde_json::Map<String, 
     value["features"][index]
         .as_object_mut()
         .expect("feature fixture is an object")
+}
+
+fn choice_mut<'a>(value: &'a mut Value, id: &str) -> &'a mut Value {
+    value["implementation_defined_choices"]
+        .as_array_mut()
+        .expect("implementation-defined choices")
+        .iter_mut()
+        .find(|choice| choice["id"] == id)
+        .expect("known implementation-defined ID")
 }
 
 #[test]
@@ -188,6 +198,39 @@ fn generated_runtime_records_cover_identity_status_relation_and_evidence() {
         assert_eq!(record.status, CapabilityStatus::Unsupported, "{id}");
         assert_eq!(record.flagger_status, FlaggerStatus::Rejected, "{id}");
     }
+}
+
+#[test]
+fn generated_session_defaults_are_typed_profile_values() {
+    let defaults = current_session_defaults();
+    assert_eq!(defaults.time_zone().seconds(), 0);
+    assert_eq!(defaults.initial_parameter_count(), 0);
+    assert_eq!(
+        defaults.session_user_declared_type(),
+        SessionUserDeclaredType::String
+    );
+}
+
+#[test]
+fn session_default_generation_rejects_incompatible_annex_b_shapes() {
+    let mut invalid_offset = source_value();
+    choice_mut(&mut invalid_offset, "ID048")["decision"]["value"] =
+        json!({"type": "string", "value": "UTC+00:00"});
+    let profile = parse_value(&invalid_offset).expect("generic Annex B value remains valid");
+    let error = render_outputs(&profile).unwrap_err().to_string();
+    assert!(error.contains("ID048 must select a fixed UTC displacement identifier"));
+
+    let mut nonempty_parameters = source_value();
+    choice_mut(&mut nonempty_parameters, "ID049")["decision"]["value"]["value"] = json!(1);
+    let profile = parse_value(&nonempty_parameters).expect("unsigned count remains valid");
+    let error = render_outputs(&profile).unwrap_err().to_string();
+    assert!(error.contains("ID049 must select zero"));
+
+    let mut wrong_user_type = source_value();
+    choice_mut(&mut wrong_user_type, "ID061")["decision"]["value"]["value"] = json!("BYTES");
+    let profile = parse_value(&wrong_user_type).expect("identifier choice remains valid");
+    let error = render_outputs(&profile).unwrap_err().to_string();
+    assert!(error.contains("ID061 must select STRING"));
 }
 
 #[test]

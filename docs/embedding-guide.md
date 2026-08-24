@@ -12,8 +12,8 @@ does not normatively define a wire format. The engine ships:
 
 - no server process,
 - no transport (HTTP, gRPC, BACnet, anything),
-- no authentication or authorization,
-- no principals table, no role catalog, no session store,
+- no bundled authentication or authorization service,
+- no principals table, role catalog, credential store, or session store,
 - no metrics endpoint, no admin UI.
 
 The stable entry point is the `selene-db` facade. It opens the in-process engine
@@ -27,7 +27,7 @@ Everything that touches the outside world is the **embedder's** responsibility:
 | Transport (HTTP, gRPC, IPC, BACnet, MQTT, &c.) | Embedder |
 | TLS termination | Embedder (with `rustls`; transitive crypto choice is enforced by `cargo-deny`) |
 | Authentication of callers | Embedder |
-| Authorization of GQL statements | Embedder (selene declares `IW011`, `ID001`, `IW002`, `ID003` as implementation-defined hooks) |
+| Session principal mapping and authorization | Embedder through facade `PrincipalProvider` and `AuthorizationPolicy` hooks |
 | Multi-tenancy / per-tenant isolation | Embedder |
 | Backups, replication, off-host durability | Embedder (selene provides WAL + snapshot primitives; off-host placement is yours) |
 | Metrics, tracing exports | Embedder (selene emits `tracing` spans; export to your sink) |
@@ -764,17 +764,33 @@ in-flight work whose acknowledgement you never received.
 
 ## 8. Principals and authorization
 
-Per ISO/IEC 39075:2024 Clause 4, the spec calls out `IW011` (external procedures), `ID001` (principal identity), `IW002` (authentication), and `ID003` (authorization privileges) as **implementation-defined**. The generated Annex B records assign these to the embedder; the engine itself has no principal table, role catalog, or `GRANT` syntax.
+Per ISO/IEC 39075:2024 Clause 4, the spec calls out `IW011` (external
+procedures), `ID001` (principal representation), `IW002` (authorization
+identifier lifecycle), and `ID003` (authorization privileges) as
+implementation-defined. The generated profile selects facade hooks owned by
+the embedder. The engine has no principal table, role catalog, credential
+store, network authentication, or `GRANT` syntax.
 
 ### 8.1 Where the authz boundary goes
 
-The embedder owns a wrapper layer around `execute_statement`. The wrapper:
+The embedder authenticates callers outside Selene and constructs a string
+`AuthorizationId`. `Database::session_with_options` resolves that ID through an
+object-safe `PrincipalProvider`, resolves optional declared home paths to stable
+catalog descriptors, and asks an `AuthorizationPolicy` to allow or deny session
+creation. Both hooks are synchronous, `Send + Sync`, and receive facade types;
+neither runs under catalog lifecycle locks or graph request leases.
 
-1. Authenticates the request (TLS client cert, JWT, mTLS, &c.) outside the engine.
-2. Plans the statement: `parse → analyze → plan`.
-3. Inspects the plan / analyzed statement to decide whether the principal is allowed.
-4. If allowed, calls `execute_statement` with a `Session::with_principal(...)` carrying audit bytes.
-5. Maps any executor error back to a transport-level response.
+`PrincipalId` and `AuthorizationId` use non-empty database-string semantics.
+Optional principal audit bytes are separate opaque data forwarded to graph
+commits. `Session::context()` exposes immutable inspection of both values and
+the copied catalog/profile defaults. The built-in anonymous configuration does
+not invoke a provider and uses the local allow-all policy.
+
+This policy hook authorizes session creation from current/home descriptors. It
+does not inspect each analyzed statement and is not a privilege language.
+Embedders that need statement-specific policy can still use the lower advanced
+analyzer boundary described below until a later facade contract owns that
+surface.
 
 ### 8.2 Inspecting the write set
 

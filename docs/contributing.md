@@ -34,7 +34,7 @@ authority; older local decision labels in historical documents are not.
 | rustls-only TLS posture | `cargo-deny` deny-list on `native-tls`, `openssl-sys`, `openssl-src`, `schannel`, `security-framework`. |
 | No hand-rolled crypto, TLS, async runtime, or serialization primitives | Delegate to upstream crates: `blake3`, `xxhash-rust`, `rkyv`, `postcard`, `jiff`, `rust_decimal`. |
 | Conventional commits with crate-or-component scope | `type(scope): subject`, for example `feat(selene-gql): ...` or `fix(BRIEF-NN): ...`. |
-| Library only | No server, transport, or auth code anywhere in the workspace. |
+| Library only | No server, transport, or bundled authentication/authorization service. |
 | Strict GQL boundary | No Cypher, SQL, or SPARQL grammar in the parser. |
 
 The codebase contains zero `unsafe` blocks of its own. Donor code adapted
@@ -490,9 +490,10 @@ tool-version mismatch or output drift.
 
 Some changes are out of scope:
 
-- **No server, transport, or auth code** anywhere in the workspace.
-  selene-db is library-only; embedders own the network and policy
-  surfaces. ISO 39075 Clause 4.2.3 puts no wire format in scope.
+- **No server, transport, or bundled authentication/authorization service.**
+  selene-db is library-only; embedders own credentials, network identity, and
+  policy through facade hooks. ISO 39075 Clause 4.2.3 puts no wire format in
+  scope.
 - **No graph types in `selene-persist`.** The persistence
   crate sees `&[Change]` going in and a `RecoveryResult` coming out.
   It must never grow a dependency on `selene-graph` or `selene-core`'s

@@ -5,16 +5,31 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use std::{hint::black_box, time::Duration};
+use std::{hint::black_box, sync::Arc, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_db::{
-    CreatePolicy, Database, DropPolicy, ExecutionOutcome, GqlStatus, ObjectPath, SchemaPath,
+    AllowAllAuthorizationPolicy, AuthHookError, AuthorizationId, CreatePolicy, Database,
+    DropPolicy, ExecutionOutcome, GqlStatus, ObjectPath, Principal, PrincipalId, PrincipalProvider,
+    SchemaPath, SessionOptions,
 };
 
 const OMITTED: ExecutionOutcome = ExecutionOutcome::OmittedResult {
     status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
 };
+
+struct BenchmarkPrincipalProvider {
+    principal: Principal,
+}
+
+impl PrincipalProvider for BenchmarkPrincipalProvider {
+    fn resolve(
+        &self,
+        _authorization_id: &AuthorizationId,
+    ) -> Result<Option<Principal>, AuthHookError> {
+        Ok(Some(self.principal.clone()))
+    }
+}
 
 fn schema(name: impl AsRef<str>) -> SchemaPath {
     SchemaPath::regular("selene", name.as_ref()).expect("benchmark schema path is valid")
@@ -328,15 +343,44 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
     for &scale in graph_scales() {
         let database = graph_fixture(scale);
         let target = graph("graphs", format!("graph_{:05}", scale / 2));
-        selection.bench_with_input(BenchmarkId::new("resolve_graph", scale), &scale, |b, _| {
-            b.iter(|| {
-                black_box(
-                    black_box(&database)
-                        .session(black_box(&target))
-                        .expect("benchmark graph exists"),
-                )
-            });
-        });
+        selection.bench_with_input(
+            BenchmarkId::new("default_context", scale),
+            &scale,
+            |b, _| {
+                b.iter(|| {
+                    black_box(
+                        black_box(&database)
+                            .session(black_box(&target))
+                            .expect("benchmark graph exists"),
+                    )
+                });
+            },
+        );
+        let options = SessionOptions::new()
+            .with_authorization_id(
+                AuthorizationId::new("benchmark-authorization")
+                    .expect("benchmark authorization ID is valid"),
+            )
+            .with_principal_provider(Arc::new(BenchmarkPrincipalProvider {
+                principal: Principal::new(
+                    PrincipalId::new("benchmark-principal")
+                        .expect("benchmark principal ID is valid"),
+                ),
+            }))
+            .with_authorization_policy(Arc::new(AllowAllAuthorizationPolicy));
+        selection.bench_with_input(
+            BenchmarkId::new("authenticated_allow_context", scale),
+            &scale,
+            |b, _| {
+                b.iter(|| {
+                    black_box(
+                        black_box(&database)
+                            .session_with_options(black_box(&target), black_box(options.clone()))
+                            .expect("authenticated benchmark session is allowed"),
+                    )
+                });
+            },
+        );
     }
     selection.finish();
 }

@@ -6,9 +6,10 @@
 //! re-exported here.
 //!
 //! The current facade owns one in-memory catalog with named schemas, graphs, and
-//! closed graph types. Persistence, parameters, transaction state, and row-value
-//! materialization are not exposed yet. A [`Session`] is selected explicitly to
-//! one catalog graph and owns the database without borrowing graph storage.
+//! closed graph types. A [`Session`] owns an immutable [`SessionContext`] with
+//! copied catalog/profile defaults and optional embedder-provided authorization.
+//! Parameter mutation, request state, transactions, termination transitions,
+//! persistence, and row-value materialization are deferred.
 //!
 //! # Quickstart
 //!
@@ -71,10 +72,30 @@
 //! ```compile_fail
 //! fn borrowed(_: selene_db::Session<'static>) {}
 //! ```
+//!
+//! A session is movable between threads but is intentionally not shareable for
+//! concurrent use:
+//!
+//! ```compile_fail
+//! fn require_sync<T: Sync>() {}
+//! require_sync::<selene_db::Session>();
+//! ```
+//!
+//! Session context fields cannot be overwritten through the public API:
+//!
+//! ```compile_fail
+//! fn overwrite(
+//!     context: &mut selene_db::SessionContext,
+//!     graph: selene_db::GraphDescriptor,
+//! ) {
+//!     context.current_graph = graph;
+//! }
+//! ```
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod auth;
 mod catalog;
 mod catalog_snapshot;
 mod config;
@@ -85,7 +106,13 @@ mod graph_type;
 mod outcome;
 mod path;
 mod session;
+mod session_context;
 
+pub use auth::{
+    AllowAllAuthorizationPolicy, AuthHookError, AuthorizationDecision, AuthorizationId,
+    AuthorizationPolicy, AuthorizationRequest, NoPrincipalProvider, Principal, PrincipalId,
+    PrincipalProvider, SessionOptions,
+};
 pub use catalog::{Catalog, CreateOutcome, CreatePolicy, DropOutcome, DropPolicy};
 pub use catalog_snapshot::{
     CatalogGeneration, CatalogReadSnapshot, GraphDescriptor, GraphId, GraphTypeDescriptor,
@@ -98,6 +125,10 @@ pub use graph_type::{GraphTypeBuilder, GraphTypeDefinition, NodeTypeDefinition};
 pub use outcome::{ExecutionOutcome, WriteSummary};
 pub use path::{CatalogPath, ObjectPath, PathSegment, SchemaPath};
 pub use session::Session;
+pub use session_context::{
+    ProfileIdentity, RequestSlotState, SessionContext, SessionDependencySummary, SessionParameters,
+    SessionTerminationState, TimeZoneDisplacement, TransactionSlotState,
+};
 
 /// Result type returned by facade operations.
 pub type Result<T> = std::result::Result<T, Error>;

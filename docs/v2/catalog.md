@@ -93,12 +93,41 @@ external graph-type sources remain unsupported.
 ## Selected facade sessions
 
 `Database::session(&ObjectPath) -> Result<Session>` resolves a graph in the
-current catalog publication. A facade `Session` stores only the database,
-catalog graph ID, absolute graph path, and schema path. It does not store or
-expose a lower graph handle. The type is owned, lifetime-free, `Send + Sync`, and
-stateless between requests.
+current catalog publication with anonymous local defaults.
+`Database::session_with_options` additionally accepts an authorization ID,
+principal provider, and authorization policy. A facade `Session` stores the
+database plus a `SessionContext`; it does not store or expose a lower graph
+handle. The type is owned, lifetime-free, `Send`, and intentionally not `Sync`.
+Concurrent use of one session is outside the current contract.
 
-Each execution uses the stable graph ID rather than rebinding by path:
+`Session::context()` exposes immutable typed inspection. The context copies:
+
+- optional authorization ID and resolved principal;
+- optional home schema and graph descriptors;
+- required current schema and graph descriptors;
+- the creation catalog generation and stable reference dependencies;
+- generated profile identity, UTC displacement, and empty parameter state; and
+- vacant request/transaction slots and active termination state.
+
+It retains no `CatalogReadSnapshot`, graph instance, lifecycle lease, or lower
+session. Parameter mutation, occupied slots, transaction behavior, and
+termination transitions are deferred to later M03 work.
+
+An explicit authorization ID is resolved by `PrincipalProvider`. Provider
+`None` is an error for that explicit ID. Optional principal home paths resolve
+in the same immutable catalog snapshot as the current graph and must identify a
+coherent schema/graph pair. `AuthorizationPolicy` then receives only copied
+facade descriptors. Provider resolution and policy evaluation run outside the
+catalog lifecycle writer and graph request leases. The local defaults perform
+no principal lookup for an anonymous session and allow session creation; there
+is no user store, role catalog, credential handling, network call, or privilege
+language.
+
+Before execution, one current catalog snapshot checks every copied home/current
+reference by stable ID and descriptor creation metadata. A dropped or replaced
+dependency returns `StaleSessionReference`; a same-path recreation cannot
+rebind the context. Execution then uses the current graph ID rather than path
+rebinding:
 
 1. load the outer state and find the runtime instance by stable ID;
 2. acquire that instance's lifecycle read lease;
@@ -109,7 +138,7 @@ Drop and replacement use catalog writer, target lifecycle write lease, then
 graph state lock order. They recheck registration after acquiring the lifecycle
 lease. A request that already holds a read lease completes before drop; drop
 then observes its writes when applying RESTRICT. A request that loses the race
-fails as `StaleGraphSelection`. Dropping and recreating the same path never
+fails as `StaleSessionReference`. Dropping and recreating the same path never
 makes an old session refer to the replacement.
 
 An idle session does not pin a lifecycle lease. A successful graph drop or
@@ -126,10 +155,11 @@ execution; the request lease is released, and the facade dispatches the command
 to the same `Catalog` lifecycle service used by Rust callers. Catalog mutation
 therefore never occurs while a graph request read lease is held.
 
-Transaction and session controls remain rejected at the facade boundary. M03
-owns persistent session context and transaction state. A bare lower executor
-session rejects every database-catalog command with the implementation-defined
-status `5GQL0`; it does not reinterpret `DROP GRAPH` as a storage reset.
+Transaction and session controls remain rejected at the facade boundary. Later
+M03 slices own request behavior, parameter mutation, transactions, and session
+close. A bare lower executor session rejects every database-catalog command
+with the implementation-defined status `5GQL0`; it does not reinterpret `DROP
+GRAPH` as a storage reset.
 
 ISO absolute references do not spell the facade catalog:
 
@@ -164,7 +194,9 @@ structured facade errors and GQLSTATUS mapping.
 | missing object or parent, wrong kind, invalid path shape | structured reference error | `42002` |
 | invalid catalog name | `InvalidCatalogName` | `42001` |
 | RESTRICT dependency | `CatalogRestrictViolation` | `G1000` |
-| stale selected identity | `StaleGraphSelection` | none |
+| stale home or current session identity | `StaleSessionReference` | none |
+| invalid authorization/principal ID or home declaration | structured session error | none |
+| missing/failing provider or denying/failing policy | structured authorization error | none |
 | unsupported catalog source or stateful control | `FeatureNotSupported` | `42N01` |
 
 No-op outcomes retain the same outer allocation and generation. Unsupported
@@ -176,8 +208,8 @@ Catalog lifecycle changes currently have no WAL, snapshot encoding, recovery,
 or crash contract. Existing lower `Mutator::factory_reset` remains available
 for engine and recovery use, but it is not a GQL database-catalog route.
 
-- M03 owns persistent session context, parameters, cancellation, and
-  transaction pinning.
+- Later M03 work owns request state, parameter mutation, cancellation,
+  transaction pinning, and close transitions.
 - Later milestones may broaden catalog object families without changing
   selected graph identity semantics.
 - M09 owns persisted descriptor encoding, WAL and snapshot records, and

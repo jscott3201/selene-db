@@ -32,6 +32,24 @@ pub enum ErrorKind {
     CatalogReferenceViolation,
     /// A session's selected stable graph identity is no longer registered.
     StaleGraphSelection,
+    /// An authorization identifier is empty or exceeds the database-string limit.
+    InvalidAuthorizationId,
+    /// A principal identifier is empty or exceeds the database-string limit.
+    InvalidPrincipalId,
+    /// An explicit authorization identifier resolved to no principal.
+    PrincipalNotFound,
+    /// The embedder principal provider returned a failure.
+    PrincipalProviderFailure,
+    /// The embedder authorization policy denied session creation.
+    AuthorizationDenied,
+    /// The embedder authorization policy returned a failure.
+    AuthorizationPolicyFailure,
+    /// A principal's declared home paths are absent, wrong-kind, or incoherent.
+    InvalidPrincipalHome,
+    /// Session initialization produced an invalid current catalog reference.
+    InvalidSessionReference,
+    /// A copied home or current session reference is no longer current.
+    StaleSessionReference,
     /// A facade graph-type definition is inconsistent.
     InvalidGraphType,
     /// Catalog identity or immutable-state validation failed internally.
@@ -108,8 +126,8 @@ impl ErrorKind {
     /// Return the GQLSTATUS the facade assigns to this category, if any.
     ///
     /// Engine-originated categories take their status from the engine
-    /// diagnostic instead; internal invariant, stale-selection, and graph-type
-    /// definition failures have none.
+    /// diagnostic instead; session/authorization-hook, internal invariant,
+    /// stale-selection, and graph-type definition failures have none.
     #[must_use]
     pub const fn gqlstatus(self) -> Option<GqlStatus> {
         match self {
@@ -120,6 +138,15 @@ impl ErrorKind {
             Self::CatalogObjectAlreadyExists => Some(GqlStatus::DUPLICATE_OBJECT),
             Self::CatalogRestrictViolation => Some(GqlStatus::DEPENDENT_OBJECT_ERROR),
             Self::StaleGraphSelection
+            | Self::InvalidAuthorizationId
+            | Self::InvalidPrincipalId
+            | Self::PrincipalNotFound
+            | Self::PrincipalProviderFailure
+            | Self::AuthorizationDenied
+            | Self::AuthorizationPolicyFailure
+            | Self::InvalidPrincipalHome
+            | Self::InvalidSessionReference
+            | Self::StaleSessionReference
             | Self::InvalidGraphType
             | Self::CatalogInvariant
             | Self::InvalidGql
@@ -243,6 +270,96 @@ impl Error {
         )
     }
 
+    pub(crate) fn empty_identity(kind: &'static str) -> Self {
+        let error_kind = match kind {
+            "authorization" => ErrorKind::InvalidAuthorizationId,
+            "principal" => ErrorKind::InvalidPrincipalId,
+            _ => ErrorKind::CatalogInvariant,
+        };
+        Self::facade(error_kind, format!("{kind} identifier must not be empty"))
+    }
+
+    pub(crate) fn identity_too_long(kind: &'static str) -> Self {
+        let error_kind = match kind {
+            "authorization" => ErrorKind::InvalidAuthorizationId,
+            "principal" => ErrorKind::InvalidPrincipalId,
+            _ => ErrorKind::CatalogInvariant,
+        };
+        Self::facade(
+            error_kind,
+            format!("{kind} identifier exceeds the database-string limit"),
+        )
+    }
+
+    pub(crate) fn invalid_authorization_id_source(source: selene_core::CoreError) -> Self {
+        Self::with_source(
+            ErrorKind::InvalidAuthorizationId,
+            "authorization identifier is invalid",
+            source,
+        )
+    }
+
+    pub(crate) fn invalid_principal_id_source(source: selene_core::CoreError) -> Self {
+        Self::with_source(
+            ErrorKind::InvalidPrincipalId,
+            "principal identifier is invalid",
+            source,
+        )
+    }
+
+    pub(crate) fn principal_not_found() -> Self {
+        Self::facade(
+            ErrorKind::PrincipalNotFound,
+            "the authorization identifier has no resolved principal",
+        )
+    }
+
+    pub(crate) fn principal_provider_failure(source: crate::AuthHookError) -> Self {
+        Self::with_source(
+            ErrorKind::PrincipalProviderFailure,
+            "principal resolution failed",
+            source,
+        )
+    }
+
+    pub(crate) fn authorization_denied() -> Self {
+        Self::facade(
+            ErrorKind::AuthorizationDenied,
+            "authorization policy denied session creation",
+        )
+    }
+
+    pub(crate) fn authorization_policy_failure(source: crate::AuthHookError) -> Self {
+        Self::with_source(
+            ErrorKind::AuthorizationPolicyFailure,
+            "authorization policy evaluation failed",
+            source,
+        )
+    }
+
+    pub(crate) fn invalid_principal_home(message: &'static str) -> Self {
+        Self::facade(ErrorKind::InvalidPrincipalHome, message)
+    }
+
+    pub(crate) fn invalid_principal_home_source(message: &'static str, source: Error) -> Self {
+        Self::with_source(ErrorKind::InvalidPrincipalHome, message, source)
+    }
+
+    pub(crate) fn invalid_session_reference(source: Error) -> Self {
+        Self::with_source(
+            ErrorKind::InvalidSessionReference,
+            "the selected session reference is invalid",
+            source,
+        )
+    }
+
+    pub(crate) fn stale_session_reference() -> Self {
+        Self::facade(
+            ErrorKind::StaleSessionReference,
+            "a session catalog reference is stale or invalidated",
+        )
+    }
+
     pub(crate) fn nonempty_graph(path: &impl fmt::Display, nodes: usize, edges: usize) -> Self {
         Self::facade(
             ErrorKind::CatalogRestrictViolation,
@@ -304,8 +421,8 @@ impl Error {
     ///
     /// Catalog failures carry the code selected by their [`ErrorKind`] whether
     /// the request came from Rust or GQL; engine failures copy the engine's
-    /// code; internal invariant, stale-selection, and graph-type definition
-    /// failures have none.
+    /// code; session/authorization-hook, internal invariant, stale-selection,
+    /// and graph-type definition failures have none.
     #[must_use]
     pub const fn gqlstatus(&self) -> Option<GqlStatus> {
         self.status

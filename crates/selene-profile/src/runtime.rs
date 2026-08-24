@@ -79,6 +79,72 @@ impl ProfileIdentity {
     }
 }
 
+/// Fixed session time-zone displacement generated from Annex B ID048.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FixedTimeZoneDisplacement {
+    seconds: i32,
+}
+
+impl FixedTimeZoneDisplacement {
+    pub(crate) const fn new(seconds: i32) -> Self {
+        Self { seconds }
+    }
+
+    /// Return the signed displacement from UTC in seconds.
+    #[must_use]
+    pub const fn seconds(self) -> i32 {
+        self.seconds
+    }
+}
+
+/// Generated declared type selected for `SESSION_USER` by Annex B ID061.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum SessionUserDeclaredType {
+    /// GQL `STRING`.
+    String,
+}
+
+/// Typed session defaults generated from the selected Annex B records.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SessionDefaults {
+    time_zone: FixedTimeZoneDisplacement,
+    initial_parameter_count: u64,
+    session_user_declared_type: SessionUserDeclaredType,
+}
+
+impl SessionDefaults {
+    pub(crate) const fn new(
+        time_zone: FixedTimeZoneDisplacement,
+        initial_parameter_count: u64,
+        session_user_declared_type: SessionUserDeclaredType,
+    ) -> Self {
+        Self {
+            time_zone,
+            initial_parameter_count,
+            session_user_declared_type,
+        }
+    }
+
+    /// Return the fixed displacement used by a new session.
+    #[must_use]
+    pub const fn time_zone(self) -> FixedTimeZoneDisplacement {
+        self.time_zone
+    }
+
+    /// Return the number of parameters present in a new session.
+    #[must_use]
+    pub const fn initial_parameter_count(self) -> u64 {
+        self.initial_parameter_count
+    }
+
+    /// Return the selected declared type for `SESSION_USER`.
+    #[must_use]
+    pub const fn session_user_declared_type(self) -> SessionUserDeclaredType {
+        self.session_user_declared_type
+    }
+}
+
 /// Complete runtime support state exposed by the feature-status procedure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapabilityStatus {

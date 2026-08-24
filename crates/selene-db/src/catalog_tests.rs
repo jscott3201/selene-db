@@ -203,7 +203,7 @@ fn injected_failures_on_the_replace_path_keep_the_old_graph() {
     assert_eq!(created.id.get(), reserved);
     assert_eq!(
         session.execute("RETURN 1").unwrap_err().kind(),
-        ErrorKind::StaleGraphSelection
+        ErrorKind::StaleSessionReference
     );
     assert_outer_complete(&catalog.inner.state.load_full());
 }
@@ -363,6 +363,38 @@ fn retained_snapshot_keeps_the_complete_old_runtime_publication() {
     assert!(!catalog.snapshot().state.graphs.contains_key(&id));
     assert!(retained.resolve_graph(&path).is_ok());
     assert!(catalog.snapshot().resolve_graph(&path).is_err());
+}
+
+#[test]
+fn idle_session_context_does_not_retain_replaced_runtime_graph() {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    catalog
+        .create_schema(&schema("session_reclaim"), CreatePolicy::Strict)
+        .unwrap();
+    let path = graph("session_reclaim", "g");
+    let CreateOutcome::Created(descriptor) = catalog
+        .create_graph(&path, None, CreatePolicy::Strict)
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let session = database.session(&path).unwrap();
+    let id = LowerGraphId::new(descriptor.id.get()).unwrap();
+    let old_instance = {
+        let state = catalog.inner.state.load();
+        Arc::downgrade(state.graphs.get(&id).unwrap())
+    };
+
+    catalog
+        .create_graph(&path, None, CreatePolicy::OrReplace)
+        .unwrap();
+
+    assert!(old_instance.upgrade().is_none());
+    assert_eq!(
+        session.execute("RETURN 1").unwrap_err().kind(),
+        ErrorKind::StaleSessionReference
+    );
 }
 
 #[test]
