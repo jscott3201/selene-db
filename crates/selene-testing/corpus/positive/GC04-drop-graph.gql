@@ -1,5 +1,4 @@
 // corpus: positive
 // feature: GC04
-// also-covers: IM_DROP_GRAPH
 // expects: parse-ok
 DROP PROPERTY GRAPH /memory/episodes

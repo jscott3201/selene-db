@@ -535,7 +535,7 @@ fn catalog_keywords_require_word_boundaries() {
 }
 
 #[test]
-fn flagger_stamps_iso_catalog_features_and_the_drop_graph_bridge_flag() {
+fn flagger_stamps_iso_catalog_features() {
     assert_eq!(features("CREATE SCHEMA /a"), [FeatureId::GC01]);
     assert_eq!(
         features("CREATE SCHEMA IF NOT EXISTS /a"),
@@ -554,15 +554,10 @@ fn flagger_stamps_iso_catalog_features_and_the_drop_graph_bridge_flag() {
         features("CREATE GRAPH IF NOT EXISTS g ANY"),
         [FeatureId::GC04, FeatureId::GG01, FeatureId::GC05]
     );
-    // DROP GRAPH also stamps the IM_DROP_GRAPH bridge flag until M02-PR05
-    // deletes the bootstrap factory reset.
-    assert_eq!(
-        features("DROP GRAPH g"),
-        [FeatureId::GC04, FeatureId::IM_DROP_GRAPH]
-    );
+    assert_eq!(features("DROP GRAPH g"), [FeatureId::GC04]);
     assert_eq!(
         features("DROP GRAPH IF EXISTS g"),
-        [FeatureId::GC04, FeatureId::GC05, FeatureId::IM_DROP_GRAPH]
+        [FeatureId::GC04, FeatureId::GC05]
     );
 }
 

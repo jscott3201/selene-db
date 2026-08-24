@@ -4,22 +4,20 @@ use std::sync::Arc;
 
 use selene_catalog::{
     CatalogDescriptor as LowerDescriptor, CatalogObjectId, CatalogObjectKind, CatalogPayload,
-    CatalogTransaction, CoreGraphTypeBridge, CreationMetadata, GraphId as LowerGraphId,
-    GraphTypeId as LowerGraphTypeId, SchemaId as LowerSchemaId,
+    CatalogTransaction, CreationMetadata, GraphId as LowerGraphId, GraphTypeId as LowerGraphTypeId,
+    SchemaId as LowerSchemaId,
 };
-use selene_core::{GraphId as CoreGraphId, GraphTypeId as CoreGraphTypeId};
+use selene_core::GraphId as CoreGraphId;
 use selene_graph::SharedGraph;
 
 use crate::{
-    CatalogReadSnapshot, Error, GraphDescriptor, GraphHandle, GraphTypeDefinition,
-    GraphTypeDescriptor, ObjectPath, Result, SchemaDescriptor, SchemaPath,
+    CatalogReadSnapshot, Error, GraphDescriptor, GraphTypeDefinition, GraphTypeDescriptor,
+    ObjectPath, Result, SchemaDescriptor, SchemaPath,
     catalog_snapshot::{
         ensure_catalog, find_object, graph_summary, graph_type_summary, next_id, require_schema,
         resolve_binding, schema_summary,
     },
-    database::{
-        DatabaseInner, DatabaseState, GraphInstance, bootstrap_graph_id, bootstrap_schema_id,
-    },
+    database::{DatabaseInner, DatabaseState, GraphInstance},
 };
 
 /// Duplicate handling for a create operation.
@@ -168,7 +166,6 @@ impl Catalog {
         let raw = next_id(base.high_water.graph_type, "graph type")?;
         let id = LowerGraphTypeId::new(raw).map_err(Error::from_catalog_invariant)?;
         let runtime = Arc::new(definition.into_runtime(path.object())?);
-        let core_id = CoreGraphTypeId::new(raw).map_err(Error::invalid_graph_type_source)?;
         let mut transaction =
             CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
         if let Some((dropped, _)) = &replaced {
@@ -180,7 +177,6 @@ impl Catalog {
             schema,
             transaction.generation(),
             CreationMetadata::new(transaction.generation(), None),
-            Some(CoreGraphTypeBridge::new(core_id)),
         )
         .map_err(Error::from_catalog_invariant)?;
         transaction
@@ -216,7 +212,7 @@ impl Catalog {
     /// dropped with the same admission as [`Catalog::drop_graph`] and the new
     /// graph, with a fresh identity, is published in the same state swap. A
     /// failure at any point publishes nothing, so the old graph stays
-    /// registered and its handles stay valid.
+    /// registered and its selected sessions stay valid.
     pub fn create_graph(
         &self,
         path: &ObjectPath,
@@ -236,7 +232,7 @@ impl Catalog {
             if policy != CreatePolicy::OrReplace {
                 return duplicate_outcome(policy, summary, path, "graph");
             }
-            let (id, instance) = self.drop_admission(&base, path, existing)?;
+            let (id, instance) = self.drop_admission(&base, existing)?;
             replaced = Some((id, summary));
             replaced_instance = Some(instance);
         }
@@ -305,7 +301,7 @@ impl Catalog {
         }
     }
 
-    /// Drop an empty, non-bootstrap graph under RESTRICT semantics.
+    /// Drop an empty graph under RESTRICT semantics.
     pub fn drop_graph(
         &self,
         path: &ObjectPath,
@@ -319,7 +315,7 @@ impl Catalog {
         if descriptor.kind() != CatalogObjectKind::Graph {
             return Err(Error::wrong_kind(path, "graph", descriptor.kind()));
         }
-        let (id, instance) = self.drop_admission(&base, path, descriptor)?;
+        let (id, instance) = self.drop_admission(&base, descriptor)?;
         let _lifecycle = instance.lifecycle.write();
         self.check_droppable(id, &instance, path)?;
         let summary = graph_summary(&base, descriptor)?;
@@ -397,7 +393,7 @@ impl Catalog {
         Ok(id)
     }
 
-    /// Drop an empty, non-bootstrap schema under RESTRICT semantics.
+    /// Drop an empty schema under RESTRICT semantics.
     pub fn drop_schema(
         &self,
         path: &SchemaPath,
@@ -412,9 +408,6 @@ impl Catalog {
         let CatalogObjectId::Schema(id) = descriptor.id() else {
             unreachable!("schema dictionary contains schemas")
         };
-        if id == bootstrap_schema_id() {
-            return Err(Error::protected(path, "bootstrap schema"));
-        }
         let children = base.catalog.schema_objects(id).map_or(0, Iterator::count);
         if children != 0 {
             return Err(Error::nonempty_schema(path, children));
@@ -435,20 +428,15 @@ impl Catalog {
         Ok(DropOutcome::Dropped(summary))
     }
 
-    /// First half of graph-drop admission, before the lifecycle write lease:
-    /// reject the protected bootstrap graph and locate the registered instance.
+    /// Locate the registered instance before taking its lifecycle write lease.
     fn drop_admission(
         &self,
         base: &DatabaseState,
-        path: &ObjectPath,
         descriptor: &LowerDescriptor,
     ) -> Result<(LowerGraphId, Arc<GraphInstance>)> {
         let CatalogObjectId::Graph(id) = descriptor.id() else {
             unreachable!("kind and typed ID agree")
         };
-        if id == bootstrap_graph_id() {
-            return Err(Error::protected(path, "bootstrap graph"));
-        }
         let instance = base.graphs.get(&id).cloned().ok_or_else(|| {
             Error::catalog_invariant("graph descriptor has no registered runtime instance")
         })?;
@@ -482,17 +470,6 @@ impl Catalog {
             return Err(Error::nonempty_graph(path, nodes, edges));
         }
         Ok(())
-    }
-
-    /// Open a non-owning handle to the graph currently at `path`.
-    pub fn open_graph(&self, path: &ObjectPath) -> Result<GraphHandle> {
-        let descriptor = self.snapshot().resolve_graph(path)?;
-        let id = LowerGraphId::new(descriptor.id.get()).map_err(Error::from_catalog_invariant)?;
-        Ok(GraphHandle::new(
-            Arc::clone(&self.inner),
-            id,
-            descriptor.path,
-        ))
     }
 }
 

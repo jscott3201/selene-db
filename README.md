@@ -31,7 +31,7 @@ evidence-gated conformance wording.
 
 | Area | Current surface |
 |---|---|
-| Facade | In-memory `Database`, catalog-owned schemas and named graphs, stable-ID `GraphHandle` execution, the temporary bootstrap `Session`, facade diagnostics, and summary-only outcomes. |
+| Facade | In-memory `Database`, catalog-owned schemas and named graphs, explicitly selected stable-ID sessions, facade diagnostics, and summary-only outcomes. |
 | GQL | Parser, analyzer, planner, optimizer, executor, parameter binding, source-string plan cache, feature-status reporting, and ISO-oriented errors. |
 | Graph storage | In-memory property graph with stable external IDs, dense internal rows, immutable reader snapshots, typed property indexes, composite indexes, and one mutation funnel. |
 | Transactions | Serialized writers, snapshot readers, rollback by non-publication, and provider fanout under the write lock. |
@@ -51,7 +51,7 @@ type.
 
 | Crate | Owns |
 |---|---|
-| [`selene-db`](crates/selene-db) | Stable database builder, catalog lifecycle, named graph handles, the temporary bootstrap session, facade errors, and summary outcomes. |
+| [`selene-db`](crates/selene-db) | Stable database builder, catalog lifecycle, selected graph sessions, facade errors, and summary outcomes. |
 | [`selene-catalog`](crates/selene-catalog) | Immutable catalog descriptors, stable typed IDs, canonical names, read snapshots, and storage-neutral mutation drafts. |
 | [`selene-profile`](crates/selene-profile) | Generated GQL profile, implementation-choice, and conformance-evidence authority. |
 | [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, `JsonValue`, IDs, `DbString`, labels, property maps, schema metadata, codecs, origins, changesets, and core vector kernels. |
@@ -67,10 +67,11 @@ The main engine dependency direction is:
 selene-core -> selene-graph -> selene-algorithms -> selene-gql -> selene-db
 ```
 
-`selene-profile` feeds runtime profile consumers. `selene-catalog` depends only
-on `selene-core` and `selene-profile`; `selene-db` privately composes the
-catalog and engine layers. `selene-persist` depends on `selene-core` and remains
-graph-blind. `selene-testing` is for tests and benchmarks.
+`selene-profile` feeds runtime profile consumers. `selene-catalog` is
+storage-neutral and has no engine-crate dependencies; `selene-db` privately
+composes the catalog and engine layers. `selene-persist` depends on
+`selene-core` and remains graph-blind. `selene-testing` is for tests and
+benchmarks.
 
 ## Quickstart
 
@@ -83,8 +84,8 @@ the equivalent path dependency.
 selene-db = { version = "2.0.0-alpha.1" }
 ```
 
-Build an in-memory database, create a schema and named graph, then execute GQL
-through its stable-ID handle:
+Build an in-memory database, create a schema and named graph, then select that
+graph for a facade session:
 
 ```rust
 use selene_db::{CreatePolicy, Database, ExecutionOutcome, ObjectPath, SchemaPath};
@@ -96,22 +97,21 @@ fn main() -> Result<(), selene_db::Error> {
     catalog.create_schema(&schema, CreatePolicy::Strict)?;
     let graph_path = ObjectPath::regular("selene", "memory", "episodes")?;
     catalog.create_graph(&graph_path, None, CreatePolicy::Strict)?;
-    let graph = catalog.open_graph(&graph_path)?;
+    let session = database.session(&graph_path)?;
 
-    graph.execute("INSERT (:Person { name: 'Ada' })")?;
-    let output = graph.execute("MATCH (p:Person) RETURN p")?;
+    session.execute("INSERT (:Person { name: 'Ada' })")?;
+    let output = session.execute("MATCH (p:Person) RETURN p")?;
     assert_eq!(output, ExecutionOutcome::Rows { row_count: 1 });
 
     Ok(())
 }
 ```
 
-The facade returns summary counts rather than row values. `Database::session`
-remains a temporary adapter for `/selene/public/default`; it rejects transaction
-and `SESSION` controls because request-local lower sessions cannot preserve their
-state. M02-PR05 removes that bootstrap adapter. Named `GraphHandle` execution
-also rejects catalog and stateful controls; M02-PR04 routes GQL catalog DDL to
-the same Rust lifecycle service used above.
+The facade returns summary counts rather than row values. A session retains the
+selected graph's stable identity and revalidates it for each request; drop or
+replacement makes the old session stale. Transaction and `SESSION` controls are
+rejected until the facade owns their state. GQL catalog DDL routes to the same
+catalog lifecycle service used above.
 The [Embedding Guide](docs/embedding-guide.md) identifies the stable entry point
 and documents the lower advanced APIs separately.
 

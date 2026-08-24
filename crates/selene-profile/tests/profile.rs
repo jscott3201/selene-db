@@ -42,21 +42,21 @@ fn checked_in_profile_loads_and_preserves_seed_contract() {
             .iter()
             .filter(|record| record.status == CapabilityStatus::Supported)
             .count(),
-        137
+        136
     );
     assert_eq!(
         capabilities()
             .iter()
             .filter(|record| record.status == CapabilityStatus::Unsupported)
             .count(),
-        39
+        40
     );
     assert_eq!(
         capabilities()
             .iter()
             .filter(|record| record.flagger_status == FlaggerStatus::Accepted)
             .count(),
-        147
+        146
     );
     assert_eq!(annex_b_records().count(), 117);
     assert_eq!(PROFILE_FORMAT_VERSION, 3);

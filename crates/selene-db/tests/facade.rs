@@ -3,9 +3,30 @@
 use std::error::Error as _;
 
 use selene_db::{
-    Database, DatabaseBuilder, DatabaseConfig, ErrorKind, ExecutionOutcome, GqlStatus, OpenMode,
-    Session, WriteSummary,
+    CreatePolicy, Database, DatabaseBuilder, DatabaseConfig, DropPolicy, ErrorKind,
+    ExecutionOutcome, GqlStatus, ObjectPath, OpenMode, SchemaPath, Session, WriteSummary,
 };
+
+fn schema(name: &str) -> SchemaPath {
+    SchemaPath::regular("selene", name).unwrap()
+}
+
+fn graph(schema: &str, name: &str) -> ObjectPath {
+    ObjectPath::regular("selene", schema, name).unwrap()
+}
+
+fn fixture() -> (Database, ObjectPath) {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    let path = graph("memory", "main");
+    catalog
+        .create_schema(&schema("memory"), CreatePolicy::Strict)
+        .unwrap();
+    catalog
+        .create_graph(&path, None, CreatePolicy::Strict)
+        .unwrap();
+    (database, path)
+}
 
 fn row_count(outcome: ExecutionOutcome) -> usize {
     let ExecutionOutcome::Rows { row_count } = outcome else {
@@ -15,9 +36,9 @@ fn row_count(outcome: ExecutionOutcome) -> usize {
 }
 
 #[test]
-fn facade_writes_and_queries_the_bootstrap_graph() {
-    let database = Database::builder().build();
-    let session = database.session();
+fn facade_writes_and_queries_a_selected_catalog_graph() {
+    let (database, path) = fixture();
+    let session = database.session(&path).unwrap();
 
     assert_eq!(
         session
@@ -37,8 +58,8 @@ fn facade_writes_and_queries_the_bootstrap_graph() {
 
 #[test]
 fn facade_summarizes_write_return_outcomes() {
-    let database = Database::builder().build();
-    let session = database.session();
+    let (database, path) = fixture();
+    let session = database.session(&path).unwrap();
 
     assert_eq!(
         session
@@ -53,8 +74,8 @@ fn session_owns_database_after_originating_handle_is_dropped() {
     fn assert_send_static<T: Send + 'static>(_: &T) {}
 
     let session = {
-        let database = Database::builder().build();
-        let session = database.session();
+        let (database, path) = fixture();
+        let session = database.session(&path).unwrap();
         drop(database);
         session
     };
@@ -67,98 +88,75 @@ fn session_owns_database_after_originating_handle_is_dropped() {
 }
 
 #[test]
-fn sessions_share_data_and_drop_graph_resets_repeatedly() {
+fn selected_sessions_do_not_bleed_state_between_graphs() {
     let database = Database::builder().build();
-    database
-        .session()
-        .execute("INSERT (:Person { name: 'Ada' })")
-        .expect("insert succeeds");
-    assert_eq!(
-        row_count(
-            database
-                .session()
-                .execute("MATCH (n:Person) RETURN n")
-                .expect("second session sees insert")
-        ),
-        1
-    );
+    let catalog = database.catalog();
+    for (schema_name, graph_name) in [("alpha", "one"), ("beta", "two")] {
+        catalog
+            .create_schema(&schema(schema_name), CreatePolicy::Strict)
+            .unwrap();
+        catalog
+            .create_graph(&graph(schema_name, graph_name), None, CreatePolicy::Strict)
+            .unwrap();
+    }
+    let alpha = database.session(&graph("alpha", "one")).unwrap();
+    let beta = database.session(&graph("beta", "two")).unwrap();
 
+    alpha.execute("INSERT (:Alpha)").unwrap();
+    beta.execute("INSERT (:Beta)").unwrap();
+    assert_eq!(row_count(alpha.execute("MATCH (n) RETURN n").unwrap()), 1);
     assert_eq!(
-        database
-            .session()
-            .execute("DROP GRAPH default")
-            .expect("drop resets bootstrap graph"),
-        ExecutionOutcome::Written(WriteSummary::new(1, None))
-    );
-    assert_eq!(
-        row_count(
-            database
-                .session()
-                .execute("MATCH (n:Person) RETURN n")
-                .expect("fresh session sees reset")
-        ),
+        row_count(alpha.execute("MATCH (n:Beta) RETURN n").unwrap()),
         0
     );
+    assert_eq!(row_count(beta.execute("MATCH (n) RETURN n").unwrap()), 1);
     assert_eq!(
-        database
-            .session()
-            .execute("DROP GRAPH default")
-            .expect("repeated reset succeeds"),
-        ExecutionOutcome::Written(WriteSummary::new(1, None))
-    );
-    assert_eq!(
-        row_count(
-            database
-                .session()
-                .execute("MATCH (n) RETURN n")
-                .expect("repeated reset leaves graph empty")
-        ),
+        row_count(beta.execute("MATCH (n:Alpha) RETURN n").unwrap()),
         0
     );
 }
 
 #[test]
-fn drop_graph_reclaims_algorithm_projection_state() {
-    let database = Database::builder().build();
-    let session = database.session();
+fn graph_drop_clears_procedure_state_only_after_successful_publication() {
+    let (database, path) = fixture();
+    let catalog = database.catalog();
+    let session = database.session(&path).unwrap();
 
-    assert_eq!(
-        session
-            .execute("CALL algo.projection_build('facade_projection', NULL, NULL, NULL)")
-            .expect("projection build succeeds"),
-        ExecutionOutcome::Empty
-    );
-    assert_eq!(
-        row_count(
-            session
-                .execute("CALL algo.projection_list() YIELD name")
-                .expect("projection list succeeds before reset")
-        ),
-        1
-    );
     session
-        .execute("CALL algo.projection_get('missing') YIELD name")
-        .expect_err("missing projection fails without clearing catalog state");
+        .execute("CALL algo.projection_build('facade_projection', NULL, NULL, NULL)")
+        .unwrap();
+    session.execute("INSERT (:Person)").unwrap();
+    assert_eq!(
+        catalog
+            .drop_graph(&path, DropPolicy::Strict)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::CatalogRestrictViolation
+    );
     assert_eq!(
         row_count(
             session
                 .execute("CALL algo.projection_list() YIELD name")
-                .expect("projection survives an execution error")
+                .unwrap()
         ),
         1
     );
 
+    session.execute("MATCH (n) DELETE n").unwrap();
+    catalog.drop_graph(&path, DropPolicy::Strict).unwrap();
     assert_eq!(
-        session
-            .execute("DROP GRAPH default")
-            .expect("drop resets bootstrap graph"),
-        ExecutionOutcome::Written(WriteSummary::new(1, None))
+        session.execute("RETURN 1").unwrap_err().kind(),
+        ErrorKind::StaleGraphSelection
     );
+    catalog
+        .create_graph(&path, None, CreatePolicy::Strict)
+        .unwrap();
+    let replacement = database.session(&path).unwrap();
     assert_eq!(
         row_count(
-            session
+            replacement
                 .execute("CALL algo.projection_list() YIELD name")
-                .expect("projection list succeeds after reset")
+                .unwrap()
         ),
         0
     );
@@ -166,8 +164,8 @@ fn drop_graph_reclaims_algorithm_projection_state() {
 
 #[test]
 fn stateful_controls_are_rejected_without_poisoning_facade_session() {
-    let database = Database::builder().build();
-    let session = database.session();
+    let (database, path) = fixture();
+    let session = database.session(&path).unwrap();
     let controls = [
         "START TRANSACTION",
         "COMMIT",
@@ -194,28 +192,54 @@ fn stateful_controls_are_rejected_without_poisoning_facade_session() {
         ),
         1
     );
-    assert_eq!(
-        session
-            .execute("INSERT (:Person)")
-            .expect("write remains auto-committed"),
-        ExecutionOutcome::Written(WriteSummary::new(1, None))
-    );
+    session.execute("INSERT (:Person)").unwrap();
     assert_eq!(
         row_count(
             database
-                .session()
+                .session(&path)
+                .unwrap()
                 .execute("MATCH (n:Person) RETURN n")
-                .expect("write did not enter hidden transaction state")
+                .unwrap()
         ),
         1
     );
 }
 
 #[test]
+fn session_selection_reports_missing_and_wrong_kind_paths() {
+    let (database, path) = fixture();
+    let catalog = database.catalog();
+    let graph_type = graph("memory", "shape");
+    let name = selene_db::PathSegment::regular("Person").unwrap();
+    let definition = selene_db::GraphTypeDefinition::builder()
+        .with_node_type(selene_db::NodeTypeDefinition::new(name.clone(), vec![name]).unwrap())
+        .build()
+        .unwrap();
+    catalog
+        .create_graph_type(&graph_type, definition, CreatePolicy::Strict)
+        .unwrap();
+
+    assert_eq!(
+        database
+            .session(&graph("memory", "missing"))
+            .err()
+            .unwrap()
+            .kind(),
+        ErrorKind::CatalogObjectNotFound
+    );
+    assert_eq!(
+        database.session(&graph_type).err().unwrap().kind(),
+        ErrorKind::CatalogObjectWrongKind
+    );
+    database.session(&path).unwrap();
+}
+
+#[test]
 fn invalid_gql_maps_to_owned_facade_error() {
-    let database = Database::builder().build();
+    let (database, path) = fixture();
     let error = database
-        .session()
+        .session(&path)
+        .unwrap()
         .execute("NOT A GQL STATEMENT")
         .expect_err("invalid source fails");
 
@@ -244,8 +268,8 @@ fn facade_session_type_has_no_lifetime_parameter() {
         session
     }
 
-    let database = Database::builder().build();
-    let session = move_session(database.session());
+    let (database, path) = fixture();
+    let session = move_session(database.session(&path).unwrap());
     assert_eq!(
         row_count(session.execute("RETURN 1").expect("moved session works")),
         1

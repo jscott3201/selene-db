@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use selene_gql::{ParserError, feature_walk, parse};
-use selene_profile::{CapabilityStatus, FlaggerStatus, capabilities, capability};
+use selene_profile::{CapabilityStatus, FeatureId, FlaggerStatus, capabilities, capability};
 use selene_testing::corpus::{CorpusKind, Expectation, load_default_corpus};
 
 #[test]
@@ -128,6 +128,10 @@ fn corpus_covers_generated_flagger_capabilities() {
                 && record.status == CapabilityStatus::Unsupported
         })
         .map(|record| record.id)
+        // The historical factory-reset extension remains a generated registry
+        // identity, but no source form stamps it after catalog DROP replaced
+        // that behavior. It therefore has no negative parser form to exercise.
+        .filter(|feature| *feature != FeatureId::IM_DROP_GRAPH)
         .filter(|feature| !negative.contains(feature))
         .collect::<Vec<_>>();
     assert!(

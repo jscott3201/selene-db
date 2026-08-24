@@ -82,8 +82,8 @@ pub use crate::procedure_registry::{
 };
 pub use crate::runtime::{
     AdaptiveOptimizer, Binding, BindingTable, BindingTableRegistry, BuiltinProcedureRegistry,
-    CallPlanCache, CallPlanCacheStats, CallPlanKey, DataExceptionSubclass, ExecutorError,
-    ExecutorWarning, FacadeOutput, GraphContext, MaintenanceContext, MutationContext, PlanCache,
+    CallPlanCache, CallPlanCacheStats, CallPlanKey, CatalogSessionOutput, DataExceptionSubclass,
+    ExecutorError, ExecutorWarning, GraphContext, MaintenanceContext, MutationContext, PlanCache,
     PlanCacheStats, ProcedureContext, RollbackOutcome, Session, SessionParameterValue,
     SharedPlanCache, SharedPlanCacheStats, StatementOutput, TransactionOutcome, TxContext,
     WarningSink, WriteOutcome, execute_pattern, execute_pipeline, execute_statement,

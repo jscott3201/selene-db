@@ -308,9 +308,17 @@ fn gc04_supported_record_matches_facade_behaviour() {
         selene_profile::FlaggerStatus::Accepted
     );
     let database = selene_db::Database::builder().build();
-    let session = database.session();
     let catalog = database.catalog();
-    let path = selene_db::ObjectPath::regular("selene", "public", "demo").unwrap();
+    let schema = selene_db::SchemaPath::regular("selene", "memory").unwrap();
+    let selected = selene_db::ObjectPath::regular("selene", "memory", "evidence").unwrap();
+    catalog
+        .create_schema(&schema, selene_db::CreatePolicy::Strict)
+        .unwrap();
+    catalog
+        .create_graph(&selected, None, selene_db::CreatePolicy::Strict)
+        .unwrap();
+    let session = database.session(&selected).unwrap();
+    let path = selene_db::ObjectPath::regular("selene", "memory", "demo").unwrap();
     let omitted = selene_db::ExecutionOutcome::OmittedResult {
         status: selene_db::GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
     };
@@ -338,7 +346,7 @@ fn fixed_provenance_manifest_is_closed_and_hashes_only_semantics() {
         .unwrap();
     assert_eq!(
         manifest.result_hash,
-        "65122be92492ddafbe3f1d32bde4910f176d6e976798877dc2e18de9778e2b15"
+        "d03e25a8b4d97485879e2943328b511898f052218afc1ab466d812f86b952db5"
     );
     let encoded = serde_json::to_vec(&manifest).unwrap();
     assert_eq!(

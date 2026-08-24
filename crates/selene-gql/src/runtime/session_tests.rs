@@ -11,7 +11,7 @@ use crate::{
     plan::plan,
     plan::{BindingTableSchema, ExecutionPlan},
     procedure_registry::EmptyProcedureRegistry,
-    runtime::statement::{StatementOutput, execute_statement},
+    runtime::statement::{CatalogSessionOutput, StatementOutput, execute_statement},
     runtime::{BindingTable, BindingTableRegistry},
 };
 
@@ -151,7 +151,7 @@ fn session_without_cache_executes_source_normally() {
 }
 
 #[test]
-fn stateless_source_execution_rejects_controls_before_state_changes() {
+fn catalog_session_source_execution_rejects_controls_before_state_changes() {
     let graph = SharedGraph::new(GraphId::new(3896));
     let mut session = Session::new(&graph);
 
@@ -163,7 +163,7 @@ fn stateless_source_execution_rejects_controls_before_state_changes() {
         "SESSION CLOSE",
     ] {
         let error = session
-            .execute_source_stateless(source, &EmptyProcedureRegistry)
+            .execute_source_catalog_session(source, &EmptyProcedureRegistry)
             .expect_err(source);
         assert!(matches!(
             error,
@@ -176,42 +176,31 @@ fn stateless_source_execution_rejects_controls_before_state_changes() {
     }
 
     let output = session
-        .execute_source_stateless("RETURN 1", &EmptyProcedureRegistry)
+        .execute_source_catalog_session("RETURN 1", &EmptyProcedureRegistry)
         .expect("ordinary source still executes");
-    let StatementOutput::Rows(table) = output else {
+    let CatalogSessionOutput::Statement(StatementOutput::Rows(table)) = output else {
         panic!("RETURN should produce rows");
     };
     assert_eq!(table.row_count(), 1);
 }
 
 #[test]
-fn named_graph_source_policy_rejects_catalog_and_stateful_controls() {
+fn catalog_session_source_policy_intercepts_catalog_and_allows_graph_work() {
     let graph = SharedGraph::new(GraphId::new(3895));
     let mut session = Session::new(&graph);
 
-    for source in [
-        "DROP GRAPH default",
-        "CREATE NODE TYPE :Person ()",
-        "START TRANSACTION",
-        "SESSION CLOSE",
-    ] {
-        let error = session
-            .execute_source_named_graph(source, &EmptyProcedureRegistry)
-            .expect_err(source);
-        assert!(matches!(
-            error,
-            ExecutorError::FeatureNotSupportedYet { .. }
-        ));
-        assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
-    }
+    let catalog = session
+        .execute_source_catalog_session("DROP GRAPH selected", &EmptyProcedureRegistry)
+        .expect("database catalog command is intercepted");
+    assert!(matches!(catalog, CatalogSessionOutput::DatabaseCatalog(_)));
 
     session
-        .execute_source_named_graph("INSERT (:Person)", &EmptyProcedureRegistry)
+        .execute_source_catalog_session("INSERT (:Person)", &EmptyProcedureRegistry)
         .expect("ordinary data mutation remains available");
     let output = session
-        .execute_source_named_graph("MATCH (n:Person) RETURN n", &EmptyProcedureRegistry)
+        .execute_source_catalog_session("MATCH (n:Person) RETURN n", &EmptyProcedureRegistry)
         .expect("ordinary read remains available");
-    let StatementOutput::Rows(table) = output else {
+    let CatalogSessionOutput::Statement(StatementOutput::Rows(table)) = output else {
         panic!("MATCH should produce rows");
     };
     assert_eq!(table.row_count(), 1);

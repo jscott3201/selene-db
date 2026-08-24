@@ -18,6 +18,19 @@ fn object(schema: &str, name: &str) -> ObjectPath {
     ObjectPath::regular("selene", schema, name).unwrap()
 }
 
+fn fixture() -> (Database, ObjectPath) {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    let path = object("session_schema", "session_graph");
+    catalog
+        .create_schema(&schema("session_schema"), CreatePolicy::Strict)
+        .unwrap();
+    catalog
+        .create_graph(&path, None, CreatePolicy::Strict)
+        .unwrap();
+    (database, path)
+}
+
 fn person_type() -> GraphTypeDefinition {
     let name = PathSegment::regular("Person").unwrap();
     GraphTypeDefinition::builder()
@@ -39,8 +52,8 @@ fn assert_unpublished(catalog: &Catalog, before: &CatalogReadSnapshot, source: &
 
 #[test]
 fn gql_graph_type_lifecycle_binds_and_enforces_a_closed_graph() {
-    let database = Database::builder().build();
-    let session = database.session();
+    let (database, session_path) = fixture();
+    let session = database.session(&session_path).unwrap();
     let catalog = database.catalog();
     session.execute("CREATE SCHEMA /closed").unwrap();
 
@@ -68,7 +81,7 @@ fn gql_graph_type_lifecycle_binds_and_enforces_a_closed_graph() {
     let graph_path = object("closed", "g");
     let graph = catalog.snapshot().resolve_graph(&graph_path).unwrap();
     assert_eq!(graph.graph_type, Some(graph_type.id));
-    let handle = catalog.open_graph(&graph_path).unwrap();
+    let handle = database.session(&graph_path).unwrap();
     assert_eq!(
         handle.execute("INSERT (:Person)").unwrap(),
         ExecutionOutcome::Written(WriteSummary::new(1, None))
@@ -115,8 +128,8 @@ fn gql_graph_type_lifecycle_binds_and_enforces_a_closed_graph() {
 
 #[test]
 fn graph_type_strict_and_conditional_outcomes_keep_exact_statuses() {
-    let database = Database::builder().build();
-    let session = database.session();
+    let (database, session_path) = fixture();
+    let session = database.session(&session_path).unwrap();
     let catalog = database.catalog();
     session.execute("CREATE SCHEMA /types").unwrap();
     session
@@ -168,12 +181,12 @@ fn graph_type_strict_and_conditional_outcomes_keep_exact_statuses() {
         .unwrap();
     let relative_type = catalog
         .snapshot()
-        .resolve_graph_type(&object("public", "local_shape"))
+        .resolve_graph_type(&object("session_schema", "local_shape"))
         .unwrap();
     assert_eq!(
         catalog
             .snapshot()
-            .resolve_graph(&object("public", "local_graph"))
+            .resolve_graph(&object("session_schema", "local_graph"))
             .unwrap()
             .graph_type,
         Some(relative_type.id)
@@ -184,8 +197,8 @@ fn graph_type_strict_and_conditional_outcomes_keep_exact_statuses() {
 
 #[test]
 fn graph_type_reference_failures_preserve_shared_namespace_and_parent_rules() {
-    let database = Database::builder().build();
-    let session = database.session();
+    let (database, session_path) = fixture();
+    let session = database.session(&session_path).unwrap();
     let catalog = database.catalog();
     session.execute("CREATE SCHEMA /a").unwrap();
     session.execute("CREATE SCHEMA /b").unwrap();
@@ -244,8 +257,8 @@ fn graph_type_reference_failures_preserve_shared_namespace_and_parent_rules() {
 
 #[test]
 fn graph_type_or_replace_is_atomic_fresh_and_restricted_when_referenced() {
-    let database = Database::builder().build();
-    let session = database.session();
+    let (database, session_path) = fixture();
+    let session = database.session(&session_path).unwrap();
     let catalog = database.catalog();
     session.execute("CREATE SCHEMA /revisions").unwrap();
     let path = object("revisions", "shape");
@@ -327,7 +340,7 @@ fn graph_type_or_replace_is_atomic_fresh_and_restricted_when_referenced() {
         second
     );
 
-    let handle = catalog.open_graph(&object("revisions", "g")).unwrap();
+    let handle = database.session(&object("revisions", "g")).unwrap();
     handle.execute("INSERT (:Memory)").unwrap();
     assert_eq!(
         handle.execute("INSERT (:Person)").unwrap_err().gqlstatus(),
@@ -337,9 +350,9 @@ fn graph_type_or_replace_is_atomic_fresh_and_restricted_when_referenced() {
 
 #[test]
 fn rust_and_gql_graph_type_definitions_produce_equivalent_descriptors() {
-    let via_gql = Database::builder().build();
-    let via_rust = Database::builder().build();
-    let session = via_gql.session();
+    let (via_gql, gql_session_path) = fixture();
+    let (via_rust, _) = fixture();
+    let session = via_gql.session(&gql_session_path).unwrap();
     let rust = via_rust.catalog();
     let type_path = object("memory", "shape");
     let graph_path = object("memory", "g");
@@ -370,8 +383,8 @@ fn rust_and_gql_graph_type_definitions_produce_equivalent_descriptors() {
         left.resolve_graph(&graph_path).unwrap(),
         right.resolve_graph(&graph_path).unwrap()
     );
-    for catalog in [via_gql.catalog(), rust] {
-        let handle = catalog.open_graph(&graph_path).unwrap();
+    for database in [via_gql, via_rust] {
+        let handle = database.session(&graph_path).unwrap();
         handle.execute("INSERT (:Person)").unwrap();
         assert_eq!(
             handle.execute("INSERT (:Other)").unwrap_err().gqlstatus(),
@@ -381,9 +394,9 @@ fn rust_and_gql_graph_type_definitions_produce_equivalent_descriptors() {
 }
 
 #[test]
-fn rejected_graph_type_commands_cannot_mutate_catalog_or_bootstrap_graph() {
-    let database = Database::builder().build();
-    let session = database.session();
+fn rejected_graph_type_commands_cannot_mutate_catalog_or_selected_graph() {
+    let (database, session_path) = fixture();
+    let session = database.session(&session_path).unwrap();
     let catalog = database.catalog();
     session.execute("INSERT (:Marker)").unwrap();
     let before = catalog.snapshot();
@@ -401,13 +414,13 @@ fn rejected_graph_type_commands_cannot_mutate_catalog_or_bootstrap_graph() {
         assert_eq!(
             session.execute("MATCH (n) RETURN n").unwrap(),
             ExecutionOutcome::Rows { row_count: 1 },
-            "{source} mutated the bootstrap graph"
+            "{source} mutated the selected graph"
         );
     }
     assert!(
         catalog
             .snapshot()
-            .resolve_graph(&object("public", "missing_type"))
+            .resolve_graph(&object("session_schema", "missing_type"))
             .is_err()
     );
 }

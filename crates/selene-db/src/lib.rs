@@ -7,8 +7,8 @@
 //!
 //! The current facade owns one in-memory catalog with named schemas, graphs, and
 //! closed graph types. Persistence, parameters, transaction state, and row-value
-//! materialization are not exposed yet. The compatibility [`Session`] still
-//! targets `/selene/public/default`; M02-PR05 removes that bootstrap bridge.
+//! materialization are not exposed yet. A [`Session`] is selected explicitly to
+//! one catalog graph and owns the database without borrowing graph storage.
 //!
 //! # Quickstart
 //!
@@ -23,23 +23,23 @@
 //! catalog.create_schema(&schema, CreatePolicy::Strict)?;
 //! let graph_path = ObjectPath::regular("selene", "memory", "episodes")?;
 //! catalog.create_graph(&graph_path, None, CreatePolicy::Strict)?;
-//! let graph = catalog.open_graph(&graph_path)?;
+//! let session = database.session(&graph_path)?;
 //!
-//! let write = graph.execute("INSERT (:Person { name: 'Ada' })")?;
+//! let write = session.execute("INSERT (:Person { name: 'Ada' })")?;
 //! assert_eq!(
 //!     write,
 //!     ExecutionOutcome::Written(WriteSummary::new(1, None)),
 //! );
 //!
-//! let rows = graph.execute("MATCH (n:Person) RETURN n")?;
+//! let rows = session.execute("MATCH (n:Person) RETURN n")?;
 //! assert_eq!(rows, ExecutionOutcome::Rows { row_count: 1 });
 //! # Ok::<(), selene_db::Error>(())
 //! ```
 //!
-//! Engine graph handles are not facade exports:
+//! Removed graph handles and lower engine types are not facade exports:
 //!
 //! ```compile_fail
-//! use selene_db::SharedGraph;
+//! use selene_db::{GraphHandle, SharedGraph};
 //! ```
 //!
 //! Physical row indices are not facade exports:
@@ -63,7 +63,13 @@
 //! Lower runtime graph and schema definitions are not facade exports:
 //!
 //! ```compile_fail
-//! use selene_db::{CoreGraphTypeBridge, GraphTypeDef, SeleneGraph};
+//! use selene_db::{CoreGraphTypeBridge, CoreProvider, GraphTypeDef, SeleneGraph};
+//! ```
+//!
+//! The facade session has no borrowed graph lifetime:
+//!
+//! ```compile_fail
+//! fn borrowed(_: selene_db::Session<'static>) {}
 //! ```
 
 #![forbid(unsafe_code)]
@@ -75,7 +81,6 @@ mod config;
 mod database;
 mod ddl;
 mod error;
-mod graph_handle;
 mod graph_type;
 mod outcome;
 mod path;
@@ -89,7 +94,6 @@ pub use catalog_snapshot::{
 pub use config::{DatabaseConfig, OpenMode};
 pub use database::{Database, DatabaseBuilder};
 pub use error::{Error, ErrorKind, GqlStatus};
-pub use graph_handle::GraphHandle;
 pub use graph_type::{GraphTypeBuilder, GraphTypeDefinition, NodeTypeDefinition};
 pub use outcome::{ExecutionOutcome, WriteSummary};
 pub use path::{CatalogPath, ObjectPath, PathSegment, SchemaPath};

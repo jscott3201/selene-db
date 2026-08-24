@@ -23,7 +23,7 @@ use crate::{
     runtime::{BindingTable, CallPlanKey, ExecutorError, Session},
 };
 
-/// Result of the database facade's single parse/analyze/plan pass.
+/// Result of a selected catalog session's single parse/analyze/plan pass.
 ///
 /// A database-catalog statement is returned as its command before any
 /// execution context or write transaction is created, so the facade can
@@ -33,7 +33,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 #[doc(hidden)]
 #[non_exhaustive]
-pub enum FacadeOutput {
+pub enum CatalogSessionOutput {
     /// The statement was executed by the lower engine.
     Statement(StatementOutput),
     /// The statement is a database-catalog command for the facade to execute.
@@ -164,57 +164,20 @@ impl Session<'_> {
             .and_then(expect_executed)
     }
 
-    /// Execute one source statement without allowing persistent session state.
+    /// Execute one source statement for a selected database-catalog session.
     ///
-    /// This hidden compatibility entry is used by the M02 facade while it
-    /// creates a borrowed lower session per request. It rejects transaction and
-    /// `SESSION` controls after the single parse/plan pass and before execution.
-    /// M02-PR05 removes this adapter when catalog-backed sessions own their
-    /// lower execution state.
+    /// Transaction and `SESSION` controls are rejected after the single
+    /// parse/analyze/plan pass. A plan consisting of one database-catalog
+    /// operation is returned as [`CatalogSessionOutput::DatabaseCatalog`]
+    /// before any execution context or write transaction exists. Every other
+    /// statement executes without a second parse.
     #[doc(hidden)]
-    pub fn execute_source_stateless(
+    pub fn execute_source_catalog_session(
         &mut self,
         source: &str,
         registry: &dyn ProcedureRegistry,
-    ) -> Result<StatementOutput, ExecutorError> {
-        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::Stateless)
-            .and_then(expect_executed)
-    }
-
-    /// Execute one source statement for the database facade's compatibility
-    /// session, returning database-catalog statements instead of executing
-    /// them.
-    ///
-    /// The policy is the stateless policy plus interception: transaction and
-    /// `SESSION` controls are rejected after the single parse/analyze/plan
-    /// pass, and a plan that consists of one database-catalog operation is
-    /// returned as [`FacadeOutput::DatabaseCatalog`] before any execution
-    /// context or write transaction exists. There is no second parse on the
-    /// non-catalog path. M02-PR05 removes this adapter together with
-    /// `execute_source_stateless`.
-    #[doc(hidden)]
-    pub fn execute_source_facade(
-        &mut self,
-        source: &str,
-        registry: &dyn ProcedureRegistry,
-    ) -> Result<FacadeOutput, ExecutorError> {
-        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::Facade)
-    }
-
-    /// Execute one source statement under the named-graph facade policy.
-    ///
-    /// The policy permits ordinary stateless reads and data mutations, but
-    /// rejects catalog, transaction-control, and session-control categories
-    /// after the existing single parse/analyze/plan pass. Catalog DDL is routed
-    /// through the database catalog service by M02-PR04.
-    #[doc(hidden)]
-    pub fn execute_source_named_graph(
-        &mut self,
-        source: &str,
-        registry: &dyn ProcedureRegistry,
-    ) -> Result<StatementOutput, ExecutorError> {
-        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::NamedGraph)
-            .and_then(expect_executed)
+    ) -> Result<CatalogSessionOutput, ExecutorError> {
+        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::CatalogSession)
     }
 
     fn execute_source_with_policy(
@@ -222,7 +185,7 @@ impl Session<'_> {
         source: &str,
         registry: &dyn ProcedureRegistry,
         policy: SourceExecutionPolicy,
-    ) -> Result<FacadeOutput, ExecutorError> {
+    ) -> Result<CatalogSessionOutput, ExecutorError> {
         let profile_identity = current_profile_identity();
         // ISO/IEC 39075:2024 section 6 GR3 + section 7.3: once a session is
         // closed by `SESSION CLOSE`, every subsequent GQL-request is rejected.
@@ -427,19 +390,17 @@ impl Session<'_> {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum SourceExecutionPolicy {
     Stateful,
-    Stateless,
-    NamedGraph,
-    /// Stateless plus database-catalog interception; see
-    /// [`Session::execute_source_facade`].
-    Facade,
+    /// Selected database-catalog session interception; see
+    /// [`Session::execute_source_catalog_session`].
+    CatalogSession,
 }
 
 /// Unwrap the executed output for the policies that never intercept.
-fn expect_executed(output: FacadeOutput) -> Result<StatementOutput, ExecutorError> {
+fn expect_executed(output: CatalogSessionOutput) -> Result<StatementOutput, ExecutorError> {
     match output {
-        FacadeOutput::Statement(output) => Ok(output),
-        FacadeOutput::DatabaseCatalog(_) => Err(ExecutorError::ImplementationDefined {
-            detail: "database-catalog interception is only enabled for the facade policy",
+        CatalogSessionOutput::Statement(output) => Ok(output),
+        CatalogSessionOutput::DatabaseCatalog(_) => Err(ExecutorError::ImplementationDefined {
+            detail: "database-catalog interception is only enabled for the catalog-session policy",
         }),
     }
 }
@@ -449,14 +410,14 @@ fn execute_source_plan(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
     policy: SourceExecutionPolicy,
-) -> Result<FacadeOutput, ExecutorError> {
+) -> Result<CatalogSessionOutput, ExecutorError> {
     ensure_source_policy(plan, policy)?;
-    if policy == SourceExecutionPolicy::Facade
+    if policy == SourceExecutionPolicy::CatalogSession
         && let Some(command) = database_catalog_command(plan)
     {
-        return Ok(FacadeOutput::DatabaseCatalog(command.clone()));
+        return Ok(CatalogSessionOutput::DatabaseCatalog(command.clone()));
     }
-    execute_statement(plan, session, registry).map(FacadeOutput::Statement)
+    execute_statement(plan, session, registry).map(CatalogSessionOutput::Statement)
 }
 
 /// Return the database-catalog command when the plan is exactly one such
@@ -472,28 +433,14 @@ fn ensure_source_policy(
     plan: &ExecutionPlan,
     policy: SourceExecutionPolicy,
 ) -> Result<(), ExecutorError> {
-    if matches!(
-        policy,
-        SourceExecutionPolicy::Stateless | SourceExecutionPolicy::Facade
-    ) && matches!(
-        plan.category,
-        StatementCategory::TransactionControl | StatementCategory::SessionControl
-    ) {
-        return Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "stateful control in the stateless facade",
-            span: SourceSpan::default(),
-        });
-    }
-    if policy == SourceExecutionPolicy::NamedGraph
+    if policy == SourceExecutionPolicy::CatalogSession
         && matches!(
             plan.category,
-            StatementCategory::CatalogModifying
-                | StatementCategory::TransactionControl
-                | StatementCategory::SessionControl
+            StatementCategory::TransactionControl | StatementCategory::SessionControl
         )
     {
         return Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "catalog or stateful control through a named graph handle",
+            feature: "stateful control in a selected facade session",
             span: SourceSpan::default(),
         });
     }

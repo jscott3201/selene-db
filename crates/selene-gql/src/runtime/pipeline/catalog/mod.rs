@@ -4,7 +4,6 @@ mod alter_edge_type;
 mod alter_node_type;
 mod compose;
 mod drop_cascade;
-mod drop_graph;
 mod endpoints;
 mod index_ddl;
 mod procedure;
@@ -46,20 +45,12 @@ pub(super) fn execute(
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     match op {
-        // Database-catalog statements are executed by the database facade,
-        // which intercepts the plan before this operator runs. Reaching here
-        // means a bare engine session received one; it has no catalog to
-        // mutate and must not silently no-op. DROP GRAPH is the pre-existing
-        // IM_DROP_GRAPH factory reset of the session graph (bridge owned by
-        // M02-PR05), handled by the drop_graph submodule.
-        CatalogOp::DatabaseCatalog(command) => match command {
-            crate::DatabaseCatalogCommand::DropGraph { span, .. } => {
-                drop_graph::execute_drop_graph(*span, table, ctx)
-            }
-            _ => Err(ExecutorError::ImplementationDefined {
-                detail: DATABASE_CATALOG_DETAIL,
-            }),
-        },
+        // Database-catalog statements are intercepted by the database facade.
+        // A bare engine session has no catalog to mutate and must not silently
+        // reinterpret or ignore the command.
+        CatalogOp::DatabaseCatalog(_) => Err(ExecutorError::ImplementationDefined {
+            detail: DATABASE_CATALOG_DETAIL,
+        }),
         CatalogOp::CreateNodeType {
             label,
             key_labels,

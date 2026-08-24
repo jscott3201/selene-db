@@ -151,7 +151,7 @@ epoch mutation.
 | Crate | Owns |
 |---|---|
 | `selene-profile` | Typed GQL profile source, validation, canonical hashing, and checked-in runtime/documentation generation. It has no engine-crate dependencies. |
-| `selene-catalog` | Catalog ownership boundary. The M02-PR01 surface is limited to the temporary single-graph bootstrap identity and default names; later M02 work owns durable catalog descriptors and transactions. |
+| `selene-catalog` | Storage-neutral catalog descriptors, typed stable IDs, immutable snapshots, and mutation drafts. It has no engine-crate dependencies. |
 | `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, `JsonValue`, vector metrics/top-k helpers, `DbString`, schema/value types, the profile compatibility adapter, property maps, codecs, and changesets. |
 | `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, exact BM25 text search, exact JSON search, reusable BM25 postings indexes, recovery provider, compaction, and graph type enforcement. |
 | `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |

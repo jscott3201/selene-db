@@ -43,8 +43,8 @@ fn catalog_dependencies_are_allowlisted_and_workspace_is_acyclic() {
     let direct = normal_workspace_dependencies(catalog, &workspace_packages);
     assert_eq!(
         direct,
-        BTreeSet::from(["selene-db-core", "selene-db-profile"]),
-        "catalog normal dependencies must stay inside the approved leaf allowlist"
+        BTreeSet::new(),
+        "catalog must not depend on another workspace crate"
     );
 
     let graph = packages

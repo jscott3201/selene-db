@@ -1,6 +1,5 @@
 //! Immutable, storage-neutral catalog descriptors.
 
-use selene_core::GraphTypeId as CoreGraphTypeId;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
@@ -40,28 +39,6 @@ impl CreationMetadata {
 
     pub(crate) fn heap_bytes(&self) -> usize {
         self.principal.as_ref().map_or(0, String::capacity)
-    }
-}
-
-/// Explicit temporary reference to the existing core graph-type schema identity.
-///
-/// This bridge distinguishes the current core schema ID from catalog-owned
-/// [`GraphTypeId`]. M02-PR05 owns its deletion after schema metadata migration.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[repr(transparent)]
-pub struct CoreGraphTypeBridge(CoreGraphTypeId);
-
-impl CoreGraphTypeBridge {
-    /// Wrap the current core schema identity at the temporary typed boundary.
-    #[must_use]
-    pub const fn new(core_id: CoreGraphTypeId) -> Self {
-        Self(core_id)
-    }
-
-    /// Return the explicitly distinguished core graph-type identity.
-    #[must_use]
-    pub const fn core_id(self) -> CoreGraphTypeId {
-        self.0
     }
 }
 
@@ -105,11 +82,8 @@ pub enum CatalogPayload {
         /// Optional constraining graph-type identity.
         graph_type: Option<GraphTypeId>,
     },
-    /// Graph-type metadata remains behind the temporary typed core bridge.
-    GraphType {
-        /// Optional current core schema identity.
-        core_bridge: Option<CoreGraphTypeBridge>,
-    },
+    /// Graph-type marker. Runtime definitions remain database-owned.
+    GraphType,
     /// Binding-table marker.
     BindingTable,
     /// Procedure marker.
@@ -129,7 +103,7 @@ impl CatalogPayload {
             Self::RootDirectory => CatalogObjectKind::Directory,
             Self::Schema => CatalogObjectKind::Schema,
             Self::Graph { .. } => CatalogObjectKind::Graph,
-            Self::GraphType { .. } => CatalogObjectKind::GraphType,
+            Self::GraphType => CatalogObjectKind::GraphType,
             Self::BindingTable => CatalogObjectKind::BindingTable,
             Self::Procedure => CatalogObjectKind::Procedure,
             Self::Index => CatalogObjectKind::Index,
@@ -265,7 +239,6 @@ impl CatalogDescriptor {
         schema: SchemaId,
         generation: CatalogGeneration,
         creation: CreationMetadata,
-        core_bridge: Option<CoreGraphTypeBridge>,
     ) -> CatalogResult<Self> {
         Self::new(
             CatalogObjectId::GraphType(id),
@@ -274,7 +247,7 @@ impl CatalogDescriptor {
             CatalogParent::Schema(schema),
             generation,
             creation,
-            CatalogPayload::GraphType { core_bridge },
+            CatalogPayload::GraphType,
         )
     }
 

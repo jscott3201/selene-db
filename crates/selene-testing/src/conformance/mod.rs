@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::Path;
 
-use selene_db::{CreatePolicy, Database, ErrorKind, ExecutionOutcome, SchemaPath};
+use selene_db::{CreatePolicy, Database, ErrorKind, ExecutionOutcome, ObjectPath, SchemaPath};
 use selene_gql::{GqlStatus, ParserError};
 use selene_profile::{
     EvidenceDisposition, EvidenceRecord, RuleRecord, ValidatedConformance, ValidatedProfile,
@@ -277,9 +277,21 @@ fn run_gc04_negative(source: &str) -> Result<Actual, String> {
 /// with `00001` and publishes the graph in the current working schema.
 fn run_gc04_positive(source: &str) -> Result<Actual, String> {
     let database = Database::builder().build();
+    let memory = SchemaPath::regular("selene", "memory").map_err(|error| error.to_string())?;
+    let selected =
+        ObjectPath::regular("selene", "memory", "evidence").map_err(|error| error.to_string())?;
+    database
+        .catalog()
+        .create_schema(&memory, CreatePolicy::Strict)
+        .map_err(|error| error.to_string())?;
+    database
+        .catalog()
+        .create_graph(&selected, None, CreatePolicy::Strict)
+        .map_err(|error| error.to_string())?;
     let before = database.catalog().snapshot().generation();
     let outcome = database
-        .session()
+        .session(&selected)
+        .map_err(|error| error.to_string())?
         .execute(source)
         .map_err(|error| error.to_string())?;
     if outcome
@@ -295,14 +307,13 @@ fn run_gc04_positive(source: &str) -> Result<Actual, String> {
     if snapshot.generation() <= before {
         return Err("CREATE GRAPH published no catalog generation".to_owned());
     }
-    let public = SchemaPath::regular("selene", "public").map_err(|error| error.to_string())?;
     let created = snapshot
-        .graphs(&public)
+        .graphs(&memory)
         .map_err(|error| error.to_string())?
         .into_iter()
         .any(|graph| graph.path.object().canonical() == "demo");
     if !created {
-        return Err("CREATE GRAPH did not publish /selene/public/demo".to_owned());
+        return Err("CREATE GRAPH did not publish /selene/memory/demo".to_owned());
     }
     Ok(Actual::executed(
         ObservedStatus::Success,
@@ -319,7 +330,15 @@ fn run_gc04_status(source: &str) -> Result<Actual, String> {
         .catalog()
         .create_schema(&memory, CreatePolicy::Strict)
         .map_err(|error| error.to_string())?;
-    let session = database.session();
+    let selected =
+        ObjectPath::regular("selene", "memory", "evidence").map_err(|error| error.to_string())?;
+    database
+        .catalog()
+        .create_graph(&selected, None, CreatePolicy::Strict)
+        .map_err(|error| error.to_string())?;
+    let session = database
+        .session(&selected)
+        .map_err(|error| error.to_string())?;
     session.execute(source).map_err(|error| error.to_string())?;
     let before = database.catalog().snapshot();
     let error = match session.execute(source) {

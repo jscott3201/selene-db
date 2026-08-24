@@ -30,12 +30,8 @@ pub enum ErrorKind {
     /// A catalog object reference crosses a prohibited ownership boundary
     /// (`42002`).
     CatalogReferenceViolation,
-    /// The temporary bootstrap object cannot be dropped (`42000`, the
-    /// class-level "syntax error or access rule violation"; the access rule is
-    /// implementation-defined under IE005).
-    ProtectedCatalogObject,
-    /// A graph handle's stable identity is no longer registered.
-    StaleGraphHandle,
+    /// A session's selected stable graph identity is no longer registered.
+    StaleGraphSelection,
     /// A facade graph-type definition is inconsistent.
     InvalidGraphType,
     /// Catalog identity or immutable-state validation failed internally.
@@ -62,9 +58,6 @@ impl GqlStatus {
     /// Completion condition of `DROP GRAPH IF EXISTS` on an absent graph
     /// (§12.5 GR1).
     pub const GRAPH_DOES_NOT_EXIST: Self = Self(*b"01G03");
-    /// Class-level "syntax error or access rule violation", used for
-    /// protected bootstrap objects.
-    pub const SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION: Self = Self(*b"42000");
     /// "Invalid syntax", used when a catalog name fails the identifier profile.
     pub const SYNTAX_ERROR: Self = Self(*b"42001");
     /// "Invalid reference", used for missing, wrong-kind, and unshapeable
@@ -115,7 +108,7 @@ impl ErrorKind {
     /// Return the GQLSTATUS the facade assigns to this category, if any.
     ///
     /// Engine-originated categories take their status from the engine
-    /// diagnostic instead; internal invariant, stale-handle, and graph-type
+    /// diagnostic instead; internal invariant, stale-selection, and graph-type
     /// definition failures have none.
     #[must_use]
     pub const fn gqlstatus(self) -> Option<GqlStatus> {
@@ -126,8 +119,7 @@ impl ErrorKind {
             | Self::CatalogReferenceViolation => Some(GqlStatus::INVALID_REFERENCE),
             Self::CatalogObjectAlreadyExists => Some(GqlStatus::DUPLICATE_OBJECT),
             Self::CatalogRestrictViolation => Some(GqlStatus::DEPENDENT_OBJECT_ERROR),
-            Self::ProtectedCatalogObject => Some(GqlStatus::SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION),
-            Self::StaleGraphHandle
+            Self::StaleGraphSelection
             | Self::InvalidGraphType
             | Self::CatalogInvariant
             | Self::InvalidGql
@@ -244,17 +236,10 @@ impl Error {
         )
     }
 
-    pub(crate) fn protected(path: &impl fmt::Display, kind: &str) -> Self {
-        Self::facade(
-            ErrorKind::ProtectedCatalogObject,
-            format!("{kind} {path} is protected until M02-PR05"),
-        )
-    }
-
     pub(crate) fn stale_graph(path: &impl fmt::Display) -> Self {
         Self::facade(
-            ErrorKind::StaleGraphHandle,
-            format!("graph handle for {path} is stale or invalidated"),
+            ErrorKind::StaleGraphSelection,
+            format!("selected graph {path} is stale or invalidated"),
         )
     }
 
@@ -319,7 +304,7 @@ impl Error {
     ///
     /// Catalog failures carry the code selected by their [`ErrorKind`] whether
     /// the request came from Rust or GQL; engine failures copy the engine's
-    /// code; internal invariant, stale-handle, and graph-type definition
+    /// code; internal invariant, stale-selection, and graph-type definition
     /// failures have none.
     #[must_use]
     pub const fn gqlstatus(&self) -> Option<GqlStatus> {
