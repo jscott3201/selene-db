@@ -107,6 +107,22 @@ pub(crate) struct DatabaseInner {
 }
 
 impl DatabaseInner {
+    /// Acquire the lifecycle writer mutex.
+    ///
+    /// Every catalog lifecycle mutation starts here. In test builds it also
+    /// asserts that the calling thread holds no graph request lease: drop
+    /// takes the target's lifecycle write lease after this mutex, so entering
+    /// under a same-thread read lease would deadlock instead of failing.
+    pub(crate) fn lock_lifecycle_writer(&self) -> parking_lot::MutexGuard<'_, ()> {
+        #[cfg(test)]
+        assert_eq!(
+            GraphRequestDepth::current(),
+            0,
+            "catalog lifecycle entered under a same-thread graph request lease"
+        );
+        self.lifecycle_writer.lock()
+    }
+
     fn new(config: DatabaseConfig) -> Self {
         let bootstrap = BootstrapCatalog::new();
         let graph = Arc::new(GraphInstance::new(SharedGraph::new(bootstrap.graph_id())));
@@ -128,6 +144,33 @@ impl DatabaseInner {
             #[cfg(test)]
             drop_blocked: Mutex::new(None),
         }
+    }
+}
+
+/// Test-only per-thread count of active graph request leases.
+#[cfg(test)]
+pub(crate) struct GraphRequestDepth;
+
+#[cfg(test)]
+impl GraphRequestDepth {
+    thread_local! {
+        static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    pub(crate) fn enter() -> Self {
+        Self::DEPTH.with(|depth| depth.set(depth.get() + 1));
+        Self
+    }
+
+    pub(crate) fn current() -> usize {
+        Self::DEPTH.with(std::cell::Cell::get)
+    }
+}
+
+#[cfg(test)]
+impl Drop for GraphRequestDepth {
+    fn drop(&mut self) {
+        Self::DEPTH.with(|depth| depth.set(depth.get() - 1));
     }
 }
 

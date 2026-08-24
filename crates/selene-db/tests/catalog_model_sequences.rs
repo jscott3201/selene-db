@@ -1,9 +1,19 @@
 //! Bounded catalog mutation sequences checked against a simple set model.
+//!
+//! Operations 0-3 use the Rust lifecycle API; operations 4-7 issue the same
+//! commands as GQL database-catalog statements through the compatibility
+//! session. Both arms must agree with one set model.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
-use selene_db::{CreatePolicy, Database, DropPolicy, ObjectPath, SchemaPath};
+use selene_db::{
+    CreatePolicy, Database, DropPolicy, ExecutionOutcome, GqlStatus, ObjectPath, SchemaPath,
+};
+
+const OMITTED: ExecutionOutcome = ExecutionOutcome::OmittedResult {
+    status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
+};
 
 fn schema(name: &str) -> SchemaPath {
     SchemaPath::regular("selene", name).unwrap()
@@ -18,10 +28,11 @@ proptest! {
 
     #[test]
     fn bounded_mutation_sequences_match_model(
-        commands in prop::collection::vec((0_u8..4, 0_u8..4, 0_u8..4), 0..40),
+        commands in prop::collection::vec((0_u8..8, 0_u8..4, 0_u8..4), 0..40),
     ) {
         let database = Database::builder().build();
         let catalog = database.catalog();
+        let session = database.session();
         let mut model: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
         for (operation, schema_index, graph_index) in commands {
@@ -67,6 +78,53 @@ proptest! {
                     if let Some(graphs) = model.get_mut(&schema_name) {
                         prop_assert!(result.is_ok());
                         graphs.remove(&graph_name);
+                    } else {
+                        prop_assert!(result.is_err());
+                    }
+                }
+                4 => {
+                    let outcome = session
+                        .execute(&format!("CREATE SCHEMA IF NOT EXISTS /{schema_name}"))
+                        .unwrap();
+                    prop_assert_eq!(outcome, OMITTED);
+                    model.entry(schema_name.clone()).or_default();
+                }
+                5 => {
+                    let has_children = model
+                        .get(&schema_name)
+                        .is_some_and(|graphs| !graphs.is_empty());
+                    let result = session.execute(&format!("DROP SCHEMA IF EXISTS /{schema_name}"));
+                    if has_children {
+                        prop_assert!(result.is_err());
+                    } else {
+                        prop_assert_eq!(result.unwrap(), OMITTED);
+                        model.remove(&schema_name);
+                    }
+                }
+                6 => {
+                    let result = session.execute(&format!(
+                        "CREATE GRAPH IF NOT EXISTS /{schema_name}/{graph_name} ANY"
+                    ));
+                    if let Some(graphs) = model.get_mut(&schema_name) {
+                        prop_assert_eq!(result.unwrap(), OMITTED);
+                        graphs.insert(graph_name.clone());
+                    } else {
+                        prop_assert!(result.is_err());
+                    }
+                }
+                7 => {
+                    let result = session.execute(&format!(
+                        "DROP GRAPH IF EXISTS /{schema_name}/{graph_name}"
+                    ));
+                    if let Some(graphs) = model.get_mut(&schema_name) {
+                        let expected = if graphs.remove(&graph_name) {
+                            OMITTED
+                        } else {
+                            ExecutionOutcome::OmittedResult {
+                                status: GqlStatus::GRAPH_DOES_NOT_EXIST,
+                            }
+                        };
+                        prop_assert_eq!(result.unwrap(), expected);
                     } else {
                         prop_assert!(result.is_err());
                     }

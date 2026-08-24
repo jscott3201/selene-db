@@ -1,15 +1,30 @@
 //! Summary-only statement outcomes.
 
+use crate::GqlStatus;
+
 /// Summary returned by [`Session::execute`](crate::Session::execute).
 ///
 /// M02-PR01 does not expose row values. A row-bearing statement reports only
 /// cardinality, while a committed write reports its change count and optional
-/// returned-row count.
+/// returned-row count. A database-catalog statement reports the ISO
+/// completion condition of its omitted result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ExecutionOutcome {
     /// The statement completed without rows or committed graph changes.
     Empty,
+    /// A database-catalog statement completed with an omitted result
+    /// (ISO/IEC 39075:2024 §4.9.3, §12.1 GR2).
+    ///
+    /// `status` is `00001` for every successful `CREATE/DROP SCHEMA` and
+    /// `CREATE/DROP GRAPH`, including the `IF [NOT] EXISTS` no-ops that §12.2,
+    /// §12.3, and §12.4 define without a warning, and `01G03` for `DROP GRAPH
+    /// IF EXISTS` on an absent graph (§12.5 GR1). A no-op publishes no catalog
+    /// state.
+    OmittedResult {
+        /// Completion condition of the statement.
+        status: GqlStatus,
+    },
     /// The statement produced a row-bearing result.
     Rows {
         /// Number of rows produced.

@@ -85,7 +85,7 @@ impl Catalog {
         path: &SchemaPath,
         policy: CreatePolicy,
     ) -> Result<CreateOutcome<SchemaDescriptor>> {
-        let _writer = self.inner.lifecycle_writer.lock();
+        let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         ensure_catalog(&base, path.catalog())?;
         if let Some(existing) = base.catalog.schema(&path.schema.0) {
@@ -130,7 +130,7 @@ impl Catalog {
         definition: GraphTypeDefinition,
         policy: CreatePolicy,
     ) -> Result<CreateOutcome<GraphTypeDescriptor>> {
-        let _writer = self.inner.lifecycle_writer.lock();
+        let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         let schema = require_schema(&base, &path.schema_path())?;
         if let Some(existing) = base.catalog.schema_object(schema, &path.object.0) {
@@ -183,7 +183,7 @@ impl Catalog {
         graph_type: Option<&ObjectPath>,
         policy: CreatePolicy,
     ) -> Result<CreateOutcome<GraphDescriptor>> {
-        let _writer = self.inner.lifecycle_writer.lock();
+        let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         let schema = require_schema(&base, &path.schema_path())?;
         if let Some(existing) = base.catalog.schema_object(schema, &path.object.0) {
@@ -241,7 +241,7 @@ impl Catalog {
         path: &ObjectPath,
         policy: DropPolicy,
     ) -> Result<DropOutcome<GraphDescriptor>> {
-        let _writer = self.inner.lifecycle_writer.lock();
+        let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         let Some(descriptor) = find_object(&base, path)? else {
             return missing_outcome(policy, path, "graph");
@@ -301,7 +301,7 @@ impl Catalog {
         path: &ObjectPath,
         policy: DropPolicy,
     ) -> Result<DropOutcome<GraphTypeDescriptor>> {
-        let _writer = self.inner.lifecycle_writer.lock();
+        let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         let Some(descriptor) = find_object(&base, path)? else {
             return missing_outcome(policy, path, "graph type");
@@ -346,7 +346,7 @@ impl Catalog {
         path: &SchemaPath,
         policy: DropPolicy,
     ) -> Result<DropOutcome<SchemaDescriptor>> {
-        let _writer = self.inner.lifecycle_writer.lock();
+        let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         ensure_catalog(&base, path.catalog())?;
         let Some(descriptor) = base.catalog.schema(&path.schema.0) else {

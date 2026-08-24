@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use selene_catalog::GraphId as LowerGraphId;
 use selene_core::Change;
+use selene_gql::FacadeOutput;
 
 use crate::{
     Error, ExecutionOutcome, GraphId, ObjectPath, Result,
@@ -49,17 +50,35 @@ impl GraphHandle {
 }
 
 impl DatabaseInner {
-    pub(crate) fn execute_bootstrap(&self, source: &str) -> Result<ExecutionOutcome> {
-        let path = format!(
+    /// Parse, plan, and either execute or intercept one compatibility-session
+    /// statement under the bootstrap graph's request lease.
+    ///
+    /// A database-catalog command is returned unexecuted; the caller dispatches
+    /// it after this lease is released (see [`crate::ddl`]).
+    pub(crate) fn execute_bootstrap(&self, source: &str) -> Result<FacadeOutput> {
+        let path = self.bootstrap_path();
+        self.with_graph_request(bootstrap_graph_id(), &path, |graph| {
+            selene_gql::Session::new(graph)
+                .execute_source_facade(source, &self.procedures)
+                .map_err(Error::from_engine)
+        })
+    }
+
+    fn bootstrap_path(&self) -> String {
+        format!(
             "/{}/{}/{}",
             self.bootstrap.catalog_name(),
             self.bootstrap.schema_name(),
             self.bootstrap.graph_name()
-        );
-        self.execute_graph(bootstrap_graph_id(), &path, source, false)
+        )
     }
 
-    fn execute_graph(
+    /// Execute one statement through a temporary lower session.
+    ///
+    /// `named` selects the named-graph policy, which rejects catalog and
+    /// stateful control statements. The stateless policy is used by the
+    /// bootstrap `DROP GRAPH` factory-reset bridge only.
+    pub(crate) fn execute_graph(
         &self,
         id: LowerGraphId,
         path: &impl std::fmt::Display,
@@ -75,6 +94,16 @@ impl DatabaseInner {
             }
             .map_err(Error::from_engine)
         })?;
+        self.finish_lower_output(id, output)
+    }
+
+    /// Map an executed lower output to the facade summary, clearing
+    /// procedure-derived state after a graph reset.
+    pub(crate) fn finish_lower_output(
+        &self,
+        id: LowerGraphId,
+        output: selene_gql::StatementOutput,
+    ) -> Result<ExecutionOutcome> {
         if let selene_gql::StatementOutput::Written(write) = &output
             && write
                 .changes
@@ -98,6 +127,8 @@ impl DatabaseInner {
             .get(&id)
             .cloned()
             .ok_or_else(|| Error::stale_graph(path))?;
+        #[cfg(test)]
+        let _depth = crate::database::GraphRequestDepth::enter();
         let _lease = instance.lifecycle.read();
         let current = self.state.load_full();
         if current

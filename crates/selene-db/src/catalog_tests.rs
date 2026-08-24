@@ -11,7 +11,10 @@ use std::{
 use selene_catalog::{CatalogObjectId, CatalogObjectKind, GraphId as LowerGraphId};
 
 use super::*;
-use crate::{CreatePolicy, Database, DropPolicy, ErrorKind, ObjectPath, SchemaPath};
+use crate::{
+    CreatePolicy, Database, DropPolicy, ErrorKind, ExecutionOutcome, GqlStatus, ObjectPath,
+    SchemaPath,
+};
 
 fn schema(name: &str) -> SchemaPath {
     SchemaPath::regular("selene", name).unwrap()
@@ -225,6 +228,82 @@ fn concurrent_readers_observe_only_complete_outer_publications() {
     }
     finished.store(true, Ordering::Release);
     reader.join().unwrap();
+}
+
+#[test]
+fn concurrent_readers_observe_only_complete_publications_from_gql_ddl() {
+    let database = Database::builder().build();
+    let session = database.session();
+    let start = Arc::new(Barrier::new(2));
+    let finished = Arc::new(AtomicBool::new(false));
+    let reader_inner = Arc::clone(&database.catalog().inner);
+    let reader_start = Arc::clone(&start);
+    let reader_finished = Arc::clone(&finished);
+    let reader = thread::spawn(move || {
+        reader_start.wait();
+        while !reader_finished.load(Ordering::Acquire) {
+            assert_outer_complete(&reader_inner.state.load_full());
+        }
+        assert_outer_complete(&reader_inner.state.load_full());
+    });
+
+    start.wait();
+    session.execute("CREATE SCHEMA /concurrent").unwrap();
+    for index in 0..8 {
+        session
+            .execute(&format!("CREATE GRAPH /concurrent/g{index} ANY"))
+            .unwrap();
+    }
+    for index in 0..8 {
+        session
+            .execute(&format!("DROP GRAPH /concurrent/g{index}"))
+            .unwrap();
+    }
+    session.execute("DROP SCHEMA /concurrent").unwrap();
+    finished.store(true, Ordering::Release);
+    reader.join().unwrap();
+}
+
+/// Every database-catalog statement dispatches after the parse lease is
+/// released. The test-only lease accounting in `lock_lifecycle_writer` panics
+/// if any `Catalog` mutation runs under a same-thread graph request lease, so
+/// this test passing proves hard constraint A for each statement kind,
+/// including the bootstrap `DROP GRAPH` bridge.
+#[test]
+fn gql_catalog_statements_dispatch_outside_the_graph_request_lease() {
+    let database = Database::builder().build();
+    let session = database.session();
+    let omitted = ExecutionOutcome::OmittedResult {
+        status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
+    };
+    assert_eq!(session.execute("CREATE SCHEMA /lease").unwrap(), omitted);
+    assert_eq!(
+        session.execute("CREATE GRAPH /lease/g ANY").unwrap(),
+        omitted
+    );
+    assert_eq!(session.execute("CREATE GRAPH h ANY").unwrap(), omitted);
+    assert_eq!(session.execute("DROP GRAPH h").unwrap(), omitted);
+    assert_eq!(session.execute("DROP GRAPH /lease/g").unwrap(), omitted);
+    assert_eq!(session.execute("DROP SCHEMA /lease").unwrap(), omitted);
+    assert!(matches!(
+        session.execute("DROP GRAPH default").unwrap(),
+        ExecutionOutcome::Written(_)
+    ));
+    assert_eq!(crate::database::GraphRequestDepth::current(), 0);
+}
+
+#[test]
+#[should_panic(expected = "catalog lifecycle entered under a same-thread graph request lease")]
+fn lease_accounting_catches_catalog_mutation_under_a_request_lease() {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    let inner = Arc::clone(&catalog.inner);
+    let path = graph("public", "default");
+    inner
+        .with_graph_request(bootstrap_graph_id(), &path, |_| {
+            catalog.create_schema(&schema("under_lease"), CreatePolicy::Strict)
+        })
+        .unwrap();
 }
 
 #[test]

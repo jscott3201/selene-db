@@ -73,6 +73,7 @@ mod catalog;
 mod catalog_snapshot;
 mod config;
 mod database;
+mod ddl;
 mod error;
 mod graph_handle;
 mod graph_type;
