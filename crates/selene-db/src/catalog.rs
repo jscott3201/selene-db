@@ -23,6 +23,9 @@ use crate::{
 };
 
 /// Duplicate handling for a create operation.
+///
+/// This enum grows as ISO catalog statements are implemented; match with a
+/// wildcard arm when only some policies matter.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum CreatePolicy {
     /// Report an existing object as an error.
@@ -30,6 +33,17 @@ pub enum CreatePolicy {
     Strict,
     /// Return [`CreateOutcome::AlreadyExists`] for the requested kind only.
     IfNotExists,
+    /// Drop an existing object of the requested kind and create the new one in
+    /// the same publication (ISO/IEC 39075:2024 section 12.4 GR2).
+    ///
+    /// Only [`Catalog::create_graph`] implements this policy. The drop half
+    /// runs exactly the [`Catalog::drop_graph`] admission: RESTRICT on a
+    /// nonempty graph, protection of the bootstrap graph, and the lifecycle
+    /// write lease. `CREATE SCHEMA` has no `OR REPLACE` form (section 12.2)
+    /// and graph-type replacement waits for graph-type statements, so
+    /// [`Catalog::create_schema`] and [`Catalog::create_graph_type`] report
+    /// `FeatureNotSupported` for it regardless of whether the object exists.
+    OrReplace,
 }
 
 /// Missing-object handling for a drop operation.
@@ -49,6 +63,15 @@ pub enum CreateOutcome<T> {
     Created(T),
     /// The same requested kind already existed at the canonical path.
     AlreadyExists(T),
+    /// [`CreatePolicy::OrReplace`] dropped the existing object and published
+    /// the new one in a single state swap. The two descriptors never share an
+    /// identity.
+    Replaced {
+        /// The descriptor removed by the replacement.
+        dropped: T,
+        /// The descriptor published in its place.
+        created: T,
+    },
 }
 
 /// Explicit result of a drop request.
@@ -85,12 +108,13 @@ impl Catalog {
         path: &SchemaPath,
         policy: CreatePolicy,
     ) -> Result<CreateOutcome<SchemaDescriptor>> {
+        reject_replace(policy, "schema")?;
         let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         ensure_catalog(&base, path.catalog())?;
         if let Some(existing) = base.catalog.schema(&path.schema.0) {
             let summary = schema_summary(&base, existing)?;
-            return duplicate_outcome(policy, summary, path);
+            return duplicate_outcome(policy, summary, path, "schema");
         }
         let raw = next_id(base.high_water.schema, "schema")?;
         let id = LowerSchemaId::new(raw).map_err(Error::from_catalog_invariant)?;
@@ -130,6 +154,7 @@ impl Catalog {
         definition: GraphTypeDefinition,
         policy: CreatePolicy,
     ) -> Result<CreateOutcome<GraphTypeDescriptor>> {
+        reject_replace(policy, "graph type")?;
         let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         let schema = require_schema(&base, &path.schema_path())?;
@@ -138,7 +163,7 @@ impl Catalog {
                 return Err(Error::wrong_kind(path, "graph type", existing.kind()));
             }
             let summary = graph_type_summary(&base, existing)?;
-            return duplicate_outcome(policy, summary, path);
+            return duplicate_outcome(policy, summary, path, "graph type");
         }
         let raw = next_id(base.high_water.graph_type, "graph type")?;
         let id = LowerGraphTypeId::new(raw).map_err(Error::from_catalog_invariant)?;
@@ -177,6 +202,12 @@ impl Catalog {
     }
 
     /// Create an open graph or a graph constrained by a same-schema graph type.
+    ///
+    /// Under [`CreatePolicy::OrReplace`] an existing graph at the path is
+    /// dropped with the same admission as [`Catalog::drop_graph`] and the new
+    /// graph, with a fresh identity, is published in the same state swap. A
+    /// failure at any point publishes nothing, so the old graph stays
+    /// registered and its handles stay valid.
     pub fn create_graph(
         &self,
         path: &ObjectPath,
@@ -186,17 +217,39 @@ impl Catalog {
         let _writer = self.inner.lock_lifecycle_writer();
         let base = self.inner.state.load_full();
         let schema = require_schema(&base, &path.schema_path())?;
+        let mut replaced = None;
+        let mut replaced_instance = None;
         if let Some(existing) = base.catalog.schema_object(schema, &path.object.0) {
             if existing.kind() != CatalogObjectKind::Graph {
                 return Err(Error::wrong_kind(path, "graph", existing.kind()));
             }
-            return duplicate_outcome(policy, graph_summary(&base, existing)?, path);
+            let summary = graph_summary(&base, existing)?;
+            if policy != CreatePolicy::OrReplace {
+                return duplicate_outcome(policy, summary, path, "graph");
+            }
+            let (id, instance) = self.drop_admission(&base, path, existing)?;
+            replaced = Some((id, summary));
+            replaced_instance = Some(instance);
+        }
+        // Lock order for the replaced graph is the drop order: writer mutex,
+        // then its lifecycle write lease, then its graph state. The lease is
+        // held until the replacing state is stored.
+        let _lifecycle = replaced_instance
+            .as_ref()
+            .map(|instance| instance.lifecycle.write());
+        if let (Some((id, _)), Some(instance)) = (&replaced, &replaced_instance) {
+            self.check_droppable(*id, instance, path)?;
         }
         let (type_id, runtime) = resolve_binding(&base, schema, graph_type)?;
         let raw = next_id(base.high_water.graph, "graph")?;
         let id = LowerGraphId::new(raw).map_err(Error::from_catalog_invariant)?;
         let mut transaction =
             CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
+        let mut graphs = base.graphs.clone();
+        if let Some((dropped, _)) = &replaced {
+            transaction.remove(CatalogObjectId::Graph(*dropped));
+            graphs.remove(dropped);
+        }
         let descriptor = LowerDescriptor::graph(
             id,
             path.object.0.clone(),
@@ -218,7 +271,6 @@ impl Catalog {
         .and_then(selene_graph::SharedGraphBuilder::build)
         .map_err(Error::invalid_graph_type_source)?;
         let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-        let mut graphs = base.graphs.clone();
         graphs.insert(id, Arc::new(GraphInstance::new(graph)));
         let mut high_water = base.high_water;
         high_water.graph = raw;
@@ -232,7 +284,16 @@ impl Catalog {
         self.inner.after_graph_construction()?;
         self.inner.before_publication()?;
         self.inner.state.store(next);
-        Ok(CreateOutcome::Created(created))
+        match replaced {
+            Some((dropped, summary)) => {
+                self.inner.procedures.forget_graph(core_graph_id(dropped));
+                Ok(CreateOutcome::Replaced {
+                    dropped: summary,
+                    created,
+                })
+            }
+            None => Ok(CreateOutcome::Created(created)),
+        }
     }
 
     /// Drop an empty, non-bootstrap graph under RESTRICT semantics.
@@ -249,33 +310,9 @@ impl Catalog {
         if descriptor.kind() != CatalogObjectKind::Graph {
             return Err(Error::wrong_kind(path, "graph", descriptor.kind()));
         }
-        let CatalogObjectId::Graph(id) = descriptor.id() else {
-            unreachable!("kind and typed ID agree")
-        };
-        if id == bootstrap_graph_id() {
-            return Err(Error::protected(path, "bootstrap graph"));
-        }
-        let instance = base.graphs.get(&id).cloned().ok_or_else(|| {
-            Error::catalog_invariant("graph descriptor has no registered runtime instance")
-        })?;
-        #[cfg(test)]
-        self.inner.observe_blocked_drop(&instance);
+        let (id, instance) = self.drop_admission(&base, path, descriptor)?;
         let _lifecycle = instance.lifecycle.write();
-        let current = self.inner.state.load_full();
-        if current
-            .graphs
-            .get(&id)
-            .is_none_or(|registered| !Arc::ptr_eq(registered, &instance))
-        {
-            return Err(Error::stale_graph(path));
-        }
-        let graph = instance.graph.read();
-        let nodes = graph.node_count();
-        let edges = graph.edge_count();
-        drop(graph);
-        if nodes != 0 || edges != 0 {
-            return Err(Error::nonempty_graph(path, nodes, edges));
-        }
+        self.check_droppable(id, &instance, path)?;
         let summary = graph_summary(&base, descriptor)?;
         let mut transaction =
             CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
@@ -378,6 +415,55 @@ impl Catalog {
         Ok(DropOutcome::Dropped(summary))
     }
 
+    /// First half of graph-drop admission, before the lifecycle write lease:
+    /// reject the protected bootstrap graph and locate the registered instance.
+    fn drop_admission(
+        &self,
+        base: &DatabaseState,
+        path: &ObjectPath,
+        descriptor: &LowerDescriptor,
+    ) -> Result<(LowerGraphId, Arc<GraphInstance>)> {
+        let CatalogObjectId::Graph(id) = descriptor.id() else {
+            unreachable!("kind and typed ID agree")
+        };
+        if id == bootstrap_graph_id() {
+            return Err(Error::protected(path, "bootstrap graph"));
+        }
+        let instance = base.graphs.get(&id).cloned().ok_or_else(|| {
+            Error::catalog_invariant("graph descriptor has no registered runtime instance")
+        })?;
+        #[cfg(test)]
+        self.inner.observe_blocked_drop(&instance);
+        Ok((id, instance))
+    }
+
+    /// Second half of graph-drop admission, under the instance's lifecycle
+    /// write lease: recheck registration, then apply RESTRICT to the contents
+    /// left by every request that completed before the lease was granted.
+    fn check_droppable(
+        &self,
+        id: LowerGraphId,
+        instance: &Arc<GraphInstance>,
+        path: &ObjectPath,
+    ) -> Result<()> {
+        let current = self.inner.state.load_full();
+        if current
+            .graphs
+            .get(&id)
+            .is_none_or(|registered| !Arc::ptr_eq(registered, instance))
+        {
+            return Err(Error::stale_graph(path));
+        }
+        let graph = instance.graph.read();
+        let nodes = graph.node_count();
+        let edges = graph.edge_count();
+        drop(graph);
+        if nodes != 0 || edges != 0 {
+            return Err(Error::nonempty_graph(path, nodes, edges));
+        }
+        Ok(())
+    }
+
     /// Open a non-owning handle to the graph currently at `path`.
     pub fn open_graph(&self, path: &ObjectPath) -> Result<GraphHandle> {
         let descriptor = self.snapshot().resolve_graph(path)?;
@@ -394,11 +480,24 @@ fn duplicate_outcome<T>(
     policy: CreatePolicy,
     value: T,
     path: &impl std::fmt::Display,
+    kind: &'static str,
 ) -> Result<CreateOutcome<T>> {
     match policy {
         CreatePolicy::Strict => Err(Error::already_exists(path)),
         CreatePolicy::IfNotExists => Ok(CreateOutcome::AlreadyExists(value)),
+        // Graph replacement is handled before this point; every other kind
+        // rejects the policy up front, so this arm is defensive only.
+        CreatePolicy::OrReplace => Err(Error::unsupported_create_policy(kind)),
     }
+}
+
+/// Reject [`CreatePolicy::OrReplace`] for kinds that do not implement it,
+/// before any lock is taken and regardless of whether the object exists.
+fn reject_replace(policy: CreatePolicy, kind: &'static str) -> Result<()> {
+    if policy == CreatePolicy::OrReplace {
+        return Err(Error::unsupported_create_policy(kind));
+    }
+    Ok(())
 }
 
 fn missing_outcome<T>(

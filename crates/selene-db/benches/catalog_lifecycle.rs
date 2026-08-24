@@ -238,6 +238,23 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
                 elapsed
             });
         });
+        // The fixture graph exists after the drop row's untimed recreation;
+        // each replacement leaves exactly one graph at the path, so no
+        // cleanup is needed between iterations.
+        gql.bench_with_input(
+            BenchmarkId::new("create_or_replace_graph_gql", scale),
+            &scale,
+            |b, _| {
+                b.iter(|| {
+                    assert_eq!(
+                        black_box(&session)
+                            .execute(black_box("CREATE OR REPLACE GRAPH /gql_target/g ANY"))
+                            .expect("timed GQL graph replace succeeds"),
+                        OMITTED
+                    );
+                });
+            },
+        );
         gql.bench_with_input(
             BenchmarkId::new("create_graph_if_not_exists_noop_gql", scale),
             &scale,

@@ -296,6 +296,36 @@ fn failures_and_panics_are_normalized_and_block_every_claim() {
     }
 }
 
+/// The generated GC04 record claims the complete capability. This test ties
+/// that claim to the three statement shapes section 12.4/12.5 put under it
+/// so the record and the facade cannot drift apart silently.
+#[test]
+fn gc04_supported_record_matches_facade_behaviour() {
+    let record = selene_profile::capability(selene_profile::FeatureId::GC04).unwrap();
+    assert_eq!(record.status, selene_profile::CapabilityStatus::Supported);
+    assert_eq!(
+        record.flagger_status,
+        selene_profile::FlaggerStatus::Accepted
+    );
+    let database = selene_db::Database::builder().build();
+    let session = database.session();
+    let catalog = database.catalog();
+    let path = selene_db::ObjectPath::regular("selene", "public", "demo").unwrap();
+    let omitted = selene_db::ExecutionOutcome::OmittedResult {
+        status: selene_db::GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
+    };
+    assert_eq!(session.execute("CREATE GRAPH demo ANY").unwrap(), omitted);
+    let created = catalog.snapshot().resolve_graph(&path).unwrap();
+    assert_eq!(
+        session.execute("CREATE OR REPLACE GRAPH demo ANY").unwrap(),
+        omitted
+    );
+    let replaced = catalog.snapshot().resolve_graph(&path).unwrap();
+    assert_ne!(replaced.id, created.id);
+    assert_eq!(session.execute("DROP GRAPH demo").unwrap(), omitted);
+    assert!(catalog.snapshot().resolve_graph(&path).is_err());
+}
+
 #[test]
 fn fixed_provenance_manifest_is_closed_and_hashes_only_semantics() {
     let harness = harness();

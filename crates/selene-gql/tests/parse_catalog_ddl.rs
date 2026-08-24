@@ -324,20 +324,76 @@ fn unsupported_clause_spans_point_at_the_clause() {
     assert_eq!(span, SourceSpan::new(15, 6));
 }
 
+/// `OR REPLACE` is part of the ISO section 12.4 format and gated by no
+/// feature of its own (CR1-CR7), so it parses, sets the flag, and stamps only
+/// GC04 and GG01.
 #[test]
-fn or_replace_keeps_its_not_implemented_rejection() {
+fn or_replace_parses_and_carries_the_flag_into_the_command() {
     for source in [
         "CREATE OR REPLACE GRAPH g ANY",
         "CREATE OR REPLACE PROPERTY GRAPH g ANY",
+        "CREATE OR REPLACE PROPERTY GRAPH /s/g TYPED ANY PROPERTY GRAPH",
+        "create or replace graph g any",
     ] {
-        let error = assert_not_implemented(source, "OR REPLACE");
-        let ParserError::NotImplemented { span, .. } = error else {
+        let statement = parse_ddl(source);
+        let DdlStatement::CreateGraph {
+            or_replace,
+            if_not_exists,
+            span,
+            ..
+        } = &statement
+        else {
+            panic!("{source}: expected CREATE GRAPH");
+        };
+        assert!(or_replace, "{source}");
+        assert!(!if_not_exists, "{source}");
+        assert_eq!(*span, full_span(source), "{source}");
+        let Some(selene_gql::DatabaseCatalogCommand::CreateGraph {
+            or_replace: true,
+            if_not_exists: false,
+            ..
+        }) = selene_gql::DatabaseCatalogCommand::from_ddl(&statement)
+        else {
+            panic!("{source}: command lost the OR REPLACE flag");
+        };
+        assert_eq!(features(source), [FeatureId::GC04, FeatureId::GG01]);
+    }
+    // OR REPLACE and IF NOT EXISTS are alternatives in ISO section 12.4, and
+    // ISO section 12.4 has no OR REPLACE ... IF NOT EXISTS ordering either.
+    for source in [
+        "CREATE OR REPLACE GRAPH IF NOT EXISTS g ANY",
+        "CREATE GRAPH IF NOT EXISTS OR REPLACE g ANY",
+        "CREATE OR REPLACE IF NOT EXISTS GRAPH g ANY",
+        "CREATE OR GRAPH g ANY",
+        "CREATE REPLACE GRAPH g ANY",
+    ] {
+        assert_syntax(source);
+    }
+    // The type clause rules are unchanged by the modifier.
+    assert_syntax("CREATE OR REPLACE GRAPH g");
+    assert_unsupported("CREATE OR REPLACE GRAPH g LIKE h", FeatureId::GG04);
+    assert_unsupported(
+        "CREATE OR REPLACE GRAPH g ANY AS COPY OF h",
+        FeatureId::GG05,
+    );
+}
+
+/// Element-type DDL is not an ISO statement; its `OR REPLACE` stays
+/// not-implemented and the diagnostic must not call the modifier non-ISO.
+#[test]
+fn element_type_or_replace_stays_not_implemented_with_a_truthful_message() {
+    for source in [
+        "CREATE OR REPLACE NODE TYPE :Person ()",
+        "CREATE OR REPLACE EDGE TYPE :KNOWS (FROM :Person TO :Person)",
+    ] {
+        let error = assert_not_implemented(source, "element-type DDL");
+        let ParserError::NotImplemented { message, span, .. } = error else {
             unreachable!()
         };
+        assert!(message.contains("sections 12.4 and 12.6"), "{message}");
+        assert!(!message.contains("not part of ISO"), "{message}");
         assert_eq!(span, full_span(source), "{source}");
     }
-    // OR REPLACE and IF NOT EXISTS are alternatives in ISO section 12.4.
-    assert_syntax("CREATE OR REPLACE GRAPH IF NOT EXISTS g ANY");
 }
 
 #[test]

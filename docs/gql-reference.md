@@ -592,6 +592,7 @@ bootstrap schema `/public` is an access-rule violation (`42000`).
 ```gql
 CREATE GRAPH /memory/episodes ANY
 CREATE PROPERTY GRAPH IF NOT EXISTS scratch TYPED ANY PROPERTY GRAPH
+CREATE OR REPLACE GRAPH /memory/episodes ANY
 DROP GRAPH /memory/episodes
 DROP PROPERTY GRAPH IF EXISTS scratch
 ```
@@ -601,14 +602,24 @@ resolved against the current working schema, which the compatibility session
 fixes to `/selene/public` (§17.2 SR2a). The graph type clause is mandatory in
 ISO §12.4; only the `<open graph type>` (`[TYPED | ::] ANY [[PROPERTY] GRAPH]`,
 feature GG01) executes. `LIKE g` (GG04), `AS COPY OF g` (GG05), an inline
-graph type (GG03), a graph type reference (GG02), `OR REPLACE`, and
-`CREATE/DROP GRAPH TYPE` are rejected before planning with `42N01`; a
-`NEXT`-composed catalog statement is rejected the same way.
+graph type (GG03), a graph type reference (GG02), and `CREATE/DROP GRAPH
+TYPE` are rejected before planning with `42N01`; a `NEXT`-composed catalog
+statement is rejected the same way.
 
 `CREATE GRAPH` and `DROP GRAPH` complete with `00001`. `DROP GRAPH IF EXISTS`
 on an absent graph completes with the warning `01G03` (§12.5 GR1). A strict
 duplicate is `42N10`; a missing graph, missing schema, or wrong-kind object is
 `42002`; a nonempty graph is `G1000` (all drops are RESTRICT).
+
+`CREATE OR REPLACE GRAPH` (§12.4 GR2) drops an existing graph at the reference
+and creates the new one in a single catalog publication; the statement
+completes with `00001` whether the graph was created or replaced, and the
+replacement always has a new graph identity, so handles opened on the old graph
+fail as stale. The effective drop is RESTRICT: a nonempty graph is `G1000`. An
+object of another kind at the reference is `42002`. `OR REPLACE` and
+`IF NOT EXISTS` are alternatives in the ISO format, so writing both is a syntax
+error. The protected bootstrap graph `/selene/public/default` cannot be
+replaced (`42000`); only `DROP GRAPH` takes the factory-reset bridge below.
 
 A `DROP GRAPH` whose reference resolves to the protected bootstrap graph
 `/selene/public/default` still performs the implementation-defined
@@ -656,9 +667,12 @@ are validated against the declared property type, stored in the graph type,
 round-tripped by `SHOW NODE TYPES` / `SHOW EDGE TYPES`, recovered from durable
 state, and materialized when an inserted node or edge omits the property.
 
-`OR REPLACE` and `IF NOT EXISTS` modifiers are accepted on `CREATE NODE TYPE`
-and `CREATE EDGE TYPE`. The parser observes feature `GC03`, but the generated
-runtime inventory withdraws it with its GG02 dependency.
+`OR REPLACE` and `IF NOT EXISTS` modifiers are accepted by the grammar on
+`CREATE NODE TYPE` and `CREATE EDGE TYPE`. The parser observes feature `GC03`
+for `IF NOT EXISTS`, but the generated runtime inventory withdraws it with its
+GG02 dependency. `OR REPLACE` on these element-type statements is rejected as
+not implemented (`42N01`): ISO defines the modifier for graph and graph-type
+statements (§12.4, §12.6), and element-type DDL is not an ISO statement.
 
 ### `ALTER NODE TYPE`
 

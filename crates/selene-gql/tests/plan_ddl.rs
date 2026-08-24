@@ -200,6 +200,7 @@ fn database_catalog_ddl_lowers_to_its_storage_neutral_command() {
         catalog_op(&plan),
         &CatalogOp::DatabaseCatalog(selene_gql::DatabaseCatalogCommand::CreateGraph {
             reference,
+            or_replace: true,
             if_not_exists: true,
             span: selene_gql::SourceSpan::new(0, 1),
         })

@@ -38,6 +38,16 @@
 //! lookup and the lifecycle lock in which a concurrent drop and same-path
 //! recreate could be observed.
 //!
+//! # `CREATE OR REPLACE GRAPH`
+//!
+//! `OR REPLACE` maps to [`CreatePolicy::OrReplace`]: [`Catalog::create_graph`]
+//! drops an existing graph under the `DROP GRAPH` admission and publishes the
+//! replacement in one state swap (§12.4 GR2), completing with `00001` whether
+//! the graph was created or replaced. A nonempty graph is `G1000`, an object
+//! of another kind is `42002`, and a reference that resolves to the protected
+//! bootstrap graph is `42000`: the factory-reset bridge below applies to
+//! `DROP GRAPH` only, so the bootstrap graph can be reset but never replaced.
+//!
 //! # Bootstrap `DROP GRAPH` bridge
 //!
 //! A `DROP GRAPH` whose reference resolves to the protected bootstrap graph
@@ -80,7 +90,10 @@ pub(crate) fn execute(
         } => {
             let path = resolve_schema(inner, &reference)?;
             match catalog.create_schema(&path, create_policy(if_not_exists))? {
-                CreateOutcome::Created(_) | CreateOutcome::AlreadyExists(_) => omitted(),
+                // Schemas have no OR REPLACE form; the arm is exhaustive only.
+                CreateOutcome::Created(_)
+                | CreateOutcome::AlreadyExists(_)
+                | CreateOutcome::Replaced { .. } => omitted(),
             }
         }
         DatabaseCatalogCommand::DropSchema {
@@ -97,12 +110,22 @@ pub(crate) fn execute(
         }
         DatabaseCatalogCommand::CreateGraph {
             reference,
+            or_replace,
             if_not_exists,
             ..
         } => {
             let path = resolve_graph(inner, &reference)?;
-            match catalog.create_graph(&path, None, create_policy(if_not_exists))? {
-                CreateOutcome::Created(_) | CreateOutcome::AlreadyExists(_) => omitted(),
+            let policy = if or_replace {
+                CreatePolicy::OrReplace
+            } else {
+                create_policy(if_not_exists)
+            };
+            match catalog.create_graph(&path, None, policy)? {
+                // Section 12.4 GR2: OR REPLACE effectively executes DROP GRAPH
+                // first; the whole statement still completes as one 00001.
+                CreateOutcome::Created(_)
+                | CreateOutcome::AlreadyExists(_)
+                | CreateOutcome::Replaced { .. } => omitted(),
             }
         }
         DatabaseCatalogCommand::DropGraph {

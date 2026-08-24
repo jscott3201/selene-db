@@ -141,6 +141,19 @@ alive. Rust callers can:
 requested kind exists at the same canonical path. An object of another kind in
 the schema's shared namespace is still `CatalogObjectWrongKind`.
 
+`CreatePolicy::OrReplace` is implemented by `create_graph` only. When a graph
+exists at the path it is dropped under the full `drop_graph` admission (writer
+mutex, the target's lifecycle write lease, registration recheck, RESTRICT on
+live nodes or edges, bootstrap protection) and the new graph is created with a
+fresh identity in the same publication: one `DatabaseState` swap removes the old
+descriptor and instance, adds the new pair, and advances the generation once.
+The outcome is `CreateOutcome::Replaced { dropped, created }`; an absent path is
+an ordinary `Created`. A failure at any point publishes nothing, so the old
+graph stays registered and its handles stay valid. `create_schema` (no
+`OR REPLACE` form in ISO §12.2) and `create_graph_type` (graph-type statements
+are part 2) report `FeatureNotSupported` for the policy whether or not the
+object exists.
+
 `DropPolicy::Strict` reports a missing object as a structured error.
 `DropPolicy::IfExists` returns `DropOutcome::NotFound`. Duplicate and missing
 no-op outcomes retain the same outer allocation and catalog generation.
@@ -202,6 +215,10 @@ There are no persistent named transactions in this slice.
 Successful graph drop removes the descriptor and runtime entry in the same
 outer publication. Procedure-derived graph state is cleared after that swap.
 An old handle fails after drop and cannot alias a same-path replacement.
+`OR REPLACE` takes the same locks in the same order and holds the old
+instance's lifecycle write lease until the replacing state is stored, so a
+request that raced the replacement either completed before it (and its writes
+are counted by RESTRICT) or fails as stale.
 
 ## GQL reference resolution
 
@@ -243,6 +260,9 @@ the same GQLSTATUS for Rust and GQL callers; the code is selected by
 | Case | Outcome / `ErrorKind` | GQLSTATUS | Grounding |
 |---|---|---|---|
 | successful create/drop | `OmittedResult` | `00001` | §12.1 GR2 |
+| `CREATE OR REPLACE GRAPH`, whether the graph was created or replaced | `OmittedResult`, one publication | `00001` | §12.4 GR2: `DROP GRAPH` is effectively executed first |
+| `CREATE OR REPLACE GRAPH` on a nonempty graph | `CatalogRestrictViolation`, no publication | `G1000` | the effective `DROP GRAPH` is RESTRICT |
+| `CREATE OR REPLACE GRAPH` on the bootstrap graph | `ProtectedCatalogObject`, no publication, no reset | `42000` | the factory-reset bridge is `DROP GRAPH` only |
 | `CREATE … IF NOT EXISTS` on an existing object, `DROP SCHEMA IF EXISTS` on a missing schema | `OmittedResult`, no publication | `00001` | §12.2/§12.3/§12.4 GR1 define no warning |
 | `DROP GRAPH IF EXISTS` on a missing graph | `OmittedResult`, no publication | `01G03` | §12.5 GR1 |
 | strict duplicate | `CatalogObjectAlreadyExists` | `42N10` | implementation subclass (IE005) |
@@ -251,7 +271,8 @@ the same GQLSTATUS for Rust and GQL callers; the code is selected by
 | RESTRICT: nonempty graph or schema, referenced graph type | `CatalogRestrictViolation` | `G1000` | Table 8 dependent object error (class); not `G1001` |
 | protected bootstrap schema or graph | `ProtectedCatalogObject` | `42000` | Table 8 class; access rule is IE005 |
 | name outside the identifier profile | `InvalidCatalogName` | `42001` | invalid syntax |
-| `LIKE`, `AS COPY OF`, inline or referenced graph type, `OR REPLACE`, `GRAPH TYPE` statements, `NEXT` chains | `FeatureNotSupported` | `42N01` | GG04, GG05, GG03, GG02, not implemented |
+| `LIKE`, `AS COPY OF`, inline or referenced graph type, `GRAPH TYPE` statements, `NEXT` chains | `FeatureNotSupported` | `42N01` | GG04, GG05, GG03, GG02, not implemented |
+| `OR REPLACE` on `CREATE NODE TYPE` / `CREATE EDGE TYPE` | `FeatureNotSupported` | `42N01` | element-type DDL is not an ISO statement; §12.4/§12.6 define `OR REPLACE` for graph and graph-type statements only |
 
 A no-op outcome retains the same outer allocation and catalog generation. An
 unsupported clause is rejected by the parser before any command exists, so it
@@ -273,7 +294,9 @@ unchanged `Written` summary and clearing projection state. The decision is by
 resolved stable identity, not spelling; every other reference goes to
 `Catalog::drop_graph`. The Flagger still stamps `IM_DROP_GRAPH` on `DROP GRAPH`
 because it cannot see that resolution. M02-PR05 owns deleting this bridge, the
-stamp, and the bootstrap catalog together.
+stamp, and the bootstrap catalog together. The bridge is `DROP GRAPH` only:
+`CREATE OR REPLACE GRAPH` on a reference that resolves to the bootstrap graph
+is `ProtectedCatalogObject` (`42000`) and neither replaces nor resets it.
 
 Catalog lifecycle changes have no WAL, snapshot encoding, recovery, or crash
 contract in M02-PR03. Test-only failures after descriptor staging, after graph

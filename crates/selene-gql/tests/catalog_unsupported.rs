@@ -24,6 +24,8 @@ fn bare_lower_session_rejects_database_catalog_statements_without_state_change()
         "DROP SCHEMA IF EXISTS /memory",
         "CREATE GRAPH g ANY",
         "CREATE GRAPH IF NOT EXISTS /memory/g ANY",
+        "CREATE OR REPLACE GRAPH g ANY",
+        "CREATE OR REPLACE PROPERTY GRAPH /memory/g TYPED ANY PROPERTY GRAPH",
     ] {
         let error = session
             .execute_source(source, &EmptyProcedureRegistry)

@@ -30,8 +30,8 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
         }
         // Section 12.4 CR1-CR3: CREATE GRAPH is GC04; the conditional modifier
         // adds GC05; the only representable type clause is the open graph type
-        // (GG01). OR REPLACE has no feature ID and is rejected by
-        // `reject_unimplemented`.
+        // (GG01). OR REPLACE is part of the section 12.4 format and gated by
+        // no feature of its own, so it rides on GC04 (CR1) and is not stamped.
         DdlStatement::CreateGraph {
             if_not_exists,
             span,

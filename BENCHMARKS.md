@@ -193,14 +193,16 @@ lifecycle commands as GQL database-catalog statements through the
 compatibility `Session`, at the same schema scales as the Rust-API publication
 rows. Timed rows cover only the GQL statement; the inverse operation restores
 the fixture through the Rust API outside the returned duration. The
-`create_graph_if_not_exists_noop_gql` row publishes nothing and isolates the
-per-request parse/analyze/plan cost of the fresh lower session (there is no
-plan cache on this path), which is the constant difference between a GQL row
-and its Rust-API counterpart.
+`create_or_replace_graph_gql` row replaces the fixture graph on every
+iteration (drop admission plus create in one publication) and needs no
+cleanup. The `create_graph_if_not_exists_noop_gql` row publishes nothing and
+isolates the per-request parse/analyze/plan cost of the fresh lower session
+(there is no plan cache on this path), which is the constant difference
+between a GQL row and its Rust-API counterpart.
 
 Recorded on 2026-08-23 with Apple M5 (10 cores, 16 GiB), macOS 26.7 build
-25G220, rustc 1.97.1, and the worktree based on
-`a86f16680ca7e925ab1938514a5ea476b277a60c`:
+25G220, rustc 1.97.1, and the worktree at `ac93178f` plus the
+`CREATE OR REPLACE GRAPH` repair:
 
 ```bash
 scripts/run-benches.sh --profile quick --bench catalog_lifecycle
@@ -208,16 +210,19 @@ scripts/run-benches.sh --profile quick --bench catalog_lifecycle
 
 10-sample Criterion confidence intervals from one quick run; recorded
 baselines, not regression thresholds. The Rust-API rows from the same run are
-listed for direct comparison.
+listed for direct comparison. The `create_or_replace_graph_gql` 16-schema
+interval was wide in this run; the immediately preceding run of the same
+command measured it at 59.478–60.154 µs.
 
 | Bench | 16 schemas | 256 schemas |
 |---|---:|---:|
-| `catalog_lifecycle/outer_snapshot_publication/create_schema` (Rust API) | 2.5728–2.5997 µs | 57.063–57.708 µs |
-| `catalog_lifecycle/outer_snapshot_publication/drop_schema` (Rust API) | 2.5774–2.6719 µs | 56.968–57.700 µs |
-| `catalog_lifecycle/gql_ddl/create_schema_gql` | 28.810–29.434 µs | 84.238–85.112 µs |
-| `catalog_lifecycle/gql_ddl/create_graph_gql` | 42.877–43.705 µs | 99.137–100.49 µs |
-| `catalog_lifecycle/gql_ddl/drop_graph_gql` | 46.599–48.469 µs | 100.81–104.26 µs |
-| `catalog_lifecycle/gql_ddl/create_graph_if_not_exists_noop_gql` | 28.397–28.870 µs | 27.560–28.044 µs |
+| `catalog_lifecycle/outer_snapshot_publication/create_schema` (Rust API) | 2.8742–2.9183 µs | 61.384–62.220 µs |
+| `catalog_lifecycle/outer_snapshot_publication/drop_schema` (Rust API) | 2.7734–2.8207 µs | 63.339–69.788 µs |
+| `catalog_lifecycle/gql_ddl/create_schema_gql` | 32.367–32.958 µs | 89.828–91.754 µs |
+| `catalog_lifecycle/gql_ddl/create_graph_gql` | 43.711–44.740 µs | 101.50–103.25 µs |
+| `catalog_lifecycle/gql_ddl/drop_graph_gql` | 50.772–51.826 µs | 104.27–104.74 µs |
+| `catalog_lifecycle/gql_ddl/create_or_replace_graph_gql` | 62.227–84.952 µs | 113.69–115.11 µs |
+| `catalog_lifecycle/gql_ddl/create_graph_if_not_exists_noop_gql` | 30.446–31.413 µs | 29.980–30.527 µs |
 
 ## §1 selene-core
 

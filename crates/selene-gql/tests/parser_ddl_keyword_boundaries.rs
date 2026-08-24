@@ -132,11 +132,21 @@ fn guarded_or_replace_keywords_still_preserve_not_implemented_rejection() {
     for source in [
         "CREATE OR REPLACE NODE TYPE :Person ()",
         "CREATE OR REPLACE EDGE TYPE :KNOWS ()",
-        "CREATE OR REPLACE GRAPH g ANY",
+        "CREATE OR REPLACE GRAPH TYPE t {(Person :Person)}",
         "CREATE SCHEMA /foo NEXT CREATE SCHEMA /bar",
         "CREATE GRAPH TYPE t {(Person :Person)}",
     ] {
         assert_not_implemented(source);
+    }
+    // CREATE OR REPLACE GRAPH is ISO section 12.4 and parses; the guarded
+    // keywords still need boundaries.
+    parse("CREATE OR REPLACE GRAPH g ANY").expect("OR REPLACE graph parses");
+    for source in [
+        "CREATE ORREPLACE GRAPH g ANY",
+        "CREATE OR REPLACEGRAPH g ANY",
+        "CREATE OR REPLACE GRAPHg ANY",
+    ] {
+        assert!(parse(source).is_err(), "{source} must not parse");
     }
 }
 

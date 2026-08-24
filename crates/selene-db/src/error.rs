@@ -215,6 +215,17 @@ impl Error {
         )
     }
 
+    /// `OR REPLACE` requested for an object kind whose replacement is not
+    /// implemented. Carries `42N01` like every other feature rejection.
+    pub(crate) fn unsupported_create_policy(kind: &str) -> Self {
+        Self {
+            kind: ErrorKind::FeatureNotSupported,
+            status: Some(GqlStatus::FEATURE_NOT_SUPPORTED),
+            message: format!("OR REPLACE is not supported for {kind} creation"),
+            source: None,
+        }
+    }
+
     pub(crate) fn already_exists(path: &impl fmt::Display) -> Self {
         Self::facade(
             ErrorKind::CatalogObjectAlreadyExists,

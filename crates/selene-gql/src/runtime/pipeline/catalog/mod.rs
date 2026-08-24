@@ -311,10 +311,12 @@ pub(super) fn execute(
     }
 }
 
+/// Element-type DDL is not an ISO statement; its `OR REPLACE` modifier is
+/// rejected by the Flagger and, for directly constructed plans, here.
 fn reject_or_replace(or_replace: bool) -> Result<(), ExecutorError> {
     if or_replace {
         return Err(ExecutorError::ImplementationDefined {
-            detail: "OR REPLACE not implemented for catalog DDL",
+            detail: "OR REPLACE is not implemented for element-type DDL",
         });
     }
     Ok(())

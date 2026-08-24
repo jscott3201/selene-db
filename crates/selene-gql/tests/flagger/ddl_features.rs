@@ -27,6 +27,12 @@ fn open_graph_management_is_admitted_and_closed_forms_are_feature_rejected() {
         ids("CREATE GRAPH IF NOT EXISTS demo ANY"),
         [FeatureId::GC04, FeatureId::GG01, FeatureId::GC05]
     );
+    // OR REPLACE is part of the section 12.4 format and gated by no feature
+    // of its own (CR1-CR7), so it stamps nothing beyond GC04 and GG01.
+    assert_eq!(
+        ids("CREATE OR REPLACE GRAPH demo ANY"),
+        [FeatureId::GC04, FeatureId::GG01]
+    );
 
     let source = "CREATE GRAPH /demo LIKE /source";
     let error = parse(source).expect_err(source);
@@ -108,9 +114,8 @@ fn intersect_and_except_composite_set_ops_are_supported() {
 }
 
 #[test]
-fn or_replace_catalog_ddl_is_not_implemented() {
+fn or_replace_element_type_ddl_is_not_implemented() {
     for source in [
-        "CREATE OR REPLACE GRAPH demo ANY",
         "CREATE OR REPLACE NODE TYPE :Person (name :: STRING)",
         "CREATE OR REPLACE EDGE TYPE :KNOWS (FROM :Person TO :Person)",
     ] {

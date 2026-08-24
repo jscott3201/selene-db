@@ -55,14 +55,12 @@ fn check_feature(id: FeatureId, span: SourceSpan) -> Result<(), ParserError> {
     })
 }
 
+/// Element-type DDL is not an ISO statement, so its `OR REPLACE` modifier has
+/// no ISO semantics to implement. `CREATE OR REPLACE GRAPH` is ISO section
+/// 12.4 and executes through the database facade; it is not rejected here.
 fn reject_unimplemented(statement: &Statement) -> Result<(), ParserError> {
     if let Statement::Ddl(
-        crate::DdlStatement::CreateGraph {
-            or_replace: true,
-            span,
-            ..
-        }
-        | crate::DdlStatement::CreateNodeType {
+        crate::DdlStatement::CreateNodeType {
             or_replace: true,
             span,
             ..
@@ -75,9 +73,9 @@ fn reject_unimplemented(statement: &Statement) -> Result<(), ParserError> {
     ) = statement
     {
         return Err(ParserError::not_implemented(
-            "OR REPLACE is not part of ISO/IEC 39075:2024 catalog DDL",
+            "OR REPLACE is defined by ISO/IEC 39075:2024 sections 12.4 and 12.6 for graph and graph-type statements; it is not implemented for element-type DDL, which is not an ISO statement",
             *span,
-            Some("OR REPLACE has no ISO feature ID; drop the modifier or DROP+CREATE explicitly"),
+            Some("drop the modifier, or DROP and CREATE the element type explicitly"),
         ));
     }
     Ok(())

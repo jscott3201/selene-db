@@ -43,13 +43,19 @@ pub enum DatabaseCatalogCommand {
         /// Span of the whole statement.
         span: SourceSpan,
     },
-    /// `CREATE [PROPERTY] GRAPH [IF NOT EXISTS] <reference> <open graph type>`.
+    /// `CREATE { [PROPERTY] GRAPH [IF NOT EXISTS] | OR REPLACE [PROPERTY]
+    /// GRAPH } <reference> <open graph type>`.
     ///
     /// Only the open graph type form reaches this command; every `<of graph
-    /// type>` and `<graph source>` clause is rejected by the parser.
+    /// type>` and `<graph source>` clause is rejected by the parser. The
+    /// grammar makes `IF NOT EXISTS` and `OR REPLACE` alternatives, so at most
+    /// one flag is set.
     CreateGraph {
         /// Absolute or current-schema-relative graph reference.
         reference: CatalogObjectReference,
+        /// Whether `OR REPLACE` was written (ISO/IEC 39075:2024 section 12.4
+        /// GR2: an existing graph is dropped before the new one is created).
+        or_replace: bool,
         /// Whether `IF NOT EXISTS` was written.
         if_not_exists: bool,
         /// Span of the whole statement.
@@ -92,11 +98,12 @@ impl DatabaseCatalogCommand {
             }),
             DdlStatement::CreateGraph {
                 reference,
+                or_replace,
                 if_not_exists,
                 span,
-                ..
             } => Some(Self::CreateGraph {
                 reference: reference.clone(),
+                or_replace: *or_replace,
                 if_not_exists: *if_not_exists,
                 span: *span,
             }),

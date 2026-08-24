@@ -43,7 +43,8 @@ pub enum DdlStatement {
     CreateGraph {
         /// Absolute or current-schema-relative graph reference.
         reference: CatalogObjectReference,
-        /// `OR REPLACE`; rejected by the Flagger as not implemented.
+        /// `OR REPLACE` (ISO/IEC 39075:2024 section 12.4): the facade drops an
+        /// existing graph and creates the new one in a single publication.
         or_replace: bool,
         /// `IF NOT EXISTS` (Feature GC05).
         if_not_exists: bool,
