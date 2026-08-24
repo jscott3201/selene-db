@@ -186,6 +186,39 @@ recorded baselines, not regression thresholds.
 | `catalog_lifecycle/outer_snapshot_publication/drop_schema` | 3.0956–3.3848 µs (16 schemas) | 67.853–70.335 µs (256 schemas) |
 | `catalog_lifecycle/graph_selection/open_graph` | 116.55–135.69 ns (4 graphs) | 141.25–151.78 ns (32 graphs) |
 
+#### M02-PR04 part 1 quick evidence
+
+The `catalog_lifecycle/gql_ddl` group issues the same schema and graph
+lifecycle commands as GQL database-catalog statements through the
+compatibility `Session`, at the same schema scales as the Rust-API publication
+rows. Timed rows cover only the GQL statement; the inverse operation restores
+the fixture through the Rust API outside the returned duration. The
+`create_graph_if_not_exists_noop_gql` row publishes nothing and isolates the
+per-request parse/analyze/plan cost of the fresh lower session (there is no
+plan cache on this path), which is the constant difference between a GQL row
+and its Rust-API counterpart.
+
+Recorded on 2026-08-23 with Apple M5 (10 cores, 16 GiB), macOS 26.7 build
+25G220, rustc 1.97.1, and the worktree based on
+`a86f16680ca7e925ab1938514a5ea476b277a60c`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle
+```
+
+10-sample Criterion confidence intervals from one quick run; recorded
+baselines, not regression thresholds. The Rust-API rows from the same run are
+listed for direct comparison.
+
+| Bench | 16 schemas | 256 schemas |
+|---|---:|---:|
+| `catalog_lifecycle/outer_snapshot_publication/create_schema` (Rust API) | 2.5728–2.5997 µs | 57.063–57.708 µs |
+| `catalog_lifecycle/outer_snapshot_publication/drop_schema` (Rust API) | 2.5774–2.6719 µs | 56.968–57.700 µs |
+| `catalog_lifecycle/gql_ddl/create_schema_gql` | 28.810–29.434 µs | 84.238–85.112 µs |
+| `catalog_lifecycle/gql_ddl/create_graph_gql` | 42.877–43.705 µs | 99.137–100.49 µs |
+| `catalog_lifecycle/gql_ddl/drop_graph_gql` | 46.599–48.469 µs | 100.81–104.26 µs |
+| `catalog_lifecycle/gql_ddl/create_graph_if_not_exists_noop_gql` | 28.397–28.870 µs | 27.560–28.044 µs |
+
 ## §1 selene-core
 
 Bench bins: `value_clone`, `vector_wgpu`. `value_clone` measures `Value` /
@@ -2497,7 +2530,7 @@ The first four are scale-independent (single-query CPU).
 | `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
 | `procedure_call_pipeline/match_call_repeat/1000` | 254.62 µs (quick) | Warm plan-cache `MATCH` over 1k input nodes feeding regular `CALL bench.repeat()`; covers direct procedure-call row growth beyond one-row source calls. |
 | `gql_profile_conformance/generated_capability_lookup` | 2.484 µs (quick) | One typed lookup for each of the 208 generated capability records. |
-| `gql_profile_flagger/parse_admitted_and_rejected` | 23.02 µs (quick) | Parses one admitted direct-selected parameter query and one rejected implied `CREATE GRAPH` query. |
+| `gql_profile_flagger/parse_admitted_and_rejected` | 23.02 µs (quick) | Parses one admitted direct-selected parameter query and one rejected `CREATE GRAPH ... LIKE` query (referenced-only feature GG04). |
 | `procedure_feature_status/shared_cache_generated_capabilities` | 54.58 µs (quick) | Warm shared-cache `selene.feature_status()` call returning the generated inventory. |
 
 PR-local generated-profile smoke commands:

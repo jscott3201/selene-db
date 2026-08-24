@@ -1,8 +1,10 @@
 # Catalog lifecycle and read-snapshot contract
 
 M02-PR02 defines catalog identity and immutable metadata. M02-PR03 adds the
-in-memory lifecycle service and named runtime graph registry. Catalog changes
-are not durable yet; M09 owns their persisted representation and recovery.
+in-memory lifecycle service and named runtime graph registry. M02-PR04 part 1
+routes GQL `CREATE/DROP SCHEMA` and `CREATE/DROP GRAPH` through that service.
+Catalog changes are not durable yet; M09 owns their persisted representation
+and recovery.
 
 ```text
 CatalogId + CatalogDescriptor
@@ -51,7 +53,8 @@ XID characters. Both forms reject General Category Co private-use characters.
 
 Names are case-sensitive and receive no case folding. Canonically equivalent
 spellings compare equal; compatibility-only equivalents do not. Ordering is
-lexicographic by Unicode scalar value, matching selected ID022.
+lexicographic by Unicode scalar value, matching selected IW023 (canonical
+identifier name); ID022 is the default collation choice.
 
 ## Descriptor and snapshot equality
 
@@ -176,8 +179,18 @@ It does not store `Arc<SharedGraph>`. Each execution:
 
 Named graph execution parses and plans through the existing GQL pipeline, then
 rejects catalog, transaction-control, and session-control categories before
-execution. Ordinary stateless reads and data mutations remain available. GQL
-catalog DDL is M02-PR04 and will call the catalog service directly.
+execution. Ordinary stateless reads and data mutations remain available.
+
+The compatibility `Session` parses every statement through the same pipeline
+under the bootstrap graph's request lease. A plan that is exactly one
+database-catalog operation is returned to the facade as a storage-neutral
+`DatabaseCatalogCommand` before any execution context or write transaction
+exists; the facade releases the lease and then dispatches to
+`Catalog::{create_schema, drop_schema, create_graph, drop_graph}`. No second
+parse happens on the non-catalog path, and no `Catalog` method is ever called
+under a graph request lease (drop takes the lifecycle writer and then the
+target's lifecycle write lease, so that would self-deadlock; test builds assert
+the lease depth is zero at every lifecycle entry).
 
 Graph drop acquires locks in this order: catalog writer, target lifecycle write
 lease, then graph state. It rechecks registration after obtaining the lifecycle
@@ -190,15 +203,77 @@ Successful graph drop removes the descriptor and runtime entry in the same
 outer publication. Procedure-derived graph state is cleared after that swap.
 An old handle fails after drop and cannot alias a same-path replacement.
 
+## GQL reference resolution
+
+ISO absolute references never spell the catalog; facade paths do. The
+compatibility session resolves GQL references as follows:
+
+- schema reference `/x` (ISO §17.1 `<absolute directory path> <schema name>`)
+  → `SchemaPath /selene/x`; a bare `CREATE SCHEMA x` is a syntax error;
+- absolute graph reference `/x/g` → `ObjectPath /selene/x/g`;
+- relative graph reference `g` → `/selene/<current working schema>/g`
+  (§17.2 SR2a);
+- one absolute segment (`/g`), three or more segments, and every other shape
+  are invalid references (`42002`): the root is a directory, not a schema
+  (§17.1 SR2a), and the catalog has directory depth 0 (IL020);
+- `CURRENT_SCHEMA`, `HOME_SCHEMA`, `.`, and `..` are reserved words or
+  unparseable in these positions and can never name a graph.
+
+The current working schema of the compatibility session is fixed to the
+bootstrap schema `/selene/public`. This is the `INI_SCHEMA` shape of §22.1 for a
+session that never executed `SESSION SET SCHEMA`; the facade exposes no setter
+because it never accepts configuration it would ignore. M03-PR01's session
+context replaces this constant.
+
+The parser tags each segment as regular or delimited and decodes its spelling,
+but validates nothing. `PathSegment::regular` / `PathSegment::delimited` are
+the only name-validation choke point, so GQL-originated and Rust-originated
+names go through identical NFC, UAX #31, and private-use checks. Resolution to
+stable IDs happens inside `Catalog::*` under the lifecycle writer mutex; the
+command carries typed paths, never pre-resolved IDs, so there is no window
+between lookup and lifecycle lock.
+
+## GQL outcomes and statuses
+
+Every successful database-catalog statement completes with an omitted result
+(`ExecutionOutcome::OmittedResult`, §12.1 GR2, §4.9.3). Facade errors carry
+the same GQLSTATUS for Rust and GQL callers; the code is selected by
+`ErrorKind` in the error constructors.
+
+| Case | Outcome / `ErrorKind` | GQLSTATUS | Grounding |
+|---|---|---|---|
+| successful create/drop | `OmittedResult` | `00001` | §12.1 GR2 |
+| `CREATE … IF NOT EXISTS` on an existing object, `DROP SCHEMA IF EXISTS` on a missing schema | `OmittedResult`, no publication | `00001` | §12.2/§12.3/§12.4 GR1 define no warning |
+| `DROP GRAPH IF EXISTS` on a missing graph | `OmittedResult`, no publication | `01G03` | §12.5 GR1 |
+| strict duplicate | `CatalogObjectAlreadyExists` | `42N10` | implementation subclass (IE005) |
+| missing object or parent, directory depth, root-as-schema | `CatalogObjectNotFound` | `42002` | Table 8 invalid reference; §23.2 GR2d |
+| wrong kind in the shared namespace, cross-schema reference | `CatalogObjectWrongKind`, `CatalogReferenceViolation` | `42002` | §17.2 SR2d(i)(1) |
+| RESTRICT: nonempty graph or schema, referenced graph type | `CatalogRestrictViolation` | `G1000` | Table 8 dependent object error (class); not `G1001` |
+| protected bootstrap schema or graph | `ProtectedCatalogObject` | `42000` | Table 8 class; access rule is IE005 |
+| name outside the identifier profile | `InvalidCatalogName` | `42001` | invalid syntax |
+| `LIKE`, `AS COPY OF`, inline or referenced graph type, `OR REPLACE`, `GRAPH TYPE` statements, `NEXT` chains | `FeatureNotSupported` | `42N01` | GG04, GG05, GG03, GG02, not implemented |
+
+A no-op outcome retains the same outer allocation and catalog generation. An
+unsupported clause is rejected by the parser before any command exists, so it
+can never be dropped silently.
+
 ## Bootstrap and durability boundary
 
 The initial outer state contains the synthetic catalog/root and
 `/selene/public/default`. `BootstrapCatalog` remains the compatibility identity,
 but the default `Session` resolves the same registry instance used by
-`Catalog::open_graph`; it does not own a second graph. The compatibility session
-still permits its existing `DROP GRAPH default` factory reset and projection
-cleanup. Rust lifecycle drop protects the bootstrap schema and graph until
-M02-PR05 removes the bridge.
+`Catalog::open_graph`; it does not own a second graph. Rust lifecycle drop
+protects the bootstrap schema and graph until M02-PR05 removes the bridge.
+
+The compatibility session keeps one bridge for `DROP GRAPH`: a reference that
+resolves to the protected bootstrap graph (`/selene/public/default`, however it
+is spelled, with or without `PROPERTY` or `IF EXISTS`) is executed as the
+existing `IM_DROP_GRAPH` factory reset through the lower engine, returning the
+unchanged `Written` summary and clearing projection state. The decision is by
+resolved stable identity, not spelling; every other reference goes to
+`Catalog::drop_graph`. The Flagger still stamps `IM_DROP_GRAPH` on `DROP GRAPH`
+because it cannot see that resolution. M02-PR05 owns deleting this bridge, the
+stamp, and the bootstrap catalog together.
 
 Catalog lifecycle changes have no WAL, snapshot encoding, recovery, or crash
 contract in M02-PR03. Test-only failures after descriptor staging, after graph
@@ -208,7 +283,10 @@ remain unchanged when publication does not occur.
 
 ## Later owners
 
-- M02-PR04 owns GQL catalog DDL routing through this service.
-- M02-PR05 owns bootstrap-catalog and `CoreGraphTypeBridge` deletion.
+- M02-PR04 part 1 delivered `CREATE/DROP SCHEMA` and `CREATE/DROP GRAPH` with
+  the open graph type. Part 2 owns `CREATE/DROP GRAPH TYPE` and
+  `CREATE GRAPH … <of graph type>` (GG02/GC03/GG20/GG21).
+- M02-PR05 owns bootstrap-catalog, `DROP GRAPH` bridge, and
+  `CoreGraphTypeBridge` deletion.
 - M03 owns persistent sessions and transaction pinning.
 - M09 owns persisted descriptor encoding, WAL/snapshot records, and recovery.
