@@ -16,6 +16,7 @@ mod error;
 mod identity;
 mod name;
 mod snapshot;
+mod transaction;
 
 pub use descriptor::{
     CatalogDescriptor, CatalogParent, CatalogPayload, CoreGraphTypeBridge, CreationMetadata,
@@ -27,6 +28,7 @@ pub use identity::{
 };
 pub use name::{CATALOG_UNICODE_VERSION, CatalogName, IdentifierForm};
 pub use snapshot::{CatalogMemoryAccounting, CatalogSnapshot, CatalogSnapshotBuilder};
+pub use transaction::CatalogTransaction;
 
 use selene_core::GraphId as CoreGraphId;
 use selene_profile::{ProfileIdentity, current_profile_identity};

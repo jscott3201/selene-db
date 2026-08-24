@@ -185,6 +185,39 @@ fn stateless_source_execution_rejects_controls_before_state_changes() {
 }
 
 #[test]
+fn named_graph_source_policy_rejects_catalog_and_stateful_controls() {
+    let graph = SharedGraph::new(GraphId::new(3895));
+    let mut session = Session::new(&graph);
+
+    for source in [
+        "DROP GRAPH default",
+        "CREATE NODE TYPE :Person ()",
+        "START TRANSACTION",
+        "SESSION CLOSE",
+    ] {
+        let error = session
+            .execute_source_named_graph(source, &EmptyProcedureRegistry)
+            .expect_err(source);
+        assert!(matches!(
+            error,
+            ExecutorError::FeatureNotSupportedYet { .. }
+        ));
+        assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+    }
+
+    session
+        .execute_source_named_graph("INSERT (:Person)", &EmptyProcedureRegistry)
+        .expect("ordinary data mutation remains available");
+    let output = session
+        .execute_source_named_graph("MATCH (n:Person) RETURN n", &EmptyProcedureRegistry)
+        .expect("ordinary read remains available");
+    let StatementOutput::Rows(table) = output else {
+        panic!("MATCH should produce rows");
+    };
+    assert_eq!(table.row_count(), 1);
+}
+
+#[test]
 fn session_with_cache_hits_on_second_source_execute() {
     let graph = SharedGraph::new(GraphId::new(3898));
     let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(4).expect("nonzero"));

@@ -31,7 +31,7 @@ evidence-gated conformance wording.
 
 | Area | Current surface |
 |---|---|
-| Facade | In-memory `Database` builder, movable lifetime-free sessions, GQL execution, facade-owned diagnostics, and summary-only outcomes. |
+| Facade | In-memory `Database`, catalog-owned schemas and named graphs, stable-ID `GraphHandle` execution, the temporary bootstrap `Session`, facade diagnostics, and summary-only outcomes. |
 | GQL | Parser, analyzer, planner, optimizer, executor, parameter binding, source-string plan cache, feature-status reporting, and ISO-oriented errors. |
 | Graph storage | In-memory property graph with stable external IDs, dense internal rows, immutable reader snapshots, typed property indexes, composite indexes, and one mutation funnel. |
 | Transactions | Serialized writers, snapshot readers, rollback by non-publication, and provider fanout under the write lock. |
@@ -51,8 +51,8 @@ type.
 
 | Crate | Owns |
 |---|---|
-| [`selene-db`](crates/selene-db) | Stable database builder, ownership root, lifetime-free sessions, facade errors, and summary outcomes. |
-| [`selene-catalog`](crates/selene-catalog) | Catalog ownership boundary. M02-PR01 contains only the temporary single-graph bootstrap identity. |
+| [`selene-db`](crates/selene-db) | Stable database builder, catalog lifecycle, named graph handles, the temporary bootstrap session, facade errors, and summary outcomes. |
+| [`selene-catalog`](crates/selene-catalog) | Immutable catalog descriptors, stable typed IDs, canonical names, read snapshots, and storage-neutral mutation drafts. |
 | [`selene-profile`](crates/selene-profile) | Generated GQL profile, implementation-choice, and conformance-evidence authority. |
 | [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, `JsonValue`, IDs, `DbString`, labels, property maps, schema metadata, codecs, origins, changesets, and core vector kernels. |
 | [`selene-graph`](crates/selene-graph) | Graph storage, transactions, mutation funnel, property/composite/vector/text indexes, exact and ANN vector search, BM25 search, exact JSON search, maintained candidate state, graph type validation, compaction, and recovery providers. |
@@ -83,27 +83,35 @@ the equivalent path dependency.
 selene-db = { version = "2.0.0-alpha.1" }
 ```
 
-Build an in-memory database, then write and query with GQL:
+Build an in-memory database, create a schema and named graph, then execute GQL
+through its stable-ID handle:
 
 ```rust
-use selene_db::{Database, ExecutionOutcome};
+use selene_db::{CreatePolicy, Database, ExecutionOutcome, ObjectPath, SchemaPath};
 
 fn main() -> Result<(), selene_db::Error> {
     let database = Database::builder().build();
-    let session = database.session();
+    let catalog = database.catalog();
+    let schema = SchemaPath::regular("selene", "memory")?;
+    catalog.create_schema(&schema, CreatePolicy::Strict)?;
+    let graph_path = ObjectPath::regular("selene", "memory", "episodes")?;
+    catalog.create_graph(&graph_path, None, CreatePolicy::Strict)?;
+    let graph = catalog.open_graph(&graph_path)?;
 
-    session.execute("INSERT (:Person { name: 'Ada' })")?;
-    let output = session.execute("MATCH (p:Person) RETURN p")?;
+    graph.execute("INSERT (:Person { name: 'Ada' })")?;
+    let output = graph.execute("MATCH (p:Person) RETURN p")?;
     assert_eq!(output, ExecutionOutcome::Rows { row_count: 1 });
 
     Ok(())
 }
 ```
 
-The M02-PR01 facade uses one temporary in-memory bootstrap graph and returns
-summary counts rather than row values. It rejects transaction and `SESSION`
-controls because request-local lower sessions cannot preserve their state.
-M02-PR05 removes this adapter after catalog-backed named graphs are available.
+The facade returns summary counts rather than row values. `Database::session`
+remains a temporary adapter for `/selene/public/default`; it rejects transaction
+and `SESSION` controls because request-local lower sessions cannot preserve their
+state. M02-PR05 removes that bootstrap adapter. Named `GraphHandle` execution
+also rejects catalog and stateful controls; M02-PR04 routes GQL catalog DDL to
+the same Rust lifecycle service used above.
 The [Embedding Guide](docs/embedding-guide.md) identifies the stable entry point
 and documents the lower advanced APIs separately.
 

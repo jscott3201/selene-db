@@ -42,7 +42,7 @@ The crate set is layered so transitive footprint stays small:
 
 | Tier | What you can do | Crates to add |
 |:---|:---|:---|
-| Stable facade | Build an in-memory database and execute GQL through movable sessions | `selene-db` |
+| Stable facade | Manage schemas and named graphs, then execute GQL through stable-ID graph handles | `selene-db` |
 | Core graph | Open a `SharedGraph`, mutate via `Mutator`, read snapshots | `selene-core`, `selene-graph` |
 | Core graph + GQL | Run ISO GQL statements (no `CALL`, no persistence) | + `selene-gql` |
 | Core graph + persistence | Direct mutation with WAL + snapshot recovery | + `selene-persist` |
@@ -56,11 +56,34 @@ The crate set is layered so transitive footprint stays small:
 selene-db = { version = "2.0.0-alpha.1" }
 ```
 
-M02-PR01 supports one in-memory bootstrap graph and summary-only outcomes.
-Named graphs, persistence configuration, parameters, facade transactions, and
-row-value materialization are not available through the facade yet. The lower
-crate sections below document advanced engine integration and do not carry the
-facade's 2.x stability promise.
+The facade owns one in-memory catalog. Create a schema and graph through the
+catalog lifecycle service, then keep the returned graph handle for requests:
+
+```rust
+use selene_db::{CreatePolicy, Database, ObjectPath, SchemaPath};
+
+fn main() -> Result<(), selene_db::Error> {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    let schema = SchemaPath::regular("selene", "memory")?;
+    catalog.create_schema(&schema, CreatePolicy::Strict)?;
+
+    let path = ObjectPath::regular("selene", "memory", "episodes")?;
+    catalog.create_graph(&path, None, CreatePolicy::Strict)?;
+    let graph = catalog.open_graph(&path)?;
+    graph.execute("INSERT (:Episode { summary: 'catalog lifecycle' })")?;
+    graph.execute("MATCH (e:Episode) RETURN e")?;
+    Ok(())
+}
+```
+
+`GraphHandle` stores catalog identity and re-resolves the runtime graph for each
+request. Dropping and recreating the same path does not make an old handle refer
+to the replacement. `Database::session()` remains the temporary bridge to
+`/selene/public/default` until M02-PR05 removes it. Persistence configuration,
+parameters, facade transactions, and row-value materialization are not exposed
+through the facade yet. The lower-crate sections below are advanced engine APIs
+and do not carry the facade's 2.x stability promise.
 
 ### 2.1 Plain core graph
 

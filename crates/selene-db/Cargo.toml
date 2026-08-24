@@ -13,10 +13,21 @@ description = "Stable embedded database facade for the selene-db GQL engine."
 name = "selene_db"
 
 [dependencies]
+arc-swap.workspace = true
+parking_lot.workspace = true
 selene-catalog.workspace = true
 selene-core = { package = "selene-db-core", path = "../selene-core", version = "2.0.0-alpha.1" }
 selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "2.0.0-alpha.1" }
 selene-gql = { package = "selene-db-gql", path = "../selene-gql", version = "2.0.0-alpha.1" }
+
+[dev-dependencies]
+criterion.workspace = true
+mimalloc.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "catalog_lifecycle"
+harness = false
 
 [lints]
 workspace = true

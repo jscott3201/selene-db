@@ -692,7 +692,7 @@ Create the new crate boundaries and a minimal `Database`/`DatabaseBuilder`/`Sess
 ## M02-PR02 — Implement Persistent Catalog IDs, Canonical Names, and Flat Schema Descriptors
 
 - **Owner:** M02
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / M
 - **Dependencies:** M02-PR01, M01-PR03
 - **Issues:** None

@@ -4,8 +4,8 @@ use proptest::prelude::*;
 use selene_catalog::{
     BindingTableId, CatalogDescriptor, CatalogError, CatalogGeneration, CatalogId, CatalogName,
     CatalogObjectId, CatalogObjectKind, CatalogParent, CatalogPayload, CatalogSnapshotBuilder,
-    ConstraintId, CoreGraphTypeBridge, CreationMetadata, DirectoryId, GraphId, GraphTypeId,
-    IndexId, ProcedureId, SchemaId,
+    CatalogTransaction, ConstraintId, CoreGraphTypeBridge, CreationMetadata, DirectoryId, GraphId,
+    GraphTypeId, IndexId, ProcedureId, SchemaId,
 };
 use selene_core::GraphTypeId as CoreGraphTypeId;
 
@@ -607,4 +607,68 @@ fn snapshot_checks_descriptor_generations_and_reports_reproducible_memory_accoun
     assert_eq!(memory.dictionary_entry_count(), 2);
     assert!(memory.descriptor_bytes() > 0);
     assert!(memory.dictionary_bytes() > 0);
+}
+
+#[test]
+fn transaction_stages_insert_and_drop_without_mutating_its_base() {
+    let mut base_builder = builder(1);
+    base_builder.insert(schema(1, "public", 1)).unwrap();
+    base_builder.insert(graph(1, 1, "first", 1)).unwrap();
+    let base = base_builder.build().unwrap();
+
+    let mut transaction = CatalogTransaction::new(&base).unwrap();
+    assert_eq!(transaction.generation(), generation(2));
+    assert!(
+        transaction
+            .remove(CatalogObjectId::Graph(GraphId::new(1).unwrap()))
+            .is_some()
+    );
+    transaction.insert(graph(2, 1, "second", 2)).unwrap();
+    let next = transaction.build().unwrap();
+
+    assert!(
+        base.schema_object(SchemaId::new(1).unwrap(), &name("first"))
+            .is_some()
+    );
+    assert!(
+        base.schema_object(SchemaId::new(1).unwrap(), &name("second"))
+            .is_none()
+    );
+    assert!(
+        next.schema_object(SchemaId::new(1).unwrap(), &name("first"))
+            .is_none()
+    );
+    assert!(
+        next.schema_object(SchemaId::new(1).unwrap(), &name("second"))
+            .is_some()
+    );
+    assert!(!base.shares_state_with(&next));
+}
+
+#[test]
+fn transaction_rejects_duplicate_id_instead_of_rebinding_identity() {
+    let mut base_builder = builder(1);
+    base_builder.insert(schema(1, "public", 1)).unwrap();
+    base_builder.insert(graph(1, 1, "first", 1)).unwrap();
+    let base = base_builder.build().unwrap();
+
+    let mut transaction = CatalogTransaction::new(&base).unwrap();
+    let error = transaction
+        .insert(graph(1, 1, "replacement", 2))
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        CatalogError::DuplicateIdentifier {
+            id: CatalogObjectId::Graph(id)
+        } if id == GraphId::new(1).unwrap()
+    ));
+    let next = transaction.build().unwrap();
+    assert!(
+        next.schema_object(SchemaId::new(1).unwrap(), &name("first"))
+            .is_some()
+    );
+    assert!(
+        next.schema_object(SchemaId::new(1).unwrap(), &name("replacement"))
+            .is_none()
+    );
 }
