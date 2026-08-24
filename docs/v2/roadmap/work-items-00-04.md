@@ -946,7 +946,7 @@ Remove the bootstrap single-graph ownership path, migrate examples/tests to `Dat
 ## M03-PR01 — Implement `SessionContext`, Principal, and Profile Defaults
 
 - **Owner:** M03
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / M
 - **Dependencies:** M02-PR05, M01-PR03
 - **Issues:** None
