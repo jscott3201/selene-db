@@ -22,7 +22,9 @@ pub(crate) fn bind_ddl_statement(
                 }
             }
         }
-        DdlStatement::CreateGraph { .. }
+        DdlStatement::CreateSchema { .. }
+        | DdlStatement::DropSchema { .. }
+        | DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }

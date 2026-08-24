@@ -171,13 +171,20 @@ fn all_property_constraints_lower() {
 }
 
 #[test]
-fn ddl_ast_or_replace_path_still_lowers_for_forward_compat() {
-    let name = selene_core::db_string("g").expect("test string fits DB string cap");
+fn database_catalog_ddl_lowers_to_its_storage_neutral_command() {
+    let reference = selene_gql::CatalogObjectReference {
+        absolute: false,
+        segments: vec![selene_gql::CatalogPathSegment {
+            name: selene_core::db_string("g").expect("test string fits DB string cap"),
+            form: selene_gql::IdentifierForm::Regular,
+        }],
+        span: selene_gql::SourceSpan::new(0, 1),
+    };
     let analyzed = selene_gql::AnalyzedStatement {
         statement: selene_gql::AnalyzedStatementKind::Ddl(DdlStatement::CreateGraph {
-            name,
+            reference: reference.clone(),
             or_replace: true,
-            if_not_exists: false,
+            if_not_exists: true,
             span: selene_gql::SourceSpan::new(0, 1),
         }),
         scopes: selene_gql::BindingScopeTree::new(selene_gql::SourceSpan::new(0, 1)),
@@ -189,13 +196,15 @@ fn ddl_ast_or_replace_path_still_lowers_for_forward_compat() {
         write_set: None,
     };
     let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("plans");
-    assert!(matches!(
+    assert_eq!(
         catalog_op(&plan),
-        CatalogOp::CreateGraph {
+        &CatalogOp::DatabaseCatalog(selene_gql::DatabaseCatalogCommand::CreateGraph {
+            reference,
             or_replace: true,
-            ..
-        }
-    ));
+            if_not_exists: true,
+            span: selene_gql::SourceSpan::new(0, 1),
+        })
+    );
 }
 
 #[test]

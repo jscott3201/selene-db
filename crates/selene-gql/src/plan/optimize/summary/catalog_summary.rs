@@ -4,8 +4,17 @@ use crate::plan::CatalogOp;
 
 pub(super) fn catalog_summary(catalog: &CatalogOp) -> String {
     match catalog {
-        CatalogOp::CreateGraph { name, .. } => format!("op=CreateGraph(name={})", name.as_str()),
-        CatalogOp::DropGraph { name, .. } => format!("op=DropGraph(name={})", name.as_str()),
+        CatalogOp::DatabaseCatalog(command) => format!(
+            "op=DatabaseCatalog(verb={}, absolute={}, segments=[{}])",
+            command.verb(),
+            command.reference().absolute,
+            command
+                .segments()
+                .iter()
+                .map(|segment| segment.name.as_str())
+                .collect::<Vec<_>>()
+                .join("/")
+        ),
         CatalogOp::CreateNodeType {
             label, properties, ..
         } => format!(

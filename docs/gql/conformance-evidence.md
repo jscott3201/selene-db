@@ -5,9 +5,9 @@
 | Field | Value |
 |---|---|
 | Profile | `selene-gql-core-2.0` |
-| Profile hash | `2ab4e16964b23ce965da3337a3a37378ce99ab550ab1a827407c7a5b6ea1b913` |
-| Rules hash | `6cb431ead227a47b778548f0bd75931434c589b9adb3809dc8f6ddcbcf16ff47` |
-| Evidence hash | `5ee61578e8bd46f704560a3bce1f7787ce85a2520cfa5d83586538841eba9b6c` |
+| Profile hash | `9fdc36c57dad00a597c810c5b99a0695064eef9d7eb7ce42d30c3ce0e221e6d8` |
+| Rules hash | `e0f287892538fc4542c728fe4efbc82a3d528642f4b46b29a1df0b0142478d77` |
+| Evidence hash | `409761dc867576999e5e8ee08d060da59d5aeb7d2af3d3816e0fda064740323f` |
 | Inventory | `seeded_incomplete` |
 | Release claimable | **false** |
 
@@ -16,14 +16,15 @@
 | Evidence | Targets | Disposition | Compiled binding | Fixture / fragment |
 |---|---|---|---|---|
 | `EVID-CONFORMANCE-G010-POSITIVE` | RULE-24.3-G010 / REQ-POSITIVE | complete | `REG-G010-POSITIVE` / `run_g010_positive` | `crates/selene-testing/corpus/positive/G010-walk-explicit.gql` / `MATCH WALK (n:Person) RETURN n` |
-| `EVID-CONFORMANCE-GC04-NEGATIVE` | RULE-24.6-GC04 / REQ-NEGATIVE | complete | `REG-GC04-NEGATIVE` / `run_gc04_negative` | `crates/selene-testing/corpus/negative/GC04-graph-management.gql` / `CREATE GRAPH IF NOT EXISTS demo` |
-| `EVID-CONFORMANCE-GC04-STATUS` | RULE-24.6-GC04 / REQ-STATUS | complete | `REG-GC04-STATUS` / `run_gc04_status` | `crates/selene-testing/corpus/negative/GC04-graph-management.gql` / `CREATE GRAPH IF NOT EXISTS demo` |
+| `EVID-CONFORMANCE-GC04-NEGATIVE` | RULE-24.6-GC04 / REQ-NEGATIVE | complete | `REG-GC04-NEGATIVE` / `run_gc04_negative` | `crates/selene-testing/corpus/negative/GG05-create-graph-copy-of.gql` / `AS COPY OF` |
+| `EVID-CONFORMANCE-GC04-POSITIVE` | RULE-24.6-GC04 / REQ-POSITIVE | complete | `REG-GC04-POSITIVE` / `run_gc04_positive` | `crates/selene-testing/corpus/positive/GC05-create-graph-if-not-exists.gql` / `CREATE GRAPH IF NOT EXISTS demo ANY` |
+| `EVID-CONFORMANCE-GC04-STATUS` | RULE-24.6-GC04 / REQ-STATUS | complete | `REG-GC04-STATUS` / `run_gc04_status` | `crates/selene-testing/corpus/positive/GC04-create-graph-open-type.gql` / `CREATE GRAPH /memory/episodes ANY` |
 | `EVID-CONFORMANCE-INVENTORY-PENDING` | RULE-24.2-001 / REQ-INVENTORY<br>RULE-24.3-001 / REQ-INVENTORY<br>RULE-24.3-GC04 / REQ-SUPPORT<br>RULE-24.5-001 / REQ-INVENTORY<br>RULE-24.7-001 / REQ-INVENTORY<br>RULE-24.7-002 / REQ-INVENTORY<br>RULE-ANNEX-B-001 / REQ-INVENTORY | pending (M10-PR05) | typed pending marker `EVID-CONFORMANCE-INVENTORY-PENDING` | — |
 
 ## Current blockers
 
 - `annex_b`: 40 applicable decisions remain pending
-- `feature_claims`: {"implemented_unclaimed": 121, "unsupported": 17}
+- `feature_claims`: {"implemented_unclaimed": 126, "unsupported": 15}
 - `inventory_state`: rule inventory is seeded_incomplete
 - `pending_evidence:EVID-CONFORMANCE-INVENTORY-PENDING`: owner M10-PR05: M10-PR05 owns complete inventory and the final claim transition.
 - `release_claimable`: profile release_claimable is false

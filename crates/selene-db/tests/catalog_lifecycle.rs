@@ -456,7 +456,7 @@ fn bound_graph_enforces_declared_node_types_and_named_policy() {
         .unwrap()
     {
         CreateOutcome::Created(descriptor) => descriptor,
-        CreateOutcome::AlreadyExists(_) => unreachable!(),
+        CreateOutcome::AlreadyExists(_) | CreateOutcome::Replaced { .. } => unreachable!(),
     };
     assert!(graph_descriptor.graph_type.is_some());
     let graph = catalog.open_graph(&graph_path).unwrap();

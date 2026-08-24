@@ -443,9 +443,22 @@ fn rebase_mutation_pipeline(pipeline: &mut MutationPipeline, offset: usize) {
 
 fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
     match statement {
-        DdlStatement::CreateGraph { span, .. }
-        | DdlStatement::DropGraph { span, .. }
-        | DdlStatement::DropNodeType { span, .. }
+        DdlStatement::CreateSchema {
+            reference, span, ..
+        }
+        | DdlStatement::DropSchema {
+            reference, span, ..
+        }
+        | DdlStatement::CreateGraph {
+            reference, span, ..
+        }
+        | DdlStatement::DropGraph {
+            reference, span, ..
+        } => {
+            rebase_span(span, offset);
+            rebase_span(&mut reference.span, offset);
+        }
+        DdlStatement::DropNodeType { span, .. }
         | DdlStatement::DropEdgeType { span, .. }
         | DdlStatement::TruncateNodeType { span, .. }
         | DdlStatement::TruncateEdgeType { span, .. }

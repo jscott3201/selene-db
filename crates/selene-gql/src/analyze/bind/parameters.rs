@@ -183,7 +183,9 @@ fn collect_ddl_parameter_declarations(
                 }
             }
         }
-        DdlStatement::CreateGraph { .. }
+        DdlStatement::CreateSchema { .. }
+        | DdlStatement::DropSchema { .. }
+        | DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }

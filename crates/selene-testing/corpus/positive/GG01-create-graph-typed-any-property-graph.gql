@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GG01
+// also-covers: GC04
+// expects: parse-ok
+CREATE PROPERTY GRAPH demo TYPED ANY PROPERTY GRAPH

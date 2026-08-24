@@ -11,29 +11,53 @@ use super::{FeatureUse, expr, record_feature};
 
 pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
     match statement {
+        // ISO/IEC 39075:2024 section 12.2/12.3 CR1-CR2: schema statements are
+        // GC01; the conditional modifier adds GC02.
+        DdlStatement::CreateSchema {
+            if_not_exists: conditional,
+            span,
+            ..
+        }
+        | DdlStatement::DropSchema {
+            if_exists: conditional,
+            span,
+            ..
+        } => {
+            record_feature(uses, FeatureId::GC01, *span);
+            if *conditional {
+                record_feature(uses, FeatureId::GC02, *span);
+            }
+        }
+        // Section 12.4 CR1-CR3: CREATE GRAPH is GC04; the conditional modifier
+        // adds GC05; the only representable type clause is the open graph type
+        // (GG01). OR REPLACE is part of the section 12.4 format and gated by
+        // no feature of its own, so it rides on GC04 (CR1) and is not stamped.
         DdlStatement::CreateGraph {
-            or_replace,
             if_not_exists,
             span,
             ..
         } => {
-            let _ = or_replace;
-            record_feature(uses, FeatureId::GG01, *span);
             record_feature(uses, FeatureId::GC04, *span);
+            record_feature(uses, FeatureId::GG01, *span);
             if *if_not_exists {
                 record_feature(uses, FeatureId::GC05, *span);
             }
         }
+        // Section 12.5 CR1-CR2: DROP GRAPH is GC04 (+GC05 with IF EXISTS).
+        // IM_DROP_GRAPH is still stamped as well: the Flagger is static and
+        // cannot know whether the reference resolves to the protected bootstrap
+        // graph, which the compatibility session factory-resets through the
+        // lower engine instead of dropping. Until M02-PR05 deletes that bridge,
+        // every DROP GRAPH may take the implementation-defined processing
+        // alternative, which is exactly what section 24.6 asks a Flagger to
+        // report. The stamp is removed together with the bridge.
         DdlStatement::DropGraph {
             if_exists, span, ..
         } => {
-            // BRIEF-152 / audit Item 10: DROP GRAPH ships as the IM_DROP_GRAPH
-            // factory-reset extension (a supported selene-db vendor flag), NOT
-            // GC04. CREATE GRAPH stays on GC04 (unsupported) so it remains
-            // parse-rejected under D1 single-graph. IF EXISTS is informational
-            // under D1 (the session graph always exists), so it carries no extra
-            // flag — both DROP GRAPH and DROP GRAPH IF EXISTS flag IM_DROP_GRAPH.
-            let _ = if_exists;
+            record_feature(uses, FeatureId::GC04, *span);
+            if *if_exists {
+                record_feature(uses, FeatureId::GC05, *span);
+            }
             record_feature(uses, FeatureId::IM_DROP_GRAPH, *span);
         }
         DdlStatement::CreateNodeType {

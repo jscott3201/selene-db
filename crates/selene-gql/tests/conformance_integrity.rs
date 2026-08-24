@@ -15,14 +15,26 @@ fn has_rationale(feature: FeatureId) -> bool {
 }
 
 #[test]
-fn unsupported_graph_management_surfaces_emit_42n01() {
-    let source = "CREATE GRAPH demo";
+fn graph_and_schema_management_are_runtime_supported_and_closed_types_are_not() {
+    for feature in [
+        FeatureId::GC01,
+        FeatureId::GC02,
+        FeatureId::GC04,
+        FeatureId::GC05,
+        FeatureId::GG01,
+    ] {
+        assert!(supported(feature), "{feature} must be runtime-supported");
+        assert!(!has_rationale(feature), "{feature}");
+    }
+    assert!(!supported(FeatureId::GG02));
+    assert!(has_rationale(FeatureId::GG02));
+    let source = "CREATE GRAPH demo ANY AS COPY OF source";
     let error = selene_gql::parse(source).expect_err(source);
     assert_eq!(error.gqlstatus().as_str(), "42N01");
     let ParserError::UnsupportedFeature { feature_id, .. } = error else {
         panic!("expected UnsupportedFeature for {source:?}");
     };
-    assert_eq!(feature_id, FeatureId::GC04);
+    assert_eq!(feature_id, FeatureId::GG05);
 }
 
 #[test]

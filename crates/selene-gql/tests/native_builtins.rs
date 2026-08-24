@@ -230,7 +230,7 @@ fn feature_status_reports_generated_capability_records() {
     }
 
     for feature_id in [
-        "GC03", "GE04", "GE05", "GG01", "GG02", "GG20", "GG21", "GH02", "GS04", "GV66", "GV67",
+        "GC03", "GE04", "GE05", "GG02", "GG20", "GG21", "GH02", "GS04", "GV66", "GV67",
     ] {
         let index = feature_ids
             .iter()
@@ -246,7 +246,7 @@ fn feature_status_reports_generated_capability_records() {
     assert_eq!(statuses[gv65], "referenced");
     assert_eq!(relations[gv65], "implied");
 
-    for feature_id in ["GC04", "GS04", "GH02", "GV66"] {
+    for feature_id in ["GG02", "GS04", "GH02", "GV66"] {
         let index = feature_ids
             .iter()
             .position(|value| value == feature_id)
@@ -258,7 +258,8 @@ fn feature_status_reports_generated_capability_records() {
         .iter()
         .position(|value| value == "GC04")
         .unwrap();
-    assert_eq!(relations[gc04], "implied");
+    assert_eq!(relations[gc04], "direct");
+    assert_eq!(statuses[gc04], "supported");
 
     let im_json = feature_ids
         .iter()

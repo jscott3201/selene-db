@@ -200,6 +200,9 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
         // IM_UUID; both are observed here.
         ("IMU-uuid-cast.gql", &["GA05", "IM_UUID"]),
         ("IMJ-json-functions.gql", &["IM_JSON"]),
+        // OR REPLACE rides on GC04 (ISO section 12.4 CR1); it must add no
+        // stamp of its own.
+        ("GC04-create-or-replace-graph.gql", &["GC04", "GG01"]),
     ];
 
     let cases = load_default_corpus().expect("corpus loads");

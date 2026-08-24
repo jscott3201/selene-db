@@ -1,27 +1,44 @@
 //! Top-level statement executor.
 
-use std::{rc::Rc, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
-use selene_core::{CancellationToken, Change, NodeScanBudget, metrics};
+use selene_core::{Change, metrics};
 use selene_graph::CommitOutcome;
 use selene_profile::current_profile_identity;
 
 use super::call_plan_cache::CallPlanSourceLookup;
 use super::plan_cache::{SharedPlanCacheInsert, SharedPlanCacheLookup};
-use super::session::materialize_parameter_values;
+use super::statement_exec::{
+    execute_maintenance, execute_read_only, execute_session_control, execute_transaction_control,
+    execute_write,
+};
 use crate::{
-    ExecutionPlan, GqlStatus, LiveIndexCatalog, OptimizeContext, PipelineOp, ProcedureRegistry,
-    SourceSpan, StatementCategory, TxOp,
+    CatalogOp, DatabaseCatalogCommand, ExecutionPlan, LiveIndexCatalog, OptimizeContext,
+    PipelineOp, ProcedureRegistry, SourceSpan, StatementCategory, TxOp,
     analyze::analyze,
     ast::Statement,
     optimize,
     parser::parse,
     plan::plan_with_caps as build_plan,
-    runtime::{
-        BindingTable, BindingTableRegistry, CallPlanKey, ExecutorError, ExecutorWarning, Session,
-        TxContext, execute_plan, pipeline,
-    },
+    runtime::{BindingTable, CallPlanKey, ExecutorError, Session},
 };
+
+/// Result of the database facade's single parse/analyze/plan pass.
+///
+/// A database-catalog statement is returned as its command before any
+/// execution context or write transaction is created, so the facade can
+/// dispatch it to the catalog service outside the graph request lease it
+/// borrowed the lower session under. Every other statement is executed
+/// normally.
+#[derive(Clone, Debug, PartialEq)]
+#[doc(hidden)]
+#[non_exhaustive]
+pub enum FacadeOutput {
+    /// The statement was executed by the lower engine.
+    Statement(StatementOutput),
+    /// The statement is a database-catalog command for the facade to execute.
+    DatabaseCatalog(DatabaseCatalogCommand),
+}
 
 /// Result returned by statement-level execution.
 #[derive(Clone, Debug, PartialEq)]
@@ -144,6 +161,7 @@ impl Session<'_> {
         registry: &dyn ProcedureRegistry,
     ) -> Result<StatementOutput, ExecutorError> {
         self.execute_source_with_policy(source, registry, SourceExecutionPolicy::Stateful)
+            .and_then(expect_executed)
     }
 
     /// Execute one source statement without allowing persistent session state.
@@ -160,6 +178,27 @@ impl Session<'_> {
         registry: &dyn ProcedureRegistry,
     ) -> Result<StatementOutput, ExecutorError> {
         self.execute_source_with_policy(source, registry, SourceExecutionPolicy::Stateless)
+            .and_then(expect_executed)
+    }
+
+    /// Execute one source statement for the database facade's compatibility
+    /// session, returning database-catalog statements instead of executing
+    /// them.
+    ///
+    /// The policy is the stateless policy plus interception: transaction and
+    /// `SESSION` controls are rejected after the single parse/analyze/plan
+    /// pass, and a plan that consists of one database-catalog operation is
+    /// returned as [`FacadeOutput::DatabaseCatalog`] before any execution
+    /// context or write transaction exists. There is no second parse on the
+    /// non-catalog path. M02-PR05 removes this adapter together with
+    /// `execute_source_stateless`.
+    #[doc(hidden)]
+    pub fn execute_source_facade(
+        &mut self,
+        source: &str,
+        registry: &dyn ProcedureRegistry,
+    ) -> Result<FacadeOutput, ExecutorError> {
+        self.execute_source_with_policy(source, registry, SourceExecutionPolicy::Facade)
     }
 
     /// Execute one source statement under the named-graph facade policy.
@@ -175,6 +214,7 @@ impl Session<'_> {
         registry: &dyn ProcedureRegistry,
     ) -> Result<StatementOutput, ExecutorError> {
         self.execute_source_with_policy(source, registry, SourceExecutionPolicy::NamedGraph)
+            .and_then(expect_executed)
     }
 
     fn execute_source_with_policy(
@@ -182,7 +222,7 @@ impl Session<'_> {
         source: &str,
         registry: &dyn ProcedureRegistry,
         policy: SourceExecutionPolicy,
-    ) -> Result<StatementOutput, ExecutorError> {
+    ) -> Result<FacadeOutput, ExecutorError> {
         let profile_identity = current_profile_identity();
         // ISO/IEC 39075:2024 section 6 GR3 + section 7.3: once a session is
         // closed by `SESSION CLOSE`, every subsequent GQL-request is rejected.
@@ -389,6 +429,19 @@ enum SourceExecutionPolicy {
     Stateful,
     Stateless,
     NamedGraph,
+    /// Stateless plus database-catalog interception; see
+    /// [`Session::execute_source_facade`].
+    Facade,
+}
+
+/// Unwrap the executed output for the policies that never intercept.
+fn expect_executed(output: FacadeOutput) -> Result<StatementOutput, ExecutorError> {
+    match output {
+        FacadeOutput::Statement(output) => Ok(output),
+        FacadeOutput::DatabaseCatalog(_) => Err(ExecutorError::ImplementationDefined {
+            detail: "database-catalog interception is only enabled for the facade policy",
+        }),
+    }
 }
 
 fn execute_source_plan(
@@ -396,21 +449,36 @@ fn execute_source_plan(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
     policy: SourceExecutionPolicy,
-) -> Result<StatementOutput, ExecutorError> {
+) -> Result<FacadeOutput, ExecutorError> {
     ensure_source_policy(plan, policy)?;
-    execute_statement(plan, session, registry)
+    if policy == SourceExecutionPolicy::Facade
+        && let Some(command) = database_catalog_command(plan)
+    {
+        return Ok(FacadeOutput::DatabaseCatalog(command.clone()));
+    }
+    execute_statement(plan, session, registry).map(FacadeOutput::Statement)
+}
+
+/// Return the database-catalog command when the plan is exactly one such
+/// operation. `EXPLAIN` wraps the operation and is executed normally.
+fn database_catalog_command(plan: &ExecutionPlan) -> Option<&DatabaseCatalogCommand> {
+    match plan.pipeline.as_slice() {
+        [PipelineOp::Catalog(CatalogOp::DatabaseCatalog(command))] => Some(command),
+        _ => None,
+    }
 }
 
 fn ensure_source_policy(
     plan: &ExecutionPlan,
     policy: SourceExecutionPolicy,
 ) -> Result<(), ExecutorError> {
-    if policy == SourceExecutionPolicy::Stateless
-        && matches!(
-            plan.category,
-            StatementCategory::TransactionControl | StatementCategory::SessionControl
-        )
-    {
+    if matches!(
+        policy,
+        SourceExecutionPolicy::Stateless | SourceExecutionPolicy::Facade
+    ) && matches!(
+        plan.category,
+        StatementCategory::TransactionControl | StatementCategory::SessionControl
+    ) {
         return Err(ExecutorError::FeatureNotSupportedYet {
             feature: "stateful control in the stateless facade",
             span: SourceSpan::default(),
@@ -448,324 +516,6 @@ fn is_top_level_call_candidate(source: &str) -> bool {
         return false;
     }
     source[4..].chars().next().is_none_or(char::is_whitespace)
-}
-
-fn execute_read_only(
-    plan: &ExecutionPlan,
-    session: &mut Session<'_>,
-    registry: &dyn ProcedureRegistry,
-) -> Result<StatementOutput, ExecutorError> {
-    let providers = session.graph().index_providers();
-    let snapshot = session.graph().read();
-    let session_tz = session.effective_time_zone();
-    let binding_tables = Rc::new(BindingTableRegistry::new());
-    let parameters = materialize_parameter_values(
-        &session.parameters,
-        &session.scalar_parameters,
-        &binding_tables,
-    );
-    let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
-    let warning_sink = session.warning_sink.as_ref();
-    let table = if let Some(txn) = session.active_txn.as_mut() {
-        let mut ctx = TxContext::write_with_owned_parameters_and_registry(
-            snapshot,
-            &plan.impl_defined_caps,
-            registry,
-            txn,
-            providers,
-            parameters,
-            Rc::clone(&binding_tables),
-        )
-        .with_resource_limits(
-            cancellation.as_ref(),
-            deadline,
-            row_cap,
-            node_scan_budget.as_ref(),
-        )
-        .with_warning_sink(warning_sink)
-        .with_session_time_zone(session_tz);
-        ctx.check_cancellation()?;
-        let table = execute_plan(plan, &mut ctx)?;
-        note_output_rows(plan, &ctx, table.row_count())?;
-        table
-    } else {
-        let mut ctx = TxContext::read_only_with_owned_parameters_and_registry(
-            snapshot,
-            &plan.impl_defined_caps,
-            registry,
-            providers,
-            parameters,
-            Rc::clone(&binding_tables),
-        )
-        .with_resource_limits(
-            cancellation.as_ref(),
-            deadline,
-            row_cap,
-            node_scan_budget.as_ref(),
-        )
-        .with_warning_sink(warning_sink)
-        .with_session_time_zone(session_tz);
-        ctx.check_cancellation()?;
-        let table = execute_plan(plan, &mut ctx)?;
-        note_output_rows(plan, &ctx, table.row_count())?;
-        table
-    };
-    Ok(output_from_table(plan, table))
-}
-
-fn execute_write(
-    plan: &ExecutionPlan,
-    session: &mut Session<'_>,
-    registry: &dyn ProcedureRegistry,
-) -> Result<StatementOutput, ExecutorError> {
-    if session.active_txn.is_some() {
-        return execute_inside_explicit_tx(plan, session, registry);
-    }
-    execute_auto_commit(plan, session, registry)
-}
-
-fn execute_maintenance(
-    plan: &ExecutionPlan,
-    session: &mut Session<'_>,
-    registry: &dyn ProcedureRegistry,
-) -> Result<StatementOutput, ExecutorError> {
-    if session.active_txn.is_some() {
-        return Err(ExecutorError::InvalidTransactionState {
-            detail: "maintenance procedure cannot run inside an explicit transaction",
-            span: SourceSpan::default(),
-        });
-    }
-    let providers = session.graph().index_providers();
-    let snapshot = session.graph().read();
-    let session_tz = session.effective_time_zone();
-    let binding_tables = Rc::new(BindingTableRegistry::new());
-    let parameters = materialize_parameter_values(
-        &session.parameters,
-        &session.scalar_parameters,
-        &binding_tables,
-    );
-    let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
-    let warning_sink = session.warning_sink.as_ref();
-    let mut ctx = TxContext::maintenance_with_owned_parameters_and_registry(
-        snapshot,
-        &plan.impl_defined_caps,
-        registry,
-        session.graph(),
-        providers,
-        parameters,
-        Rc::clone(&binding_tables),
-    )
-    .with_resource_limits(
-        cancellation.as_ref(),
-        deadline,
-        row_cap,
-        node_scan_budget.as_ref(),
-    )
-    .with_warning_sink(warning_sink)
-    .with_session_time_zone(session_tz);
-    ctx.check_cancellation()?;
-    let table = execute_plan(plan, &mut ctx)?;
-    note_output_rows(plan, &ctx, table.row_count())?;
-    Ok(output_from_table(plan, table))
-}
-
-fn execute_inside_explicit_tx(
-    plan: &ExecutionPlan,
-    session: &mut Session<'_>,
-    registry: &dyn ProcedureRegistry,
-) -> Result<StatementOutput, ExecutorError> {
-    let providers = session.graph().index_providers();
-    let snapshot = session.graph().read();
-    let session_tz = session.effective_time_zone();
-    let binding_tables = Rc::new(BindingTableRegistry::new());
-    let parameters = materialize_parameter_values(
-        &session.parameters,
-        &session.scalar_parameters,
-        &binding_tables,
-    );
-    let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
-    let warning_sink = session.warning_sink.as_ref();
-    let txn = session
-        .active_txn
-        .as_mut()
-        .ok_or(ExecutorError::ImplementationDefined {
-            detail: "explicit-TX path entered without active transaction",
-        })?;
-    let mut ctx = TxContext::write_with_owned_parameters_and_registry(
-        snapshot,
-        &plan.impl_defined_caps,
-        registry,
-        txn,
-        providers,
-        parameters,
-        Rc::clone(&binding_tables),
-    )
-    .with_resource_limits(
-        cancellation.as_ref(),
-        deadline,
-        row_cap,
-        node_scan_budget.as_ref(),
-    )
-    .with_warning_sink(warning_sink)
-    .with_session_time_zone(session_tz);
-    let result = ctx
-        .check_cancellation()
-        .and_then(|()| execute_plan(plan, &mut ctx))
-        .and_then(|table| {
-            note_output_rows(plan, &ctx, table.row_count())?;
-            Ok(table)
-        });
-    if result.is_err() {
-        session.aborted = true;
-    }
-    result.map(|table| output_from_table(plan, table))
-}
-
-fn execute_auto_commit(
-    plan: &ExecutionPlan,
-    session: &mut Session<'_>,
-    registry: &dyn ProcedureRegistry,
-) -> Result<StatementOutput, ExecutorError> {
-    let providers = session.graph().index_providers();
-    let snapshot = session.graph().read();
-    let principal = session.principal();
-    let session_tz = session.effective_time_zone();
-    let binding_tables = Rc::new(BindingTableRegistry::new());
-    let parameters = materialize_parameter_values(
-        &session.parameters,
-        &session.scalar_parameters,
-        &binding_tables,
-    );
-    let mut txn = session.graph().begin_write();
-    let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
-    let warning_sink = session.warning_sink.as_ref();
-    let result = {
-        let mut ctx = TxContext::write_with_owned_parameters_and_registry(
-            snapshot,
-            &plan.impl_defined_caps,
-            registry,
-            &mut txn,
-            providers,
-            parameters,
-            Rc::clone(&binding_tables),
-        )
-        .with_resource_limits(
-            cancellation.as_ref(),
-            deadline,
-            row_cap,
-            node_scan_budget.as_ref(),
-        )
-        .with_warning_sink(warning_sink)
-        .with_session_time_zone(session_tz);
-        ctx.check_cancellation()
-            .and_then(|()| execute_plan(plan, &mut ctx))
-            .and_then(|table| {
-                note_output_rows(plan, &ctx, table.row_count())?;
-                Ok(table)
-            })
-    };
-    match result {
-        Ok(table) => {
-            let outcome = txn.commit_with_principal(principal).map_err(|source| {
-                ExecutorError::GraphMutation {
-                    source,
-                    span: SourceSpan::default(),
-                }
-            })?;
-            emit_commit_warnings(&outcome, session);
-            Ok(write_output_from_commit(plan, table, outcome))
-        }
-        Err(error) => {
-            txn.rollback();
-            Err(error)
-        }
-    }
-}
-
-fn emit_commit_warnings(outcome: &CommitOutcome, session: &Session<'_>) {
-    let Some(sink) = session.warning_sink.as_ref() else {
-        return;
-    };
-    for warning in &outcome.warnings {
-        sink.borrow_mut().emit(ExecutorWarning {
-            code: GqlStatus::VALIDATION_MODE_RELAXED_WRITE,
-            message: warning.warning.violation.to_string(),
-            span: SourceSpan::default(),
-        });
-    }
-}
-
-fn note_output_rows(
-    plan: &ExecutionPlan,
-    ctx: &TxContext<'_, '_>,
-    row_count: usize,
-) -> Result<(), ExecutorError> {
-    if !plan.output_schema.columns.is_empty() {
-        ctx.note_result_rows(row_count)?;
-    }
-    Ok(())
-}
-
-fn resource_limits(
-    session: &Session<'_>,
-) -> (
-    Option<CancellationToken>,
-    Option<std::time::Instant>,
-    Option<usize>,
-    Option<NodeScanBudget>,
-) {
-    (
-        session.cancellation.clone(),
-        session.deadline,
-        session.row_cap,
-        session.max_nodes_scanned.map(NodeScanBudget::new),
-    )
-}
-
-fn execute_transaction_control(
-    plan: &ExecutionPlan,
-    session: &mut Session<'_>,
-) -> Result<StatementOutput, ExecutorError> {
-    let [crate::PipelineOp::Tx(op)] = plan.pipeline.as_slice() else {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "transaction-control plan must contain exactly one TX op",
-        });
-    };
-    pipeline::tx::execute(op, session)
-}
-
-fn execute_session_control(
-    plan: &ExecutionPlan,
-    session: &mut Session<'_>,
-    registry: &dyn ProcedureRegistry,
-) -> Result<StatementOutput, ExecutorError> {
-    let [crate::PipelineOp::Session(op)] = plan.pipeline.as_slice() else {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "session-control plan must contain exactly one session op",
-        });
-    };
-    pipeline::session::execute(op, session, registry)
-}
-
-fn output_from_table(plan: &ExecutionPlan, table: BindingTable) -> StatementOutput {
-    if plan.output_schema.columns.is_empty() {
-        StatementOutput::Empty
-    } else {
-        StatementOutput::Rows(table)
-    }
-}
-
-fn write_output_from_commit(
-    plan: &ExecutionPlan,
-    table: BindingTable,
-    outcome: CommitOutcome,
-) -> StatementOutput {
-    let rows = if plan.output_schema.columns.is_empty() {
-        None
-    } else {
-        Some(table)
-    };
-    StatementOutput::Written(WriteOutcome::from_commit(outcome, rows))
 }
 
 fn record_statement_metrics(plan: &ExecutionPlan, started: Instant) {

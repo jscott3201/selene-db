@@ -100,8 +100,10 @@ fn selection_is_conjunctive_permutation_independent_and_exactly_shardable() {
     let cases = [
         ("rule", "RULE-24.3-G010", 1),
         ("feature", "G010", 1),
-        ("clause", "CLAUSE-24.6", 2),
-        ("owner", "M01-PR05", 3),
+        ("clause", "CLAUSE-24.6", 3),
+        ("owner", "M01-PR05", 1),
+        ("owner", "M02-PR04", 3),
+        ("feature", "GG01", 3),
     ];
     for (kind, value, count) in cases {
         let mut request = request(ClaimRequest::IsoAligned);
@@ -117,7 +119,7 @@ fn selection_is_conjunctive_permutation_independent_and_exactly_shardable() {
     let mut conjunction = request(ClaimRequest::IsoAligned);
     conjunction.selection.feature = Some("GC04".to_owned());
     conjunction.selection.clause = Some("CLAUSE-24.6".to_owned());
-    assert_eq!(harness.select(&conjunction).unwrap().len(), 2);
+    assert_eq!(harness.select(&conjunction).unwrap().len(), 3);
     assert!(
         harness
             .run_claim(conjunction, REVISION, Some(Duration::ZERO))
@@ -176,7 +178,7 @@ fn selection_is_conjunctive_permutation_independent_and_exactly_shardable() {
     for shard in [
         Shard { index: 0, count: 0 },
         Shard { index: 2, count: 2 },
-        Shard { index: 3, count: 4 },
+        Shard { index: 4, count: 5 },
     ] {
         let mut request = request(ClaimRequest::IsoAligned);
         request.shard = shard;
@@ -195,7 +197,7 @@ fn seeded_runners_pass_iso_aligned_and_block_selected_profile() {
         )
         .unwrap();
     assert_eq!(manifest.decision, Decision::Permitted);
-    assert_eq!(manifest.observations.len(), 3);
+    assert_eq!(manifest.observations.len(), 4);
     assert!(
         manifest
             .observations
@@ -294,6 +296,36 @@ fn failures_and_panics_are_normalized_and_block_every_claim() {
     }
 }
 
+/// The generated GC04 record claims the complete capability. This test ties
+/// that claim to the three statement shapes section 12.4/12.5 put under it
+/// so the record and the facade cannot drift apart silently.
+#[test]
+fn gc04_supported_record_matches_facade_behaviour() {
+    let record = selene_profile::capability(selene_profile::FeatureId::GC04).unwrap();
+    assert_eq!(record.status, selene_profile::CapabilityStatus::Supported);
+    assert_eq!(
+        record.flagger_status,
+        selene_profile::FlaggerStatus::Accepted
+    );
+    let database = selene_db::Database::builder().build();
+    let session = database.session();
+    let catalog = database.catalog();
+    let path = selene_db::ObjectPath::regular("selene", "public", "demo").unwrap();
+    let omitted = selene_db::ExecutionOutcome::OmittedResult {
+        status: selene_db::GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
+    };
+    assert_eq!(session.execute("CREATE GRAPH demo ANY").unwrap(), omitted);
+    let created = catalog.snapshot().resolve_graph(&path).unwrap();
+    assert_eq!(
+        session.execute("CREATE OR REPLACE GRAPH demo ANY").unwrap(),
+        omitted
+    );
+    let replaced = catalog.snapshot().resolve_graph(&path).unwrap();
+    assert_ne!(replaced.id, created.id);
+    assert_eq!(session.execute("DROP GRAPH demo").unwrap(), omitted);
+    assert!(catalog.snapshot().resolve_graph(&path).is_err());
+}
+
 #[test]
 fn fixed_provenance_manifest_is_closed_and_hashes_only_semantics() {
     let harness = harness();
@@ -306,7 +338,7 @@ fn fixed_provenance_manifest_is_closed_and_hashes_only_semantics() {
         .unwrap();
     assert_eq!(
         manifest.result_hash,
-        "40fae1202b8b49902d2c3a65e93d1431b59fa8e58b933d1d0647c622dfb2074f"
+        "0e19143c060e20b6320e444c0c23704afabe1969a83dec140b5f094dd22e4463"
     );
     let encoded = serde_json::to_vec(&manifest).unwrap();
     assert_eq!(

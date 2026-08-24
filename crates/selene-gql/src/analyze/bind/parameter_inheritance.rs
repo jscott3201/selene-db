@@ -154,7 +154,9 @@ fn inherit_ddl_parameter_declarations(statement: &mut DdlStatement, declarations
                 }
             }
         }
-        DdlStatement::CreateGraph { .. }
+        DdlStatement::CreateSchema { .. }
+        | DdlStatement::DropSchema { .. }
+        | DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }

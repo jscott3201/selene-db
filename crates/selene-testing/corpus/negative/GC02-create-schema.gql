@@ -1,4 +1,0 @@
-// corpus: negative
-// feature: GC02
-// expects: parse-rejected(GC02)
-CREATE SCHEMA demo

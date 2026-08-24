@@ -6,7 +6,7 @@ use selene_profile::FeatureId;
 #[test]
 fn deferred_transaction_forms_report_unsupported_features() {
     for (source, expected) in [
-        ("START TRANSACTION CREATE GRAPH demo", FeatureId::GP18),
+        ("START TRANSACTION CREATE GRAPH demo ANY", FeatureId::GP18),
         ("START TRANSACTION ON GRAPH demo", FeatureId::GT03),
     ] {
         let error = parse(source).expect_err(source);
@@ -30,7 +30,7 @@ fn transaction_keywords_require_boundaries() {
         "STARTTRANSACTION",
         "STARTx TRANSACTION",
         "START TRANSACTIONx",
-        "START TRANSACTIONCREATE GRAPH demo",
+        "START TRANSACTIONCREATE GRAPH demo ANY",
         "START TRANSACTION ONGRAPH demo",
         "START TRANSACTION ON GRAPHx",
         "COMMITx",

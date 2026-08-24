@@ -42,6 +42,7 @@ mod session;
 #[cfg(any(test, feature = "test-harness"))]
 mod snapshot_summary;
 mod statement;
+mod statement_exec;
 mod subplan;
 mod value_compare;
 mod value_key;
@@ -66,7 +67,7 @@ pub use snapshot_summary::{
     ExecutorSnapshot, ExecutorSummaryInput, NetGraphDelta, RowOrderPolicy, SnapshotColumn,
     executor_summary,
 };
-pub use statement::{StatementOutput, WriteOutcome, execute_statement};
+pub use statement::{FacadeOutput, StatementOutput, WriteOutcome, execute_statement};
 
 pub use crate::plan::{BindingTableColumn, BindingTableSchema};
 

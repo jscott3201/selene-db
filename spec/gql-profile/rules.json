@@ -5,8 +5,8 @@
   "inventory_state": "seeded_incomplete",
   "target": {
     "kind": "profile_target_closure",
-    "expected_count": 138,
-    "feature_ids_hash": "bc4b60531a0d6a0f7e04dbad55bdd5ea7ed681b9029aa5204212f63496363cda"
+    "expected_count": 141,
+    "feature_ids_hash": "b0808ed0e8bce27025cfab37c2038eadafdac1523513bf4e8f9bc416a4e698ea"
   },
   "approved_domains": [
     "CLAUSE-24.2",
@@ -74,13 +74,14 @@
     },
     {
       "id": "RULE-24.6-GC04",
-      "label": "Flagger rejection for graph management",
+      "label": "Facade execution and Flagger admission for graph management",
       "clause_ids": ["CLAUSE-24.6"],
       "applicability": { "kind": "feature", "feature_id": "GC04" },
-      "features": ["GC04"],
-      "owner_milestone": "M01",
-      "owner_pr": "M01-PR05",
+      "features": ["GC04", "GC05", "GG01"],
+      "owner_milestone": "M02",
+      "owner_pr": "M02-PR04",
       "requirements": [
+        { "id": "REQ-POSITIVE", "kind": "positive" },
         { "id": "REQ-NEGATIVE", "kind": "negative" },
         { "id": "REQ-STATUS", "kind": "exact_status" }
       ]

@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GC05
+// also-covers: GC04, IM_DROP_GRAPH
+// expects: parse-ok
+DROP GRAPH IF EXISTS demo

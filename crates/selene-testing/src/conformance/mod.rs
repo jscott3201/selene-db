@@ -7,13 +7,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::path::Path;
 
+use selene_db::{CreatePolicy, Database, ErrorKind, ExecutionOutcome, SchemaPath};
 use selene_gql::{GqlStatus, ParserError};
 use selene_profile::{
     EvidenceDisposition, EvidenceRecord, RuleRecord, ValidatedConformance, ValidatedProfile,
     load_conformance, load_profile,
 };
 
-use run::{Actual, ObservedStatus};
+use run::{Actual, ObservedSideEffects, ObservedStatus};
 
 const PROFILE_PATH: &str = "spec/gql-profile/profile.json";
 
@@ -60,15 +61,22 @@ const REGISTRATIONS: &[Registration] = &[
     registration!(
         "REG-GC04-NEGATIVE",
         "EVID-CONFORMANCE-GC04-NEGATIVE",
-        "corpus/negative/GC04-graph-management.gql",
-        "CREATE GRAPH IF NOT EXISTS demo",
+        "corpus/negative/GG05-create-graph-copy-of.gql",
+        "AS COPY OF",
         run_gc04_negative
+    ),
+    registration!(
+        "REG-GC04-POSITIVE",
+        "EVID-CONFORMANCE-GC04-POSITIVE",
+        "corpus/positive/GC05-create-graph-if-not-exists.gql",
+        "CREATE GRAPH IF NOT EXISTS demo ANY",
+        run_gc04_positive
     ),
     registration!(
         "REG-GC04-STATUS",
         "EVID-CONFORMANCE-GC04-STATUS",
-        "corpus/negative/GC04-graph-management.gql",
-        "CREATE GRAPH IF NOT EXISTS demo",
+        "corpus/positive/GC04-create-graph-open-type.gql",
+        "CREATE GRAPH /memory/episodes ANY",
         run_gc04_status
     ),
 ];
@@ -246,34 +254,99 @@ fn run_g010_positive(source: &str) -> Result<Actual, String> {
     Ok(Actual::parser(ObservedStatus::Success))
 }
 
+/// The `<graph source>` clause is rejected before planning with feature GG05
+/// (ISO/IEC 39075:2024 section 12.4 CR7); nothing reaches the catalog.
 fn run_gc04_negative(source: &str) -> Result<Actual, String> {
     let error = match selene_gql::parse(source) {
-        Ok(_) => return Err("GC04 unexpectedly parsed".to_owned()),
+        Ok(_) => return Err("graph source clause unexpectedly parsed".to_owned()),
         Err(error) => error,
     };
     let feature_id = match error {
         ParserError::UnsupportedFeature { feature_id, .. } => feature_id,
-        _ => return Err("GC04 did not return UnsupportedFeature".to_owned()),
+        _ => return Err("graph source clause did not return UnsupportedFeature".to_owned()),
     };
-    if feature_id != selene_profile::FeatureId::GC04 {
-        return Err("unsupported feature was not GC04".to_owned());
+    if feature_id != selene_profile::FeatureId::GG05 {
+        return Err("unsupported feature was not GG05".to_owned());
     }
     Ok(Actual::parser(ObservedStatus::Error {
         gqlstatus: GqlStatus::FEATURE_NOT_SUPPORTED.as_str().to_owned(),
     }))
 }
 
+/// `CREATE GRAPH IF NOT EXISTS demo ANY` through the database facade completes
+/// with `00001` and publishes the graph in the current working schema.
+fn run_gc04_positive(source: &str) -> Result<Actual, String> {
+    let database = Database::builder().build();
+    let before = database.catalog().snapshot().generation();
+    let outcome = database
+        .session()
+        .execute(source)
+        .map_err(|error| error.to_string())?;
+    if outcome
+        != (ExecutionOutcome::OmittedResult {
+            status: selene_db::GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
+        })
+    {
+        return Err(format!(
+            "CREATE GRAPH did not complete with 00001: {outcome:?}"
+        ));
+    }
+    let snapshot = database.catalog().snapshot();
+    if snapshot.generation() <= before {
+        return Err("CREATE GRAPH published no catalog generation".to_owned());
+    }
+    let public = SchemaPath::regular("selene", "public").map_err(|error| error.to_string())?;
+    let created = snapshot
+        .graphs(&public)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .any(|graph| graph.path.object().canonical() == "demo");
+    if !created {
+        return Err("CREATE GRAPH did not publish /selene/public/demo".to_owned());
+    }
+    Ok(Actual::executed(
+        ObservedStatus::Success,
+        ObservedSideEffects::Required,
+    ))
+}
+
+/// A strict duplicate `CREATE GRAPH` through the database facade reports
+/// `42N10` and publishes nothing.
 fn run_gc04_status(source: &str) -> Result<Actual, String> {
-    let error = match selene_gql::parse(source) {
-        Ok(_) => return Err("GC04 unexpectedly parsed".to_owned()),
+    let database = Database::builder().build();
+    let memory = SchemaPath::regular("selene", "memory").map_err(|error| error.to_string())?;
+    database
+        .catalog()
+        .create_schema(&memory, CreatePolicy::Strict)
+        .map_err(|error| error.to_string())?;
+    let session = database.session();
+    session.execute(source).map_err(|error| error.to_string())?;
+    let before = database.catalog().snapshot();
+    let error = match session.execute(source) {
+        Ok(outcome) => return Err(format!("duplicate CREATE GRAPH succeeded: {outcome:?}")),
         Err(error) => error,
     };
-    if error.gqlstatus() != GqlStatus::FEATURE_NOT_SUPPORTED {
-        return Err("GC04 did not return exact GQLSTATUS 42N01".to_owned());
+    if error.kind() != ErrorKind::CatalogObjectAlreadyExists {
+        return Err(format!(
+            "duplicate CREATE GRAPH kind was {:?}",
+            error.kind()
+        ));
     }
-    Ok(Actual::parser(ObservedStatus::Error {
-        gqlstatus: error.gqlstatus().as_str().to_owned(),
-    }))
+    let Some(status) = error.gqlstatus() else {
+        return Err("duplicate CREATE GRAPH carried no GQLSTATUS".to_owned());
+    };
+    if status != selene_db::GqlStatus::DUPLICATE_OBJECT {
+        return Err(format!("duplicate CREATE GRAPH status was {status}"));
+    }
+    if !database.catalog().snapshot().shares_state_with(&before) {
+        return Err("duplicate CREATE GRAPH published catalog state".to_owned());
+    }
+    Ok(Actual::executed(
+        ObservedStatus::Error {
+            gqlstatus: status.as_str().to_owned(),
+        },
+        ObservedSideEffects::Forbidden,
+    ))
 }
 
 /// Run the command-line conformance runner or traceability generator.

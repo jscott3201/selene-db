@@ -755,7 +755,7 @@ Define the catalog object identity and immutable descriptor model for one synthe
 ## M02-PR03 — Add Catalog-Owned Named Graph and Graph-Type Lifecycle in Rust
 
 - **Owner:** M02
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / L
 - **Dependencies:** M02-PR02
 - **Issues:** None

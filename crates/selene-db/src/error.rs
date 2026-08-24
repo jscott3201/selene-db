@@ -3,22 +3,36 @@
 use std::{error::Error as StdError, fmt};
 
 /// Stable category for a facade failure.
+///
+/// Catalog categories carry a fixed GQLSTATUS (see [`ErrorKind::gqlstatus`])
+/// so Rust and GQL callers observe the same diagnostic for the same failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ErrorKind {
-    /// A logical catalog path segment is invalid.
+    /// A logical catalog path segment is invalid (`42001`: the name fails the
+    /// selected identifier profile).
     InvalidCatalogName,
-    /// The requested catalog object does not exist.
+    /// The requested catalog object, or a parent it needs, does not exist, or
+    /// the reference has a shape the catalog cannot hold (`42002`, ISO/IEC
+    /// 39075:2024 Table 8 "invalid reference"; §23.2 GR2d).
     CatalogObjectNotFound,
-    /// Strict creation found an existing object of the requested kind.
+    /// Strict creation found an existing object of the requested kind
+    /// (`42N10`, a selene-db subclass; ISO delegates the condition to the
+    /// implementation under IE005).
     CatalogObjectAlreadyExists,
-    /// A shared-namespace object exists with another kind.
+    /// A shared-namespace object exists with another kind (`42002`: §17.2
+    /// SR2d(i)(1) makes the wrong kind a reference syntax-rule violation).
     CatalogObjectWrongKind,
-    /// RESTRICT rejected a lifecycle mutation with live dependents or contents.
+    /// RESTRICT rejected a lifecycle mutation with live dependents or contents
+    /// (`G1000`, the class-level "dependent object error"; not `G1001`, whose
+    /// subclass names edges only).
     CatalogRestrictViolation,
-    /// A catalog object reference crosses a prohibited ownership boundary.
+    /// A catalog object reference crosses a prohibited ownership boundary
+    /// (`42002`).
     CatalogReferenceViolation,
-    /// The temporary bootstrap object cannot be dropped.
+    /// The temporary bootstrap object cannot be dropped (`42000`, the
+    /// class-level "syntax error or access rule violation"; the access rule is
+    /// implementation-defined under IE005).
     ProtectedCatalogObject,
     /// A graph handle's stable identity is no longer registered.
     StaleGraphHandle,
@@ -42,8 +56,26 @@ pub enum ErrorKind {
 pub struct GqlStatus([u8; 5]);
 
 impl GqlStatus {
+    /// Completion condition of a successful catalog statement with an omitted
+    /// result (ISO/IEC 39075:2024 §4.9.3).
+    pub const SUCCESSFUL_COMPLETION_OMITTED_RESULT: Self = Self(*b"00001");
+    /// Completion condition of `DROP GRAPH IF EXISTS` on an absent graph
+    /// (§12.5 GR1).
+    pub const GRAPH_DOES_NOT_EXIST: Self = Self(*b"01G03");
+    /// Class-level "syntax error or access rule violation", used for
+    /// protected bootstrap objects.
+    pub const SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION: Self = Self(*b"42000");
+    /// "Invalid syntax", used when a catalog name fails the identifier profile.
+    pub const SYNTAX_ERROR: Self = Self(*b"42001");
+    /// "Invalid reference", used for missing, wrong-kind, and unshapeable
+    /// catalog references.
+    pub const INVALID_REFERENCE: Self = Self(*b"42002");
     /// GQLSTATUS used when a facade mode does not support a GQL feature.
     pub const FEATURE_NOT_SUPPORTED: Self = Self(*b"42N01");
+    /// Duplicate catalog object under strict creation (selene-db subclass).
+    pub const DUPLICATE_OBJECT: Self = Self(*b"42N10");
+    /// Class-level "dependent object error", used for RESTRICT violations.
+    pub const DEPENDENT_OBJECT_ERROR: Self = Self(*b"G1000");
     /// GQLSTATUS used when a closed graph violates its bound graph type.
     pub const GRAPH_TYPE_VIOLATION: Self = Self(*b"G2000");
 
@@ -79,11 +111,37 @@ pub struct Error {
     source: Option<Box<dyn StdError + Send + Sync + 'static>>,
 }
 
+impl ErrorKind {
+    /// Return the GQLSTATUS the facade assigns to this category, if any.
+    ///
+    /// Engine-originated categories take their status from the engine
+    /// diagnostic instead; internal invariant, stale-handle, and graph-type
+    /// definition failures have none.
+    #[must_use]
+    pub const fn gqlstatus(self) -> Option<GqlStatus> {
+        match self {
+            Self::InvalidCatalogName => Some(GqlStatus::SYNTAX_ERROR),
+            Self::CatalogObjectNotFound
+            | Self::CatalogObjectWrongKind
+            | Self::CatalogReferenceViolation => Some(GqlStatus::INVALID_REFERENCE),
+            Self::CatalogObjectAlreadyExists => Some(GqlStatus::DUPLICATE_OBJECT),
+            Self::CatalogRestrictViolation => Some(GqlStatus::DEPENDENT_OBJECT_ERROR),
+            Self::ProtectedCatalogObject => Some(GqlStatus::SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION),
+            Self::StaleGraphHandle
+            | Self::InvalidGraphType
+            | Self::CatalogInvariant
+            | Self::InvalidGql
+            | Self::FeatureNotSupported
+            | Self::Execution => None,
+        }
+    }
+}
+
 impl Error {
     fn facade(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
-            status: None,
+            status: kind.gqlstatus(),
             message: message.into(),
             source: None,
         }
@@ -96,7 +154,7 @@ impl Error {
     ) -> Self {
         Self {
             kind,
-            status: None,
+            status: kind.gqlstatus(),
             message: message.into(),
             source: Some(Box::new(source)),
         }
@@ -147,6 +205,25 @@ impl Error {
             ErrorKind::CatalogObjectNotFound,
             format!("{kind} {path} does not exist"),
         )
+    }
+
+    /// A GQL reference that no facade path can represent.
+    pub(crate) fn invalid_reference(reference: &str, detail: &str) -> Self {
+        Self::facade(
+            ErrorKind::CatalogObjectNotFound,
+            format!("invalid catalog reference {reference}: {detail}"),
+        )
+    }
+
+    /// `OR REPLACE` requested for an object kind whose replacement is not
+    /// implemented. Carries `42N01` like every other feature rejection.
+    pub(crate) fn unsupported_create_policy(kind: &str) -> Self {
+        Self {
+            kind: ErrorKind::FeatureNotSupported,
+            status: Some(GqlStatus::FEATURE_NOT_SUPPORTED),
+            message: format!("OR REPLACE is not supported for {kind} creation"),
+            source: None,
+        }
     }
 
     pub(crate) fn already_exists(path: &impl fmt::Display) -> Self {
@@ -238,7 +315,12 @@ impl Error {
         self.kind
     }
 
-    /// Return the GQLSTATUS code when the failure came from GQL processing.
+    /// Return the GQLSTATUS code of this failure.
+    ///
+    /// Catalog failures carry the code selected by their [`ErrorKind`] whether
+    /// the request came from Rust or GQL; engine failures copy the engine's
+    /// code; internal invariant, stale-handle, and graph-type definition
+    /// failures have none.
     #[must_use]
     pub const fn gqlstatus(&self) -> Option<GqlStatus> {
         self.status

@@ -36,8 +36,7 @@ use crate::{
     runtime::{Binding, BindingTable, ExecutorError, TxContext},
 };
 
-const GRAPH_LEVEL_CATALOG_DETAIL: &str =
-    "CREATE GRAPH is not supported under D1 single-graph embeddable mode";
+const DATABASE_CATALOG_DETAIL: &str = "database catalog statements require the database facade; a bare engine session owns one graph and no catalog";
 const OPEN_GRAPH_CATALOG_DDL: &str =
     "open graph (GG01) does not support catalog type DDL -- use a closed graph (GG02)";
 
@@ -47,17 +46,20 @@ pub(super) fn execute(
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     match op {
-        // CREATE GRAPH stays rejected under D1 single-graph (cannot create a
-        // second graph). DROP GRAPH is the IM_DROP_GRAPH factory-reset
-        // (BRIEF-152, audit Item 10), handled by the drop_graph submodule.
-        CatalogOp::CreateGraph { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: GRAPH_LEVEL_CATALOG_DETAIL,
-        }),
-        CatalogOp::DropGraph {
-            name,
-            if_exists,
-            span,
-        } => drop_graph::execute_drop_graph(name.clone(), *if_exists, *span, table, ctx),
+        // Database-catalog statements are executed by the database facade,
+        // which intercepts the plan before this operator runs. Reaching here
+        // means a bare engine session received one; it has no catalog to
+        // mutate and must not silently no-op. DROP GRAPH is the pre-existing
+        // IM_DROP_GRAPH factory reset of the session graph (bridge owned by
+        // M02-PR05), handled by the drop_graph submodule.
+        CatalogOp::DatabaseCatalog(command) => match command {
+            crate::DatabaseCatalogCommand::DropGraph { span, .. } => {
+                drop_graph::execute_drop_graph(*span, table, ctx)
+            }
+            _ => Err(ExecutorError::ImplementationDefined {
+                detail: DATABASE_CATALOG_DETAIL,
+            }),
+        },
         CatalogOp::CreateNodeType {
             label,
             key_labels,
@@ -309,10 +311,12 @@ pub(super) fn execute(
     }
 }
 
+/// Element-type DDL is not an ISO statement; its `OR REPLACE` modifier is
+/// rejected by the Flagger and, for directly constructed plans, here.
 fn reject_or_replace(or_replace: bool) -> Result<(), ExecutorError> {
     if or_replace {
         return Err(ExecutorError::ImplementationDefined {
-            detail: "OR REPLACE not implemented for catalog DDL",
+            detail: "OR REPLACE is not implemented for element-type DDL",
         });
     }
     Ok(())

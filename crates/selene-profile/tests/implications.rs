@@ -11,7 +11,7 @@ const SOURCE: &str = include_str!("../../../spec/gql-profile/profile.json");
 const BASE_SUPPORTED: &str = include_str!("fixtures/m01_pr01_supported.txt");
 
 const DOWNGRADED: &[&str] = &[
-    "GC03", "GE04", "GE05", "GH02", "GG01", "GG02", "GG20", "GG21", "GS04", "GV66", "GV67",
+    "GC03", "GE04", "GE05", "GH02", "GG02", "GG20", "GG21", "GS04", "GV66", "GV67",
 ];
 
 const IMPORTED: &[(&str, &str)] = &[
@@ -33,12 +33,11 @@ const IMPORTED: &[(&str, &str)] = &[
     ("G082", "Let value variable statement: initializer"),
     ("GA04", "Binding table function value expressions"),
     ("GA09", "Binding table function WHERE clause"),
-    ("GC01", "Graph-type-like statements"),
     ("GD03", "Insert and replace statements"),
     ("GD04", "Insert statement"),
-    ("GG03", "Graph types with additional constraints"),
-    ("GG04", "Simple indexes"),
-    ("GG05", "Explicit index names"),
+    ("GG03", "Graph type inline specification"),
+    ("GG04", "Graph type like a graph"),
+    ("GG05", "Graph from a graph source"),
     ("GG22", "Non-abstract element types"),
     ("GG23", "Abstract element types"),
     ("GP17", "Return statement"),
@@ -258,11 +257,22 @@ fn table_10_golden_pins_edges_endpoints_ids_and_pages() {
 #[test]
 fn imported_endpoint_names_and_orders_are_exact() {
     let profile = parse_profile(SOURCE).expect("profile validates");
+    // GC01 was imported as a referenced endpoint and is now runtime-supported
+    // (M02-PR04 part 1); it keeps its imported runtime order.
+    let gc01 = profile
+        .profile()
+        .features
+        .iter()
+        .find(|feature| feature.id.as_str() == "GC01")
+        .expect("GC01 is present");
+    assert_eq!(gc01.runtime_order, 252);
+    assert_eq!(gc01.name, "Graph schema management");
+    assert_eq!(gc01.runtime_support, RuntimeSupport::Supported);
     let imported = profile
         .profile()
         .features
         .iter()
-        .filter(|feature| feature.runtime_order >= 234)
+        .filter(|feature| feature.runtime_order >= 234 && feature.id.as_str() != "GC01")
         .map(|feature| {
             assert_eq!(feature.runtime_support, RuntimeSupport::Referenced);
             assert_eq!(feature.claim_state, ClaimState::Unsupported);
@@ -287,7 +297,7 @@ fn imported_endpoint_names_and_orders_are_exact() {
 fn direct_target_and_surviving_compatibility_order_preserve_m01_pr01() {
     let profile = parse_profile(SOURCE).expect("profile validates");
     let base = BASE_SUPPORTED.lines().collect::<Vec<_>>();
-    assert_eq!(base.len(), 143);
+    assert_eq!(base.len(), 147);
     let downgraded = DOWNGRADED.iter().copied().collect::<BTreeSet<_>>();
     let expected_survivors = base
         .iter()
@@ -309,7 +319,7 @@ fn direct_target_and_surviving_compatibility_order_preserve_m01_pr01() {
         .copied()
         .filter(|id| !id.starts_with("IM_"))
         .collect::<BTreeSet<_>>();
-    assert_eq!(old_iso.len(), 132);
+    assert_eq!(old_iso.len(), 136);
     assert_eq!(
         profile
             .profile()
@@ -361,8 +371,6 @@ fn closure_conflicts_reject_reenabling_runtime_support() {
         ("GC03", "GG02"),
         ("GE04", "GV60"),
         ("GE05", "GV61"),
-        ("GG01", "GC04"),
-        ("GG02", "GC04"),
         ("GG20", "GG02"),
         ("GG21", "GG02"),
         ("GS04", "GS05"),
@@ -542,9 +550,9 @@ fn generated_claim_matrix_pins_counts_blockers_and_boundary() {
         .find(|(path, _)| path == std::path::Path::new("docs/gql/conformance/features.md"))
         .expect("claim matrix")
         .1;
-    assert!(markdown.contains("| Direct selections | 132 |"));
-    assert!(markdown.contains("| Complete Table 10 closure | 138 |"));
-    assert_eq!(markdown.matches("| direct selection | ").count(), 264);
+    assert!(markdown.contains("| Direct selections | 136 |"));
+    assert!(markdown.contains("| Complete Table 10 closure | 141 |"));
+    assert_eq!(markdown.matches("| direct selection | ").count(), 272);
     assert!(markdown.contains("| GC03 | GC04 | transitive dependency | GC03 → GG02 → GC04 |"));
     assert!(markdown.contains("71 direct all-of relationships"));
     assert!(markdown.contains("96 endpoint features"));

@@ -53,7 +53,7 @@ row, not formal conformance status.
 | Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is runtime-supported as feature `GQ15`. |
 | Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
-| DDL (`DROP GRAPH`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` and both additive `ALTER` forms are implementation-defined surfaces. Type DDL is Flagger-accepted as part of the directly selected parser surface even though the complete runtime inventory reports `GG01`, `GG02`, `GG20`, and `GG21` as unsupported. `CREATE GRAPH` remains rejected through implied feature `GC04`. |
+| DDL (`CREATE/DROP SCHEMA`, `CREATE/DROP GRAPH`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | Schema and open-graph management (`GC01`, `GC02`, `GC04`, `GC05`, `GG01`) execute through the `selene-db` facade catalog service. Closed graph types (`GG02`), inline and `LIKE` graph types (`GG03`, `GG04`), graph sources (`GG05`), and `CREATE/DROP GRAPH TYPE` are rejected with `42N01`. Both additive `ALTER` forms are implementation-defined surfaces. Type DDL is Flagger-accepted as part of the directly selected parser surface even though the runtime inventory reports `GG02`, `GG20`, and `GG21` as unsupported. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries are runtime-supported as `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not runtime-supported. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are runtime-supported (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
@@ -567,25 +567,66 @@ explicitly.
 ## 7. Schema (DDL)
 
 The engine has open (schema-on-read) and closed (schema-validated) graph modes,
-corresponding to GG01 and GG02. The implication-closed runtime inventory
-withdraws both because GC04 graph management is unavailable. The default engine
-mode is open; closed graphs are opt-in.
+corresponding to GG01 and GG02. Open graphs are created from GQL through the
+`selene-db` facade; closed graphs can be created through the Rust catalog API
+today and from GQL once M02-PR04 part 2 lands.
 
-### `DROP GRAPH`
+### `CREATE SCHEMA` / `DROP SCHEMA`
 
 ```gql
-DROP GRAPH analytics IF EXISTS
+CREATE SCHEMA /memory
+CREATE SCHEMA IF NOT EXISTS /`my schema`
+DROP SCHEMA IF EXISTS /memory
 ```
 
-`DROP GRAPH` is supported as the implementation-defined
-`IM_DROP_GRAPH` factory-reset surface. In the c5 baseline, selene-db embeds exactly
-one current graph; the parsed graph name is informational and the command
-resets the current session graph. `DROP GRAPH IF EXISTS` parses too; the
-modifier is informational under the same single-graph model.
+Schema references are absolute (ISO/IEC 39075:2024 §17.1): the leading `/` is
+mandatory and a bare name is a syntax error (`42001`). The facade catalog has
+one root directory with no child directories, so `/a/b` is an invalid reference
+(`42002`). Both statements complete with the omitted-result condition `00001`;
+the `IF [NOT] EXISTS` no-ops are silent and publish nothing. Dropping a schema
+that still contains objects is a dependent-object error (`G1000`); dropping the
+bootstrap schema `/public` is an access-rule violation (`42000`).
 
-`CREATE GRAPH` remains outside current runtime support. It rejects before planning
-with feature-not-supported status `42N01` for `GC04`, because the embedded
-engine does not create a second graph from GQL.
+### `CREATE GRAPH` / `DROP GRAPH`
+
+```gql
+CREATE GRAPH /memory/episodes ANY
+CREATE PROPERTY GRAPH IF NOT EXISTS scratch TYPED ANY PROPERTY GRAPH
+CREATE OR REPLACE GRAPH /memory/episodes ANY
+DROP GRAPH /memory/episodes
+DROP PROPERTY GRAPH IF EXISTS scratch
+```
+
+A graph reference is either absolute (`/schema/graph`) or a single name
+resolved against the current working schema, which the compatibility session
+fixes to `/selene/public` (§17.2 SR2a). The graph type clause is mandatory in
+ISO §12.4; only the `<open graph type>` (`[TYPED | ::] ANY [[PROPERTY] GRAPH]`,
+feature GG01) executes. `LIKE g` (GG04), `AS COPY OF g` (GG05), an inline
+graph type (GG03), a graph type reference (GG02), and `CREATE/DROP GRAPH
+TYPE` are rejected before planning with `42N01`; a `NEXT`-composed catalog
+statement is rejected the same way.
+
+`CREATE GRAPH` and `DROP GRAPH` complete with `00001`. `DROP GRAPH IF EXISTS`
+on an absent graph completes with the warning `01G03` (§12.5 GR1). A strict
+duplicate is `42N10`; a missing graph, missing schema, or wrong-kind object is
+`42002`; a nonempty graph is `G1000` (all drops are RESTRICT).
+
+`CREATE OR REPLACE GRAPH` (§12.4 GR2) drops an existing graph at the reference
+and creates the new one in a single catalog publication; the statement
+completes with `00001` whether the graph was created or replaced, and the
+replacement always has a new graph identity, so handles opened on the old graph
+fail as stale. The effective drop is RESTRICT: a nonempty graph is `G1000`. An
+object of another kind at the reference is `42002`. `OR REPLACE` and
+`IF NOT EXISTS` are alternatives in the ISO format, so writing both is a syntax
+error. The protected bootstrap graph `/selene/public/default` cannot be
+replaced (`42000`); only `DROP GRAPH` takes the factory-reset bridge below.
+
+A `DROP GRAPH` whose reference resolves to the protected bootstrap graph
+`/selene/public/default` still performs the implementation-defined
+`IM_DROP_GRAPH` factory reset of that graph instead of removing it; M02-PR05
+removes this bridge together with the bootstrap catalog. Through a named
+`GraphHandle`, every catalog statement is rejected with `42N01`; use the facade
+`Session` or the Rust `Catalog` API.
 
 ### `CREATE NODE TYPE` / `CREATE EDGE TYPE`
 
@@ -626,9 +667,12 @@ are validated against the declared property type, stored in the graph type,
 round-tripped by `SHOW NODE TYPES` / `SHOW EDGE TYPES`, recovered from durable
 state, and materialized when an inserted node or edge omits the property.
 
-`OR REPLACE` and `IF NOT EXISTS` modifiers are accepted on `CREATE NODE TYPE`
-and `CREATE EDGE TYPE`. The parser observes feature `GC03`, but the generated
-runtime inventory withdraws it with its GG02 dependency.
+`OR REPLACE` and `IF NOT EXISTS` modifiers are accepted by the grammar on
+`CREATE NODE TYPE` and `CREATE EDGE TYPE`. The parser observes feature `GC03`
+for `IF NOT EXISTS`, but the generated runtime inventory withdraws it with its
+GG02 dependency. `OR REPLACE` on these element-type statements is rejected as
+not implemented (`42N01`): ISO defines the modifier for graph and graph-type
+statements (§12.4, §12.6), and element-type DDL is not an ISO statement.
 
 ### `ALTER NODE TYPE`
 
@@ -859,7 +903,8 @@ Examples of rejected constructs:
 | `CREATE PROCEDURE pkg.fn() { LET x = 1 RETURN x }` | Procedure-local definitions (`GP05`-`GP13`) are deferred. | Parser error. |
 | `CALL pkg.fn(TABLE rows)` | Binding tables as procedure arguments (`GP14`) are deferred. | Parser error. |
 | `CALL pkg.fn(GRAPH g)` | Graphs as procedure arguments (`GP15`) are deferred. | Parser error. |
-| `CREATE GRAPH demo` | Graph management (`GC04`) is absent from the single-graph model. | Flagger error for `GC04`. |
+| `CREATE GRAPH demo` | ISO §12.4 requires an `<open graph type>` or `<of graph type>` clause. | Parser error (`42001`). |
+| `CREATE GRAPH demo LIKE other` | Graph type like a graph (`GG04`) is not implemented. | Feature error for `GG04`. |
 | `MERGE (n:Person {id: 1})` | `MERGE` mutation lowering is deferred. | Parser error. |
 | `RETURN NULL IS TYPED GRAPH AS ok` | Graph reference value types (`GV60`) are deferred. | Flagger error. |
 | `CAST(x AS FLOAT16)` | Feature `GV20` is unsupported. | Flagger error. |

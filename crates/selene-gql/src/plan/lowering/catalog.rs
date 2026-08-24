@@ -3,8 +3,8 @@
 use selene_core::{DbString, db_string};
 
 use crate::{
-    DdlStatement, GqlStatus, GqlType, KeyLabelSet, SourceSpan, TypePropertyConstraint,
-    TypePropertyDef,
+    DatabaseCatalogCommand, DdlStatement, GqlStatus, GqlType, KeyLabelSet, SourceSpan,
+    TypePropertyConstraint, TypePropertyDef,
     analyze::{AnalyzedStatement, AnalyzedType},
     plan::{
         BindingTableColumn, BindingTableSchema, CatalogOp, ExecutionPlan, ImplDefinedCaps,
@@ -21,26 +21,13 @@ pub(crate) fn lower_ddl(
     caps: &ImplDefinedCaps,
 ) -> Result<ExecutionPlan, PlannerError> {
     let op = match statement {
-        DdlStatement::CreateGraph {
-            name,
-            or_replace,
-            if_not_exists,
-            span,
-        } => CatalogOp::CreateGraph {
-            name: name.clone(),
-            or_replace: *or_replace,
-            if_not_exists: *if_not_exists,
-            span: *span,
-        },
-        DdlStatement::DropGraph {
-            name,
-            if_exists,
-            span,
-        } => CatalogOp::DropGraph {
-            name: name.clone(),
-            if_exists: *if_exists,
-            span: *span,
-        },
+        DdlStatement::CreateSchema { .. }
+        | DdlStatement::DropSchema { .. }
+        | DdlStatement::CreateGraph { .. }
+        | DdlStatement::DropGraph { .. } => CatalogOp::DatabaseCatalog(
+            DatabaseCatalogCommand::from_ddl(statement)
+                .expect("database-catalog DDL variants reduce to a command"),
+        ),
         DdlStatement::CreateNodeType {
             label,
             key_label_set,

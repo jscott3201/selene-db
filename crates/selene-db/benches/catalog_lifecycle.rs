@@ -8,7 +8,13 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_db::{CreatePolicy, Database, DropPolicy, ObjectPath, SchemaPath};
+use selene_db::{
+    CreatePolicy, Database, DropPolicy, ExecutionOutcome, GqlStatus, ObjectPath, SchemaPath,
+};
+
+const OMITTED: ExecutionOutcome = ExecutionOutcome::OmittedResult {
+    status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
+};
 
 fn schema(name: impl AsRef<str>) -> SchemaPath {
     SchemaPath::regular("selene", name.as_ref()).expect("benchmark schema path is valid")
@@ -156,6 +162,115 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
         });
     }
     publication.finish();
+
+    // GQL database-catalog DDL through the compatibility session at the same
+    // schema scales as the Rust-API publication rows, so the parse/resolve
+    // overhead of the router is directly comparable.
+    let mut gql = c.benchmark_group("catalog_lifecycle/gql_ddl");
+    for &scale in catalog_scales() {
+        let database = catalog_fixture(scale);
+        let catalog = database.catalog();
+        let session = database.session();
+        let schema_target = schema("gql_target");
+        let graph_target = graph("gql_target", "g");
+        gql.bench_with_input(
+            BenchmarkId::new("create_schema_gql", scale),
+            &scale,
+            |b, _| {
+                b.iter_custom(|iterations| {
+                    let mut elapsed = Duration::ZERO;
+                    for _ in 0..iterations {
+                        let started = std::time::Instant::now();
+                        let outcome = session
+                            .execute("CREATE SCHEMA /gql_target")
+                            .expect("timed GQL schema create succeeds");
+                        elapsed += started.elapsed();
+                        assert_eq!(black_box(outcome), OMITTED);
+                        catalog
+                            .drop_schema(&schema_target, DropPolicy::Strict)
+                            .expect("untimed schema cleanup succeeds");
+                    }
+                    elapsed
+                });
+            },
+        );
+        catalog
+            .create_schema(&schema_target, CreatePolicy::Strict)
+            .expect("graph fixture schema creation succeeds");
+        gql.bench_with_input(
+            BenchmarkId::new("create_graph_gql", scale),
+            &scale,
+            |b, _| {
+                b.iter_custom(|iterations| {
+                    let mut elapsed = Duration::ZERO;
+                    for _ in 0..iterations {
+                        let started = std::time::Instant::now();
+                        let outcome = session
+                            .execute("CREATE GRAPH /gql_target/g ANY")
+                            .expect("timed GQL graph create succeeds");
+                        elapsed += started.elapsed();
+                        assert_eq!(black_box(outcome), OMITTED);
+                        catalog
+                            .drop_graph(&graph_target, DropPolicy::Strict)
+                            .expect("untimed graph cleanup succeeds");
+                    }
+                    elapsed
+                });
+            },
+        );
+        catalog
+            .create_graph(&graph_target, None, CreatePolicy::Strict)
+            .expect("drop fixture graph creation succeeds");
+        gql.bench_with_input(BenchmarkId::new("drop_graph_gql", scale), &scale, |b, _| {
+            b.iter_custom(|iterations| {
+                let mut elapsed = Duration::ZERO;
+                for _ in 0..iterations {
+                    let started = std::time::Instant::now();
+                    let outcome = session
+                        .execute("DROP GRAPH /gql_target/g")
+                        .expect("timed GQL graph drop succeeds");
+                    elapsed += started.elapsed();
+                    assert_eq!(black_box(outcome), OMITTED);
+                    catalog
+                        .create_graph(&graph_target, None, CreatePolicy::Strict)
+                        .expect("untimed graph recreation succeeds");
+                }
+                elapsed
+            });
+        });
+        // The fixture graph exists after the drop row's untimed recreation;
+        // each replacement leaves exactly one graph at the path, so no
+        // cleanup is needed between iterations.
+        gql.bench_with_input(
+            BenchmarkId::new("create_or_replace_graph_gql", scale),
+            &scale,
+            |b, _| {
+                b.iter(|| {
+                    assert_eq!(
+                        black_box(&session)
+                            .execute(black_box("CREATE OR REPLACE GRAPH /gql_target/g ANY"))
+                            .expect("timed GQL graph replace succeeds"),
+                        OMITTED
+                    );
+                });
+            },
+        );
+        gql.bench_with_input(
+            BenchmarkId::new("create_graph_if_not_exists_noop_gql", scale),
+            &scale,
+            |b, _| {
+                b.iter(|| {
+                    assert_eq!(
+                        black_box(&session)
+                            .execute(black_box("CREATE GRAPH IF NOT EXISTS /gql_target/g ANY"))
+                            .expect("conditional no-op succeeds"),
+                        OMITTED
+                    );
+                });
+            },
+        );
+    }
+    gql.finish();
 
     let mut selection = c.benchmark_group("catalog_lifecycle/graph_selection");
     for &scale in graph_scales() {
