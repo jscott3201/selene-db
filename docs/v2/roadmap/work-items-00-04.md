@@ -1074,7 +1074,7 @@ Give each execution a fresh request context that merges parameters deterministic
 ## M03-PR03 — Implement Execution Context Stack, Binding Tables, and Structured Outcomes
 
 - **Owner:** M03
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / L
 - **Dependencies:** M03-PR02
 - **Issues:** None
