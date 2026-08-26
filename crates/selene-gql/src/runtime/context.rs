@@ -421,8 +421,14 @@ impl<'a, 'g> TxContext<'a, 'g> {
     }
 
     /// Register a binding table in this statement's request-scoped registry.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
-        self.request_runtime.binding_tables().register(table)
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ExecutorError> {
+        self.request_runtime
+            .binding_tables()
+            .register(table)
+            .map_err(ExecutorError::from)
     }
 
     /// Look up a binding table from this statement's request-scoped registry.

@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, time::Instant};
+use std::{collections::BTreeMap, num::NonZeroUsize, time::Instant};
 
 use selene_core::{BindingTableId, DbString, GraphId, Value, db_string};
 use selene_graph::{GraphTypeDef, SharedGraph, TypedIndexKind};
@@ -12,7 +12,7 @@ use crate::{
     plan::{BindingTableSchema, ExecutionPlan},
     procedure_registry::EmptyProcedureRegistry,
     runtime::statement::{CatalogSessionOutput, StatementOutput, execute_statement},
-    runtime::{BindingTable, BindingTableRegistry},
+    runtime::{BindingTable, BindingTableRegistry, RequestRuntimeHandle},
 };
 
 fn planned(source: &str) -> ExecutionPlan {
@@ -84,7 +84,7 @@ fn scalar_only_materialization_borrows_parameter_map() {
 
     session.bind_parameter(name.clone(), Value::Int(7));
 
-    let parameters = session.materialize_parameters(&registry);
+    let parameters = session.materialize_parameters(&registry).unwrap();
 
     assert!(matches!(parameters, std::borrow::Cow::Borrowed(_)));
     assert_eq!(parameters.get(&name), Some(&Value::Int(7)));
@@ -101,7 +101,7 @@ fn materialize_parameters_registers_table_values() {
     session.bind_parameter(scalar.clone(), Value::Int(7));
     session.bind_table_parameter(table.clone(), empty_table());
 
-    let parameters = session.materialize_parameters(&registry);
+    let parameters = session.materialize_parameters(&registry).unwrap();
 
     assert!(matches!(parameters, std::borrow::Cow::Owned(_)));
     assert_eq!(parameters.get(&scalar), Some(&Value::Int(7)));
@@ -145,6 +145,65 @@ fn expression_resolution_uses_the_same_registry_as_table_materialization() {
         panic!("RETURN should produce rows");
     };
     assert_eq!(table.rows()[0].values(), &[Value::Int(0)]);
+}
+
+fn install_limited_request_runtime(
+    session: &mut Session<'_>,
+    next_authority: u64,
+    next_local_id: u64,
+) {
+    session.request = Some(RequestExecutionInput::with_runtime(
+        BTreeMap::new(),
+        jiff::Timestamp::new(1_788_692_096, 0).unwrap(),
+        jiff::tz::TimeZone::UTC,
+        RequestRuntimeHandle::with_binding_table_limits_for_test(next_authority, next_local_id),
+    ));
+}
+
+fn assert_table_allocation_limit(
+    next_authority: u64,
+    next_local_id: u64,
+    expected_detail: &'static str,
+) {
+    let graph = SharedGraph::new(GraphId::new(4005));
+    let mut session = Session::new(&graph);
+    let table_name = admitted("t");
+    session.bind_table_parameter(table_name.clone(), empty_table());
+    install_limited_request_runtime(&mut session, next_authority, next_local_id);
+
+    let error = execute("RETURN $t AS t", &mut session).unwrap_err();
+    assert!(matches!(
+        &error,
+        ExecutorError::ProgramLimitExceeded { detail, .. } if *detail == expected_detail
+    ));
+    assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+    let runtime = session.request.as_ref().unwrap().runtime();
+    assert!(runtime.binding_tables().is_empty());
+    assert_eq!(runtime.stack().depth(), 1, "failed frame must be reclaimed");
+
+    session.clear_parameter(&table_name);
+    let output = execute("RETURN 1 AS value", &mut session)
+        .expect("tableless execution must not require a table authority");
+    assert!(matches!(output, StatementOutput::Rows(_)));
+    assert!(runtime.binding_tables().is_empty());
+}
+
+#[test]
+fn authority_exhaustion_is_a_controlled_request_program_limit() {
+    assert_table_allocation_limit(
+        u64::from(u32::MAX) + 1,
+        1,
+        "binding-table request authority exhausted",
+    );
+}
+
+#[test]
+fn request_local_exhaustion_is_a_controlled_request_program_limit() {
+    assert_table_allocation_limit(
+        31,
+        u64::from(u32::MAX) + 1,
+        "binding-table request-local ID space exhausted",
+    );
 }
 
 #[test]

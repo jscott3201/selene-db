@@ -39,7 +39,7 @@ pub(super) fn execute_read_only(
         &session.parameters,
         &session.scalar_parameters,
         &binding_tables,
-    );
+    )?;
     let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let table = if let Some(txn) = session.active_txn.as_mut() {
@@ -125,7 +125,7 @@ pub(super) fn execute_maintenance(
         &session.parameters,
         &session.scalar_parameters,
         &binding_tables,
-    );
+    )?;
     let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let mut ctx = TxContext::maintenance_with_owned_parameters_and_runtime(
@@ -179,7 +179,7 @@ fn execute_inside_explicit_tx(
         &session.parameters,
         &session.scalar_parameters,
         &binding_tables,
-    );
+    )?;
     let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let txn = session
@@ -235,7 +235,7 @@ fn execute_auto_commit(
         &session.parameters,
         &session.scalar_parameters,
         &binding_tables,
-    );
+    )?;
     let mut txn = session.graph().begin_write();
     let reference_result = validate_request_references(session.request.as_ref(), txn.read());
     let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);

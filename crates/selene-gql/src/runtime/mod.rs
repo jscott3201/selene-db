@@ -55,7 +55,9 @@ mod visited_set;
 mod wco;
 
 pub use binding_table::{Binding, BindingTable};
-pub use binding_table_registry::{BindingTableLookupError, BindingTableRegistry};
+pub use binding_table_registry::{
+    BindingTableAllocationError, BindingTableLookupError, BindingTableRegistry,
+};
 pub use builtin_registry::BuiltinProcedureRegistry;
 pub use call_plan_cache::{CallPlanCache, CallPlanCacheStats, CallPlanKey};
 pub use context::{AdaptiveOptimizer, EvalCtx, TxContext};

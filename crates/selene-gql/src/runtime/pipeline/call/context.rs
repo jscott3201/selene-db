@@ -134,6 +134,9 @@ pub(super) fn procedure_error(
             detail: "node scan budget exceeded",
             span,
         },
+        ProcedureError::ProgramLimitExceeded { detail } => {
+            ExecutorError::ProgramLimitExceeded { detail, span }
+        }
         source => ExecutorError::Procedure { source, span },
     }
 }

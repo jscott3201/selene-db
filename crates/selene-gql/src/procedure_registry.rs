@@ -15,7 +15,10 @@ use std::time::Duration;
 
 use selene_core::DbString;
 
-use crate::{GqlStatus, GqlType, runtime::ProcedureContext};
+use crate::{
+    GqlStatus, GqlType,
+    runtime::{BindingTableAllocationError, ProcedureContext},
+};
 
 /// Registry interface consumed by the GQL planner and executor.
 ///
@@ -397,6 +400,12 @@ pub enum ProcedureError {
         /// Observed scanned nodes after the batch that crossed the limit.
         scanned: usize,
     },
+    /// Procedure output exhausted the request-scoped binding-table ID space.
+    #[error("procedure program limit exceeded: {detail}")]
+    ProgramLimitExceeded {
+        /// Stable allocation-limit detail.
+        detail: &'static str,
+    },
 }
 
 impl ProcedureError {
@@ -411,7 +420,17 @@ impl ProcedureError {
             }
             Self::Cancelled => GqlStatus::OPERATION_CANCELLED,
             Self::Timeout { .. } => GqlStatus::DEADLINE_EXCEEDED,
-            Self::NodeScanBudgetExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
+            Self::NodeScanBudgetExceeded { .. } | Self::ProgramLimitExceeded { .. } => {
+                GqlStatus::PROGRAM_LIMIT_EXCEEDED
+            }
+        }
+    }
+}
+
+impl From<BindingTableAllocationError> for ProcedureError {
+    fn from(error: BindingTableAllocationError) -> Self {
+        Self::ProgramLimitExceeded {
+            detail: error.program_limit_detail(),
         }
     }
 }

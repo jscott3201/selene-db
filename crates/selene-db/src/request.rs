@@ -204,3 +204,38 @@ impl RequestOutcome {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ErrorKind;
+
+    #[test]
+    fn binding_table_program_limit_is_a_structured_failed_request() {
+        let context = Arc::new(RequestContext::new(
+            RequestParams::new(),
+            RequestTimestamp::from_parts(1_788_692_096, 0),
+        ));
+        let error = Error::from_engine(selene_gql::ExecutorError::ProgramLimitExceeded {
+            detail: "binding-table request authority exhausted",
+            span: selene_gql::SourceSpan::default(),
+        });
+        let outcome = RequestOutcome::failed(context, error);
+
+        assert_eq!(outcome.error().unwrap().kind(), ErrorKind::Execution);
+        assert_eq!(
+            outcome.error().unwrap().gqlstatus().unwrap().as_str(),
+            "5GQL1"
+        );
+        assert_eq!(outcome.diagnostics().primary().status().as_str(), "5GQL1");
+        assert!(
+            outcome
+                .diagnostics()
+                .primary()
+                .message()
+                .contains("binding-table request authority exhausted")
+        );
+        assert!(outcome.diagnostics().additional().is_empty());
+        assert!(outcome.into_result().is_err());
+    }
+}

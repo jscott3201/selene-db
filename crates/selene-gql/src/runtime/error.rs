@@ -9,6 +9,8 @@ use selene_core::DbString;
 
 use crate::{AnalysisError, GqlStatus, ParserError, PlannerError, ProcedureError, SourceSpan};
 
+use super::BindingTableAllocationError;
+
 /// Table 8 data-exception subclasses used by runtime evaluation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -526,6 +528,15 @@ impl ExecutorError {
             subclass,
             message: message.into(),
             span,
+        }
+    }
+}
+
+impl From<BindingTableAllocationError> for ExecutorError {
+    fn from(error: BindingTableAllocationError) -> Self {
+        Self::ProgramLimitExceeded {
+            detail: error.program_limit_detail(),
+            span: SourceSpan::default(),
         }
     }
 }

@@ -269,7 +269,7 @@ mod tests {
     fn table_refs_resolve_only_through_their_request_authority() {
         let graph = SeleneGraph::new(GraphId::new(91_001));
         let mut owner = request();
-        let id = owner.runtime.binding_tables().register(table());
+        let id = owner.runtime.binding_tables().register(table()).unwrap();
         let name = db_string("table").unwrap();
         owner.parameters.insert(
             name.clone(),

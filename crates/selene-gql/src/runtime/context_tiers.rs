@@ -9,7 +9,7 @@ use selene_graph::{
     VectorCandidateStateInfo, VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
 };
 
-use crate::{BindingTable, BindingTableRegistry, ImplDefinedCaps, ProcedureTier};
+use crate::{BindingTable, BindingTableRegistry, ImplDefinedCaps, ProcedureError, ProcedureTier};
 
 /// Read-tier procedure context.
 pub struct GraphContext<'a> {
@@ -98,8 +98,13 @@ impl<'a> GraphContext<'a> {
     }
 
     /// Register a binding table for this procedure call's statement.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
-        self.binding_tables.register(table)
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ProcedureError> {
+        self.binding_tables
+            .register(table)
+            .map_err(ProcedureError::from)
     }
 }
 
@@ -168,8 +173,13 @@ impl<'a, 'g> MutationContext<'a, 'g> {
     }
 
     /// Register a binding table for this procedure call's statement.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
-        self.binding_tables.register(table)
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ProcedureError> {
+        self.binding_tables
+            .register(table)
+            .map_err(ProcedureError::from)
     }
 }
 
@@ -254,8 +264,13 @@ impl<'a, 'g> MaintenanceContext<'a, 'g> {
     }
 
     /// Register a binding table for this procedure call's statement.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
-        self.binding_tables.register(table)
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ProcedureError> {
+        self.binding_tables
+            .register(table)
+            .map_err(ProcedureError::from)
     }
 }
 
@@ -282,7 +297,10 @@ impl ProcedureContext<'_, '_> {
     }
 
     /// Register a binding table for the currently executing procedure call.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ProcedureError> {
         match self {
             Self::Graph(ctx) => ctx.register_binding_table(table),
             Self::Mutation(ctx) => ctx.register_binding_table(table),

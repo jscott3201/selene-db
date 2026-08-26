@@ -18,10 +18,23 @@ pub(crate) struct RequestRuntime {
 pub struct RequestRuntimeHandle(Arc<RequestRuntime>);
 
 impl RequestRuntimeHandle {
-    /// Create one request authority with a root execution context.
+    /// Create one request runtime with a root execution context.
+    ///
+    /// Its binding-table authority is acquired lazily only if a table is
+    /// registered.
     #[must_use]
     pub fn new() -> Self {
         Self(Arc::new(RequestRuntime::new()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_binding_table_limits_for_test(
+        next_authority: u64,
+        next_local_id: u64,
+    ) -> Self {
+        Self(Arc::new(
+            RequestRuntime::with_binding_table_limits_for_test(next_authority, next_local_id),
+        ))
     }
 
     /// Clone every status produced so far in deterministic request order.
@@ -46,6 +59,18 @@ impl RequestRuntime {
     pub(crate) fn new() -> Self {
         Self {
             binding_tables: Arc::new(BindingTableRegistry::new()),
+            stack: Mutex::new(ExecutionStack::new()),
+            statuses: Mutex::new(Vec::new()),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_binding_table_limits_for_test(next_authority: u64, next_local_id: u64) -> Self {
+        Self {
+            binding_tables: Arc::new(BindingTableRegistry::with_limits_for_test(
+                next_authority,
+                next_local_id,
+            )),
             stack: Mutex::new(ExecutionStack::new()),
             statuses: Mutex::new(Vec::new()),
         }
