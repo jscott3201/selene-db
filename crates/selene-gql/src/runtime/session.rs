@@ -5,7 +5,7 @@ use std::{
 };
 
 use selene_core::{CancellationToken, Change, DbString, Value};
-use selene_graph::{CommitOutcome, SharedGraph, WriteTxn};
+use selene_graph::{CommitOutcome, SharedGraph, WriteTxn, write_txn::PreparedGraphCommit};
 
 use crate::{
     GqlStatus, SourceSpan,
@@ -62,6 +62,10 @@ pub struct Session<'g> {
     pub(crate) time_zone: Option<jiff::tz::TimeZone>,
     /// Explicit facade request metadata; direct lower sessions leave this absent.
     pub(crate) request: Option<RequestExecutionInput>,
+    /// Selected-facade execution prepares instead of graph-locally publishing.
+    pub(crate) prepare_unpublished: bool,
+    /// Owned result of one selected-facade unpublished write.
+    pub(crate) prepared_graph: Option<PreparedGraphCommit>,
     #[cfg(test)]
     pub(crate) before_statement_execution: Option<Box<dyn FnOnce() + 'g>>,
     /// Session termination flag (ISO/IEC 39075:2024 section 7.3).
@@ -171,6 +175,8 @@ impl<'g> Session<'g> {
             index_selection: true,
             time_zone: None,
             request: None,
+            prepare_unpublished: false,
+            prepared_graph: None,
             #[cfg(test)]
             before_statement_execution: None,
             closed: false,
@@ -181,31 +187,9 @@ impl<'g> Session<'g> {
     /// Create a session that forwards opaque principal bytes to commits.
     #[must_use]
     pub fn with_principal(graph: &'g SharedGraph, principal: Arc<[u8]>) -> Self {
-        Self {
-            graph,
-            principal: Some(principal),
-            parameters: BTreeMap::new(),
-            scalar_parameters: BTreeMap::new(),
-            plan_cache: None,
-            shared_plan_cache: None,
-            call_plan_cache: None,
-            active_txn: None,
-            aborted: false,
-            tx_started_at: None,
-            tx_statement_count: 0,
-            cancellation: None,
-            deadline: None,
-            max_nodes_scanned: None,
-            row_cap: None,
-            warning_sink: None,
-            index_selection: true,
-            time_zone: None,
-            request: None,
-            #[cfg(test)]
-            before_statement_execution: None,
-            closed: false,
-            caps: ImplDefinedCaps::DEFAULT,
-        }
+        let mut session = Self::new(graph);
+        session.principal = Some(principal);
+        session
     }
 
     /// Attach a cooperative cancellation token to subsequent statements.

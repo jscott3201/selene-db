@@ -2,9 +2,10 @@
 
 M02-PR02 defines catalog identity and immutable metadata. M02-PR03 adds the
 in-memory lifecycle service, M02-PR04 routes GQL lifecycle statements through
-that service, and M02-PR05 makes catalog-selected sessions the facade execution
-root. Catalog changes are not durable yet; M09 owns their persisted
-representation and recovery.
+that service, M02-PR05 makes catalog-selected sessions the facade execution
+root, and M03-PR04 Part 1 puts every facade mutation behind one in-memory
+publication authority. Catalog and graph changes are not durable yet; M09 owns
+their persisted representation and recovery.
 
 ## Hierarchy and namespaces
 
@@ -47,7 +48,8 @@ sort by canonical name and use stable ID as the tie-break key.
 
 ## One outer publication
 
-`DatabaseInner` has one `ArcSwap<DatabaseState>` and one lifecycle-writer mutex.
+`DatabaseInner` has one `ArcSwap<DatabaseState>` and one mutation coordinator
+that encapsulates the former lifecycle-writer mutex.
 `DatabaseState` contains everything that must agree at a catalog generation:
 
 - the immutable catalog snapshot;
@@ -55,11 +57,21 @@ sort by canonical name and use stable ID as the tie-break key.
 - validated graph-type definitions keyed by catalog `GraphTypeId`; and
 - kind-local ID high-water marks.
 
-A successful lifecycle command builds one complete replacement and performs one
-outer swap. Descriptor state and runtime maps are never published separately.
-Failed construction or validation retains the prior allocation, generation,
-runtime maps, procedure state, and high-water marks. A same-path recreation or
-replacement receives a fresh stable ID.
+A lifetime-free `DatabaseDraft` pins the exact outer allocation, catalog
+generation, selected graph identity, and graph generation. Direct lifecycle
+commands and selected-session writes use the coordinator's same reservation.
+Catalog staging and graph `PreparedGraphCommit` staging do not publish. The
+authority revalidates the pinned base immediately before performing its one
+outer store; that store is the sole facade visibility cut-line. Descriptor
+state, graph snapshots, runtime maps, and high-water marks are therefore never
+published separately.
+
+Pre-store validation failure or cancellation retains the exact prior outer
+allocation, generation, runtime maps, procedure state, graph IDs, and
+high-water marks. A post-store acknowledgement failure is `Indeterminate`: the
+complete new state is visible even though acknowledgement was uncertain. These
+outcomes are in-memory and durability-independent until M09. A same-path
+recreation or replacement still receives a fresh stable ID.
 
 `CatalogReadSnapshot` loads the outer state in O(1). Its facade summaries do not
 expose lower graph instances, schema definitions, row positions, mutators,
@@ -117,7 +129,9 @@ active, `request_slot()` returns `RequestSlotState::Active` and
 holds only the merged typed parameter snapshot and request timestamp. Neither
 the session nor request context retains a `CatalogReadSnapshot`, graph instance,
 lifecycle lease, lower transaction context, binding registry, or execution
-stack. Facade transaction behavior and termination transitions remain deferred.
+  stack. The transaction slot remains vacant in Part 1; explicit demarcation,
+  multi-request visibility, access/mixing policy, and termination transitions
+  remain deferred to M03-PR04 Part 2 and M03-PR05.
 
 An explicit authorization ID is resolved by `PrincipalProvider`. Provider
 `None` is an error for that explicit ID. Optional principal home paths resolve
@@ -157,12 +171,23 @@ not clear that state.
 A selected session associates one immutable request context before validating
 copied catalog references or parsing. After parse and analysis, request
 preflight checks every source parameter use and every supplied graph-backed
-value before planning or execution. Ordinary data statements then execute under
-the graph request lease. A plan containing one database-catalog command returns
-to the facade before execution; the graph lease is released, the facade
-dispatches through the same `Catalog` lifecycle service used by Rust callers,
-and the request context remains active until dispatch completes. Catalog
-mutation therefore never occurs while a graph request read lease is held.
+value before planning or execution. Read-only plans execute against the live
+pinned graph under its request lease without the global mutation reservation.
+Database-catalog commands return to the facade before execution; the graph
+lease is released, then the facade dispatches through the reservation-aware
+`Catalog` lifecycle service while the request context remains active.
+
+Data-modifying and engine catalog-modifying plans retain their one owned plan
+and request input, release the graph lease, and enter the same global
+reservation. If the pinned graph generation or schema epoch changed, planning
+is retried safely inside the reservation. Execution uses a closure-local,
+CORE-only scratch `SharedGraph` cloned from the current facade snapshot.
+`WriteTxn::prepare_unpublished` validates and freezes its next graph without a
+seal sequence, committer submission, graph-local store, WAL/provider work, live
+schema-epoch bump, or fanout. The facade builds a CORE-only replacement
+`GraphInstance`, composes the complete `DatabaseState`, and publishes once.
+This CORE-only assumption is a Part 1 boundary; non-CORE/durable provider
+preservation belongs to M09.
 
 Parameter names omit `$`, preserve exact Unicode spelling, and are
 case-sensitive. `GeneralParameter` carries both its declared `GqlType` and
@@ -175,7 +200,12 @@ tombstone, unknown, stale, and cross-request IDs fail preflight as invalid
 references rather than aliasing another request's table.
 
 Transaction and session controls remain rejected at the facade boundary.
-M03-PR04 owns transactions; M03-PR05 owns session set/reset/close behavior. A
+Selected maintenance procedures are also rejected before execution with
+`FeatureNotSupportedYet` / `42N01` in Part 1 because their lower maintenance
+context can publish through a live `SharedGraph`; direct lower-engine
+maintenance behavior is unchanged. M03-PR04 Part 2 owns facade transaction
+state/demarcation and deletes the M02 DDL auto-commit bridge; M03-PR05 owns
+session set/reset/close behavior. A
 bare lower executor session rejects every database-catalog command
 with the implementation-defined status `5GQL0`; it does not reinterpret `DROP
 GRAPH` as a storage reset.
@@ -228,7 +258,7 @@ contexts or physical table types.
 | stale home or current session identity | `StaleSessionReference` | none |
 | invalid authorization/principal ID or home declaration | structured session error | none |
 | missing/failing provider or denying/failing policy | structured authorization error | none |
-| unsupported catalog source or stateful control | `FeatureNotSupported` | `42N01` |
+| unsupported catalog source, stateful control, or selected maintenance | `FeatureNotSupported` | `42N01` |
 
 No-op outcomes retain the same outer allocation and generation. Unsupported
 clauses are rejected before a command exists and cannot mutate catalog state.
@@ -240,7 +270,9 @@ or crash contract. Existing lower `Mutator::factory_reset` remains available
 for engine and recovery use, but it is not a GQL database-catalog route.
 
 - M03-PR03 owns execution context/stack and binding-table parameter support.
-- M03-PR04 owns transaction pinning; M03-PR05 owns session controls.
+- M03-PR04 Part 1 owns in-memory staging/publication authority; Part 2 owns
+  explicit transaction state/demarcation and multi-request visibility.
+- M03-PR05 owns session controls.
 - M05 owns replacing the temporary facade re-export of lower `Value` and
   `GqlType` semantic types.
 - Later milestones may broaden catalog object families without changing

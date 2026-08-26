@@ -337,6 +337,73 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
     }
     gql.finish();
 
+    // M03-PR04 Part 1 authority rows. Each timed mutation performs one facade
+    // reservation, scratch-graph staging, unpublished graph preparation, CORE
+    // replacement construction, and one outer DatabaseState publication.
+    let authority_database = graph_fixture(1);
+    let authority_catalog = authority_database.catalog();
+    let authority_session = authority_database
+        .session(&graph("graphs", "graph_00000"))
+        .expect("authority benchmark session resolves");
+    let authority_schema = schema("authority_publication");
+    let mut authority = c.benchmark_group("catalog_lifecycle/transaction_authority");
+    authority.throughput(Throughput::Elements(1));
+    authority.bench_function("direct_schema_reserve_publish", |b| {
+        b.iter_custom(|iterations| {
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                let started = std::time::Instant::now();
+                black_box(
+                    authority_catalog
+                        .create_schema(&authority_schema, CreatePolicy::Strict)
+                        .expect("timed authority schema create succeeds"),
+                );
+                elapsed += started.elapsed();
+                authority_catalog
+                    .drop_schema(&authority_schema, DropPolicy::Strict)
+                    .expect("untimed authority schema cleanup succeeds");
+            }
+            elapsed
+        });
+    });
+    authority.bench_function("selected_insert_stage_publish", |b| {
+        b.iter_custom(|iterations| {
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                let started = std::time::Instant::now();
+                black_box(&authority_session)
+                    .execute(black_box("INSERT (:AuthorityBench) FINISH"))
+                    .expect("timed selected insert succeeds");
+                elapsed += started.elapsed();
+                authority_session
+                    .execute("MATCH (n:AuthorityBench) DELETE n FINISH")
+                    .expect("untimed selected insert cleanup succeeds");
+            }
+            elapsed
+        });
+    });
+    authority.bench_function("selected_publish_then_read", |b| {
+        b.iter_custom(|iterations| {
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                let started = std::time::Instant::now();
+                authority_session
+                    .execute("INSERT (:AuthorityVisible) FINISH")
+                    .expect("timed visibility insert succeeds");
+                let rows = authority_session
+                    .execute("MATCH (n:AuthorityVisible) RETURN n")
+                    .expect("timed visibility read succeeds");
+                assert_eq!(black_box(rows.row_count()), Some(1));
+                elapsed += started.elapsed();
+                authority_session
+                    .execute("MATCH (n:AuthorityVisible) DELETE n FINISH")
+                    .expect("untimed visibility cleanup succeeds");
+            }
+            elapsed
+        });
+    });
+    authority.finish();
+
     let mut selection = c.benchmark_group("catalog_lifecycle/session_creation");
     for &scale in graph_scales() {
         let database = graph_fixture(scale);

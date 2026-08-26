@@ -473,8 +473,8 @@ fn concurrent_readers_observe_only_complete_publications_from_gql_ddl() {
 }
 
 /// Every database-catalog statement dispatches after the parse lease is
-/// released. The test-only lease accounting in `lock_lifecycle_writer` panics
-/// if any `Catalog` mutation runs under a same-thread graph request lease, so
+/// released. The test-only lease accounting in `with_mutation_reservation`
+/// panics if any `Catalog` mutation runs under a same-thread graph request lease, so
 /// this test passing proves hard constraint A for each statement kind,
 /// including a drop of a graph other than the selected graph.
 #[test]

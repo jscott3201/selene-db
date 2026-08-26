@@ -36,9 +36,11 @@ let session = database.session(&graph)?;
 let output = session.execute(source)?;
 ```
 
-Each call parses, analyzes, plans, and executes the source against the selected
-graph. Catalog statements are dispatched through the same database catalog
-service used by the Rust lifecycle API.
+Each call parses, analyzes, and plans the source once against the selected
+graph. Reads execute on that pinned live graph. Selected data/engine-catalog
+mutations execute on a CORE-only scratch graph and become visible through one
+facade `DatabaseState` publication; database-catalog statements are dispatched
+through the same reservation-aware service used by the Rust lifecycle API.
 
 ---
 
@@ -54,10 +56,11 @@ row, not formal conformance status.
 | Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `FOR`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
 | Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is runtime-supported as feature `GQ15`. |
-| Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
+| Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). Selected-facade writes stage without graph-local publication and cross one outer in-memory cut-line. `MERGE` remains deferred. |
 | DDL (`CREATE/DROP SCHEMA`, `CREATE/DROP GRAPH`, `CREATE/DROP GRAPH TYPE`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | Schema/graph management and a bounded named closed-graph path execute through the `selene-db` catalog service. The graph-type source accepts property-free named node types with implied singleton labels. Complete GC03/GG02/GG20/GG21 support remains unsupported: properties, edges/endpoints, explicit key labels, COPY OF/LIKE/external sources, and inline graph types are absent. Both additive `ALTER` forms are implementation-defined surfaces. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries are runtime-supported as `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
-| Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Lower engine only | Feature `GT01` is implemented by the lower executor. Facade sessions reject stateful controls until M03 owns transaction state. Multi-graph transactions (`GT03`) are not runtime-supported. |
+| Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Lower engine only | Feature `GT01` is implemented by the lower executor. M03-PR04 Part 1 supplies facade publication authority but intentionally leaves the transaction slot vacant; facade demarcation is Part 2. Multi-graph transactions (`GT03`) are not runtime-supported. |
+| Maintenance procedures | Lower engine only | Selected facade sessions reject maintenance with `42N01` before execution during the Part 1 CORE-only bridge; direct lower-engine maintenance remains supported. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are runtime-supported (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
 

@@ -652,3 +652,4 @@ fn concurrent_writers_serialize() {
 /// completes regardless. The `chained_count` increments only if the
 /// nested write completes; it must stay at 0.
 mod provider_tests;
+mod unpublished;

@@ -49,6 +49,68 @@ pub struct CommitOutcome {
     pub warnings: Vec<CommitWarning>,
 }
 
+/// Owned graph snapshot and commit metadata prepared without publication.
+///
+/// This bundle is the graph-owned staging boundary used by the database facade:
+/// it contains the immutable next [`SeleneGraph`] plus the metadata required to
+/// shape the existing write outcome, but no lock guard, borrow, [`WriteTxn`],
+/// [`crate::SharedGraph`], committer, WAL handle, or provider state. Preparing
+/// it does not allocate a graph-local publish sequence, append or flush durable
+/// state, store a graph snapshot, bump a live schema epoch, or notify providers.
+/// The transaction's rollback remains armed, so its scratch graph is restored
+/// when preparation returns while this owned snapshot remains valid.
+#[doc(hidden)]
+pub struct PreparedGraphCommit {
+    next_snapshot: Arc<SeleneGraph>,
+    changes: Vec<Change>,
+    principal: Option<Arc<[u8]>>,
+    schema_changed: bool,
+    generation: u64,
+    next_node_id: u64,
+    next_edge_id: u64,
+    warnings: Vec<CommitWarning>,
+}
+
+impl PreparedGraphCommit {
+    /// Borrow the immutable graph snapshot that would become visible.
+    #[must_use]
+    pub fn snapshot(&self) -> &SeleneGraph {
+        &self.next_snapshot
+    }
+
+    /// Return the existing in-memory write metadata without publishing.
+    #[must_use]
+    pub fn outcome(&self) -> CommitOutcome {
+        CommitOutcome {
+            generation: self.generation,
+            changes: self.changes.clone(),
+            principal: self.principal.clone(),
+            durable_at: None,
+            next_node_id: self.next_node_id,
+            next_edge_id: self.next_edge_id,
+            warnings: self.warnings.clone(),
+        }
+    }
+
+    /// Return whether the prepared changes alter graph schema.
+    #[must_use]
+    pub const fn schema_changed(&self) -> bool {
+        self.schema_changed
+    }
+
+    /// Consume the bundle and return its next graph snapshot.
+    #[must_use]
+    pub fn into_snapshot(self) -> SeleneGraph {
+        Arc::try_unwrap(self.next_snapshot).unwrap_or_else(|snapshot| snapshot.as_ref().clone())
+    }
+}
+
+/// Compile-time proof that facade-owned prepared graph state is lifetime-free.
+const _: fn() = || {
+    fn assert_send_static<T: Send + 'static>() {}
+    assert_send_static::<PreparedGraphCommit>();
+};
+
 /// A frozen, owned, `Send + 'static` commit bundle handed from a session thread
 /// to the single committer thread (v1.2 multi-writer, BRIEF 1).
 ///
@@ -113,6 +175,11 @@ const _: fn() = || {
     fn assert_send_static<T: Send + 'static>() {}
     assert_send_static::<SealedCommit>();
 };
+
+struct PreparedCommitParts {
+    prepared: PreparedGraphCommit,
+    fanout_changes: Option<Vec<Change>>,
+}
 
 /// RAII owner of the single graph write lock.
 ///
@@ -241,6 +308,29 @@ impl<'g> WriteTxn<'g> {
         committer.submit_commit(sealed)
     }
 
+    /// Validate and freeze this transaction without graph-local publication.
+    ///
+    /// This is intended for a closure-local, CORE-only scratch
+    /// [`crate::SharedGraph`] whose returned snapshot will be published by a
+    /// higher-level authority. It performs the same generation/next-ID update,
+    /// GG02 and unique validation, warning collection, and cancellation sample
+    /// as [`WriteTxn::seal`], but deliberately leaves rollback armed and does not
+    /// allocate a `seal_seq` or contact the committer or providers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::Cancelled`] when `cancel` is set at the preparation
+    /// cut-line, or the same graph-type validation errors as a normal commit.
+    #[doc(hidden)]
+    pub fn prepare_unpublished(
+        mut self,
+        principal: Option<Arc<[u8]>>,
+        cancel: Option<&AtomicBool>,
+    ) -> GraphResult<PreparedGraphCommit> {
+        let parts = self.prepare_commit_parts(principal, cancel)?;
+        Ok(parts.prepared)
+    }
+
     /// Run the under-lock half of commit and hand back an owned, `Send`
     /// [`SealedCommit`] for the committer thread (v1.2 multi-writer, BRIEF 1).
     ///
@@ -291,6 +381,39 @@ impl<'g> WriteTxn<'g> {
             "pre_txn must be present at seal entry"
         );
 
+        let PreparedCommitParts {
+            prepared,
+            fanout_changes,
+        } = self.prepare_commit_parts(principal, cancel)?;
+
+        // Allocate the publish-order key under the lock so seal-seq order equals
+        // lock-acquisition order (the intended total order). Preparation has
+        // completed every fallible step, keeping aborted sequences gap-free.
+        let seal_seq = self.committer.next_seal_seq();
+
+        // Disarm Drop-rollback: from here the commit is handed to the committer
+        // and the in-place mutations become the published state.
+        self.pre_txn = None;
+
+        Ok(SealedCommit {
+            seal_seq,
+            next_snapshot: prepared.next_snapshot,
+            changes: prepared.changes,
+            fanout_changes,
+            principal: prepared.principal,
+            schema_changed: prepared.schema_changed,
+            generation: prepared.generation,
+            next_node_id: prepared.next_node_id,
+            next_edge_id: prepared.next_edge_id,
+            warnings: prepared.warnings,
+        })
+    }
+
+    fn prepare_commit_parts(
+        &mut self,
+        principal: Option<Arc<[u8]>>,
+        cancel: Option<&AtomicBool>,
+    ) -> GraphResult<PreparedCommitParts> {
         let schema_changed = self
             .changes
             .iter()
@@ -354,17 +477,8 @@ impl<'g> WriteTxn<'g> {
             return Err(GraphError::Cancelled);
         }
 
-        // Allocate the publish-order key under the lock so seal-seq order equals
-        // lock-acquisition order (the intended total order). Done after every
-        // fallible step so an aborted seal consumes no sequence number, keeping
-        // the committer's reorder sequence gap-free.
-        let seal_seq = self.committer.next_seal_seq();
-
-        // Disarm Drop-rollback: from here the commit is handed to the committer
-        // and the in-place mutations become the published state.
-        self.pre_txn = None;
-        // Freeze the next snapshot under the lock. The committer publishes this
-        // exact Arc and never rebuilds it.
+        // Freeze the next snapshot under the lock. Unpublished preparation keeps
+        // this Arc while Drop restores the scratch guard's prior Arc.
         let next_snapshot = Arc::clone(&*self.guard);
 
         let changes = std::mem::take(&mut self.changes);
@@ -376,17 +490,18 @@ impl<'g> WriteTxn<'g> {
         // bundle. `None` on the common (non-truncate) path → zero allocation.
         let fanout_changes = pipeline::expand_truncates_for_fanout(&changes, &truncate_expansions);
 
-        Ok(SealedCommit {
-            seal_seq,
-            next_snapshot,
-            changes,
+        Ok(PreparedCommitParts {
+            prepared: PreparedGraphCommit {
+                next_snapshot,
+                changes,
+                principal,
+                schema_changed,
+                generation,
+                next_node_id,
+                next_edge_id,
+                warnings,
+            },
             fanout_changes,
-            principal,
-            schema_changed,
-            generation,
-            next_node_id,
-            next_edge_id,
-            warnings,
         })
     }
 
