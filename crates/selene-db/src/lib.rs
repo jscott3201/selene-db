@@ -9,8 +9,12 @@
 //! closed graph types. A [`Session`] holds copied catalog/profile defaults,
 //! optional embedder-provided authorization, a controlled typed parameter map,
 //! and one active-request slot. [`RequestOutcome`] retains the immutable context
-//! used by each explicit [`Request`]. Transactions, termination transitions,
-//! and persistence are deferred.
+//! used by each explicit [`Request`]. M03-PR04 Part 1 provides facade-owned
+//! single-writer detached staging and one outer in-memory publication for
+//! implicit mutations. An [`ErrorKind::MutationIndeterminate`] result means the
+//! complete mutation is already visible and must not be retried blindly.
+//! Explicit transaction demarcation/state and persistence remain deferred to
+//! Part 2 and M09 respectively.
 //!
 //! # Quickstart
 //!
@@ -114,6 +118,7 @@ mod path;
 mod request;
 mod session;
 mod session_context;
+mod transaction;
 
 pub use auth::{
     AllowAllAuthorizationPolicy, AuthHookError, AuthorizationDecision, AuthorizationId,

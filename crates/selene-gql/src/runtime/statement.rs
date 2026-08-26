@@ -1,11 +1,6 @@
 //! Top-level statement executor.
 
-use std::{
-    mem,
-    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
-    sync::Arc,
-    time::Instant,
-};
+use std::{sync::Arc, time::Instant};
 
 use selene_core::{Change, metrics};
 use selene_graph::CommitOutcome;
@@ -29,7 +24,7 @@ use crate::{
     runtime::{
         BindingTable, CallPlanKey, DiagnosticBundle, ExecutionFrame,
         ExecutionOutcome as RuntimeExecutionOutcome, ExecutorError, GqlStatusObject,
-        RequestExecutionInput, Session, SessionParameterValue, request,
+        RequestExecutionInput, Session, request,
     },
 };
 
@@ -40,7 +35,7 @@ use crate::{
 /// dispatch it to the catalog service outside the graph request lease it
 /// borrowed the lower session under. Every other statement is executed
 /// normally.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 #[doc(hidden)]
 #[non_exhaustive]
 pub enum CatalogSessionOutput {
@@ -50,6 +45,21 @@ pub enum CatalogSessionOutput {
     RequestOutcome(RuntimeExecutionOutcome),
     /// The statement is a database-catalog command for the facade to execute.
     DatabaseCatalog(DatabaseCatalogCommand),
+    /// A selected-facade request was compiled but deliberately not executed.
+    #[doc(hidden)]
+    Prepared(Arc<ExecutionPlan>),
+}
+
+impl PartialEq for CatalogSessionOutput {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Statement(left), Self::Statement(right)) => left == right,
+            (Self::RequestOutcome(left), Self::RequestOutcome(right)) => left == right,
+            (Self::DatabaseCatalog(left), Self::DatabaseCatalog(right)) => left == right,
+            (Self::Prepared(left), Self::Prepared(right)) => Arc::ptr_eq(left, right),
+            _ => false,
+        }
+    }
 }
 
 /// Result returned by statement-level execution.
@@ -250,43 +260,22 @@ impl Session<'_> {
         registry: &dyn ProcedureRegistry,
         request: RequestExecutionInput,
     ) -> Result<CatalogSessionOutput, ExecutorError> {
-        let request_runtime = request.runtime();
-        let scalar_parameters: std::collections::BTreeMap<_, _> = request
-            .parameters
-            .iter()
-            .map(|(name, parameter)| (name.clone(), parameter.value().clone()))
-            .collect();
-        let parameters = scalar_parameters
-            .iter()
-            .map(|(name, value)| (name.clone(), SessionParameterValue::Scalar(value.clone())))
-            .collect();
-        let request_time_zone = request.time_zone.clone();
-        let prior_parameters = mem::replace(&mut self.parameters, parameters);
-        let prior_scalar_parameters = mem::replace(&mut self.scalar_parameters, scalar_parameters);
-        let prior_time_zone = self.time_zone.replace(request_time_zone);
-        let prior_request = self.request.replace(request);
-
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            self.execute_source_with_policy(source, registry, SourceExecutionPolicy::CatalogSession)
-        }));
-
-        self.parameters = prior_parameters;
-        self.scalar_parameters = prior_scalar_parameters;
-        self.time_zone = prior_time_zone;
-        self.request = prior_request;
-
-        match outcome {
-            Ok(result) => result.map(|output| match output {
-                CatalogSessionOutput::Statement(output) => CatalogSessionOutput::RequestOutcome(
-                    RuntimeExecutionOutcome::from_statement(output, request_runtime.statuses()),
-                ),
-                output => output,
-            }),
-            Err(payload) => resume_unwind(payload),
-        }
+        let (result, _, request_runtime, _) = self.with_facade_request(request, false, |session| {
+            session.execute_source_with_policy(
+                source,
+                registry,
+                SourceExecutionPolicy::CatalogSession,
+            )
+        });
+        result.map(|output| match output {
+            CatalogSessionOutput::Statement(output) => CatalogSessionOutput::RequestOutcome(
+                RuntimeExecutionOutcome::from_statement(output, request_runtime.statuses()),
+            ),
+            output => output,
+        })
     }
 
-    fn execute_source_with_policy(
+    pub(super) fn execute_source_with_policy(
         &mut self,
         source: &str,
         registry: &dyn ProcedureRegistry,
@@ -513,32 +502,37 @@ impl Session<'_> {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum SourceExecutionPolicy {
+pub(super) enum SourceExecutionPolicy {
     Stateful,
     /// Selected database-catalog session interception; see
     /// [`Session::execute_source_catalog_session`].
     CatalogSession,
+    /// Compile one selected request without executing any plan operation.
+    PrepareCatalogSession,
 }
 
 /// Unwrap the executed output for the policies that never intercept.
 fn expect_executed(output: CatalogSessionOutput) -> Result<StatementOutput, ExecutorError> {
     match output {
         CatalogSessionOutput::Statement(output) => Ok(output),
-        CatalogSessionOutput::RequestOutcome(_) | CatalogSessionOutput::DatabaseCatalog(_) => {
-            Err(ExecutorError::ImplementationDefined {
-                detail: "database-catalog interception is only enabled for the catalog-session policy",
-            })
-        }
+        CatalogSessionOutput::RequestOutcome(_)
+        | CatalogSessionOutput::DatabaseCatalog(_)
+        | CatalogSessionOutput::Prepared(_) => Err(ExecutorError::ImplementationDefined {
+            detail: "database-catalog interception is only enabled for the catalog-session policy",
+        }),
     }
 }
 
-fn execute_source_plan(
+pub(super) fn execute_source_plan(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
     policy: SourceExecutionPolicy,
 ) -> Result<CatalogSessionOutput, ExecutorError> {
     ensure_source_policy(plan, policy)?;
+    if policy == SourceExecutionPolicy::PrepareCatalogSession {
+        return Ok(CatalogSessionOutput::Prepared(Arc::new(plan.clone())));
+    }
     if policy == SourceExecutionPolicy::CatalogSession
         && let Some(command) = database_catalog_command(plan)
     {
@@ -551,7 +545,7 @@ fn execute_source_plan(
 
 /// Return the database-catalog command when the plan is exactly one such
 /// operation. `EXPLAIN` wraps the operation and is executed normally.
-fn database_catalog_command(plan: &ExecutionPlan) -> Option<&DatabaseCatalogCommand> {
+pub(super) fn database_catalog_command(plan: &ExecutionPlan) -> Option<&DatabaseCatalogCommand> {
     match plan.pipeline.as_slice() {
         [PipelineOp::Catalog(CatalogOp::DatabaseCatalog(command))] => Some(command),
         _ => None,
@@ -562,16 +556,27 @@ fn ensure_source_policy(
     plan: &ExecutionPlan,
     policy: SourceExecutionPolicy,
 ) -> Result<(), ExecutorError> {
-    if policy == SourceExecutionPolicy::CatalogSession
-        && matches!(
-            plan.category,
-            StatementCategory::TransactionControl | StatementCategory::SessionControl
-        )
-    {
-        return Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "stateful control in a selected facade session",
-            span: SourceSpan::default(),
-        });
+    if matches!(
+        policy,
+        SourceExecutionPolicy::CatalogSession | SourceExecutionPolicy::PrepareCatalogSession
+    ) {
+        let feature = match plan.category {
+            StatementCategory::TransactionControl | StatementCategory::SessionControl => {
+                Some("stateful control in a selected facade session")
+            }
+            StatementCategory::Maintenance => {
+                Some("maintenance in a selected facade session before M03-PR04 Part 2")
+            }
+            StatementCategory::ReadOnly
+            | StatementCategory::DataModifying
+            | StatementCategory::CatalogModifying => None,
+        };
+        if let Some(feature) = feature {
+            return Err(ExecutorError::FeatureNotSupportedYet {
+                feature,
+                span: SourceSpan::default(),
+            });
+        }
     }
     Ok(())
 }

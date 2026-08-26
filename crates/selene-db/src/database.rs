@@ -3,7 +3,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use arc_swap::ArcSwap;
-use parking_lot::{Mutex, RwLock};
+#[cfg(test)]
+use parking_lot::Mutex;
+use parking_lot::RwLock;
 use selene_catalog::{
     CatalogDescriptor, CatalogGeneration, CatalogId, CatalogName, CatalogSnapshot,
     CatalogSnapshotBuilder, CreationMetadata, DirectoryId, GraphId, GraphTypeId,
@@ -15,6 +17,7 @@ use crate::{
     AuthorizationDecision, AuthorizationRequest, Catalog, CatalogReadSnapshot, DatabaseConfig,
     Error, GraphDescriptor, ObjectPath, Principal, Result, SchemaDescriptor, Session,
     SessionContext, SessionOptions, session_context::SessionContextParts,
+    transaction::MutationCoordinator,
 };
 
 const CATALOG_NAME: &str = "selene";
@@ -221,46 +224,35 @@ impl DatabaseBuilder {
 pub(crate) struct DatabaseInner {
     pub(crate) config: DatabaseConfig,
     pub(crate) state: ArcSwap<DatabaseState>,
-    pub(crate) lifecycle_writer: Mutex<()>,
+    pub(crate) transactions: MutationCoordinator,
     pub(crate) procedures: BuiltinProcedureRegistry,
     #[cfg(test)]
     pub(crate) failure: Mutex<Option<crate::catalog::FailurePoint>>,
     #[cfg(test)]
     pub(crate) drop_blocked: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    #[cfg(test)]
+    pub(crate) replacement_graph_constructions: std::sync::atomic::AtomicUsize,
 }
 
 impl DatabaseInner {
-    /// Acquire the lifecycle writer mutex.
-    ///
-    /// Every catalog lifecycle mutation starts here. In test builds it also
-    /// asserts that the calling thread holds no graph request lease: drop
-    /// takes the target's lifecycle write lease after this mutex, so entering
-    /// under a same-thread read lease would deadlock instead of failing.
-    pub(crate) fn lock_lifecycle_writer(&self) -> parking_lot::MutexGuard<'_, ()> {
-        #[cfg(test)]
-        assert_eq!(
-            GraphRequestDepth::current(),
-            0,
-            "catalog lifecycle entered under a same-thread graph request lease"
-        );
-        self.lifecycle_writer.lock()
-    }
-
     fn new(config: DatabaseConfig) -> Self {
         Self {
             config,
             state: ArcSwap::from(Arc::new(DatabaseState {
+                publication: 0,
                 catalog: initial_snapshot(),
                 graphs: BTreeMap::new(),
                 graph_types: BTreeMap::new(),
                 high_water: HighWaterMarks::initial(),
             })),
-            lifecycle_writer: Mutex::new(()),
+            transactions: MutationCoordinator::new(),
             procedures: BuiltinProcedureRegistry::new(),
             #[cfg(test)]
             failure: Mutex::new(None),
             #[cfg(test)]
             drop_blocked: Mutex::new(None),
+            #[cfg(test)]
+            replacement_graph_constructions: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -293,6 +285,7 @@ impl Drop for GraphRequestDepth {
 }
 
 pub(crate) struct DatabaseState {
+    pub(crate) publication: u64,
     pub(crate) catalog: CatalogSnapshot,
     pub(crate) graphs: BTreeMap<GraphId, Arc<GraphInstance>>,
     pub(crate) graph_types: BTreeMap<GraphTypeId, Arc<GraphTypeDef>>,

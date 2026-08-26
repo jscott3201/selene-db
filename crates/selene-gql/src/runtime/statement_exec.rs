@@ -268,13 +268,25 @@ fn execute_auto_commit(
     });
     match result {
         Ok(table) => {
-            let outcome = txn.commit_with_principal(principal).map_err(|source| {
-                ExecutorError::GraphMutation {
-                    source,
-                    span: SourceSpan::default(),
-                }
-            })?;
+            let (outcome, prepared) = if session.prepare_unpublished {
+                let prepared = txn.prepare_unpublished(principal, None).map_err(|source| {
+                    ExecutorError::GraphMutation {
+                        source,
+                        span: SourceSpan::default(),
+                    }
+                })?;
+                (prepared.outcome(), Some(prepared))
+            } else {
+                let outcome = txn.commit_with_principal(principal).map_err(|source| {
+                    ExecutorError::GraphMutation {
+                        source,
+                        span: SourceSpan::default(),
+                    }
+                })?;
+                (outcome, None)
+            };
             emit_commit_warnings(&outcome, session, request_runtime);
+            session.prepared_graph = prepared;
             Ok(write_output_from_commit(plan, table, outcome))
         }
         Err(error) => {

@@ -163,7 +163,8 @@ Bench bin: `catalog_lifecycle`. The quick profile measures absolute schema
 resolve, deterministic schema listing, outer snapshot clone, schema
 create/drop publication at 16 and 256 user schemas, and default/authenticated
 session-context creation at 4 and 32 registered graphs. The full profile adds
-1,024 schemas and 128 graphs.
+1,024 schemas and 128 graphs. M03-PR04 Part 1 adds focused direct-reservation,
+selected graph staging/publication, and publish-then-read rows at one graph.
 The create and drop rows time only the named operation; the inverse operation
 restores the fixture outside the returned Criterion duration.
 
@@ -266,6 +267,30 @@ descriptor allocation. They are characterization rows, not regression claims.
 ```bash
 scripts/run-benches.sh --profile quick --bench execution_context
 ```
+
+#### M03-PR04 Part 1 publication-authority evidence
+
+The `catalog_lifecycle/transaction_authority` group characterizes the new
+in-memory authority without claiming an improvement. The direct row includes
+one common reservation and outer catalog publication. The selected insert row
+includes single-pass planning, CORE-only scratch construction, unpublished
+graph preparation, replacement construction, and one outer publication. The
+publish-then-read row adds a read-only request that must observe the complete
+new graph. Cleanup runs outside each returned Criterion duration.
+
+Recorded on 2026-08-26 with Apple M5 (10 cores, 16 GiB), macOS 26.7 build
+25G220, rustc 1.97.1, mimalloc, and the M03-PR04 Part 1 worktree based on
+`1b6d801e43d6d2ded02ba74edf28824f3b36db26`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/transaction_authority
+```
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/transaction_authority/direct_schema_reserve_publish` | 590.55–593.91 ns |
+| `catalog_lifecycle/transaction_authority/selected_insert_stage_publish` | 123.06–146.13 µs |
+| `catalog_lifecycle/transaction_authority/selected_publish_then_read` | 256.49–271.13 µs |
 
 #### M02-PR04 part 1 quick evidence
 

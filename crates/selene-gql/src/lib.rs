@@ -86,11 +86,11 @@ pub use crate::runtime::{
     CallPlanCache, CallPlanCacheStats, CallPlanKey, CatalogSessionOutput, DataExceptionSubclass,
     DiagnosticBundle, ExecutionContext, ExecutionContextError, ExecutionFrame, ExecutionOutcome,
     ExecutionStack, ExecutorError, ExecutorWarning, GqlStatusObject, GraphContext,
-    MaintenanceContext, MutationContext, PlanCache, PlanCacheStats, ProcedureContext, Record,
-    RequestExecutionInput, RequestParameter, RequestRuntimeHandle, RollbackOutcome, Session,
-    SessionParameterValue, SharedPlanCache, SharedPlanCacheStats, StatementOutput,
-    TransactionOutcome, TxContext, WarningSink, WriteOutcome, execute_pattern, execute_pipeline,
-    execute_statement, validate_parameter_value,
+    MaintenanceContext, MutationContext, PlanCache, PlanCacheStats, PreparedCatalogMutationOutput,
+    PreparedCatalogRequest, ProcedureContext, Record, RequestExecutionInput, RequestParameter,
+    RequestRuntimeHandle, RollbackOutcome, Session, SessionParameterValue, SharedPlanCache,
+    SharedPlanCacheStats, StatementOutput, TransactionOutcome, TxContext, WarningSink,
+    WriteOutcome, execute_pattern, execute_pipeline, execute_statement, validate_parameter_value,
 };
 pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken, NodeScanBudget};
 

@@ -3,12 +3,16 @@
 use std::{cell::Cell, marker::PhantomData, sync::Arc};
 
 use selene_catalog::GraphId as LowerGraphId;
-use selene_gql::CatalogSessionOutput;
+use selene_gql::{CatalogSessionOutput, PreparedCatalogRequest};
+use selene_graph::SharedGraph;
 
 use crate::{
     CatalogReadSnapshot, Error, ExecutionOutcome, GeneralParameter, ObjectPath, Request,
     RequestContext, RequestOutcome, RequestParams, RequestTimestamp, Result, SessionContext,
-    database::DatabaseInner, ddl, params::validated_parameter_name,
+    database::DatabaseInner,
+    ddl,
+    params::validated_parameter_name,
+    transaction::{DatabaseDraft, require_committed},
 };
 
 /// Movable session selected to one catalog graph identity.
@@ -149,19 +153,36 @@ impl Session {
             .principal()
             .and_then(crate::Principal::audit_bytes_arc);
         let input = context.lower_input(self.context.time_zone().seconds())?;
-        match self.inner.execute_catalog_request(
+        match self.inner.prepare_catalog_request(
             graph_id,
             &current_graph.path,
             audit_bytes,
             request.source(),
             input,
         )? {
-            CatalogSessionOutput::RequestOutcome(output) => ExecutionOutcome::from_engine(output),
-            CatalogSessionOutput::DatabaseCatalog(command) => {
-                ddl::execute(&self.inner, &self.context.current_schema().path, command)
+            PreparedSessionExecution::Complete(CatalogSessionOutput::RequestOutcome(output)) => {
+                ExecutionOutcome::from_engine(output)
             }
-            CatalogSessionOutput::Statement(_) => Err(Error::unsupported_engine_outcome()),
-            _ => Err(Error::unsupported_engine_outcome()),
+            PreparedSessionExecution::Deferred(prepared) => {
+                if let Some(command) = prepared.database_catalog_command().cloned() {
+                    ddl::execute(&self.inner, &self.context.current_schema().path, command)
+                } else {
+                    self.inner.execute_prepared_mutation(
+                        graph_id,
+                        &current_graph.path,
+                        self.context
+                            .principal()
+                            .and_then(crate::Principal::audit_bytes_arc),
+                        prepared,
+                    )
+                }
+            }
+            PreparedSessionExecution::Complete(
+                CatalogSessionOutput::Statement(_)
+                | CatalogSessionOutput::DatabaseCatalog(_)
+                | CatalogSessionOutput::Prepared(_),
+            ) => Err(Error::unsupported_engine_outcome()),
+            PreparedSessionExecution::Complete(_) => Err(Error::unsupported_engine_outcome()),
         }
     }
 
@@ -189,27 +210,81 @@ impl Session {
 }
 
 impl DatabaseInner {
-    /// Parse, plan, and either execute or intercept one selected-session
-    /// statement under the graph's request lease.
+    /// Parse and plan once, then execute reads or defer mutations.
     ///
     /// A database-catalog command is returned unexecuted. The facade dispatches
     /// it only after this method releases the graph lease.
-    fn execute_catalog_request(
+    fn prepare_catalog_request(
         &self,
         id: LowerGraphId,
         path: &ObjectPath,
         audit_bytes: Option<Arc<[u8]>>,
         source: &str,
         request: selene_gql::RequestExecutionInput,
-    ) -> Result<CatalogSessionOutput> {
+    ) -> Result<PreparedSessionExecution> {
         self.with_graph_request(id, path, |graph| {
             let mut session = match audit_bytes {
                 Some(audit_bytes) => selene_gql::Session::with_principal(graph, audit_bytes),
                 None => selene_gql::Session::new(graph),
             };
-            session
-                .execute_source_catalog_request(source, &self.procedures, request)
-                .map_err(Error::from_engine)
+            let prepared = session
+                .prepare_source_catalog_request(source, &self.procedures, request)
+                .map_err(Error::from_engine)?;
+            if prepared.is_read_only() {
+                session
+                    .execute_prepared_catalog_request(prepared, &self.procedures)
+                    .map(PreparedSessionExecution::Complete)
+                    .map_err(Error::from_engine)
+            } else {
+                Ok(PreparedSessionExecution::Deferred(prepared))
+            }
+        })
+    }
+
+    fn execute_prepared_mutation(
+        &self,
+        id: LowerGraphId,
+        _path: &ObjectPath,
+        audit_bytes: Option<Arc<[u8]>>,
+        prepared: PreparedCatalogRequest,
+    ) -> Result<ExecutionOutcome> {
+        self.with_mutation_reservation(|reservation| {
+            let base = self.state.load_full();
+            let mut draft = DatabaseDraft::new(&base, &reservation);
+            let instance = draft.pin_graph(&base, id)?;
+            let snapshot = instance.graph.read();
+            let stale_plan = prepared.graph_id().get() != id.get()
+                || prepared.graph_generation() != snapshot.meta.generation
+                || prepared.schema_version() != instance.graph.schema_version();
+            let scratch = SharedGraph::try_from_graph(snapshot.as_ref().clone())
+                .map_err(Error::invalid_graph_type_source)?;
+            drop(snapshot);
+            let mut session = match audit_bytes {
+                Some(audit_bytes) => selene_gql::Session::with_principal(&scratch, audit_bytes),
+                None => selene_gql::Session::new(&scratch),
+            };
+            let prepared = if stale_plan {
+                session
+                    .reprepare_source_catalog_request(prepared, &self.procedures)
+                    .map_err(Error::from_engine)?
+            } else {
+                prepared
+            };
+            if prepared.is_read_only() || prepared.is_database_catalog() {
+                return Err(Error::catalog_invariant(
+                    "selected mutation changed category while replanning",
+                ));
+            }
+            let staged = session
+                .execute_prepared_catalog_request_unpublished(prepared, &self.procedures)
+                .map_err(Error::from_engine)?;
+            let (output, prepared_graph) = staged.into_parts();
+            drop(session);
+            drop(scratch);
+
+            draft.attach_prepared_graph(id, prepared_graph)?;
+            require_committed(self.publish_database_draft(reservation, draft)?)?;
+            ExecutionOutcome::from_engine(output)
         })
     }
 
@@ -238,6 +313,11 @@ impl DatabaseInner {
         }
         execute(&instance.graph)
     }
+}
+
+enum PreparedSessionExecution {
+    Complete(CatalogSessionOutput),
+    Deferred(PreparedCatalogRequest),
 }
 
 #[cfg(test)]
