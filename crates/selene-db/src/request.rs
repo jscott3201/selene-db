@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::{Error, ExecutionOutcome, RequestParams, Result};
+use crate::{DiagnosticBundle, Error, ExecutionOutcome, RequestParams, Result};
 
 /// One source statement and its request-scoped parameters.
 #[derive(Clone, Debug)]
@@ -81,20 +81,23 @@ impl RequestTimestamp {
 
 /// Immutable parameter and temporal snapshot associated with one execution.
 ///
-/// The context contains no graph allocation, lock, transaction, physical row,
-/// binding-table registry, or execution stack. `TableRef` parameters are
-/// rejected before execution until M03-PR03 defines their request registry.
+/// The context contains no graph allocation, lifecycle lease, catalog snapshot,
+/// transaction, or physical row. Its private request-runtime handle owns the
+/// execution stack, status collection, and sole binding-table authority; none
+/// of those lower runtime types is exposed through the facade.
 #[derive(Debug)]
 pub struct RequestContext {
     parameters: RequestParams,
     timestamp: RequestTimestamp,
+    runtime: selene_gql::RequestRuntimeHandle,
 }
 
 impl RequestContext {
-    pub(crate) const fn new(parameters: RequestParams, timestamp: RequestTimestamp) -> Self {
+    pub(crate) fn new(parameters: RequestParams, timestamp: RequestTimestamp) -> Self {
         Self {
             parameters,
             timestamp,
+            runtime: selene_gql::RequestRuntimeHandle::new(),
         }
     }
 
@@ -116,10 +119,11 @@ impl RequestContext {
     ) -> Result<selene_gql::RequestExecutionInput> {
         let offset = jiff::tz::Offset::from_seconds(time_zone_seconds)
             .map_err(Error::invalid_request_time_zone)?;
-        Ok(selene_gql::RequestExecutionInput::new(
+        Ok(selene_gql::RequestExecutionInput::with_runtime(
             self.parameters.to_lower(),
             self.timestamp.lower(),
             jiff::tz::TimeZone::fixed(offset),
+            self.runtime.clone(),
         ))
     }
 }
@@ -141,6 +145,8 @@ pub enum RequestOutcome {
         context: Arc<RequestContext>,
         /// Facade diagnostic with its original source chain and GQLSTATUS.
         error: Error,
+        /// Structured primary/additional/nested request diagnostics.
+        diagnostics: DiagnosticBundle,
     },
 }
 
@@ -168,6 +174,25 @@ impl RequestOutcome {
         match self {
             Self::Failed { error, .. } => Some(error),
             Self::Succeeded { .. } => None,
+        }
+    }
+
+    /// Borrow the structured diagnostics for either success or failure.
+    #[must_use]
+    pub const fn diagnostics(&self) -> &DiagnosticBundle {
+        match self {
+            Self::Succeeded { outcome, .. } => outcome.diagnostics(),
+            Self::Failed { diagnostics, .. } => diagnostics,
+        }
+    }
+
+    pub(crate) fn failed(context: Arc<RequestContext>, error: Error) -> Self {
+        let diagnostics =
+            DiagnosticBundle::from_error_and_engine_statuses(&error, &context.runtime.statuses());
+        Self::Failed {
+            context,
+            error,
+            diagnostics,
         }
     }
 

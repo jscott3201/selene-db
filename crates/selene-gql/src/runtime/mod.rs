@@ -19,10 +19,12 @@ mod context_tiers;
 mod edge_access;
 mod error;
 pub(crate) mod evaluator;
+mod execution_context;
 mod expand;
 mod hash_join;
 mod match_mode;
 mod native_algorithms;
+mod outcome;
 mod outer;
 mod parameter_type;
 mod path_mode;
@@ -35,6 +37,7 @@ mod property_filter_rows;
 mod questioned;
 mod repeat;
 mod request;
+mod request_runtime;
 mod scan;
 mod scan_bind;
 mod scan_resolve;
@@ -52,18 +55,26 @@ mod visited_set;
 mod wco;
 
 pub use binding_table::{Binding, BindingTable};
-pub use binding_table_registry::BindingTableRegistry;
+pub use binding_table_registry::{BindingTableLookupError, BindingTableRegistry};
 pub use builtin_registry::BuiltinProcedureRegistry;
 pub use call_plan_cache::{CallPlanCache, CallPlanCacheStats, CallPlanKey};
 pub use context::{AdaptiveOptimizer, EvalCtx, TxContext};
 pub use context_tiers::{GraphContext, MaintenanceContext, MutationContext, ProcedureContext};
 pub use error::{DataExceptionSubclass, ExecutorError, ExecutorWarning, WarningSink};
+pub use execution_context::{
+    ExecutionContext, ExecutionContextError, ExecutionFrame, ExecutionStack, Record,
+};
+pub use outcome::{
+    BindingTableDescriptor, BindingTableField, DiagnosticBundle, ExecutionOutcome, GqlStatusObject,
+};
 pub use parameter_type::validate_parameter_value;
 pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;
 pub use plan_cache::{PlanCache, PlanCacheStats, SharedPlanCache, SharedPlanCacheStats};
 pub(crate) use plan_runner::execute_plan;
 pub use request::{RequestExecutionInput, RequestParameter};
+#[doc(hidden)]
+pub use request_runtime::RequestRuntimeHandle;
 pub use session::{RollbackOutcome, Session, SessionParameterValue, TransactionOutcome};
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{

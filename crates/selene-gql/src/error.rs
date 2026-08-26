@@ -11,6 +11,8 @@ use crate::ast::span::SourceSpan;
 pub struct GqlStatus([u8; 5]);
 
 impl GqlStatus {
+    /// Maps to GQLSTATUS 00000: successful completion with a regular result.
+    pub const SUCCESSFUL_COMPLETION: Self = Self(*b"00000");
     /// Maps to GQLSTATUS 00001 per ISO/IEC 39075:2024 section 23.1 Table 8:
     /// the completion condition of a successful outcome with an omitted
     /// result (section 4.9.3), which every catalog-modifying statement
@@ -20,6 +22,8 @@ impl GqlStatus {
     /// the `DROP GRAPH IF EXISTS` completion condition when the graph is
     /// absent (section 12.5 GR1).
     pub const GRAPH_DOES_NOT_EXIST: Self = Self(*b"01G03");
+    /// Maps to GQLSTATUS 02000: successful completion with no data.
+    pub const NO_DATA: Self = Self(*b"02000");
     /// Maps to GQLSTATUS 42000 per ISO/IEC 39075:2024 section 23.1 Table 8:
     /// the class-level "syntax error or access rule violation" condition.
     /// ISO leaves access rules to the implementation (IE005).

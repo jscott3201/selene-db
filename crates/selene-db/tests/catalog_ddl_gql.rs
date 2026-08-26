@@ -11,9 +11,7 @@ use selene_db::{
     PathSegment, SchemaPath, Session, WriteSummary,
 };
 
-const OMITTED: ExecutionOutcome = ExecutionOutcome::OmittedResult {
-    status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
-};
+const OMITTED: ExecutionOutcome = ExecutionOutcome::SUCCESSFUL_OMITTED;
 
 fn schema(name: &str) -> SchemaPath {
     SchemaPath::regular("selene", name).unwrap()
@@ -94,8 +92,8 @@ fn absolute_and_current_schema_relative_references_round_trip() {
         .session(&graph("session_schema", "scratch"))
         .unwrap();
     assert_eq!(
-        handle.execute("INSERT (:Note)").unwrap(),
-        ExecutionOutcome::Written(WriteSummary::new(1, None))
+        handle.execute("INSERT (:Note)").unwrap().write_summary(),
+        Some(WriteSummary::new(1, None))
     );
     handle.execute("MATCH (n:Note) DELETE n").unwrap();
 
@@ -345,9 +343,7 @@ fn conditional_noops_report_their_condition_without_publishing() {
     ] {
         assert_eq!(
             session.execute(source).unwrap(),
-            ExecutionOutcome::OmittedResult {
-                status: GqlStatus::GRAPH_DOES_NOT_EXIST
-            },
+            ExecutionOutcome::GRAPH_NOT_FOUND_OMITTED,
             "{source}"
         );
         assert_unpublished(&catalog, &before, source);
@@ -662,12 +658,15 @@ fn sessions_share_catalog_state_and_stay_usable_after_catalog_errors() {
     );
     second.execute("DROP GRAPH /shared/absent").unwrap_err();
     assert_eq!(
-        second.execute("INSERT (:Person)").unwrap(),
-        ExecutionOutcome::Written(WriteSummary::new(1, None))
+        second.execute("INSERT (:Person)").unwrap().write_summary(),
+        Some(WriteSummary::new(1, None))
     );
     assert_eq!(
-        first.execute("MATCH (n:Person) RETURN n").unwrap(),
-        ExecutionOutcome::Rows { row_count: 1 }
+        first
+            .execute("MATCH (n:Person) RETURN n")
+            .unwrap()
+            .row_count(),
+        Some(1)
     );
 }
 

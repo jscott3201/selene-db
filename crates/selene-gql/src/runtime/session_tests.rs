@@ -135,6 +135,19 @@ fn statement_execution_materializes_table_parameter_refs() {
 }
 
 #[test]
+fn expression_resolution_uses_the_same_registry_as_table_materialization() {
+    let graph = SharedGraph::new(GraphId::new(4004));
+    let mut session = Session::new(&graph);
+    session.bind_table_parameter(admitted("t"), empty_table());
+
+    let output = execute("RETURN cardinality($t)", &mut session).expect("statement executes");
+    let StatementOutput::Rows(table) = output else {
+        panic!("RETURN should produce rows");
+    };
+    assert_eq!(table.rows()[0].values(), &[Value::Int(0)]);
+}
+
+#[test]
 fn session_without_cache_executes_source_normally() {
     let graph = SharedGraph::new(GraphId::new(3897));
     let mut session = Session::new(&graph);

@@ -3,8 +3,9 @@
 use std::error::Error as _;
 
 use selene_db::{
-    CreatePolicy, Database, DatabaseBuilder, DatabaseConfig, DropPolicy, ErrorKind,
-    ExecutionOutcome, GqlStatus, ObjectPath, OpenMode, SchemaPath, Session, WriteSummary,
+    CreatePolicy, Database, DatabaseBuilder, DatabaseConfig, DeclaredType, DropPolicy, ErrorKind,
+    ExecutionOutcome, GqlStatus, GqlType, ObjectPath, OpenMode, Request, RequestOutcome,
+    SchemaPath, Session, Value, WriteSummary,
 };
 
 fn schema(name: &str) -> SchemaPath {
@@ -29,10 +30,9 @@ fn fixture() -> (Database, ObjectPath) {
 }
 
 fn row_count(outcome: ExecutionOutcome) -> usize {
-    let ExecutionOutcome::Rows { row_count } = outcome else {
-        panic!("expected row summary, got {outcome:?}");
-    };
-    row_count
+    outcome
+        .row_count()
+        .unwrap_or_else(|| panic!("expected row result, got {outcome:?}"))
 }
 
 #[test]
@@ -40,12 +40,10 @@ fn facade_writes_and_queries_a_selected_catalog_graph() {
     let (database, path) = fixture();
     let session = database.session(&path).unwrap();
 
-    assert_eq!(
-        session
-            .execute("INSERT (:Person { name: 'Ada' })")
-            .expect("insert succeeds"),
-        ExecutionOutcome::Written(WriteSummary::new(1, None))
-    );
+    let write = session
+        .execute("INSERT (:Person { name: 'Ada' })")
+        .expect("insert succeeds");
+    assert_eq!(write.write_summary(), Some(WriteSummary::new(1, None)));
     assert_eq!(
         row_count(
             session
@@ -61,11 +59,172 @@ fn facade_summarizes_write_return_outcomes() {
     let (database, path) = fixture();
     let session = database.session(&path).unwrap();
 
+    let write = session
+        .execute("INSERT (n:Person) RETURN n")
+        .expect("write with return succeeds");
+    assert_eq!(write.write_summary(), Some(WriteSummary::new(1, Some(1))));
+    assert_eq!(write.row_count(), Some(1));
+}
+
+#[test]
+fn facade_preserves_rows_names_and_analyzer_declared_types() {
+    let (database, path) = fixture();
+    let session = database.session(&path).unwrap();
+
+    let outcome = session
+        .execute("RETURN 7 AS answer, 'Ada' AS name")
+        .expect("query succeeds");
+    let ExecutionOutcome::Rows {
+        result,
+        diagnostics,
+    } = outcome
+    else {
+        panic!("expected regular result");
+    };
     assert_eq!(
-        session
-            .execute("INSERT (n:Person) RETURN n")
-            .expect("write with return succeeds"),
-        ExecutionOutcome::Written(WriteSummary::new(1, Some(1)))
+        diagnostics.primary().status(),
+        GqlStatus::SUCCESSFUL_COMPLETION
+    );
+    assert_eq!(result.rows().len(), 1);
+    assert_eq!(
+        result.rows()[0].values(),
+        &[
+            Value::Int(7),
+            Value::String(selene_core::db_string("Ada").unwrap())
+        ]
+    );
+    assert_eq!(result.descriptor().fields()[0].name(), Some("answer"));
+    assert_eq!(result.descriptor().fields()[1].name(), Some("name"));
+    assert_eq!(
+        result.descriptor().fields()[0].declared_type(),
+        &DeclaredType::Resolved(GqlType::Integer)
+    );
+    assert_eq!(
+        result.descriptor().fields()[1].declared_type(),
+        &DeclaredType::Resolved(GqlType::String)
+    );
+
+    let procedure = session
+        .execute("CALL selene.health() YIELD graph_id, node_count")
+        .unwrap();
+    let ExecutionOutcome::Rows { result, .. } = procedure else {
+        panic!("expected procedure rows");
+    };
+    assert_eq!(result.descriptor().fields()[0].name(), Some("graph_id"));
+    assert_eq!(result.descriptor().fields()[1].name(), Some("node_count"));
+    assert_eq!(
+        result.descriptor().fields()[1].declared_type(),
+        &DeclaredType::Resolved(GqlType::Uint64)
+    );
+    assert_eq!(result.rows().len(), 1);
+
+    session.execute("INSERT (:Person)").unwrap();
+    let node = session
+        .execute("MATCH (n:Person) RETURN n AS node")
+        .unwrap();
+    let ExecutionOutcome::Rows { result, .. } = node else {
+        panic!("expected node-reference row");
+    };
+    assert_eq!(
+        result.rows()[0].values(),
+        &[Value::NodeRef(selene_core::NodeId::new(1))]
+    );
+    assert_eq!(result.descriptor().fields()[0].name(), Some("node"));
+    assert_eq!(
+        result.descriptor().fields()[0].declared_type(),
+        &DeclaredType::Resolved(GqlType::NodeRef)
+    );
+}
+
+#[test]
+fn facade_preserves_all_rows_non_scalar_values_and_duplicate_field_diagnostics() {
+    let (database, path) = fixture();
+    let session = database.session(&path).unwrap();
+
+    let outcome = session
+        .execute("FOR x IN [1, 2, 3] RETURN x AS value, [x] AS items")
+        .expect("all rows and list values remain lossless");
+    let ExecutionOutcome::Rows { result, .. } = outcome else {
+        panic!("expected regular result");
+    };
+
+    assert_eq!(result.descriptor().fields()[0].name(), Some("value"));
+    assert_eq!(result.descriptor().fields()[1].name(), Some("items"));
+    assert_eq!(result.rows().len(), 3);
+    for (index, row) in result.rows().iter().enumerate() {
+        let value = Value::Int((index + 1) as i64);
+        assert_eq!(row.values(), &[value.clone(), Value::List(vec![value])]);
+    }
+
+    let duplicate = session.execute_request(Request::new("RETURN 1 AS value, 2 AS value"));
+    assert!(matches!(duplicate, RequestOutcome::Failed { .. }));
+    assert_eq!(duplicate.diagnostics().primary().status().as_str(), "42N10");
+    assert!(
+        duplicate
+            .diagnostics()
+            .primary()
+            .message()
+            .contains("already declared")
+    );
+}
+
+#[test]
+fn facade_distinguishes_no_data_warning_omitted_and_failure() {
+    let (database, path) = fixture();
+    let session = database.session(&path).unwrap();
+
+    let no_data = session.execute("MATCH (n:Missing) RETURN n").unwrap();
+    assert_eq!(no_data.row_count(), Some(0));
+    assert_eq!(no_data.diagnostics().primary().status(), GqlStatus::NO_DATA);
+
+    let warning = session
+        .execute("FOR x IN [1, NULL, 2] RETURN sum(x) AS total")
+        .unwrap();
+    assert_eq!(
+        warning.diagnostics().primary().status(),
+        GqlStatus::NULL_VALUE_ELIMINATED_IN_SET_FUNCTION
+    );
+    assert_eq!(warning.diagnostics().additional().len(), 1);
+    assert_eq!(
+        warning.diagnostics().additional()[0].status(),
+        GqlStatus::SUCCESSFUL_COMPLETION
+    );
+
+    let catalog_session = {
+        let catalog = database.catalog();
+        let schema = SchemaPath::regular("selene", "omitted").unwrap();
+        catalog
+            .create_schema(&schema, CreatePolicy::Strict)
+            .unwrap();
+        let graph = ObjectPath::regular("selene", "omitted", "selected").unwrap();
+        catalog
+            .create_graph(&graph, None, CreatePolicy::Strict)
+            .unwrap();
+        database.session(&graph).unwrap()
+    };
+    let omitted = catalog_session.execute("CREATE GRAPH other ANY").unwrap();
+    assert!(matches!(omitted, ExecutionOutcome::OmittedResult { .. }));
+    assert_eq!(
+        omitted.diagnostics().primary().status(),
+        GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT
+    );
+
+    let failed = session.execute_request(Request::new("RETURN 1 / 0"));
+    assert!(matches!(failed, RequestOutcome::Failed { .. }));
+    assert_eq!(failed.diagnostics().primary().status().as_str(), "22012");
+    assert!(failed.into_result().is_err());
+
+    let warned_failure = session.execute_request(Request::new(
+        "FOR x IN [1, NULL, 2] RETURN sum(x) AS total NEXT RETURN total, 1 / 0",
+    ));
+    assert_eq!(
+        warned_failure.diagnostics().primary().status().as_str(),
+        "22012"
+    );
+    assert_eq!(warned_failure.diagnostics().additional().len(), 1);
+    assert_eq!(
+        warned_failure.diagnostics().additional()[0].status(),
+        GqlStatus::NULL_VALUE_ELIMINATED_IN_SET_FUNCTION
     );
 }
 

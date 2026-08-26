@@ -134,7 +134,7 @@ fn edge_and_path_references_validate_elements_connectivity_and_staleness() {
 }
 
 #[test]
-fn nested_references_are_walked_and_table_references_are_deferred() {
+fn nested_references_are_walked_and_foreign_table_references_are_rejected() {
     let session = fixture("reference_nested");
     let stale = Value::NodeRef(NodeId::new(99));
 
@@ -168,5 +168,5 @@ fn nested_references_are_walked_and_table_references_are_deferred() {
         GqlType::TableRef(BindingTableType::Any),
         Value::TableRef(BindingTableId::new(1)),
     );
-    assert_invalid_reference(&table, "table parameters are pending M03-PR03");
+    assert_invalid_reference(&table, "belongs to another request");
 }

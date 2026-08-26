@@ -319,9 +319,7 @@ fn gc04_supported_record_matches_facade_behaviour() {
         .unwrap();
     let session = database.session(&selected).unwrap();
     let path = selene_db::ObjectPath::regular("selene", "memory", "demo").unwrap();
-    let omitted = selene_db::ExecutionOutcome::OmittedResult {
-        status: selene_db::GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
-    };
+    let omitted = selene_db::ExecutionOutcome::SUCCESSFUL_OMITTED;
     assert_eq!(session.execute("CREATE GRAPH demo ANY").unwrap(), omitted);
     let created = catalog.snapshot().resolve_graph(&path).unwrap();
     assert_eq!(
@@ -346,7 +344,7 @@ fn fixed_provenance_manifest_is_closed_and_hashes_only_semantics() {
         .unwrap();
     assert_eq!(
         manifest.result_hash,
-        "c08e3397d6af9ead5d80dff26e732162d7b23bd656051e7f5acd41eea7271a83"
+        "1c76089804950ec8a9ddfc1dd3d1096a26a3fbbca0721177a9407d5b033c44ed"
     );
     let encoded = serde_json::to_vec(&manifest).unwrap();
     assert_eq!(

@@ -122,6 +122,17 @@ impl BindingTable {
         }
     }
 
+    /// Construct the relational unit table: one empty row and no fields.
+    #[must_use]
+    pub fn unit() -> Self {
+        Self {
+            schema: BindingTableSchema {
+                columns: Vec::new(),
+            },
+            rows: vec![Binding::empty()],
+        }
+    }
+
     /// Construct a table from a schema and row vector.
     #[must_use]
     pub fn new(schema: BindingTableSchema, rows: Vec<Binding>) -> Self {
@@ -159,11 +170,6 @@ impl BindingTable {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
-    }
-
-    /// Append one row.
-    pub fn push_row(&mut self, row: Binding) {
-        self.rows.push(row);
     }
 
     /// Return the index of the first named column matching `name`.

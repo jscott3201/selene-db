@@ -89,11 +89,13 @@ validation, compilation, catalog-dispatch, and runtime failures.
 Session parameters are controlled upserts. A request snapshots them, then
 shadows exact case-sensitive names with its `RequestParams`; it never mutates
 the session dictionary. Graph-backed values are checked against the selected
-graph before execution. Binding-table references are rejected until M03-PR03
-defines the request-owned table registry. The session is `Send` but not `Sync`,
-so an embedder must serialize access rather than issue concurrent requests.
-Persistence configuration, facade transactions, cancellation, session
-set/reset/close controls, and row-value materialization are not exposed yet.
+graph before execution. The lower runtime resolves binding-table references
+through one request-owned registry; the facade exposes neither physical tables
+nor raw registry access. The session is `Send` but not `Sync`, so an embedder
+must serialize access rather than issue concurrent requests. Persistence
+configuration, facade transactions, cancellation, and session set/reset/close
+controls are not exposed yet. Successful regular results retain immutable row
+values and analyzer-declared field descriptors.
 
 ## Advanced lower-engine APIs
 

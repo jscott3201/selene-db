@@ -6,9 +6,7 @@ use selene_db::{
     WriteSummary,
 };
 
-const OMITTED: ExecutionOutcome = ExecutionOutcome::OmittedResult {
-    status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
-};
+const OMITTED: ExecutionOutcome = ExecutionOutcome::SUCCESSFUL_OMITTED;
 
 fn schema(name: &str) -> SchemaPath {
     SchemaPath::regular("selene", name).unwrap()
@@ -83,8 +81,8 @@ fn gql_graph_type_lifecycle_binds_and_enforces_a_closed_graph() {
     assert_eq!(graph.graph_type, Some(graph_type.id));
     let handle = database.session(&graph_path).unwrap();
     assert_eq!(
-        handle.execute("INSERT (:Person)").unwrap(),
-        ExecutionOutcome::Written(WriteSummary::new(1, None))
+        handle.execute("INSERT (:Person)").unwrap().write_summary(),
+        Some(WriteSummary::new(1, None))
     );
 
     for source in [
@@ -99,8 +97,8 @@ fn gql_graph_type_lifecycle_binds_and_enforces_a_closed_graph() {
             "{source}: {error}"
         );
         assert_eq!(
-            handle.execute("MATCH (n) RETURN n").unwrap(),
-            ExecutionOutcome::Rows { row_count: 1 },
+            handle.execute("MATCH (n) RETURN n").unwrap().row_count(),
+            Some(1),
             "{source} must not publish a partial mutation"
         );
     }
@@ -412,8 +410,8 @@ fn rejected_graph_type_commands_cannot_mutate_catalog_or_selected_graph() {
         assert!(session.execute(source).is_err(), "{source}");
         assert_unpublished(&catalog, &before, source);
         assert_eq!(
-            session.execute("MATCH (n) RETURN n").unwrap(),
-            ExecutionOutcome::Rows { row_count: 1 },
+            session.execute("MATCH (n) RETURN n").unwrap().row_count(),
+            Some(1),
             "{source} mutated the selected graph"
         );
     }

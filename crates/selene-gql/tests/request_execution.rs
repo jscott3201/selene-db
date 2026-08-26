@@ -4,9 +4,9 @@ use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc};
 
 use selene_core::{DbString, GraphId, Value, db_string};
 use selene_gql::{
-    BuiltinProcedureRegistry, CallPlanCache, CatalogSessionOutput, EmptyProcedureRegistry, GqlType,
-    RequestExecutionInput, RequestParameter, Session, StatementOutput, analyze, is_parameter_name,
-    parse,
+    BuiltinProcedureRegistry, CallPlanCache, CatalogSessionOutput, EmptyProcedureRegistry,
+    ExecutionOutcome, GqlType, RequestExecutionInput, RequestParameter, Session, StatementOutput,
+    analyze, is_parameter_name, parse,
 };
 use selene_graph::SharedGraph;
 
@@ -38,10 +38,16 @@ fn execute(
 }
 
 fn values(output: CatalogSessionOutput) -> Vec<Value> {
-    let CatalogSessionOutput::Statement(StatementOutput::Rows(table)) = output else {
+    let CatalogSessionOutput::RequestOutcome(ExecutionOutcome::RegularResult {
+        table,
+        declared,
+        ..
+    }) = output
+    else {
         panic!("expected row output");
     };
     assert_eq!(table.row_count(), 1);
+    assert_eq!(declared.fields().len(), table.schema().columns.len());
     table.rows()[0].values().to_vec()
 }
 
@@ -105,6 +111,43 @@ fn analyzer_contract_records_spans_and_inherits_source_declarations() {
         "bare uses remain in the source contract"
     );
     assert_eq!(analyzed.parameters[2].declared_type, None);
+}
+
+#[test]
+fn request_adapter_matches_existing_row_executor_values_and_schema() {
+    let graph = SharedGraph::new(GraphId::new(8_100));
+    let source = "RETURN 7 AS answer, 'Ada' AS name";
+    let direct = Session::new(&graph)
+        .execute_source(source, &EmptyProcedureRegistry)
+        .unwrap();
+    let StatementOutput::Rows(direct) = direct else {
+        panic!("direct executor should return rows");
+    };
+    let adapted = execute(
+        &graph,
+        source,
+        input(
+            [],
+            jiff::Timestamp::new(1_788_692_096, 0).unwrap(),
+            jiff::tz::TimeZone::UTC,
+        ),
+    )
+    .unwrap();
+    let CatalogSessionOutput::RequestOutcome(ExecutionOutcome::RegularResult {
+        table,
+        declared,
+        ..
+    }) = adapted
+    else {
+        panic!("request adapter should return regular rows");
+    };
+
+    assert_eq!(table, direct);
+    assert_eq!(declared.fields().len(), direct.schema().columns.len());
+    for (field, column) in declared.fields().iter().zip(&direct.schema().columns) {
+        assert_eq!(field.name(), column.name.as_ref().map(DbString::as_str));
+        assert_eq!(field.declared_type(), &column.ty);
+    }
 }
 
 #[test]
@@ -254,10 +297,16 @@ fn one_supplied_instant_reaches_read_and_write_current_datetime_contexts() {
         input([], timestamp, zone),
     )
     .unwrap();
-    let CatalogSessionOutput::Statement(StatementOutput::Written(write)) = write else {
+    let CatalogSessionOutput::RequestOutcome(ExecutionOutcome::Written {
+        write,
+        declared: Some(declared),
+        ..
+    }) = write
+    else {
         panic!("expected write output");
     };
     let table = write.rows.expect("write returns values");
+    assert_eq!(declared.fields().len(), table.schema().columns.len());
     assert_eq!(
         table.rows()[0].values(),
         &[

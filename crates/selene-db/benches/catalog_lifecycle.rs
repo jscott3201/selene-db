@@ -10,13 +10,11 @@ use std::{hint::black_box, sync::Arc, time::Duration};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_db::{
     AllowAllAuthorizationPolicy, AuthHookError, AuthorizationId, CreatePolicy, Database,
-    DropPolicy, ExecutionOutcome, GeneralParameter, GqlStatus, GqlType, ObjectPath, Principal,
-    PrincipalId, PrincipalProvider, Request, RequestParams, SchemaPath, SessionOptions, Value,
+    DropPolicy, ExecutionOutcome, GeneralParameter, GqlType, ObjectPath, Principal, PrincipalId,
+    PrincipalProvider, Request, RequestParams, SchemaPath, SessionOptions, Value,
 };
 
-const OMITTED: ExecutionOutcome = ExecutionOutcome::OmittedResult {
-    status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
-};
+const OMITTED: ExecutionOutcome = ExecutionOutcome::SUCCESSFUL_OMITTED;
 
 struct BenchmarkPrincipalProvider {
     principal: Principal,
@@ -393,8 +391,9 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
             assert_eq!(
                 black_box(&session)
                     .execute(black_box("RETURN 1"))
-                    .expect("minimal request succeeds"),
-                ExecutionOutcome::Rows { row_count: 1 }
+                    .expect("minimal request succeeds")
+                    .row_count(),
+                Some(1)
             );
         });
     });
@@ -421,8 +420,8 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
                         black_box(parameters.clone()),
                     ));
                     assert_eq!(
-                        black_box(outcome.execution()),
-                        Some(&ExecutionOutcome::Rows { row_count: 1 })
+                        black_box(outcome.execution()).and_then(ExecutionOutcome::row_count),
+                        Some(1)
                     );
                 });
             },

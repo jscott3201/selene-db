@@ -1,37 +1,251 @@
-//! Summary-only statement outcomes.
+//! Stable row-bearing, write, and omitted execution outcomes.
 
-use crate::GqlStatus;
+use crate::{DiagnosticBundle, GqlStatus, GqlStatusObject, GqlType, Value};
 
-/// Statement summary returned by successful facade execution.
+/// Temporary typed adapter for one analyzer-inferred result field.
 ///
-/// [`Session::execute`](crate::Session::execute) returns this value directly;
-/// [`RequestOutcome`](crate::RequestOutcome) retains it for a successful
-/// explicit request. Row-bearing statements report cardinality rather than row
-/// values. Writes report change and optional returned-row counts.
+/// M05 replaces this adapter with the unified semantic type descriptor. It is
+/// intentionally typed rather than rendered as a free-form string.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
+pub enum DeclaredType {
+    /// The analyzer resolved one concrete GQL type.
+    Resolved(GqlType),
+    /// Static inference deliberately retained a dynamic type cell.
+    Dynamic,
+}
+
+/// One field in a regular result's declared descriptor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResultField {
+    name: Option<String>,
+    declared_type: DeclaredType,
+}
+
+impl ResultField {
+    /// Borrow the declared field name, when the projection supplied one.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Borrow the analyzer-inferred type.
+    #[must_use]
+    pub const fn declared_type(&self) -> &DeclaredType {
+        &self.declared_type
+    }
+}
+
+/// Analyzer-declared regular-result descriptor required by profile choice IA001.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResultDescriptor {
+    fields: Vec<ResultField>,
+}
+
+impl ResultDescriptor {
+    /// Borrow result fields in column order.
+    #[must_use]
+    pub fn fields(&self) -> &[ResultField] {
+        &self.fields
+    }
+
+    fn from_engine(descriptor: &selene_gql::BindingTableDescriptor) -> Self {
+        Self {
+            fields: descriptor
+                .fields()
+                .iter()
+                .map(|field| ResultField {
+                    name: field.name().map(str::to_owned),
+                    declared_type: match field.declared_type() {
+                        selene_gql::AnalyzedType::Resolved(ty) => {
+                            DeclaredType::Resolved(ty.clone())
+                        }
+                        selene_gql::AnalyzedType::Dynamic => DeclaredType::Dynamic,
+                    },
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One immutable regular-result row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResultRow {
+    values: Vec<Value>,
+}
+
+impl ResultRow {
+    /// Borrow values in descriptor-field order.
+    #[must_use]
+    pub fn values(&self) -> &[Value] {
+        &self.values
+    }
+}
+
+/// One regular result with immutable rows and an analyzer-declared descriptor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegularResult {
+    descriptor: ResultDescriptor,
+    rows: Vec<ResultRow>,
+}
+
+impl RegularResult {
+    /// Borrow the IA001 declared descriptor.
+    #[must_use]
+    pub const fn descriptor(&self) -> &ResultDescriptor {
+        &self.descriptor
+    }
+
+    /// Borrow all result rows in executor order.
+    #[must_use]
+    pub fn rows(&self) -> &[ResultRow] {
+        &self.rows
+    }
+
+    /// Return the number of rows.
+    #[must_use]
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn from_engine(
+        table: &selene_gql::BindingTable,
+        declared: &selene_gql::BindingTableDescriptor,
+    ) -> Self {
+        Self {
+            descriptor: ResultDescriptor::from_engine(declared),
+            rows: table
+                .rows()
+                .iter()
+                .map(|row| ResultRow {
+                    values: row.values().to_vec(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Structured facade result for one successful GQL request.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ExecutionOutcome {
-    /// The statement completed without rows or committed graph changes.
-    Empty,
-    /// A database-catalog statement completed with an omitted result
-    /// (ISO/IEC 39075:2024 §4.9.3, §12.1 GR2).
-    ///
-    /// `status` is `00001` for every successful `CREATE/DROP SCHEMA` and
-    /// `CREATE/DROP GRAPH`, including the `IF [NOT] EXISTS` no-ops that §12.2,
-    /// §12.3, and §12.4 define without a warning, and `01G03` for `DROP GRAPH
-    /// IF EXISTS` on an absent graph (§12.5 GR1). A no-op publishes no catalog
-    /// state.
-    OmittedResult {
-        /// Completion condition of the statement.
-        status: GqlStatus,
-    },
-    /// The statement produced a row-bearing result.
+    /// A successful regular result with rows and a declared descriptor.
     Rows {
-        /// Number of rows produced.
-        row_count: usize,
+        /// Immutable row values and declared result descriptor.
+        result: RegularResult,
+        /// Completion, no-data, and warning statuses.
+        diagnostics: DiagnosticBundle,
     },
-    /// The statement committed graph changes.
-    Written(WriteSummary),
+    /// A successful outcome whose regular result is omitted.
+    OmittedResult {
+        /// Completion and warning statuses. No empty descriptor is fabricated.
+        diagnostics: DiagnosticBundle,
+    },
+    /// A successful graph write with optional returned rows.
+    Written {
+        /// Committed change summary.
+        summary: WriteSummary,
+        /// Returned regular result for a write with `RETURN`.
+        result: Option<RegularResult>,
+        /// Completion, no-data, and warning statuses.
+        diagnostics: DiagnosticBundle,
+    },
+}
+
+impl ExecutionOutcome {
+    /// Canonical successful omitted outcome used by catalog modifications.
+    pub const SUCCESSFUL_OMITTED: Self = Self::OmittedResult {
+        diagnostics: DiagnosticBundle::new(
+            GqlStatusObject::static_message(
+                GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
+                "successful completion with omitted result",
+            ),
+            Vec::new(),
+        ),
+    };
+
+    /// Canonical warning outcome for `DROP GRAPH IF EXISTS` on an absent graph.
+    pub const GRAPH_NOT_FOUND_OMITTED: Self = Self::OmittedResult {
+        diagnostics: DiagnosticBundle::new(
+            GqlStatusObject::static_message(
+                GqlStatus::GRAPH_DOES_NOT_EXIST,
+                "DROP GRAPH IF EXISTS found no graph",
+            ),
+            Vec::new(),
+        ),
+    };
+
+    pub(crate) fn from_engine(output: selene_gql::ExecutionOutcome) -> crate::Result<Self> {
+        match output {
+            selene_gql::ExecutionOutcome::RegularResult {
+                table,
+                declared,
+                diagnostics,
+            } => Ok(Self::Rows {
+                result: RegularResult::from_engine(&table, &declared),
+                diagnostics: DiagnosticBundle::from_engine(&diagnostics),
+            }),
+            selene_gql::ExecutionOutcome::OmittedResult { diagnostics } => {
+                Ok(Self::OmittedResult {
+                    diagnostics: DiagnosticBundle::from_engine(&diagnostics),
+                })
+            }
+            selene_gql::ExecutionOutcome::Written {
+                write,
+                declared,
+                diagnostics,
+            } => {
+                let result = match (write.rows.as_ref(), declared.as_ref()) {
+                    (Some(table), Some(declared)) => {
+                        Some(RegularResult::from_engine(table, declared))
+                    }
+                    (None, None) => None,
+                    _ => return Err(crate::Error::unsupported_engine_outcome()),
+                };
+                Ok(Self::Written {
+                    summary: WriteSummary::new(
+                        write.changes.len(),
+                        result.as_ref().map(RegularResult::row_count),
+                    ),
+                    result,
+                    diagnostics: DiagnosticBundle::from_engine(&diagnostics),
+                })
+            }
+            selene_gql::ExecutionOutcome::Failed { .. } => {
+                Err(crate::Error::unsupported_engine_outcome())
+            }
+            _ => Err(crate::Error::unsupported_engine_outcome()),
+        }
+    }
+
+    /// Borrow this outcome's complete diagnostic bundle.
+    #[must_use]
+    pub const fn diagnostics(&self) -> &DiagnosticBundle {
+        match self {
+            Self::Rows { diagnostics, .. }
+            | Self::OmittedResult { diagnostics }
+            | Self::Written { diagnostics, .. } => diagnostics,
+        }
+    }
+
+    /// Return the regular-result row count, including write-return rows.
+    #[must_use]
+    pub fn row_count(&self) -> Option<usize> {
+        match self {
+            Self::Rows { result, .. } => Some(result.row_count()),
+            Self::Written { result, .. } => result.as_ref().map(RegularResult::row_count),
+            Self::OmittedResult { .. } => None,
+        }
+    }
+
+    /// Return the committed write summary, when this is a write outcome.
+    #[must_use]
+    pub const fn write_summary(&self) -> Option<WriteSummary> {
+        match self {
+            Self::Written { summary, .. } => Some(*summary),
+            Self::Rows { .. } | Self::OmittedResult { .. } => None,
+        }
+    }
 }
 
 /// Summary of an auto-committed write.
@@ -64,33 +278,18 @@ impl WriteSummary {
     }
 }
 
-impl ExecutionOutcome {
-    pub(crate) fn from_engine(output: selene_gql::StatementOutput) -> crate::Result<Self> {
-        let summary = match output {
-            selene_gql::StatementOutput::Empty => Self::Empty,
-            selene_gql::StatementOutput::Rows(rows) => Self::Rows {
-                row_count: rows.row_count(),
-            },
-            selene_gql::StatementOutput::Written(write) => Self::Written(WriteSummary::new(
-                write.changes.len(),
-                write.rows.as_ref().map(selene_gql::BindingTable::row_count),
-            )),
-            _ => return Err(crate::Error::unsupported_engine_outcome()),
-        };
-        Ok(summary)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn lower_empty_output_maps_to_facade_empty_summary() {
+    fn lower_omitted_output_does_not_fabricate_a_descriptor() {
+        let lower = selene_gql::ExecutionOutcome::successful_omitted();
+        let mapped = ExecutionOutcome::from_engine(lower).unwrap();
+        assert!(matches!(mapped, ExecutionOutcome::OmittedResult { .. }));
         assert_eq!(
-            ExecutionOutcome::from_engine(selene_gql::StatementOutput::Empty)
-                .expect("known lower outcome maps"),
-            ExecutionOutcome::Empty
+            mapped.diagnostics().primary().status(),
+            GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT
         );
     }
 }

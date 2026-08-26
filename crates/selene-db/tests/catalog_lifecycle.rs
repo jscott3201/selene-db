@@ -2,8 +2,8 @@
 
 use selene_db::{
     Catalog, CatalogPath, CatalogReadSnapshot, CreateOutcome, CreatePolicy, Database, DropOutcome,
-    DropPolicy, ErrorKind, ExecutionOutcome, GqlStatus, GraphTypeDefinition, NodeTypeDefinition,
-    ObjectPath, PathSegment, SchemaPath, Session,
+    DropPolicy, ErrorKind, GqlStatus, GraphTypeDefinition, NodeTypeDefinition, ObjectPath,
+    PathSegment, SchemaPath, Session,
 };
 
 fn schema(name: &str) -> SchemaPath {
@@ -70,8 +70,9 @@ fn multiple_schemas_resolve_list_and_select_same_named_graphs() {
             .session(&object("alpha", "shared"))
             .unwrap()
             .execute("MATCH (n) RETURN n")
-            .unwrap(),
-        ExecutionOutcome::Rows { row_count: 1 }
+            .unwrap()
+            .row_count(),
+        Some(1)
     );
 }
 
@@ -501,8 +502,9 @@ fn old_session_never_aliases_same_path_recreation() {
             .session(&path)
             .unwrap()
             .execute("RETURN 1")
-            .unwrap(),
-        ExecutionOutcome::Rows { row_count: 1 }
+            .unwrap()
+            .row_count(),
+        Some(1)
     );
 }
 

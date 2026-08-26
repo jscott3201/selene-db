@@ -1,6 +1,6 @@
 //! Procedure execution context tiers.
 
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use selene_core::{BindingTableId, CancellationChecker, DbString};
 use selene_graph::{
@@ -17,7 +17,7 @@ pub struct GraphContext<'a> {
     caps: &'a ImplDefinedCaps,
     providers: &'a [Arc<dyn IndexProvider>],
     cancellation: CancellationChecker<'a>,
-    binding_tables: Rc<BindingTableRegistry>,
+    binding_tables: Arc<BindingTableRegistry>,
 }
 
 impl<'a> GraphContext<'a> {
@@ -26,7 +26,7 @@ impl<'a> GraphContext<'a> {
         caps: &'a ImplDefinedCaps,
         providers: &'a [Arc<dyn IndexProvider>],
         cancellation: CancellationChecker<'a>,
-        binding_tables: Rc<BindingTableRegistry>,
+        binding_tables: Arc<BindingTableRegistry>,
     ) -> Self {
         Self {
             snapshot,
@@ -108,7 +108,7 @@ pub struct MutationContext<'a, 'g> {
     mutator: Mutator<'a, 'g>,
     caps: &'a ImplDefinedCaps,
     cancellation: CancellationChecker<'a>,
-    binding_tables: Rc<BindingTableRegistry>,
+    binding_tables: Arc<BindingTableRegistry>,
 }
 
 impl<'a, 'g> MutationContext<'a, 'g> {
@@ -116,7 +116,7 @@ impl<'a, 'g> MutationContext<'a, 'g> {
         mutator: Mutator<'a, 'g>,
         caps: &'a ImplDefinedCaps,
         cancellation: CancellationChecker<'a>,
-        binding_tables: Rc<BindingTableRegistry>,
+        binding_tables: Arc<BindingTableRegistry>,
     ) -> Self {
         Self {
             mutator,
@@ -134,7 +134,7 @@ impl<'a, 'g> MutationContext<'a, 'g> {
             mutator,
             caps,
             CancellationChecker::disabled(),
-            Rc::new(BindingTableRegistry::new()),
+            Arc::new(BindingTableRegistry::new()),
         )
     }
 
@@ -178,7 +178,7 @@ pub struct MaintenanceContext<'a, 'g> {
     graph: &'g SharedGraph,
     caps: &'a ImplDefinedCaps,
     cancellation: CancellationChecker<'a>,
-    binding_tables: Rc<BindingTableRegistry>,
+    binding_tables: Arc<BindingTableRegistry>,
 }
 
 impl<'a, 'g> MaintenanceContext<'a, 'g> {
@@ -186,7 +186,7 @@ impl<'a, 'g> MaintenanceContext<'a, 'g> {
         graph: &'g SharedGraph,
         caps: &'a ImplDefinedCaps,
         cancellation: CancellationChecker<'a>,
-        binding_tables: Rc<BindingTableRegistry>,
+        binding_tables: Arc<BindingTableRegistry>,
     ) -> Self {
         Self {
             graph,

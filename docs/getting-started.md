@@ -41,7 +41,7 @@ advanced engine APIs and do not carry the facade's 2.x stability promise.
 graph through `Catalog`, then select that graph when constructing a session.
 
 ```rust
-use selene_db::{CreatePolicy, Database, ExecutionOutcome, ObjectPath, SchemaPath};
+use selene_db::{CreatePolicy, Database, ObjectPath, SchemaPath};
 
 fn main() -> Result<(), selene_db::Error> {
     let database = Database::builder().build();
@@ -61,7 +61,7 @@ fn main() -> Result<(), selene_db::Error> {
     let outcome = session.execute(
         "MATCH (p:Person) RETURN p.name AS name ORDER BY name",
     )?;
-    assert_eq!(outcome, ExecutionOutcome::Rows { row_count: 2 });
+    assert_eq!(outcome.row_count(), Some(2));
 
     Ok(())
 }
@@ -69,9 +69,9 @@ fn main() -> Result<(), selene_db::Error> {
 
 Run the program with `cargo run`.
 
-The current facade reports execution summaries, not row values. A row-producing
-statement returns `ExecutionOutcome::Rows { row_count }`; a write without rows
-returns a write summary.
+The facade returns immutable row values with analyzer-declared field descriptors
+and structured diagnostics. `ExecutionOutcome::row_count()` is a convenience for
+callers that need only cardinality; a write also exposes its write summary.
 
 ## Catalog DDL through GQL
 
@@ -140,8 +140,10 @@ outcome.into_result()?;
 
 Request bindings shadow the session snapshot without changing the session map.
 Every context captures one request timestamp. Graph, node, edge, and path
-references are checked against the selected graph before execution. Table
-parameters remain unsupported until M03-PR03 and fail before execution.
+references are checked against the selected graph before execution. The lower
+runtime allocates table references from one request-owned registry; the facade
+does not expose physical binding tables, so caller-supplied raw `TableRef` IDs
+fail preflight instead of aliasing another request.
 
 ## Current facade boundaries
 
@@ -150,9 +152,9 @@ The facade session is owned, lifetime-free, `Send`, and intentionally not
 `Session::context()` exposes immutable current/home catalog references,
 authorization and principal data, profile identity, time-zone displacement,
 the current parameter count, and request/transaction slots. It does not expose
-transactions, session controls, cancellation, persistence configuration, or
-row-value materialization. Stateful controls return a structured error rather
-than being accepted without durable session state.
+transactions, session controls, cancellation, persistence configuration, lower
+execution contexts, or physical binding tables. Stateful controls return a
+structured error rather than being accepted without durable session state.
 
 See the [Embedding Guide](embedding-guide.md) for lifecycle and integration
 details, and the [GQL Reference](gql-reference.md) for supported language forms.

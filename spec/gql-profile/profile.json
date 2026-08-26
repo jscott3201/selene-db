@@ -3186,7 +3186,7 @@
           "type": "boolean",
           "value": true
         },
-        "rationale": "Row results expose analyzer-inferred column types through the public binding-table schema.",
+        "rationale": "Regular facade results expose analyzer-inferred column types through their public descriptor.",
         "stability": "stable",
         "visibility": "public"
       },
@@ -3203,16 +3203,21 @@
       "id": "IA002",
       "topic": "Additional status chaining",
       "decision": {
-        "disposition": "pending",
-        "owner": "M03-PR03",
-        "reason": "The current error API has one typed error and does not yet model a status-object chain."
+        "disposition": "selected",
+        "value": {
+          "type": "string",
+          "value": "complete deterministic primary, all ordered additional, and every ordered nested-cause status without truncation"
+        },
+        "rationale": "Structured request outcomes expose the complete status chain produced for a request without truncation.",
+        "stability": "stable",
+        "visibility": "public"
       },
       "runtime_order": 1,
       "clause_anchors": [
         "CLAUSE-ANNEX-B"
       ],
       "evidence": [
-        "EVID-PLAN-M03-PR03"
+        "EVID-STATUS-CHAINING"
       ],
       "applicability": "APP-ALWAYS"
     },
@@ -6011,8 +6016,8 @@
     },
     {
       "id": "EVID-RESULT-DESCRIPTORS",
-      "reference": "crates/selene-gql/src/plan/ir/mod.rs",
-      "description": "Public binding-table columns expose analyzer-inferred types."
+      "reference": "crates/selene-db/src/outcome.rs",
+      "description": "Facade regular results expose analyzer-inferred field types while omitted results carry no fabricated descriptor."
     },
     {
       "id": "EVID-SESSION-API",
@@ -6028,6 +6033,11 @@
       "id": "EVID-SESSION-PRINCIPAL",
       "reference": "crates/selene-db/src/auth.rs",
       "description": "Facade authorization and principal string types, local provider and policy hooks, declared homes, and optional audit bytes."
+    },
+    {
+      "id": "EVID-STATUS-CHAINING",
+      "reference": "crates/selene-db/src/diagnostic.rs",
+      "description": "Facade diagnostic bundles preserve the primary status, every ordered additional status, and recursive ordered causes without truncation."
     },
     {
       "id": "EVID-STRING-CONCAT",

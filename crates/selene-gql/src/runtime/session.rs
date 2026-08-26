@@ -13,7 +13,7 @@ use crate::{
     runtime::{
         BindingTable, BindingTableRegistry, CallPlanCache, ExecutorError, ExecutorWarning,
         PlanCache, PlanCacheStats, RequestExecutionInput, SharedPlanCache, WarningSink,
-        WriteOutcome,
+        WriteOutcome, request_runtime::RequestRuntime,
     },
 };
 
@@ -381,6 +381,14 @@ impl<'g> Session<'g> {
         self.request
             .as_ref()
             .map_or_else(jiff::Timestamp::now, |request| request.timestamp)
+    }
+
+    /// Clone this explicit request's runtime, or create one for a direct statement.
+    pub(crate) fn execution_runtime(&self) -> Arc<RequestRuntime> {
+        self.request.as_ref().map_or_else(
+            || Arc::new(RequestRuntime::new()),
+            RequestExecutionInput::runtime,
+        )
     }
 
     /// Reset every session characteristic (ISO feature GS04).

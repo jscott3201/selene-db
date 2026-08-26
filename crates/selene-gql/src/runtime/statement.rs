@@ -13,6 +13,7 @@ use selene_profile::current_profile_identity;
 
 use super::call_plan_cache::CallPlanSourceLookup;
 use super::plan_cache::{SharedPlanCacheInsert, SharedPlanCacheLookup};
+use super::request_runtime::RequestRuntime;
 use super::statement_exec::{
     execute_maintenance, execute_read_only, execute_session_control, execute_transaction_control,
     execute_write,
@@ -26,8 +27,9 @@ use crate::{
     parser::parse,
     plan::plan_with_caps as build_plan,
     runtime::{
-        BindingTable, CallPlanKey, ExecutorError, RequestExecutionInput, Session,
-        SessionParameterValue, request,
+        BindingTable, CallPlanKey, DiagnosticBundle, ExecutionFrame,
+        ExecutionOutcome as RuntimeExecutionOutcome, ExecutorError, GqlStatusObject,
+        RequestExecutionInput, Session, SessionParameterValue, request,
     },
 };
 
@@ -44,6 +46,8 @@ use crate::{
 pub enum CatalogSessionOutput {
     /// The statement was executed by the lower engine.
     Statement(StatementOutput),
+    /// A facade request completed with rows, declared types, and statuses.
+    RequestOutcome(RuntimeExecutionOutcome),
     /// The statement is a database-catalog command for the facade to execute.
     DatabaseCatalog(DatabaseCatalogCommand),
 }
@@ -105,6 +109,9 @@ pub fn execute_statement(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
+    let request_runtime = session.execution_runtime();
+    let mut execution_stack = request_runtime.stack();
+    let mut execution_frame = execution_stack.push_child();
     // ISO/IEC 39075:2024 section 7.3: once `SESSION CLOSE` sets the termination
     // flag, every subsequent GQL-request is rejected regardless of category.
     // `execute_source` guards the source-string entry; this guard covers the
@@ -114,28 +121,34 @@ pub fn execute_statement(
     // (hard rule 11) rather than only one layer up. The flag is set *during*
     // execution of `SESSION CLOSE` itself, so this check never blocks the
     // closing statement — only the requests that follow it.
-    if session.is_closed() {
-        return Err(ExecutorError::SessionClosed {
-            span: SourceSpan::default(),
-        });
-    }
-    if session.aborted && plan.category != StatementCategory::TransactionControl {
-        return Err(ExecutorError::InFailedTransaction {
-            span: SourceSpan::default(),
-        });
-    }
     let started = Instant::now();
     let counts_toward_tx =
         plan.category != StatementCategory::TransactionControl && session.active_txn.is_some();
-    let result = match plan.category {
-        StatementCategory::ReadOnly => execute_read_only(plan, session, registry),
-        StatementCategory::Maintenance => execute_maintenance(plan, session, registry),
-        StatementCategory::DataModifying | StatementCategory::CatalogModifying => {
-            execute_write(plan, session, registry)
+    let result = (|| {
+        if session.is_closed() {
+            return Err(ExecutorError::SessionClosed {
+                span: SourceSpan::default(),
+            });
         }
-        StatementCategory::TransactionControl => execute_transaction_control(plan, session),
-        StatementCategory::SessionControl => execute_session_control(plan, session, registry),
-    };
+        if session.aborted && plan.category != StatementCategory::TransactionControl {
+            return Err(ExecutorError::InFailedTransaction {
+                span: SourceSpan::default(),
+            });
+        }
+        match plan.category {
+            StatementCategory::ReadOnly => {
+                execute_read_only(plan, session, registry, &request_runtime)
+            }
+            StatementCategory::Maintenance => {
+                execute_maintenance(plan, session, registry, &request_runtime)
+            }
+            StatementCategory::DataModifying | StatementCategory::CatalogModifying => {
+                execute_write(plan, session, registry, &request_runtime)
+            }
+            StatementCategory::TransactionControl => execute_transaction_control(plan, session),
+            StatementCategory::SessionControl => execute_session_control(plan, session, registry),
+        }
+    })();
     if counts_toward_tx {
         if result.is_ok() {
             session.tx_statement_count = session.tx_statement_count.saturating_add(1);
@@ -144,7 +157,48 @@ pub fn execute_statement(
         }
     }
     record_statement_metrics(plan, started);
-    result
+    finish_execution_frame(&mut execution_frame, &request_runtime, result)
+}
+
+fn finish_execution_frame(
+    frame: &mut ExecutionFrame<'_>,
+    runtime: &RequestRuntime,
+    result: Result<StatementOutput, ExecutorError>,
+) -> Result<StatementOutput, ExecutorError> {
+    match result {
+        Ok(output) => {
+            let table = match &output {
+                StatementOutput::Rows(table) => Some(table),
+                StatementOutput::Written(write) => write.rows.as_ref(),
+                StatementOutput::Empty => None,
+            };
+            if let Some(table) = table {
+                frame
+                    .context_mut()
+                    .replace_table(Arc::new(table.clone()))
+                    .map_err(|_| ExecutorError::ImplementationDefined {
+                        detail: "statement output overlaps the execution working record",
+                    })?;
+            }
+            frame
+                .context_mut()
+                .replace_outcome(RuntimeExecutionOutcome::from_statement(
+                    output.clone(),
+                    runtime.statuses(),
+                ));
+            Ok(output)
+        }
+        Err(error) => {
+            let primary = GqlStatusObject::new(error.gqlstatus(), error.to_string());
+            frame
+                .context_mut()
+                .replace_outcome(RuntimeExecutionOutcome::failed(DiagnosticBundle::new(
+                    primary,
+                    runtime.statuses(),
+                )));
+            Err(error)
+        }
+    }
 }
 
 impl Session<'_> {
@@ -196,6 +250,7 @@ impl Session<'_> {
         registry: &dyn ProcedureRegistry,
         request: RequestExecutionInput,
     ) -> Result<CatalogSessionOutput, ExecutorError> {
+        let request_runtime = request.runtime();
         let scalar_parameters: std::collections::BTreeMap<_, _> = request
             .parameters
             .iter()
@@ -221,7 +276,12 @@ impl Session<'_> {
         self.request = prior_request;
 
         match outcome {
-            Ok(result) => result,
+            Ok(result) => result.map(|output| match output {
+                CatalogSessionOutput::Statement(output) => CatalogSessionOutput::RequestOutcome(
+                    RuntimeExecutionOutcome::from_statement(output, request_runtime.statuses()),
+                ),
+                output => output,
+            }),
             Err(payload) => resume_unwind(payload),
         }
     }
@@ -464,9 +524,11 @@ enum SourceExecutionPolicy {
 fn expect_executed(output: CatalogSessionOutput) -> Result<StatementOutput, ExecutorError> {
     match output {
         CatalogSessionOutput::Statement(output) => Ok(output),
-        CatalogSessionOutput::DatabaseCatalog(_) => Err(ExecutorError::ImplementationDefined {
-            detail: "database-catalog interception is only enabled for the catalog-session policy",
-        }),
+        CatalogSessionOutput::RequestOutcome(_) | CatalogSessionOutput::DatabaseCatalog(_) => {
+            Err(ExecutorError::ImplementationDefined {
+                detail: "database-catalog interception is only enabled for the catalog-session policy",
+            })
+        }
     }
 }
 

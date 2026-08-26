@@ -63,8 +63,8 @@ use selene_gql::{
 
 use crate::{
     Catalog, CreateOutcome, CreatePolicy, DropOutcome, DropPolicy, Error, ExecutionOutcome,
-    GqlStatus, GraphTypeDefinition, NodeTypeDefinition, ObjectPath, PathSegment, Result,
-    SchemaPath, database::DatabaseInner,
+    GraphTypeDefinition, NodeTypeDefinition, ObjectPath, PathSegment, Result, SchemaPath,
+    database::DatabaseInner,
 };
 
 /// Execute one database-catalog command for a selected session.
@@ -134,9 +134,7 @@ pub(crate) fn execute(
             match catalog.drop_graph(&path, drop_policy(if_exists))? {
                 DropOutcome::Dropped(_) => omitted(),
                 // Section 12.5 GR1: a completion condition, not an exception.
-                DropOutcome::NotFound => ExecutionOutcome::OmittedResult {
-                    status: GqlStatus::GRAPH_DOES_NOT_EXIST,
-                },
+                DropOutcome::NotFound => ExecutionOutcome::GRAPH_NOT_FOUND_OMITTED,
             }
         }
         DatabaseCatalogCommand::CreateGraphType {
@@ -176,10 +174,8 @@ pub(crate) fn execute(
 
 /// Section 12.1 GR2: a successful catalog-modifying statement completes with
 /// an omitted result.
-const fn omitted() -> ExecutionOutcome {
-    ExecutionOutcome::OmittedResult {
-        status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
-    }
+fn omitted() -> ExecutionOutcome {
+    ExecutionOutcome::SUCCESSFUL_OMITTED
 }
 
 const fn create_policy(if_not_exists: bool) -> CreatePolicy {

@@ -10,13 +10,13 @@
 //! optional embedder-provided authorization, a controlled typed parameter map,
 //! and one active-request slot. [`RequestOutcome`] retains the immutable context
 //! used by each explicit [`Request`]. Transactions, termination transitions,
-//! persistence, and row-value materialization are deferred.
+//! and persistence are deferred.
 //!
 //! # Quickstart
 //!
 //! ```
 //! use selene_db::{
-//!     CreatePolicy, Database, ExecutionOutcome, ObjectPath, SchemaPath, WriteSummary,
+//!     CreatePolicy, Database, ObjectPath, SchemaPath, WriteSummary,
 //! };
 //!
 //! let database = Database::builder().build();
@@ -28,13 +28,10 @@
 //! let session = database.session(&graph_path)?;
 //!
 //! let write = session.execute("INSERT (:Person { name: 'Ada' })")?;
-//! assert_eq!(
-//!     write,
-//!     ExecutionOutcome::Written(WriteSummary::new(1, None)),
-//! );
+//! assert_eq!(write.write_summary(), Some(WriteSummary::new(1, None)));
 //!
 //! let rows = session.execute("MATCH (n:Person) RETURN n")?;
-//! assert_eq!(rows, ExecutionOutcome::Rows { row_count: 1 });
+//! assert_eq!(rows.row_count(), Some(1));
 //! # Ok::<(), selene_db::Error>(())
 //! ```
 //!
@@ -66,6 +63,12 @@
 //!
 //! ```compile_fail
 //! use selene_db::{CoreGraphTypeBridge, CoreProvider, GraphTypeDef, SeleneGraph};
+//! ```
+//!
+//! Lower execution contexts and physical binding tables are not facade exports:
+//!
+//! ```compile_fail
+//! use selene_db::{BindingTable, ExecutionContext, ExecutionStack};
 //! ```
 //!
 //! The facade session has no borrowed graph lifetime:
@@ -102,6 +105,7 @@ mod catalog_snapshot;
 mod config;
 mod database;
 mod ddl;
+mod diagnostic;
 mod error;
 mod graph_type;
 mod outcome;
@@ -123,9 +127,13 @@ pub use catalog_snapshot::{
 };
 pub use config::{DatabaseConfig, OpenMode};
 pub use database::{Database, DatabaseBuilder};
+pub use diagnostic::{DiagnosticBundle, GqlStatusObject};
 pub use error::{Error, ErrorKind, GqlStatus};
 pub use graph_type::{GraphTypeBuilder, GraphTypeDefinition, NodeTypeDefinition};
-pub use outcome::{ExecutionOutcome, WriteSummary};
+pub use outcome::{
+    DeclaredType, ExecutionOutcome, RegularResult, ResultDescriptor, ResultField, ResultRow,
+    WriteSummary,
+};
 pub use params::{GeneralParameter, RequestParams};
 pub use path::{CatalogPath, ObjectPath, PathSegment, SchemaPath};
 pub use request::{Request, RequestContext, RequestOutcome, RequestTimestamp};

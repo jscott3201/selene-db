@@ -294,11 +294,7 @@ fn run_gc04_positive(source: &str) -> Result<Actual, String> {
         .map_err(|error| error.to_string())?
         .execute(source)
         .map_err(|error| error.to_string())?;
-    if outcome
-        != (ExecutionOutcome::OmittedResult {
-            status: selene_db::GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
-        })
-    {
+    if outcome != ExecutionOutcome::SUCCESSFUL_OMITTED {
         return Err(format!(
             "CREATE GRAPH did not complete with 00001: {outcome:?}"
         ));

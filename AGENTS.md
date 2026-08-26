@@ -399,7 +399,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked --all-features --profile default
 cargo test --workspace --locked --all-features --doc
 cargo doc --workspace --no-deps --locked
-cargo deny check --exclude-dev bans
+cargo deny --exclude-dev check bans
 cargo deny check licenses sources
 cargo audit -d /private/tmp/selene-advisory-db
 bash .github/scripts/check-file-size.sh

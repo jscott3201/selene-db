@@ -169,8 +169,10 @@ case-sensitive. `GeneralParameter` carries both its declared `GqlType` and
 `Value`. Request bindings shadow the session snapshot without modifying it.
 Preflight rejects unbound uses, source/request declaration mismatches, stale or
 foreign graph, node, edge, and path references, and nested invalid references.
-`TableRef` parameters are rejected until M03-PR03 defines their request-scoped
-registry.
+Each request owns one binding-table registry and ID allocator. A `TableRef`
+resolves only through that authority, including when nested in a list or record;
+tombstone, unknown, stale, and cross-request IDs fail preflight as invalid
+references rather than aliasing another request's table.
 
 Transaction and session controls remain rejected at the facade boundary.
 M03-PR04 owns transactions; M03-PR05 owns session set/reset/close behavior. A
@@ -204,6 +206,14 @@ runtime errors use `RequestOutcome::Failed`. The legacy `Session::execute`
 adapter preserves its existing `Result<ExecutionOutcome>` signature. Rust and
 GQL lifecycle calls share the same structured facade errors and GQLSTATUS
 mapping.
+
+Regular results retain immutable rows plus an analyzer-declared typed
+descriptor; omitted results have no fabricated descriptor. Every success and
+failure carries one deterministic diagnostic bundle: a primary status, all
+additional statuses in request order, and every ordered nested cause without
+truncation. Internally, the same request owns the root/child execution stack,
+status collector, and table registry. The facade exposes none of those runtime
+contexts or physical table types.
 
 | Case | Outcome or error | GQLSTATUS |
 |---|---|---|

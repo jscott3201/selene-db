@@ -123,14 +123,14 @@ impl Session {
         let context = Arc::new(RequestContext::new(merged, timestamp));
         let guard = match self.context.activate_request(Arc::clone(&context)) {
             Ok(guard) => guard,
-            Err(error) => return RequestOutcome::Failed { context, error },
+            Err(error) => return RequestOutcome::failed(context, error),
         };
         active_hook(self);
         let result = self.execute_active_request(&request, &context);
         drop(guard);
         match result {
             Ok(outcome) => RequestOutcome::Succeeded { context, outcome },
-            Err(error) => RequestOutcome::Failed { context, error },
+            Err(error) => RequestOutcome::failed(context, error),
         }
     }
 
@@ -156,10 +156,11 @@ impl Session {
             request.source(),
             input,
         )? {
-            CatalogSessionOutput::Statement(output) => ExecutionOutcome::from_engine(output),
+            CatalogSessionOutput::RequestOutcome(output) => ExecutionOutcome::from_engine(output),
             CatalogSessionOutput::DatabaseCatalog(command) => {
                 ddl::execute(&self.inner, &self.context.current_schema().path, command)
             }
+            CatalogSessionOutput::Statement(_) => Err(Error::unsupported_engine_outcome()),
             _ => Err(Error::unsupported_engine_outcome()),
         }
     }

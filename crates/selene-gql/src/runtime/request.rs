@@ -1,13 +1,16 @@
 //! Facade request input and parameter preflight.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use selene_core::{DbString, EdgeDirection, Path, Record, Value};
 use selene_graph::SeleneGraph;
 
 use crate::{GqlType, SourceSpan, analyze::ParameterUse};
 
-use super::{ExecutorError, parameter_type};
+use super::{
+    BindingTableRegistry, ExecutorError, parameter_type,
+    request_runtime::{RequestRuntime, RequestRuntimeHandle},
+};
 
 /// Typed parameter input for one facade request.
 #[doc(hidden)]
@@ -42,6 +45,7 @@ pub struct RequestExecutionInput {
     pub(crate) parameters: BTreeMap<DbString, RequestParameter>,
     pub(crate) timestamp: jiff::Timestamp,
     pub(crate) time_zone: jiff::tz::TimeZone,
+    pub(crate) runtime: Arc<RequestRuntime>,
 }
 
 impl RequestExecutionInput {
@@ -52,11 +56,33 @@ impl RequestExecutionInput {
         timestamp: jiff::Timestamp,
         time_zone: jiff::tz::TimeZone,
     ) -> Self {
+        Self::with_runtime(
+            parameters,
+            timestamp,
+            time_zone,
+            RequestRuntimeHandle::new(),
+        )
+    }
+
+    /// Construct lower input using an existing facade-owned request authority.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_runtime(
+        parameters: BTreeMap<DbString, RequestParameter>,
+        timestamp: jiff::Timestamp,
+        time_zone: jiff::tz::TimeZone,
+        runtime: RequestRuntimeHandle,
+    ) -> Self {
         Self {
             parameters,
             timestamp,
             time_zone,
+            runtime: runtime.inner(),
         }
+    }
+
+    pub(crate) fn runtime(&self) -> Arc<RequestRuntime> {
+        Arc::clone(&self.runtime)
     }
 }
 
@@ -65,6 +91,7 @@ pub(super) fn validate(
     uses: &[ParameterUse],
     graph: &SeleneGraph,
 ) -> Result<(), ExecutorError> {
+    let binding_tables = request.runtime.binding_tables();
     for (name, parameter) in &request.parameters {
         parameter_type::validate_declared_type(
             name.clone(),
@@ -72,7 +99,13 @@ pub(super) fn validate(
             parameter.declared_type(),
             SourceSpan::default(),
         )?;
-        validate_value_references(name, parameter.value(), graph, SourceSpan::default())?;
+        validate_value_references(
+            name,
+            parameter.value(),
+            graph,
+            &binding_tables,
+            SourceSpan::default(),
+        )?;
     }
     for parameter_use in uses {
         let parameter = request.parameters.get(&parameter_use.name).ok_or_else(|| {
@@ -97,8 +130,15 @@ pub(super) fn validate_references(
     request: &RequestExecutionInput,
     graph: &SeleneGraph,
 ) -> Result<(), ExecutorError> {
+    let binding_tables = request.runtime.binding_tables();
     for (name, parameter) in &request.parameters {
-        validate_value_references(name, parameter.value(), graph, SourceSpan::default())?;
+        validate_value_references(
+            name,
+            parameter.value(),
+            graph,
+            &binding_tables,
+            SourceSpan::default(),
+        )?;
     }
     Ok(())
 }
@@ -107,6 +147,7 @@ fn validate_value_references(
     name: &DbString,
     value: &Value,
     graph: &SeleneGraph,
+    binding_tables: &BindingTableRegistry,
     span: SourceSpan,
 ) -> Result<(), ExecutorError> {
     let mut pending = vec![value];
@@ -126,12 +167,10 @@ fn validate_value_references(
                 return Err(invalid_reference(name, "edge reference is not alive", span));
             }
             Value::Path(path) => validate_path(name, path, graph, span)?,
-            Value::TableRef(_) => {
-                return Err(invalid_reference(
-                    name,
-                    "table parameters are pending M03-PR03",
-                    span,
-                ));
+            Value::TableRef(id) => {
+                if let Err(error) = binding_tables.resolve(*id) {
+                    return Err(invalid_reference(name, &error.to_string(), span));
+                }
             }
             Value::List(values) => pending.extend(values),
             Value::Record(record) => {
@@ -202,5 +241,55 @@ fn invalid_reference(name: &DbString, detail: &str, span: SourceSpan) -> Executo
     ExecutorError::InvalidReference {
         name: format!("parameter ${name}: {detail}"),
         span,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BindingTable, BindingTableSchema, BindingTableType};
+    use selene_core::{GraphId, db_string};
+    use std::sync::Arc;
+
+    fn request() -> RequestExecutionInput {
+        RequestExecutionInput::new(
+            BTreeMap::new(),
+            jiff::Timestamp::new(1_788_692_096, 0).unwrap(),
+            jiff::tz::TimeZone::UTC,
+        )
+    }
+
+    fn table() -> Arc<BindingTable> {
+        Arc::new(BindingTable::empty(BindingTableSchema {
+            columns: Vec::new(),
+        }))
+    }
+
+    #[test]
+    fn table_refs_resolve_only_through_their_request_authority() {
+        let graph = SeleneGraph::new(GraphId::new(91_001));
+        let mut owner = request();
+        let id = owner.runtime.binding_tables().register(table());
+        let name = db_string("table").unwrap();
+        owner.parameters.insert(
+            name.clone(),
+            RequestParameter::new(
+                GqlType::TableRef(BindingTableType::Any),
+                Value::TableRef(id),
+            ),
+        );
+        validate_references(&owner, &graph).expect("same-request table resolves");
+
+        let mut foreign = request();
+        foreign.parameters.insert(
+            name,
+            RequestParameter::new(
+                GqlType::List(Box::new(GqlType::TableRef(BindingTableType::Any))),
+                Value::List(vec![Value::TableRef(id)]),
+            ),
+        );
+        let error = validate_references(&foreign, &graph).unwrap_err();
+        assert_eq!(error.gqlstatus(), crate::GqlStatus::INVALID_REFERENCE);
+        assert!(error.to_string().contains("another request"));
     }
 }
