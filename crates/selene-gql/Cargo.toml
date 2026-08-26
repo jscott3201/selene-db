@@ -117,5 +117,9 @@ harness = false
 name = "read_pipeline"
 harness = false
 
+[[bench]]
+name = "execution_context"
+harness = false
+
 [lints]
 workspace = true

@@ -4,7 +4,7 @@
 //! facade interception) and the per-category execution arms stay under the
 //! file cap. Every function here is called from [`super::statement`] only.
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use selene_core::{CancellationToken, NodeScanBudget};
 use selene_graph::{CommitOutcome, SeleneGraph};
@@ -13,8 +13,9 @@ use super::{request, session::materialize_parameter_values};
 use crate::{
     ExecutionPlan, GqlStatus, ProcedureRegistry, SourceSpan,
     runtime::{
-        BindingTable, BindingTableRegistry, ExecutorError, ExecutorWarning, RequestExecutionInput,
+        BindingTable, ExecutorError, ExecutorWarning, GqlStatusObject, RequestExecutionInput,
         Session, StatementOutput, TxContext, WriteOutcome, execute_plan, pipeline,
+        request_runtime::RequestRuntime,
     },
 };
 
@@ -22,6 +23,7 @@ pub(super) fn execute_read_only(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
+    request_runtime: &Arc<RequestRuntime>,
 ) -> Result<StatementOutput, ExecutorError> {
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
@@ -32,23 +34,23 @@ pub(super) fn execute_read_only(
     }
     let session_tz = session.effective_time_zone();
     let request_timestamp = session.effective_request_timestamp();
-    let binding_tables = Rc::new(BindingTableRegistry::new());
+    let binding_tables = request_runtime.binding_tables();
     let parameters = materialize_parameter_values(
         &session.parameters,
         &session.scalar_parameters,
         &binding_tables,
-    );
+    )?;
     let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let table = if let Some(txn) = session.active_txn.as_mut() {
-        let mut ctx = TxContext::write_with_owned_parameters_and_registry(
+        let mut ctx = TxContext::write_with_owned_parameters_and_runtime(
             snapshot,
             &plan.impl_defined_caps,
             registry,
             txn,
             providers,
             parameters,
-            Rc::clone(&binding_tables),
+            Arc::clone(request_runtime),
             request_timestamp,
         )
         .with_resource_limits(
@@ -64,13 +66,13 @@ pub(super) fn execute_read_only(
         note_output_rows(plan, &ctx, table.row_count())?;
         table
     } else {
-        let mut ctx = TxContext::read_only_with_owned_parameters_and_registry(
+        let mut ctx = TxContext::read_only_with_owned_parameters_and_runtime(
             snapshot,
             &plan.impl_defined_caps,
             registry,
             providers,
             parameters,
-            Rc::clone(&binding_tables),
+            Arc::clone(request_runtime),
             request_timestamp,
         )
         .with_resource_limits(
@@ -93,17 +95,19 @@ pub(super) fn execute_write(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
+    request_runtime: &Arc<RequestRuntime>,
 ) -> Result<StatementOutput, ExecutorError> {
     if session.active_txn.is_some() {
-        return execute_inside_explicit_tx(plan, session, registry);
+        return execute_inside_explicit_tx(plan, session, registry, request_runtime);
     }
-    execute_auto_commit(plan, session, registry)
+    execute_auto_commit(plan, session, registry, request_runtime)
 }
 
 pub(super) fn execute_maintenance(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
+    request_runtime: &Arc<RequestRuntime>,
 ) -> Result<StatementOutput, ExecutorError> {
     if session.active_txn.is_some() {
         return Err(ExecutorError::InvalidTransactionState {
@@ -116,22 +120,22 @@ pub(super) fn execute_maintenance(
     validate_request_references(session.request.as_ref(), snapshot.as_ref())?;
     let session_tz = session.effective_time_zone();
     let request_timestamp = session.effective_request_timestamp();
-    let binding_tables = Rc::new(BindingTableRegistry::new());
+    let binding_tables = request_runtime.binding_tables();
     let parameters = materialize_parameter_values(
         &session.parameters,
         &session.scalar_parameters,
         &binding_tables,
-    );
+    )?;
     let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
-    let mut ctx = TxContext::maintenance_with_owned_parameters_and_registry(
+    let mut ctx = TxContext::maintenance_with_owned_parameters_and_runtime(
         snapshot,
         &plan.impl_defined_caps,
         registry,
         session.graph(),
         providers,
         parameters,
-        Rc::clone(&binding_tables),
+        Arc::clone(request_runtime),
         request_timestamp,
     )
     .with_resource_limits(
@@ -152,6 +156,7 @@ fn execute_inside_explicit_tx(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
+    request_runtime: &Arc<RequestRuntime>,
 ) -> Result<StatementOutput, ExecutorError> {
     if let Some(request) = session.request.as_ref() {
         let txn = session
@@ -169,12 +174,12 @@ fn execute_inside_explicit_tx(
     let snapshot = session.graph().read();
     let session_tz = session.effective_time_zone();
     let request_timestamp = session.effective_request_timestamp();
-    let binding_tables = Rc::new(BindingTableRegistry::new());
+    let binding_tables = request_runtime.binding_tables();
     let parameters = materialize_parameter_values(
         &session.parameters,
         &session.scalar_parameters,
         &binding_tables,
-    );
+    )?;
     let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let txn = session
@@ -183,14 +188,14 @@ fn execute_inside_explicit_tx(
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "explicit-TX path entered without active transaction",
         })?;
-    let mut ctx = TxContext::write_with_owned_parameters_and_registry(
+    let mut ctx = TxContext::write_with_owned_parameters_and_runtime(
         snapshot,
         &plan.impl_defined_caps,
         registry,
         txn,
         providers,
         parameters,
-        Rc::clone(&binding_tables),
+        Arc::clone(request_runtime),
         request_timestamp,
     )
     .with_resource_limits(
@@ -218,31 +223,32 @@ fn execute_auto_commit(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
+    request_runtime: &Arc<RequestRuntime>,
 ) -> Result<StatementOutput, ExecutorError> {
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let principal = session.principal();
     let session_tz = session.effective_time_zone();
     let request_timestamp = session.effective_request_timestamp();
-    let binding_tables = Rc::new(BindingTableRegistry::new());
+    let binding_tables = request_runtime.binding_tables();
     let parameters = materialize_parameter_values(
         &session.parameters,
         &session.scalar_parameters,
         &binding_tables,
-    );
+    )?;
     let mut txn = session.graph().begin_write();
     let reference_result = validate_request_references(session.request.as_ref(), txn.read());
     let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let result = reference_result.and_then(|()| {
-        let mut ctx = TxContext::write_with_owned_parameters_and_registry(
+        let mut ctx = TxContext::write_with_owned_parameters_and_runtime(
             snapshot,
             &plan.impl_defined_caps,
             registry,
             &mut txn,
             providers,
             parameters,
-            Rc::clone(&binding_tables),
+            Arc::clone(request_runtime),
             request_timestamp,
         )
         .with_resource_limits(
@@ -268,7 +274,7 @@ fn execute_auto_commit(
                     span: SourceSpan::default(),
                 }
             })?;
-            emit_commit_warnings(&outcome, session);
+            emit_commit_warnings(&outcome, session, request_runtime);
             Ok(write_output_from_commit(plan, table, outcome))
         }
         Err(error) => {
@@ -287,16 +293,21 @@ fn validate_request_references(
     })
 }
 
-fn emit_commit_warnings(outcome: &CommitOutcome, session: &Session<'_>) {
-    let Some(sink) = session.warning_sink.as_ref() else {
-        return;
-    };
+fn emit_commit_warnings(
+    outcome: &CommitOutcome,
+    session: &Session<'_>,
+    request_runtime: &RequestRuntime,
+) {
     for warning in &outcome.warnings {
-        sink.borrow_mut().emit(ExecutorWarning {
+        let warning = ExecutorWarning {
             code: GqlStatus::VALIDATION_MODE_RELAXED_WRITE,
             message: warning.warning.violation.to_string(),
             span: SourceSpan::default(),
-        });
+        };
+        request_runtime.record_status(GqlStatusObject::new(warning.code, warning.message.clone()));
+        if let Some(sink) = session.warning_sink.as_ref() {
+            sink.borrow_mut().emit(warning);
+        }
     }
 }
 

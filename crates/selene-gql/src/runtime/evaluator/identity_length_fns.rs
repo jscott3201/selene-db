@@ -54,10 +54,10 @@ pub(super) fn eval_cardinality(
             .tx
             .binding_table_for(id)
             .map(|table| Value::Int(table.row_count() as i64))
-            .ok_or_else(|| {
+            .map_err(|error| {
                 super::binary_ops::data_exception_value_with(
                     DataExceptionSubclass::InvalidValueType,
-                    "cardinality binding table reference is unknown",
+                    format!("cardinality {error}"),
                     span,
                 )
             }),

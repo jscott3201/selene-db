@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use selene_core::{CancellationChecker, GraphId, LabelSet, PropertyMap, Value, db_string};
 use selene_graph::{IndexProvider, SharedGraph};
@@ -47,7 +47,7 @@ fn compaction_stats_reports_reclaimable_rows() {
         &caps,
         &providers,
         CancellationChecker::disabled(),
-        Rc::new(BindingTableRegistry::new()),
+        Arc::new(BindingTableRegistry::new()),
     );
 
     let result = execute_stats(&ctx, &[]).expect("stats executes");
@@ -79,7 +79,7 @@ fn compact_reports_before_reclaimed_and_after_stats() {
         &shared,
         &caps,
         CancellationChecker::disabled(),
-        Rc::new(BindingTableRegistry::new()),
+        Arc::new(BindingTableRegistry::new()),
     );
 
     let result = execute_compact(&ctx, &[]).expect("compact executes");
@@ -129,13 +129,13 @@ fn compaction_procedures_reject_arguments() {
         &caps,
         &providers,
         CancellationChecker::disabled(),
-        Rc::new(BindingTableRegistry::new()),
+        Arc::new(BindingTableRegistry::new()),
     );
     let maintenance_ctx = MaintenanceContext::new(
         &shared,
         &caps,
         CancellationChecker::disabled(),
-        Rc::new(BindingTableRegistry::new()),
+        Arc::new(BindingTableRegistry::new()),
     );
 
     let stats_err = execute_stats(&graph_ctx, &[Value::Bool(true)]).unwrap_err();

@@ -94,7 +94,7 @@ impl ProcedureRegistry for BindingTableFixtureRegistry {
             detail: "fixture row count must be non-negative".to_owned(),
         })?;
         let table = table_with_rows(rows);
-        let id = ctx.register_binding_table(Arc::new(table));
+        let id = ctx.register_binding_table(Arc::new(table))?;
         Ok(ProcedureResult {
             rows: vec![vec![Value::TableRef(id)]],
         })

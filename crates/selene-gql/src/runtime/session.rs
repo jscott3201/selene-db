@@ -11,9 +11,9 @@ use crate::{
     GqlStatus, SourceSpan,
     plan::ImplDefinedCaps,
     runtime::{
-        BindingTable, BindingTableRegistry, CallPlanCache, ExecutorError, ExecutorWarning,
-        PlanCache, PlanCacheStats, RequestExecutionInput, SharedPlanCache, WarningSink,
-        WriteOutcome,
+        BindingTable, BindingTableAllocationError, BindingTableRegistry, CallPlanCache,
+        ExecutorError, ExecutorWarning, PlanCache, PlanCacheStats, RequestExecutionInput,
+        SharedPlanCache, WarningSink, WriteOutcome, request_runtime::RequestRuntime,
     },
 };
 
@@ -82,12 +82,12 @@ pub(crate) fn materialize_parameter_values<'a>(
     parameters: &'a BTreeMap<DbString, SessionParameterValue>,
     scalar_parameters: &'a BTreeMap<DbString, Value>,
     registry: &BindingTableRegistry,
-) -> Cow<'a, BTreeMap<DbString, Value>> {
+) -> Result<Cow<'a, BTreeMap<DbString, Value>>, BindingTableAllocationError> {
     if parameters
         .values()
         .all(|value| matches!(value, SessionParameterValue::Scalar(_)))
     {
-        return Cow::Borrowed(scalar_parameters);
+        return Ok(Cow::Borrowed(scalar_parameters));
     }
 
     let mut materialized = scalar_parameters.clone();
@@ -95,11 +95,11 @@ pub(crate) fn materialize_parameter_values<'a>(
         if let SessionParameterValue::Table(table) = value {
             materialized.insert(
                 name.clone(),
-                Value::TableRef(registry.register(Arc::clone(table))),
+                Value::TableRef(registry.register(Arc::clone(table))?),
             );
         }
     }
-    Cow::Owned(materialized)
+    Ok(Cow::Owned(materialized))
 }
 
 /// Metadata returned after committing an explicit transaction through a [`Session`].
@@ -383,6 +383,14 @@ impl<'g> Session<'g> {
             .map_or_else(jiff::Timestamp::now, |request| request.timestamp)
     }
 
+    /// Clone this explicit request's runtime, or create one for a direct statement.
+    pub(crate) fn execution_runtime(&self) -> Arc<RequestRuntime> {
+        self.request.as_ref().map_or_else(
+            || Arc::new(RequestRuntime::new()),
+            RequestExecutionInput::runtime,
+        )
+    }
+
     /// Reset every session characteristic (ISO feature GS04).
     ///
     /// Clears all session parameters and resets the time zone to its default.
@@ -427,7 +435,7 @@ impl<'g> Session<'g> {
     pub(crate) fn materialize_parameters<'a>(
         &'a self,
         registry: &BindingTableRegistry,
-    ) -> Cow<'a, BTreeMap<DbString, Value>> {
+    ) -> Result<Cow<'a, BTreeMap<DbString, Value>>, BindingTableAllocationError> {
         materialize_parameter_values(&self.parameters, &self.scalar_parameters, registry)
     }
 

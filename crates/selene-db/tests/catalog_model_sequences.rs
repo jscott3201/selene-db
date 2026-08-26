@@ -7,13 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
-use selene_db::{
-    CreatePolicy, Database, DropPolicy, ExecutionOutcome, GqlStatus, ObjectPath, SchemaPath,
-};
+use selene_db::{CreatePolicy, Database, DropPolicy, ExecutionOutcome, ObjectPath, SchemaPath};
 
-const OMITTED: ExecutionOutcome = ExecutionOutcome::OmittedResult {
-    status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
-};
+const OMITTED: ExecutionOutcome = ExecutionOutcome::SUCCESSFUL_OMITTED;
 
 fn schema(name: &str) -> SchemaPath {
     SchemaPath::regular("selene", name).unwrap()
@@ -126,9 +122,7 @@ proptest! {
                         let expected = if graphs.remove(&graph_name) {
                             OMITTED
                         } else {
-                            ExecutionOutcome::OmittedResult {
-                                status: GqlStatus::GRAPH_DOES_NOT_EXIST,
-                            }
+                            ExecutionOutcome::GRAPH_NOT_FOUND_OMITTED
                         };
                         prop_assert_eq!(result.unwrap(), expected);
                     } else {

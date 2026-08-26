@@ -76,12 +76,22 @@ pub enum ErrorKind {
 pub struct GqlStatus([u8; 5]);
 
 impl GqlStatus {
+    /// Successful completion with a regular result.
+    pub const SUCCESSFUL_COMPLETION: Self = Self(*b"00000");
     /// Completion condition of a successful catalog statement with an omitted
     /// result (ISO/IEC 39075:2024 §4.9.3).
     pub const SUCCESSFUL_COMPLETION_OMITTED_RESULT: Self = Self(*b"00001");
     /// Completion condition of `DROP GRAPH IF EXISTS` on an absent graph
     /// (§12.5 GR1).
     pub const GRAPH_DOES_NOT_EXIST: Self = Self(*b"01G03");
+    /// Successful completion with no data.
+    pub const NO_DATA: Self = Self(*b"02000");
+    /// Runtime warning for aggregate NULL elimination.
+    pub const NULL_VALUE_ELIMINATED_IN_SET_FUNCTION: Self = Self(*b"01G11");
+    /// Runtime warning for a relaxed validation-mode write.
+    pub const VALIDATION_MODE_RELAXED_WRITE: Self = Self(*b"01N01");
+    /// Implementation-defined runtime failure fallback.
+    pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"5GQL0");
     /// "Invalid syntax", used when a catalog name fails the identifier profile.
     pub const SYNTAX_ERROR: Self = Self(*b"42001");
     /// "Invalid reference", used for missing, wrong-kind, and unshapeable

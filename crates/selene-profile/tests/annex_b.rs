@@ -230,7 +230,7 @@ fn unknown_clause_evidence_applicability_and_owner_fail() {
     }
 
     let mut owner = source_value();
-    record_mut(&mut owner, "IA002")["decision"]["owner"] = json!("M99-PR99");
+    record_mut(&mut owner, "IA003")["decision"]["owner"] = json!("M99-PR99");
     let error = parse_value(&owner).unwrap_err();
     assert!(error.contains("not a known bounded work item"), "{error}");
 }
@@ -246,7 +246,7 @@ fn closed_decision_and_value_decode_rejects_missing_extra_and_incompatible_field
     assert!(error.contains("missing field `value`"), "{error}");
 
     let mut extra = source_value();
-    record_mut(&mut extra, "IA002")["decision"]["value"] = json!({"type":"boolean","value":true});
+    record_mut(&mut extra, "IA003")["decision"]["value"] = json!({"type":"boolean","value":true});
     let error = parse_value(&extra).unwrap_err();
     assert!(error.contains("unknown field `value`"), "{error}");
 
@@ -332,12 +332,12 @@ fn release_claim_and_placeholder_and_size_guards_are_strict() {
     release["release_claimable"] = json!(true);
     let error = parse_value(&release).unwrap_err();
     assert!(
-        error.contains("release-claimable profile has pending decision IA002"),
+        error.contains("release-claimable profile has pending decision IA003"),
         "{error}"
     );
 
     let mut placeholder = source_value();
-    record_mut(&mut placeholder, "IA002")["decision"]["reason"] = json!("TODO later");
+    record_mut(&mut placeholder, "IA003")["decision"]["reason"] = json!("TODO later");
     let error = parse_value(&placeholder).unwrap_err();
     assert!(error.contains("contains placeholder text"), "{error}");
 
@@ -379,19 +379,33 @@ fn checked_in_records_have_no_placeholder_text() {
 }
 
 #[test]
-fn ia001_float_relocation_and_id086_are_truthful() {
+fn ia001_ia002_float_relocation_and_id086_are_truthful() {
     let ia001 = annex_b_by_id("IA001").unwrap();
     assert_eq!(ia001.topic, "Result declared-type exposure");
     assert_eq!(
         ia001.decision,
         AnnexBDecision::Selected {
             value: AnnexBValue::Boolean(true),
-            rationale: "Row results expose analyzer-inferred column types through the public binding-table schema.",
+            rationale: "Regular facade results expose analyzer-inferred column types through their public descriptor.",
             stability: selene_profile::RuntimeDecisionStability::Stable,
             visibility: selene_profile::RuntimeDecisionVisibility::Public,
         }
     );
     assert!(!format!("{ia001:?}").to_ascii_lowercase().contains("float"));
+
+    let ia002 = annex_b_by_id("IA002").unwrap();
+    assert!(ia002.evidence.contains(&"EVID-STATUS-CHAINING"));
+    assert!(matches!(
+        ia002.decision,
+        AnnexBDecision::Selected {
+            value: AnnexBValue::String(
+                "complete deterministic primary, all ordered additional, and every ordered nested-cause status without truncation"
+            ),
+            stability: selene_profile::RuntimeDecisionStability::Stable,
+            visibility: selene_profile::RuntimeDecisionVisibility::Public,
+            ..
+        }
+    ));
 
     let id037 = annex_b_by_id("ID037").unwrap();
     let AnnexBDecision::Selected {

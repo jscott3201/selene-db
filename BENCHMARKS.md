@@ -256,6 +256,17 @@ deliberately bypasses the source-plan cache so every call has the analyzed
 parameter-use contract needed for preflight; a later cache design must retain
 that contract rather than skip request validation.
 
+#### M03-PR03 execution-context microbenchmarks
+
+Bench bin: `execution_context`. The focused rows cover root construction,
+child push/drop cleanup, immutable record amendment, a two-row/two-column
+binding-table construction, and statement-result conversion including declared
+descriptor allocation. They are characterization rows, not regression claims.
+
+```bash
+scripts/run-benches.sh --profile quick --bench execution_context
+```
+
 #### M02-PR04 part 1 quick evidence
 
 The `catalog_lifecycle/gql_ddl` group issues the same schema and graph

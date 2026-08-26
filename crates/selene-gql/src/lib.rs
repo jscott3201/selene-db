@@ -81,11 +81,14 @@ pub use crate::procedure_registry::{
     Value,
 };
 pub use crate::runtime::{
-    AdaptiveOptimizer, Binding, BindingTable, BindingTableRegistry, BuiltinProcedureRegistry,
+    AdaptiveOptimizer, Binding, BindingTable, BindingTableAllocationError, BindingTableDescriptor,
+    BindingTableField, BindingTableLookupError, BindingTableRegistry, BuiltinProcedureRegistry,
     CallPlanCache, CallPlanCacheStats, CallPlanKey, CatalogSessionOutput, DataExceptionSubclass,
-    ExecutorError, ExecutorWarning, GraphContext, MaintenanceContext, MutationContext, PlanCache,
-    PlanCacheStats, ProcedureContext, RequestExecutionInput, RequestParameter, RollbackOutcome,
-    Session, SessionParameterValue, SharedPlanCache, SharedPlanCacheStats, StatementOutput,
+    DiagnosticBundle, ExecutionContext, ExecutionContextError, ExecutionFrame, ExecutionOutcome,
+    ExecutionStack, ExecutorError, ExecutorWarning, GqlStatusObject, GraphContext,
+    MaintenanceContext, MutationContext, PlanCache, PlanCacheStats, ProcedureContext, Record,
+    RequestExecutionInput, RequestParameter, RequestRuntimeHandle, RollbackOutcome, Session,
+    SessionParameterValue, SharedPlanCache, SharedPlanCacheStats, StatementOutput,
     TransactionOutcome, TxContext, WarningSink, WriteOutcome, execute_pattern, execute_pipeline,
     execute_statement, validate_parameter_value,
 };

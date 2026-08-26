@@ -13,9 +13,7 @@ use selene_db::{
     NodeTypeDefinition, ObjectPath, PathSegment, SchemaPath, WriteSummary,
 };
 
-const OMITTED: ExecutionOutcome = ExecutionOutcome::OmittedResult {
-    status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
-};
+const OMITTED: ExecutionOutcome = ExecutionOutcome::SUCCESSFUL_OMITTED;
 
 fn schema(name: &str) -> SchemaPath {
     SchemaPath::regular("selene", name).unwrap()
@@ -120,8 +118,11 @@ fn or_replace_creates_when_absent_and_replaces_with_a_fresh_identity() {
     );
     let new_session = database.session(&path).unwrap();
     assert_eq!(
-        new_session.execute("INSERT (:Note)").unwrap(),
-        ExecutionOutcome::Written(WriteSummary::new(1, None))
+        new_session
+            .execute("INSERT (:Note)")
+            .unwrap()
+            .write_summary(),
+        Some(WriteSummary::new(1, None))
     );
     // The retained pre-replace snapshot still resolves the old identity.
     assert_eq!(before.resolve_graph(&path).unwrap().id, first.id);
@@ -207,8 +208,9 @@ fn or_replace_failures_publish_nothing_and_keep_the_old_graph() {
             .session(&graph("memory", "full"))
             .unwrap()
             .execute("MATCH (n) RETURN n")
-            .unwrap(),
-        ExecutionOutcome::Rows { row_count: 2 }
+            .unwrap()
+            .row_count(),
+        Some(2)
     );
 
     // Wrong kind in the shared namespace (§17.2 SR2d(i)(1)).

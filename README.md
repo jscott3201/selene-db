@@ -31,7 +31,7 @@ evidence-gated conformance wording.
 
 | Area | Current surface |
 |---|---|
-| Facade | In-memory `Database`, catalog-owned schemas and named graphs, explicitly selected stable-ID sessions, facade diagnostics, and summary-only outcomes. |
+| Facade | In-memory `Database`, catalog-owned schemas and named graphs, explicitly selected stable-ID sessions, structured diagnostics, and immutable result rows with declared descriptors. |
 | GQL | Parser, analyzer, planner, optimizer, executor, parameter binding, source-string plan cache, feature-status reporting, and ISO-oriented errors. |
 | Graph storage | In-memory property graph with stable external IDs, dense internal rows, immutable reader snapshots, typed property indexes, composite indexes, and one mutation funnel. |
 | Transactions | Serialized writers, snapshot readers, rollback by non-publication, and provider fanout under the write lock. |
@@ -88,7 +88,7 @@ Build an in-memory database, create a schema and named graph, then select that
 graph for a facade session:
 
 ```rust
-use selene_db::{CreatePolicy, Database, ExecutionOutcome, ObjectPath, SchemaPath};
+use selene_db::{CreatePolicy, Database, ObjectPath, SchemaPath};
 
 fn main() -> Result<(), selene_db::Error> {
     let database = Database::builder().build();
@@ -101,17 +101,18 @@ fn main() -> Result<(), selene_db::Error> {
 
     session.execute("INSERT (:Person { name: 'Ada' })")?;
     let output = session.execute("MATCH (p:Person) RETURN p")?;
-    assert_eq!(output, ExecutionOutcome::Rows { row_count: 1 });
+    assert_eq!(output.row_count(), Some(1));
 
     Ok(())
 }
 ```
 
-The facade returns summary counts rather than row values. A session retains the
-selected graph's stable identity and revalidates it for each request; drop or
-replacement makes the old session stale. Transaction and `SESSION` controls are
-rejected until the facade owns their state. GQL catalog DDL routes to the same
-catalog lifecycle service used above.
+The facade returns immutable row values, analyzer-declared result descriptors,
+and structured diagnostics. A session retains the selected graph's stable
+identity and revalidates it for each request; drop or replacement makes the old
+session stale. Transaction and `SESSION` controls are rejected until the facade
+owns their state. GQL catalog DDL routes to the same catalog lifecycle service
+used above.
 The [Embedding Guide](docs/embedding-guide.md) identifies the stable entry point
 and documents the lower advanced APIs separately.
 

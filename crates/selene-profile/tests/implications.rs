@@ -529,7 +529,7 @@ fn claimed_source_and_release_claimable_require_complete_evidence() {
     let mut release = source_value();
     release["release_claimable"] = json!(true);
     let error = parse_value(&release).unwrap_err();
-    assert!(error.contains("pending decision IA002"), "{error}");
+    assert!(error.contains("pending decision IA003"), "{error}");
 
     resolve_annex_b_for_release_fixture(&mut release);
     let error = parse_value(&release).unwrap_err();

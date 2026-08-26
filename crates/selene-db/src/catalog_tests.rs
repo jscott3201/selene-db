@@ -12,8 +12,8 @@ use selene_catalog::{CatalogObjectId, CatalogObjectKind, GraphId as LowerGraphId
 
 use super::*;
 use crate::{
-    CreatePolicy, Database, DropPolicy, ErrorKind, ExecutionOutcome, GqlStatus, ObjectPath,
-    SchemaPath, database::HighWaterMarks,
+    CreatePolicy, Database, DropPolicy, ErrorKind, ExecutionOutcome, ObjectPath, SchemaPath,
+    database::HighWaterMarks,
 };
 
 fn schema(name: &str) -> SchemaPath {
@@ -481,9 +481,7 @@ fn concurrent_readers_observe_only_complete_publications_from_gql_ddl() {
 fn gql_catalog_statements_dispatch_outside_the_graph_request_lease() {
     let database = Database::builder().build();
     let session = catalog_session(&database);
-    let omitted = ExecutionOutcome::OmittedResult {
-        status: GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
-    };
+    let omitted = ExecutionOutcome::SUCCESSFUL_OMITTED;
     assert_eq!(session.execute("CREATE SCHEMA /lease").unwrap(), omitted);
     assert_eq!(
         session

@@ -97,6 +97,7 @@ selene-db-gql|expression_eval|0
 selene-db-gql|procedure_call_repeat|1
 selene-db-gql|correlated_subquery|0
 selene-db-gql|read_pipeline|0
+selene-db-gql|execution_context|0
 selene-db-algorithms|algo_bench|0
 selene-db-algorithms|projection|0
 selene-db-algorithms|vector_graph_retrieval|0
