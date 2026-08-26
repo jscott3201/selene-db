@@ -35,6 +35,10 @@ facade_id!(GraphTypeId, "Stable facade graph-type identity.");
 pub struct CatalogGeneration(u64);
 
 impl CatalogGeneration {
+    pub(crate) const fn from_lower(generation: selene_catalog::CatalogGeneration) -> Self {
+        Self(generation.get())
+    }
+
     /// Return the nonzero generation number.
     #[must_use]
     pub const fn get(self) -> u64 {

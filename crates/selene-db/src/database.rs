@@ -1,6 +1,13 @@
 //! Database ownership, immutable outer state, and construction.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    num::NonZeroU64,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use arc_swap::ArcSwap;
 #[cfg(test)]
@@ -16,8 +23,9 @@ use selene_graph::{GraphTypeDef, SharedGraph};
 use crate::{
     AuthorizationDecision, AuthorizationRequest, Catalog, CatalogReadSnapshot, DatabaseConfig,
     Error, GraphDescriptor, ObjectPath, Principal, Result, SchemaDescriptor, Session,
-    SessionContext, SessionOptions, session_context::SessionContextParts,
-    transaction::MutationCoordinator,
+    SessionContext, SessionOptions,
+    session_context::SessionContextParts,
+    transaction::{MutationCoordinator, TransactionId},
 };
 
 const CATALOG_NAME: &str = "selene";
@@ -225,6 +233,7 @@ pub(crate) struct DatabaseInner {
     pub(crate) config: DatabaseConfig,
     pub(crate) state: ArcSwap<DatabaseState>,
     pub(crate) transactions: MutationCoordinator,
+    next_transaction_id: AtomicU64,
     pub(crate) procedures: BuiltinProcedureRegistry,
     #[cfg(test)]
     pub(crate) failure: Mutex<Option<crate::catalog::FailurePoint>>,
@@ -246,6 +255,7 @@ impl DatabaseInner {
                 high_water: HighWaterMarks::initial(),
             })),
             transactions: MutationCoordinator::new(),
+            next_transaction_id: AtomicU64::new(1),
             procedures: BuiltinProcedureRegistry::new(),
             #[cfg(test)]
             failure: Mutex::new(None),
@@ -254,6 +264,24 @@ impl DatabaseInner {
             #[cfg(test)]
             replacement_graph_constructions: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    pub(crate) fn allocate_transaction_id(&self) -> Result<TransactionId> {
+        let current = self
+            .next_transaction_id
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| match next {
+                0 => None,
+                u64::MAX => Some(0),
+                value => Some(value + 1),
+            })
+            .map_err(|_| Error::transaction_id_exhausted())?;
+        let value = NonZeroU64::new(current).ok_or_else(Error::transaction_id_exhausted)?;
+        Ok(TransactionId::from_nonzero(value))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_next_transaction_id(&self, next: u64) {
+        self.next_transaction_id.store(next, Ordering::Relaxed);
     }
 }
 

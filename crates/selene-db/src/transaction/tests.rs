@@ -14,7 +14,7 @@ use selene_graph::SharedGraph;
 use super::{AuthorityOutcome, DatabaseDraft};
 use crate::{
     CreatePolicy, Database, ErrorKind, ExecutionOutcome, ObjectPath, SchemaPath,
-    catalog::FailurePoint, database::DatabaseState,
+    TransactionSlotState, catalog::FailurePoint, database::DatabaseState,
 };
 
 fn fixture() -> (Database, SchemaPath, ObjectPath) {
@@ -194,6 +194,14 @@ fn selected_session_reports_indeterminate_with_complete_graph_visible() {
 
     assert_eq!(error.kind(), ErrorKind::MutationIndeterminate);
     assert_eq!(error.gqlstatus().unwrap().as_str(), "40003");
+    assert_eq!(
+        session.context().transaction_slot(),
+        TransactionSlotState::Indeterminate
+    );
+    assert_eq!(
+        session.context().transaction_retains_detached_state(),
+        Some(false)
+    );
     let after = database.catalog().snapshot();
     assert!(!before.shares_state_with(&after));
     let visible = session
@@ -385,6 +393,14 @@ fn selected_pre_store_failpoints_leave_exact_state_and_next_id() {
         let error = session.execute("INSERT (:Canceled) FINISH").unwrap_err();
         assert_eq!(error.kind(), ErrorKind::MutationCanceled);
         assert_eq!(error.gqlstatus().unwrap().as_str(), "5GQL2");
+        assert_eq!(
+            session.context().transaction_slot(),
+            TransactionSlotState::RolledBack
+        );
+        assert_eq!(
+            session.context().transaction_retains_detached_state(),
+            Some(false)
+        );
 
         let after = inner.state.load_full();
         assert!(Arc::ptr_eq(&before, &after));

@@ -9,12 +9,12 @@
 //! closed graph types. A [`Session`] holds copied catalog/profile defaults,
 //! optional embedder-provided authorization, a controlled typed parameter map,
 //! and one active-request slot. [`RequestOutcome`] retains the immutable context
-//! used by each explicit [`Request`]. M03-PR04 Part 1 provides facade-owned
-//! single-writer detached staging and one outer in-memory publication for
-//! implicit mutations. An [`ErrorKind::MutationIndeterminate`] result means the
-//! complete mutation is already visible and must not be retried blindly.
-//! Explicit transaction demarcation/state and persistence remain deferred to
-//! Part 2 and M09 respectively.
+//! used by each explicit [`Request`]. M03-PR04 provides facade-owned detached
+//! transaction state, serial multi-request visibility, and one outer in-memory
+//! publication for implicit and explicit mutations. An
+//! [`ErrorKind::MutationIndeterminate`] result means the complete mutation is
+//! already visible and must not be retried blindly. Persistence remains owned
+//! by M09.
 //!
 //! # Quickstart
 //!
@@ -106,6 +106,7 @@
 mod auth;
 mod catalog;
 mod catalog_snapshot;
+mod catalog_stage;
 mod config;
 mod database;
 mod ddl;
@@ -155,6 +156,7 @@ pub use session_context::{
     ProfileIdentity, RequestSlotState, SessionContext, SessionDependencySummary, SessionParameters,
     SessionTerminationState, TimeZoneDisplacement, TransactionSlotState,
 };
+pub use transaction::{Transaction, TransactionAccessMode, TransactionId, TransactionState};
 
 /// Result type returned by facade operations.
 pub type Result<T> = std::result::Result<T, Error>;

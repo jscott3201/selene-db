@@ -292,6 +292,30 @@ scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalo
 | `catalog_lifecycle/transaction_authority/selected_insert_stage_publish` | 123.06–146.13 µs |
 | `catalog_lifecycle/transaction_authority/selected_publish_then_read` | 256.49–271.13 µs |
 
+#### M03-PR04 Part 2 transaction-demarcation characterization
+
+The existing `catalog_lifecycle/transaction_authority` group now also measures
+empty read-write start/commit and start/rollback, read-only snapshot acquisition
+plus rollback, implicit one-write staging/publication, and four explicit staged
+writes plus one commit. Cleanup is outside each returned Criterion duration.
+These are quick characterization numbers, not an improvement claim.
+
+Recorded on 2026-08-26 with Apple M5 (10 cores, 16 GiB), macOS 26.7 build
+25G220, rustc 1.97.1, and mimalloc on the M03-PR04 Part 2 worktree based on
+`4750e2efd799bfb95766b9687d8cdee14fb054fe`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/transaction_authority
+```
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/transaction_authority/empty_start_commit` | 310.53–312.20 ns |
+| `catalog_lifecycle/transaction_authority/empty_start_rollback` | 307.90–327.35 ns |
+| `catalog_lifecycle/transaction_authority/read_snapshot_start_rollback` | 307.25–320.63 ns |
+| `catalog_lifecycle/transaction_authority/selected_insert_stage_publish` | 179.61–226.71 µs |
+| `catalog_lifecycle/transaction_authority/explicit_four_write_stage_commit` | 1.2539–1.4208 ms |
+
 #### M02-PR04 part 1 quick evidence
 
 The `catalog_lifecycle/gql_ddl` group issues the same schema and graph

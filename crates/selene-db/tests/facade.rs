@@ -322,16 +322,25 @@ fn graph_drop_clears_procedure_state_only_after_successful_publication() {
 }
 
 #[test]
-fn stateful_controls_are_rejected_without_poisoning_facade_session() {
+fn transaction_controls_work_while_deferred_session_controls_do_not_poison() {
     let (database, path) = fixture();
     let session = database.session(&path).unwrap();
-    let controls = [
-        "START TRANSACTION",
-        "COMMIT",
-        "ROLLBACK",
-        "SESSION SET VALUE $answer = 42",
-        "SESSION CLOSE",
-    ];
+
+    session.execute("START TRANSACTION").unwrap();
+    session.execute("COMMIT").unwrap();
+    assert_eq!(
+        session
+            .execute("COMMIT")
+            .unwrap_err()
+            .gqlstatus()
+            .unwrap()
+            .as_str(),
+        "2D000"
+    );
+    session.execute("START TRANSACTION").unwrap();
+    session.execute("ROLLBACK").unwrap();
+
+    let controls = ["SESSION SET VALUE $answer = 42", "SESSION CLOSE"];
 
     for source in controls.into_iter().chain(controls) {
         let error = session.execute(source).expect_err(source);

@@ -25,14 +25,20 @@ use std::{
 };
 
 use parking_lot::{Mutex, MutexGuard};
-use selene_catalog::{CatalogGeneration, CatalogSnapshot, GraphId, GraphTypeId};
+use selene_catalog::{CatalogGeneration, CatalogObjectId, CatalogSnapshot, GraphId, GraphTypeId};
 use selene_core::GraphId as CoreGraphId;
 use selene_graph::{GraphTypeDef, SeleneGraph, SharedGraph, write_txn::PreparedGraphCommit};
 
 use crate::{
     Error, Result,
+    catalog_snapshot::graph_summary,
     database::{DatabaseInner, DatabaseState, GraphInstance, HighWaterMarks},
 };
+
+mod state;
+
+pub(crate) use state::{DetachedTransaction, MutationMode, TransitionEvent, transition};
+pub use state::{Transaction, TransactionAccessMode, TransactionId, TransactionState};
 
 /// Closure-local proof that the facade's writer mutex remains held.
 ///
@@ -109,8 +115,10 @@ pub(crate) struct DatabaseDraft {
     pub(crate) high_water: HighWaterMarks,
     pinned_graph: Option<PinnedGraph>,
     graph_removals: BTreeSet<GraphId>,
-    graph_replacement: Option<(GraphId, DetachedGraphReplacement)>,
-    forget_graphs: Vec<CoreGraphId>,
+    graph_replacements: BTreeMap<GraphId, DetachedGraphReplacement>,
+    selected_graph: Option<Box<SeleneGraph>>,
+    forget_graphs: BTreeSet<CoreGraphId>,
+    modified: bool,
 }
 
 impl DatabaseDraft {
@@ -124,13 +132,15 @@ impl DatabaseDraft {
             high_water: base.high_water,
             pinned_graph: None,
             graph_removals: BTreeSet::new(),
-            graph_replacement: None,
-            forget_graphs: Vec::new(),
+            graph_replacements: BTreeMap::new(),
+            selected_graph: None,
+            forget_graphs: BTreeSet::new(),
+            modified: false,
         }
     }
 
     pub(crate) fn forget_graph(&mut self, id: CoreGraphId) {
-        self.forget_graphs.push(id);
+        self.forget_graphs.insert(id);
     }
 
     pub(crate) fn pin_graph(
@@ -161,22 +171,98 @@ impl DatabaseDraft {
             instance_identity: Arc::as_ptr(&instance) as usize,
             generation: snapshot.meta.generation,
         });
+        self.selected_graph = Some(Box::new(snapshot.as_ref().clone()));
         drop(snapshot);
         Ok(instance)
     }
 
+    pub(crate) const fn base_publication(&self) -> u64 {
+        self.base_publication
+    }
+
+    pub(crate) const fn base_catalog_generation(&self) -> CatalogGeneration {
+        self.base_catalog_generation
+    }
+
+    pub(crate) fn matches_base(&self, base: &Arc<DatabaseState>) -> bool {
+        let outer_matches = Arc::as_ptr(base) as usize == self.base_state_identity
+            && base.publication == self.base_publication
+            && base.catalog.generation() == self.base_catalog_generation;
+        outer_matches
+            && self.pinned_graph.is_none_or(|pinned| {
+                base.graphs.get(&pinned.id).is_some_and(|instance| {
+                    let snapshot = instance.graph.read();
+                    Arc::as_ptr(instance) as usize == pinned.instance_identity
+                        && snapshot.graph_id().get() == pinned.id.get()
+                        && snapshot.meta.generation == pinned.generation
+                })
+            })
+    }
+
+    pub(crate) fn selected_graph(&self) -> Result<&SeleneGraph> {
+        let pinned = self
+            .pinned_graph
+            .ok_or_else(|| Error::catalog_invariant("database draft has no selected graph"))?;
+        self.graph_replacements
+            .get(&pinned.id)
+            .map(DetachedGraphReplacement::snapshot)
+            .or(self.selected_graph.as_deref())
+            .ok_or_else(|| Error::catalog_invariant("database draft lost its selected graph"))
+    }
+
+    pub(crate) fn selected_graph_id(&self) -> Result<GraphId> {
+        self.pinned_graph
+            .map(|pinned| pinned.id)
+            .ok_or_else(|| Error::catalog_invariant("database draft has no selected graph"))
+    }
+
+    pub(crate) fn pinned_graph_generation(&self) -> Result<u64> {
+        self.pinned_graph
+            .map(|pinned| pinned.generation)
+            .ok_or_else(|| Error::catalog_invariant("database draft has no selected graph"))
+    }
+
+    pub(crate) fn state_view(&self) -> DatabaseState {
+        DatabaseState {
+            publication: self.base_publication,
+            catalog: self.catalog.clone(),
+            graphs: BTreeMap::new(),
+            graph_types: self.graph_types.clone(),
+            high_water: self.high_water,
+        }
+    }
+
+    pub(crate) const fn is_modified(&self) -> bool {
+        self.modified
+    }
+
+    pub(crate) fn mark_modified(&mut self) {
+        self.modified = true;
+    }
+
     pub(crate) fn remove_graph(&mut self, id: GraphId) {
+        self.modified = true;
         self.graph_removals.insert(id);
+        self.graph_replacements.remove(&id);
     }
 
     pub(crate) fn replace_graph(&mut self, id: GraphId, snapshot: SeleneGraph) -> Result<()> {
-        if snapshot.graph_id().get() != id.get() || self.graph_replacement.is_some() {
+        if snapshot.graph_id().get() != id.get() || self.graph_replacements.contains_key(&id) {
             return Err(Error::catalog_invariant(
                 "database draft has an invalid or duplicate graph replacement",
             ));
         }
-        self.graph_replacement = Some((id, DetachedGraphReplacement::Snapshot(Box::new(snapshot))));
+        self.graph_removals.remove(&id);
+        self.modified = true;
+        self.graph_replacements
+            .insert(id, DetachedGraphReplacement::Snapshot(Box::new(snapshot)));
         Ok(())
+    }
+
+    pub(crate) fn replacement_snapshot(&self, id: GraphId) -> Option<&SeleneGraph> {
+        self.graph_replacements
+            .get(&id)
+            .map(DetachedGraphReplacement::snapshot)
     }
 
     pub(crate) fn attach_prepared_graph(
@@ -194,17 +280,16 @@ impl DatabaseDraft {
                 "prepared graph commit changed the stable graph identity",
             ));
         }
-        if prepared.snapshot().meta.generation != pinned.generation.saturating_add(1) {
+        let current_generation = self.selected_graph()?.meta.generation;
+        if prepared.snapshot().meta.generation != current_generation.saturating_add(1) {
             return Err(Error::catalog_invariant(
-                "prepared graph generation is not the pinned generation successor",
+                "prepared graph generation is not the detached generation successor",
             ));
         }
-        if self.graph_replacement.is_some() {
-            return Err(Error::catalog_invariant(
-                "database draft already has a graph replacement",
-            ));
-        }
-        self.graph_replacement = Some((id, DetachedGraphReplacement::Prepared(prepared)));
+        self.graph_removals.remove(&id);
+        self.modified = true;
+        self.graph_replacements
+            .insert(id, DetachedGraphReplacement::Prepared(prepared));
         Ok(())
     }
 }
@@ -244,6 +329,9 @@ impl DatabaseInner {
         _reservation: MutationReservation<'_>,
         draft: DatabaseDraft,
     ) -> Result<AuthorityOutcome> {
+        if !draft.is_modified() && draft.pinned_graph.is_none() {
+            return Ok(AuthorityOutcome::Committed);
+        }
         #[cfg(test)]
         if self.take_failure(crate::catalog::FailurePoint::BeforeAuthorityPrepare) {
             return Ok(AuthorityOutcome::Canceled);
@@ -262,8 +350,46 @@ impl DatabaseInner {
                 "database mutation base changed while its reservation was active",
             ));
         }
+        let lifecycle_ids = draft
+            .graph_removals
+            .iter()
+            .chain(draft.graph_replacements.keys())
+            .filter(|id| current.graphs.contains_key(id))
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let lifecycle_instances = lifecycle_ids
+            .iter()
+            .map(|id| {
+                current
+                    .graphs
+                    .get(id)
+                    .cloned()
+                    .map(|instance| (*id, instance))
+                    .ok_or_else(|| {
+                        Error::catalog_invariant(
+                            "published graph descriptor has no runtime instance",
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let _lifecycle_guards = lifecycle_instances
+            .iter()
+            .map(|(_, instance)| instance.lifecycle.write())
+            .collect::<Vec<_>>();
+
+        let locked_current = self.state.load_full();
+        if !draft.matches_base(&locked_current)
+            || lifecycle_instances.iter().any(|(id, instance)| {
+                locked_current
+                    .graphs
+                    .get(id)
+                    .is_none_or(|registered| !Arc::ptr_eq(registered, instance))
+            })
+        {
+            return Err(Error::transaction_rollback());
+        }
         if let Some(pinned) = draft.pinned_graph {
-            let instance = current
+            let instance = locked_current
                 .graphs
                 .get(&pinned.id)
                 .ok_or_else(Error::stale_session_reference)?;
@@ -274,17 +400,32 @@ impl DatabaseInner {
             {
                 return Err(Error::stale_session_reference());
             }
-            let Some((replacement_id, replacement)) = draft.graph_replacement.as_ref() else {
-                return Err(Error::catalog_invariant(
-                    "prepared database state lost its selected graph",
-                ));
-            };
-            if *replacement_id != pinned.id
-                || replacement.snapshot().graph_id().get() != pinned.id.get()
-                || replacement.snapshot().meta.generation != pinned.generation.saturating_add(1)
+            if let Some(replacement) = draft.graph_replacements.get(&pinned.id)
+                && (replacement.snapshot().graph_id().get() != pinned.id.get()
+                    || replacement.snapshot().meta.generation <= pinned.generation)
             {
                 return Err(Error::catalog_invariant(
                     "prepared database state has a stale graph identity or generation",
+                ));
+            }
+        }
+        for id in &draft.graph_removals {
+            let Some(instance) = locked_current.graphs.get(id) else {
+                continue;
+            };
+            let snapshot = instance.graph.read();
+            if snapshot.node_count() != 0 || snapshot.edge_count() != 0 {
+                let descriptor = locked_current
+                    .catalog
+                    .descriptor(CatalogObjectId::Graph(*id))
+                    .ok_or_else(|| {
+                        Error::catalog_invariant("removed graph descriptor is missing")
+                    })?;
+                let path = graph_summary(&locked_current, descriptor)?.path;
+                return Err(Error::nonempty_graph(
+                    &path,
+                    snapshot.node_count(),
+                    snapshot.edge_count(),
                 ));
             }
         }
@@ -299,7 +440,7 @@ impl DatabaseInner {
             graph_types,
             high_water,
             graph_removals,
-            graph_replacement,
+            graph_replacements,
             forget_graphs,
             ..
         } = draft;
@@ -307,7 +448,7 @@ impl DatabaseInner {
         for id in graph_removals {
             graphs.remove(&id);
         }
-        if let Some((id, replacement)) = graph_replacement {
+        for (id, replacement) in graph_replacements {
             let graph = SharedGraph::try_from_graph(replacement.into_snapshot())
                 .map_err(Error::invalid_graph_type_source)?;
             #[cfg(test)]

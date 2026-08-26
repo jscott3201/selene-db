@@ -7,7 +7,8 @@ use selene_profile::{current_profile_identity, current_session_defaults};
 
 use crate::{
     AuthorizationId, CatalogGeneration, Error, GeneralParameter, GraphDescriptor, GraphId,
-    Principal, RequestContext, Result, SchemaDescriptor, SchemaId,
+    Principal, RequestContext, Result, SchemaDescriptor, SchemaId, Transaction, TransactionState,
+    transaction::DetachedTransaction,
 };
 
 /// Facade-owned copy of the generated profile identity.
@@ -117,6 +118,31 @@ pub enum RequestSlotState {
 pub enum TransactionSlotState {
     /// No transaction is active.
     Vacant,
+    /// Requests may execute and stage work.
+    Active,
+    /// A statement failed and detached work was discarded.
+    Failed,
+    /// Commit validation/publication is in progress.
+    Committing,
+    /// Detached work was discarded.
+    RolledBack,
+    /// The complete successor state was published and acknowledged.
+    Committed,
+    /// Publication completed but acknowledgement was uncertain.
+    Indeterminate,
+}
+
+impl From<TransactionState> for TransactionSlotState {
+    fn from(state: TransactionState) -> Self {
+        match state {
+            TransactionState::Active => Self::Active,
+            TransactionState::Failed => Self::Failed,
+            TransactionState::Committing => Self::Committing,
+            TransactionState::RolledBack => Self::RolledBack,
+            TransactionState::Committed => Self::Committed,
+            TransactionState::Indeterminate => Self::Indeterminate,
+        }
+    }
 }
 
 /// Session termination inspection state.
@@ -183,6 +209,7 @@ pub(crate) struct SessionContextParts {
 struct SessionState {
     parameters: BTreeMap<DbString, GeneralParameter>,
     active_request: Option<Arc<RequestContext>>,
+    transaction: Option<DetachedTransaction>,
 }
 
 pub(crate) struct ActiveRequestGuard<'a> {
@@ -190,9 +217,55 @@ pub(crate) struct ActiveRequestGuard<'a> {
     context: Arc<RequestContext>,
 }
 
+pub(crate) struct TransactionCheckout<'a> {
+    state: &'a RefCell<SessionState>,
+    transaction: Option<DetachedTransaction>,
+}
+
+impl TransactionCheckout<'_> {
+    pub(crate) fn as_ref(&self) -> Option<&DetachedTransaction> {
+        self.transaction.as_ref()
+    }
+
+    pub(crate) fn as_mut(&mut self) -> Option<&mut DetachedTransaction> {
+        self.transaction.as_mut()
+    }
+
+    pub(crate) fn replace(
+        &mut self,
+        transaction: DetachedTransaction,
+    ) -> Option<DetachedTransaction> {
+        self.transaction.replace(transaction)
+    }
+}
+
+impl Drop for TransactionCheckout<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking()
+            && let Some(transaction) = self.transaction.as_mut()
+            && matches!(
+                transaction.descriptor().state(),
+                TransactionState::Active | TransactionState::Committing
+            )
+        {
+            transaction.abandon_on_unwind();
+        }
+        self.state.borrow_mut().transaction = self.transaction.take();
+    }
+}
+
 impl Drop for ActiveRequestGuard<'_> {
     fn drop(&mut self) {
         let mut state = self.state.borrow_mut();
+        if std::thread::panicking()
+            && let Some(transaction) = state.transaction.as_mut()
+            && matches!(
+                transaction.descriptor().state(),
+                TransactionState::Active | TransactionState::Committing
+            )
+        {
+            transaction.abandon_on_unwind();
+        }
         if state
             .active_request
             .as_ref()
@@ -219,7 +292,6 @@ pub struct SessionContext {
     dependencies: SessionDependencySummary,
     time_zone: TimeZoneDisplacement,
     state: RefCell<SessionState>,
-    transaction_slot: TransactionSlotState,
     termination: SessionTerminationState,
 }
 
@@ -244,7 +316,6 @@ impl SessionContext {
             dependencies,
             time_zone: TimeZoneDisplacement::from_profile(),
             state: RefCell::new(SessionState::default()),
-            transaction_slot: TransactionSlotState::Vacant,
             termination: SessionTerminationState::Active,
         }
     }
@@ -331,10 +402,35 @@ impl SessionContext {
         self.state.borrow().active_request.as_ref().map(Arc::clone)
     }
 
-    /// Return the inactive transaction slot state.
+    /// Return the precise transaction slot state.
     #[must_use]
-    pub const fn transaction_slot(&self) -> TransactionSlotState {
-        self.transaction_slot
+    pub fn transaction_slot(&self) -> TransactionSlotState {
+        self.state
+            .borrow()
+            .transaction
+            .as_ref()
+            .map_or(TransactionSlotState::Vacant, |transaction| {
+                transaction.descriptor().state().into()
+            })
+    }
+
+    /// Clone the immutable transaction inspection descriptor, when present.
+    #[must_use]
+    pub fn transaction(&self) -> Option<Transaction> {
+        self.state
+            .borrow()
+            .transaction
+            .as_ref()
+            .map(|transaction| transaction.descriptor().clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn transaction_retains_detached_state(&self) -> Option<bool> {
+        self.state
+            .borrow()
+            .transaction
+            .as_ref()
+            .map(crate::transaction::DetachedTransaction::retains_detached_state)
     }
 
     /// Return the session termination state.
@@ -357,6 +453,14 @@ impl SessionContext {
 
     pub(crate) fn remove_parameter(&self, name: &str) -> Option<GeneralParameter> {
         self.state.borrow_mut().parameters.remove(name)
+    }
+
+    pub(crate) fn checkout_transaction(&self) -> TransactionCheckout<'_> {
+        let transaction = self.state.borrow_mut().transaction.take();
+        TransactionCheckout {
+            state: &self.state,
+            transaction,
+        }
     }
 
     pub(crate) fn activate_request(

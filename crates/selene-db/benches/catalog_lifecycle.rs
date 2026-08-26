@@ -11,7 +11,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use selene_db::{
     AllowAllAuthorizationPolicy, AuthHookError, AuthorizationId, CreatePolicy, Database,
     DropPolicy, ExecutionOutcome, GeneralParameter, GqlType, ObjectPath, Principal, PrincipalId,
-    PrincipalProvider, Request, RequestParams, SchemaPath, SessionOptions, Value,
+    PrincipalProvider, Request, RequestParams, SchemaPath, SessionOptions, TransactionAccessMode,
+    Value,
 };
 
 const OMITTED: ExecutionOutcome = ExecutionOutcome::SUCCESSFUL_OMITTED;
@@ -366,6 +367,54 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
             elapsed
         });
     });
+    authority.bench_function("empty_start_commit", |b| {
+        b.iter_custom(|iterations| {
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                let started = std::time::Instant::now();
+                authority_session
+                    .start_transaction(TransactionAccessMode::ReadWrite)
+                    .expect("timed empty transaction start succeeds");
+                authority_session
+                    .commit_transaction()
+                    .expect("timed empty transaction commit succeeds");
+                elapsed += started.elapsed();
+            }
+            elapsed
+        });
+    });
+    authority.bench_function("empty_start_rollback", |b| {
+        b.iter_custom(|iterations| {
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                let started = std::time::Instant::now();
+                authority_session
+                    .start_transaction(TransactionAccessMode::ReadWrite)
+                    .expect("timed empty transaction start succeeds");
+                authority_session
+                    .rollback_transaction()
+                    .expect("timed empty transaction rollback succeeds");
+                elapsed += started.elapsed();
+            }
+            elapsed
+        });
+    });
+    authority.bench_function("read_snapshot_start_rollback", |b| {
+        b.iter_custom(|iterations| {
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                let started = std::time::Instant::now();
+                authority_session
+                    .start_transaction(TransactionAccessMode::ReadOnly)
+                    .expect("timed read snapshot acquisition succeeds");
+                authority_session
+                    .rollback_transaction()
+                    .expect("timed read snapshot rollback succeeds");
+                elapsed += started.elapsed();
+            }
+            elapsed
+        });
+    });
     authority.bench_function("selected_insert_stage_publish", |b| {
         b.iter_custom(|iterations| {
             let mut elapsed = Duration::ZERO;
@@ -378,6 +427,30 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
                 authority_session
                     .execute("MATCH (n:AuthorityBench) DELETE n FINISH")
                     .expect("untimed selected insert cleanup succeeds");
+            }
+            elapsed
+        });
+    });
+    authority.bench_function("explicit_four_write_stage_commit", |b| {
+        b.iter_custom(|iterations| {
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                let started = std::time::Instant::now();
+                authority_session
+                    .start_transaction(TransactionAccessMode::ReadWrite)
+                    .expect("timed explicit transaction start succeeds");
+                for _ in 0..4 {
+                    authority_session
+                        .execute("INSERT (:ExplicitAuthorityBench) FINISH")
+                        .expect("timed explicit staging succeeds");
+                }
+                authority_session
+                    .commit_transaction()
+                    .expect("timed explicit commit succeeds");
+                elapsed += started.elapsed();
+                authority_session
+                    .execute("MATCH (n:ExplicitAuthorityBench) DELETE n FINISH")
+                    .expect("untimed explicit transaction cleanup succeeds");
             }
             elapsed
         });

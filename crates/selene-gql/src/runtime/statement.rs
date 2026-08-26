@@ -561,12 +561,18 @@ fn ensure_source_policy(
         SourceExecutionPolicy::CatalogSession | SourceExecutionPolicy::PrepareCatalogSession
     ) {
         let feature = match plan.category {
-            StatementCategory::TransactionControl | StatementCategory::SessionControl => {
-                Some("stateful control in a selected facade session")
+            StatementCategory::SessionControl => {
+                Some("session control in a selected facade session")
             }
-            StatementCategory::Maintenance => {
-                Some("maintenance in a selected facade session before M03-PR04 Part 2")
+            StatementCategory::TransactionControl
+                if policy == SourceExecutionPolicy::CatalogSession =>
+            {
+                Some("transaction control delegated below the selected facade state machine")
             }
+            StatementCategory::Maintenance if policy == SourceExecutionPolicy::CatalogSession => {
+                Some("maintenance outside the selected facade detached-maintenance boundary")
+            }
+            StatementCategory::TransactionControl | StatementCategory::Maintenance => None,
             StatementCategory::ReadOnly
             | StatementCategory::DataModifying
             | StatementCategory::CatalogModifying => None,

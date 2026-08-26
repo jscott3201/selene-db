@@ -4,8 +4,8 @@
 //! The lower engine reduces schema, graph, and graph-type lifecycle statements
 //! to a storage-neutral [`DatabaseCatalogCommand`] and hands it back before any
 //! execution context exists. This module resolves the carried references and
-//! node definitions to facade-owned path/definition types, then dispatches to
-//! the same [`Catalog`] methods Rust callers use.
+//! node definitions to facade-owned path/definition types, then stages through
+//! the same detached lifecycle functions Rust [`Catalog`] callers use.
 //!
 //! # Reference resolution
 //!
@@ -55,25 +55,26 @@
 //! read lease on the same graph would self-deadlock; the test-only lease
 //! accounting in [`DatabaseInner`] turns that mistake into a panic.
 
-use std::{fmt::Write as _, sync::Arc};
+use std::fmt::Write as _;
 
 use selene_gql::{
     CatalogGraphTypeDefinition, CatalogObjectReference, CatalogPathSegment, DatabaseCatalogCommand,
 };
 
 use crate::{
-    Catalog, CreateOutcome, CreatePolicy, DropOutcome, DropPolicy, Error, ExecutionOutcome,
+    CreateOutcome, CreatePolicy, DropOutcome, DropPolicy, Error, ExecutionOutcome,
     GraphTypeDefinition, NodeTypeDefinition, ObjectPath, PathSegment, Result, SchemaPath,
-    database::DatabaseInner,
+    catalog_stage::CatalogStager, database::DatabaseInner, transaction::DatabaseDraft,
 };
 
-/// Execute one database-catalog command for a selected session.
-pub(crate) fn execute(
-    inner: &Arc<DatabaseInner>,
+/// Stage one database-catalog command without publishing its detached draft.
+pub(crate) fn stage(
+    inner: &DatabaseInner,
+    draft: &mut DatabaseDraft,
     current_schema: &SchemaPath,
     command: DatabaseCatalogCommand,
 ) -> Result<ExecutionOutcome> {
-    let catalog = Catalog::new(Arc::clone(inner));
+    let mut catalog = CatalogStager::new(inner, draft);
     let outcome = match command {
         DatabaseCatalogCommand::CreateSchema {
             reference,
