@@ -1,23 +1,14 @@
 //! Database-owned catalog lifecycle service and immutable read snapshots.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
-use selene_catalog::{
-    CatalogDescriptor as LowerDescriptor, CatalogObjectId, CatalogObjectKind, CatalogPayload,
-    CatalogTransaction, CreationMetadata, GraphId as LowerGraphId, GraphTypeId as LowerGraphTypeId,
-    SchemaId as LowerSchemaId,
-};
+use selene_catalog::GraphId as LowerGraphId;
 use selene_core::GraphId as CoreGraphId;
-use selene_graph::SeleneGraph;
 
 use crate::{
     CatalogReadSnapshot, Error, GraphDescriptor, GraphTypeDefinition, GraphTypeDescriptor,
     ObjectPath, Result, SchemaDescriptor, SchemaPath,
-    catalog_snapshot::{
-        ensure_catalog, find_object, graph_summary, graph_type_summary, next_id, require_schema,
-        resolve_binding, schema_summary,
-    },
-    database::{DatabaseInner, DatabaseState, GraphInstance},
+    database::{DatabaseInner, GraphInstance},
     transaction::{DatabaseDraft, require_committed},
 };
 
@@ -103,39 +94,13 @@ impl Catalog {
         path: &SchemaPath,
         policy: CreatePolicy,
     ) -> Result<CreateOutcome<SchemaDescriptor>> {
-        reject_replace(policy, "schema")?;
         self.inner.with_mutation_reservation(|reservation| {
             let base = self.inner.state.load_full();
             let mut draft = DatabaseDraft::new(&base, &reservation);
-            ensure_catalog(&base, path.catalog())?;
-            if let Some(existing) = base.catalog.schema(&path.schema.0) {
-                let summary = schema_summary(&base, existing)?;
-                return duplicate_outcome(policy, summary, path, "schema");
-            }
-            let raw = next_id(base.high_water.schema, "schema")?;
-            let id = LowerSchemaId::new(raw).map_err(Error::from_catalog_invariant)?;
-            let mut transaction =
-                CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
-            let descriptor = LowerDescriptor::schema(
-                id,
-                path.schema.0.clone(),
-                base.catalog.root_directory_id(),
-                transaction.generation(),
-                CreationMetadata::new(transaction.generation(), None),
-            )
-            .map_err(Error::from_catalog_invariant)?;
-            transaction
-                .insert(descriptor)
-                .map_err(Error::from_catalog_invariant)?;
-            self.inner.after_descriptor_staging()?;
-            let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-            let mut high_water = base.high_water;
-            high_water.schema = raw;
-            draft.catalog = catalog;
-            draft.high_water = high_water;
-            let created = created_summary(&draft, CatalogObjectId::Schema(id), schema_summary)?;
+            let outcome = crate::catalog_stage::CatalogStager::new(&self.inner, &mut draft)
+                .create_schema(path, policy)?;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
-            Ok(CreateOutcome::Created(created))
+            Ok(outcome)
         })
     }
 
@@ -149,57 +114,10 @@ impl Catalog {
         self.inner.with_mutation_reservation(|reservation| {
             let base = self.inner.state.load_full();
             let mut draft = DatabaseDraft::new(&base, &reservation);
-            let schema = require_schema(&base, &path.schema_path())?;
-            let mut replaced = None;
-            if let Some(existing) = base.catalog.schema_object(schema, &path.object.0) {
-                if existing.kind() != CatalogObjectKind::GraphType {
-                    return Err(Error::wrong_kind(path, "graph type", existing.kind()));
-                }
-                let summary = graph_type_summary(&base, existing)?;
-                if policy != CreatePolicy::OrReplace {
-                    return duplicate_outcome(policy, summary, path, "graph type");
-                }
-                let id = self.graph_type_drop_admission(&base, path, existing)?;
-                replaced = Some((id, summary));
-            }
-            let raw = next_id(base.high_water.graph_type, "graph type")?;
-            let id = LowerGraphTypeId::new(raw).map_err(Error::from_catalog_invariant)?;
-            let runtime = Arc::new(definition.into_runtime(path.object())?);
-            let mut transaction =
-                CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
-            if let Some((dropped, _)) = &replaced {
-                transaction.remove(CatalogObjectId::GraphType(*dropped));
-            }
-            let descriptor = LowerDescriptor::graph_type(
-                id,
-                path.object.0.clone(),
-                schema,
-                transaction.generation(),
-                CreationMetadata::new(transaction.generation(), None),
-            )
-            .map_err(Error::from_catalog_invariant)?;
-            transaction
-                .insert(descriptor)
-                .map_err(Error::from_catalog_invariant)?;
-            self.inner.after_descriptor_staging()?;
-            let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-            let mut graph_types = base.graph_types.clone();
-            if let Some((dropped, _)) = &replaced {
-                graph_types.remove(dropped);
-            }
-            graph_types.insert(id, runtime);
-            let mut high_water = base.high_water;
-            high_water.graph_type = raw;
-            draft.catalog = catalog;
-            draft.graph_types = graph_types;
-            draft.high_water = high_water;
-            let created =
-                created_summary(&draft, CatalogObjectId::GraphType(id), graph_type_summary)?;
+            let outcome = crate::catalog_stage::CatalogStager::new(&self.inner, &mut draft)
+                .create_graph_type(path, definition, policy)?;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
-            match replaced {
-                Some((_, dropped)) => Ok(CreateOutcome::Replaced { dropped, created }),
-                None => Ok(CreateOutcome::Created(created)),
-            }
+            Ok(outcome)
         })
     }
 
@@ -219,73 +137,10 @@ impl Catalog {
         self.inner.with_mutation_reservation(|reservation| {
             let base = self.inner.state.load_full();
             let mut draft = DatabaseDraft::new(&base, &reservation);
-            let schema = require_schema(&base, &path.schema_path())?;
-            let mut replaced = None;
-            let mut replaced_instance = None;
-            if let Some(existing) = base.catalog.schema_object(schema, &path.object.0) {
-                if existing.kind() != CatalogObjectKind::Graph {
-                    return Err(Error::wrong_kind(path, "graph", existing.kind()));
-                }
-                let summary = graph_summary(&base, existing)?;
-                if policy != CreatePolicy::OrReplace {
-                    return duplicate_outcome(policy, summary, path, "graph");
-                }
-                let (id, instance) = self.drop_admission(&base, existing)?;
-                replaced = Some((id, summary));
-                replaced_instance = Some(instance);
-            }
-            // Lock order for the replaced graph is the drop order: writer mutex,
-            // then its lifecycle write lease, then its graph state. The lease is
-            // held until the replacing state is stored.
-            let _lifecycle = replaced_instance
-                .as_ref()
-                .map(|instance| instance.lifecycle.write());
-            if let (Some((id, _)), Some(instance)) = (&replaced, &replaced_instance) {
-                self.check_droppable(*id, instance, path)?;
-            }
-            let (type_id, runtime) = resolve_binding(&base, schema, graph_type)?;
-            let raw = next_id(base.high_water.graph, "graph")?;
-            let id = LowerGraphId::new(raw).map_err(Error::from_catalog_invariant)?;
-            let mut transaction =
-                CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
-            if let Some((dropped, _)) = &replaced {
-                transaction.remove(CatalogObjectId::Graph(*dropped));
-                draft.remove_graph(*dropped);
-            }
-            let descriptor = LowerDescriptor::graph(
-                id,
-                path.object.0.clone(),
-                schema,
-                transaction.generation(),
-                CreationMetadata::new(transaction.generation(), None),
-                type_id,
-            )
-            .map_err(Error::from_catalog_invariant)?;
-            transaction
-                .insert(descriptor)
-                .map_err(Error::from_catalog_invariant)?;
-            self.inner.after_descriptor_staging()?;
-            let mut graph = SeleneGraph::new(core_graph_id(id));
-            graph.meta.bound_type = runtime;
-            let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-            let mut high_water = base.high_water;
-            high_water.graph = raw;
-            draft.catalog = catalog;
-            draft.high_water = high_water;
-            draft.replace_graph(id, graph)?;
-            let created = created_summary(&draft, CatalogObjectId::Graph(id), graph_summary)?;
-            self.inner.after_graph_construction()?;
-            if let Some((dropped, _)) = &replaced {
-                draft.forget_graph(core_graph_id(*dropped));
-            }
+            let outcome = crate::catalog_stage::CatalogStager::new(&self.inner, &mut draft)
+                .create_graph(path, graph_type, policy)?;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
-            match replaced {
-                Some((_, summary)) => Ok(CreateOutcome::Replaced {
-                    dropped: summary,
-                    created,
-                }),
-                None => Ok(CreateOutcome::Created(created)),
-            }
+            Ok(outcome)
         })
     }
 
@@ -298,26 +153,10 @@ impl Catalog {
         self.inner.with_mutation_reservation(|reservation| {
             let base = self.inner.state.load_full();
             let mut draft = DatabaseDraft::new(&base, &reservation);
-            let Some(descriptor) = find_object(&base, path)? else {
-                return missing_outcome(policy, path, "graph");
-            };
-            if descriptor.kind() != CatalogObjectKind::Graph {
-                return Err(Error::wrong_kind(path, "graph", descriptor.kind()));
-            }
-            let (id, instance) = self.drop_admission(&base, descriptor)?;
-            let _lifecycle = instance.lifecycle.write();
-            self.check_droppable(id, &instance, path)?;
-            let summary = graph_summary(&base, descriptor)?;
-            let mut transaction =
-                CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
-            transaction.remove(CatalogObjectId::Graph(id));
-            self.inner.after_descriptor_staging()?;
-            let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-            draft.catalog = catalog;
-            draft.remove_graph(id);
-            draft.forget_graph(core_graph_id(id));
+            let outcome = crate::catalog_stage::CatalogStager::new(&self.inner, &mut draft)
+                .drop_graph(path, policy)?;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
-            Ok(DropOutcome::Dropped(summary))
+            Ok(outcome)
         })
     }
 
@@ -330,49 +169,11 @@ impl Catalog {
         self.inner.with_mutation_reservation(|reservation| {
             let base = self.inner.state.load_full();
             let mut draft = DatabaseDraft::new(&base, &reservation);
-            let Some(descriptor) = find_object(&base, path)? else {
-                return missing_outcome(policy, path, "graph type");
-            };
-            if descriptor.kind() != CatalogObjectKind::GraphType {
-                return Err(Error::wrong_kind(path, "graph type", descriptor.kind()));
-            }
-            let id = self.graph_type_drop_admission(&base, path, descriptor)?;
-            let summary = graph_type_summary(&base, descriptor)?;
-            let mut transaction =
-                CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
-            transaction.remove(CatalogObjectId::GraphType(id));
-            self.inner.after_descriptor_staging()?;
-            let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-            let mut graph_types = base.graph_types.clone();
-            graph_types.remove(&id);
-            draft.catalog = catalog;
-            draft.graph_types = graph_types;
+            let outcome = crate::catalog_stage::CatalogStager::new(&self.inner, &mut draft)
+                .drop_graph_type(path, policy)?;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
-            Ok(DropOutcome::Dropped(summary))
+            Ok(outcome)
         })
-    }
-
-    /// Apply the dependency check shared by DROP and OR REPLACE.
-    fn graph_type_drop_admission(
-        &self,
-        base: &DatabaseState,
-        path: &ObjectPath,
-        descriptor: &LowerDescriptor,
-    ) -> Result<LowerGraphTypeId> {
-        let CatalogObjectId::GraphType(id) = descriptor.id() else {
-            unreachable!("kind and typed ID agree")
-        };
-        let references = base
-            .catalog
-            .descriptors()
-            .filter(|candidate| {
-                matches!(candidate.payload(), CatalogPayload::Graph { graph_type: Some(target) } if *target == id)
-            })
-            .count();
-        if references != 0 {
-            return Err(Error::referenced_graph_type(path, references));
-        }
-        Ok(id)
     }
 
     /// Drop an empty schema under RESTRICT semantics.
@@ -384,75 +185,15 @@ impl Catalog {
         self.inner.with_mutation_reservation(|reservation| {
             let base = self.inner.state.load_full();
             let mut draft = DatabaseDraft::new(&base, &reservation);
-            ensure_catalog(&base, path.catalog())?;
-            let Some(descriptor) = base.catalog.schema(&path.schema.0) else {
-                return missing_outcome(policy, path, "schema");
-            };
-            let CatalogObjectId::Schema(id) = descriptor.id() else {
-                unreachable!("schema dictionary contains schemas")
-            };
-            let children = base.catalog.schema_objects(id).map_or(0, Iterator::count);
-            if children != 0 {
-                return Err(Error::nonempty_schema(path, children));
-            }
-            let summary = schema_summary(&base, descriptor)?;
-            let mut transaction =
-                CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
-            transaction.remove(CatalogObjectId::Schema(id));
-            self.inner.after_descriptor_staging()?;
-            let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-            draft.catalog = catalog;
+            let outcome = crate::catalog_stage::CatalogStager::new(&self.inner, &mut draft)
+                .drop_schema(path, policy)?;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
-            Ok(DropOutcome::Dropped(summary))
+            Ok(outcome)
         })
-    }
-
-    /// Locate the registered instance before taking its lifecycle write lease.
-    fn drop_admission(
-        &self,
-        base: &DatabaseState,
-        descriptor: &LowerDescriptor,
-    ) -> Result<(LowerGraphId, Arc<GraphInstance>)> {
-        let CatalogObjectId::Graph(id) = descriptor.id() else {
-            unreachable!("kind and typed ID agree")
-        };
-        let instance = base.graphs.get(&id).cloned().ok_or_else(|| {
-            Error::catalog_invariant("graph descriptor has no registered runtime instance")
-        })?;
-        #[cfg(test)]
-        self.inner.observe_blocked_drop(&instance);
-        Ok((id, instance))
-    }
-
-    /// Second half of graph-drop admission, under the instance's lifecycle
-    /// write lease: recheck registration, then apply RESTRICT to the contents
-    /// left by every request that completed before the lease was granted.
-    fn check_droppable(
-        &self,
-        id: LowerGraphId,
-        instance: &Arc<GraphInstance>,
-        path: &ObjectPath,
-    ) -> Result<()> {
-        let current = self.inner.state.load_full();
-        if current
-            .graphs
-            .get(&id)
-            .is_none_or(|registered| !Arc::ptr_eq(registered, instance))
-        {
-            return Err(Error::stale_graph(path));
-        }
-        let graph = instance.graph.read();
-        let nodes = graph.node_count();
-        let edges = graph.edge_count();
-        drop(graph);
-        if nodes != 0 || edges != 0 {
-            return Err(Error::nonempty_graph(path, nodes, edges));
-        }
-        Ok(())
     }
 }
 
-fn duplicate_outcome<T>(
+pub(crate) fn duplicate_outcome<T>(
     policy: CreatePolicy,
     value: T,
     path: &impl std::fmt::Display,
@@ -469,14 +210,14 @@ fn duplicate_outcome<T>(
 
 /// Reject [`CreatePolicy::OrReplace`] for kinds that do not implement it,
 /// before any lock is taken and regardless of whether the object exists.
-fn reject_replace(policy: CreatePolicy, kind: &'static str) -> Result<()> {
+pub(crate) fn reject_replace(policy: CreatePolicy, kind: &'static str) -> Result<()> {
     if policy == CreatePolicy::OrReplace {
         return Err(Error::unsupported_create_policy(kind));
     }
     Ok(())
 }
 
-fn missing_outcome<T>(
+pub(crate) fn missing_outcome<T>(
     policy: DropPolicy,
     path: &impl std::fmt::Display,
     kind: &'static str,
@@ -487,32 +228,15 @@ fn missing_outcome<T>(
     }
 }
 
-fn created_summary<T>(
-    draft: &DatabaseDraft,
-    id: CatalogObjectId,
-    summarize: impl FnOnce(&DatabaseState, &LowerDescriptor) -> Result<T>,
-) -> Result<T> {
-    let state = DatabaseState {
-        publication: 0,
-        catalog: draft.catalog.clone(),
-        graphs: BTreeMap::new(),
-        graph_types: draft.graph_types.clone(),
-        high_water: draft.high_water,
-    };
-    let descriptor = state
-        .catalog
-        .descriptor(id)
-        .ok_or_else(|| Error::catalog_invariant("created descriptor is missing"))?;
-    summarize(&state, descriptor)
-}
-
 pub(crate) const fn core_graph_id(id: LowerGraphId) -> CoreGraphId {
     CoreGraphId::new(id.get())
 }
 
 impl DatabaseInner {
-    #[cfg(test)]
-    fn observe_blocked_drop(&self, instance: &GraphInstance) {
+    pub(crate) fn observe_blocked_drop(&self, instance: &GraphInstance) {
+        #[cfg(not(test))]
+        let _ = instance;
+        #[cfg(test)]
         if let Some(observer) = self.drop_blocked.lock().take() {
             assert!(
                 instance.lifecycle.try_write().is_none(),
@@ -522,7 +246,7 @@ impl DatabaseInner {
         }
     }
 
-    fn after_descriptor_staging(&self) -> Result<()> {
+    pub(crate) fn after_descriptor_staging(&self) -> Result<()> {
         #[cfg(test)]
         if *self.failure.lock() == Some(FailurePoint::AfterDescriptorStaging) {
             self.failure.lock().take();
@@ -531,7 +255,7 @@ impl DatabaseInner {
         Ok(())
     }
 
-    fn after_graph_construction(&self) -> Result<()> {
+    pub(crate) fn after_graph_construction(&self) -> Result<()> {
         #[cfg(test)]
         if *self.failure.lock() == Some(FailurePoint::AfterGraphConstruction) {
             self.failure.lock().take();

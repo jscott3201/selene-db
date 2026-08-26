@@ -13,7 +13,7 @@ use selene_catalog::{CatalogObjectId, CatalogObjectKind, GraphId as LowerGraphId
 use super::*;
 use crate::{
     CreatePolicy, Database, DropPolicy, ErrorKind, ExecutionOutcome, ObjectPath, SchemaPath,
-    database::HighWaterMarks,
+    database::{DatabaseState, HighWaterMarks},
 };
 
 fn schema(name: &str) -> SchemaPath {

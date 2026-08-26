@@ -36,11 +36,11 @@ let session = database.session(&graph)?;
 let output = session.execute(source)?;
 ```
 
-Each call parses, analyzes, and plans the source once against the selected
-graph. Reads execute on that pinned live graph. Selected data/engine-catalog
-mutations execute on a CORE-only scratch graph and become visible through one
-facade `DatabaseState` publication; database-catalog statements are dispatched
-through the same reservation-aware service used by the Rust lifecycle API.
+Each call parses, analyzes, and plans the source once against the selected live
+or detached transaction graph. Implicit reads execute on a pinned live graph;
+explicit reads use the transaction snapshot. Selected data/engine-catalog and
+database-catalog mutations stage in one detached draft and become visible
+through one facade `DatabaseState` publication.
 The reservation capability cannot escape its writer-lock closure, and staged
 drafts contain detached graph content rather than live graph runtimes. A
 pre-publication cancellation returns `MutationCanceled` / `5GQL2` with no
@@ -65,8 +65,8 @@ row, not formal conformance status.
 | Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). Selected-facade writes stage without graph-local publication and cross one outer in-memory cut-line. `MERGE` remains deferred. |
 | DDL (`CREATE/DROP SCHEMA`, `CREATE/DROP GRAPH`, `CREATE/DROP GRAPH TYPE`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | Schema/graph management and a bounded named closed-graph path execute through the `selene-db` catalog service. The graph-type source accepts property-free named node types with implied singleton labels. Complete GC03/GG02/GG20/GG21 support remains unsupported: properties, edges/endpoints, explicit key labels, COPY OF/LIKE/external sources, and inline graph types are absent. Both additive `ALTER` forms are implementation-defined surfaces. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries are runtime-supported as `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
-| Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Lower engine only | Feature `GT01` is implemented by the lower executor. M03-PR04 Part 1 supplies facade publication authority but intentionally leaves the transaction slot vacant; facade demarcation is Part 2. Multi-graph transactions (`GT03`) are not runtime-supported. |
-| Maintenance procedures | Lower engine only | Selected facade sessions reject maintenance with `42N01` before execution during the Part 1 CORE-only bridge; direct lower-engine maintenance remains supported. |
+| Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full, single selected graph | The facade owns detached serializable demarcation over the Part 1 authority. Rust can additionally request read-only access. Multi-graph transactions (`GT03`) remain unsupported. |
+| Maintenance procedures | Lower engine only | Selected facade sessions reject maintenance with `42N01` before live maintenance execution at the explicit detached-maintenance boundary; direct lower-engine maintenance remains supported. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are runtime-supported (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
 
@@ -881,18 +881,22 @@ via `Arc`. There are no loadable third-party packs to register.
 
 ---
 
-## 9. Transaction control (advanced lower engine)
+## 9. Transaction control
 
-The facade does not yet retain explicit transaction state and rejects these
-controls. The lower executor implements them for advanced engine use.
+The facade and lower executor both implement these controls. A facade session
+uses facade-owned, lifetime-free detached state and never delegates its controls
+to a lower session transaction. Direct lower sessions keep their existing
+graph-local behavior.
 
 The lower engine's default isolation is **serializable** (clause 4.6); it
 uses strict-serializable under a single write lock per graph with
 lock-free reads. Generated Annex B records `IE002` and `IE004` settle this;
 `selene_profile::annex_b_by_id` provides direct lookup.
 
-Statements outside an explicit transaction auto-commit at statement end
-(implementation-defined choice `IE001`).
+Modifying statements outside an explicit transaction auto-start and commit one
+facade transaction at statement end (implementation-defined choice `IE001`).
+Implicit read-only requests use a coherent live read snapshot without starting
+a transaction.
 
 ```gql
 START TRANSACTION
@@ -906,10 +910,17 @@ COMMIT
 ROLLBACK
 ```
 
-Inside an explicit lower-engine transaction, multiple statements share one snapshot
-and one write boundary. A failed statement marks the transaction aborted;
-subsequent statements (other than `ROLLBACK`) return
-`ExecutorError::InFailedTransaction`.
+Inside an explicit facade transaction, multiple requests share detached catalog
+and selected-graph successors. The session sees predecessor changes; other
+sessions see the old outer state until `COMMIT`. Read-write commit validates the
+exact pinned base, so a concurrent winner causes rollback with `40000` rather
+than lost update. A read-only transaction pins immutable snapshots, never
+stores, and can serialize before a concurrent writer.
+
+The public Rust equivalents are
+`Session::start_transaction(TransactionAccessMode)`, `commit_transaction`, and
+`rollback_transaction`. Bare GQL start is read-write; there is no access-mode
+grammar extension.
 
 ```rust
 let mut session = selene_gql::Session::new(&graph);
@@ -920,10 +931,17 @@ execute_statement(&plan_for("INSERT (:Person {name: 'Lin'}) FINISH"), &mut sessi
 execute_statement(&plan_for("COMMIT"), &mut session, &registry)?;
 ```
 
-Mixed catalog-and-data transactions are forbidden (implementation-defined
-choices `IE006`, `IE007`): a transaction may either modify schema or
-modify data, but not both. Feature `GP18` (mixed catalog/data) is not
-present in the current register.
+Failed parse, analysis, runtime, procedure, or staging discards all detached
+work and leaves an explicit transaction failed. Later non-controls return
+`25N02`; `ROLLBACK` succeeds; `COMMIT` performs rollback and returns `25N02`.
+Duplicate start is `25G01`, termination without active work is `2D000`, and a
+read-only write is `25G03`. Cancellation before store is rolled back with
+`5GQL2`; uncertainty after the complete store is indeterminate with `40003`.
+
+Mixed catalog-and-data transactions are forbidden: reads do not establish a
+mode, but the first modification fixes data or catalog mode and the opposite
+class returns `25G02` with no publication. Feature `GP18` remains absent from
+the current register; no conformance claim state or profile hash changes.
 
 Multi-graph transactions (`GT03`) are not runtime-supported; one transaction touches
 exactly one graph.

@@ -2,18 +2,14 @@
 
 use std::{cell::Cell, marker::PhantomData, sync::Arc};
 
-use selene_catalog::GraphId as LowerGraphId;
-use selene_gql::{CatalogSessionOutput, PreparedCatalogRequest};
-use selene_graph::SharedGraph;
-
 use crate::{
-    CatalogReadSnapshot, Error, ExecutionOutcome, GeneralParameter, ObjectPath, Request,
-    RequestContext, RequestOutcome, RequestParams, RequestTimestamp, Result, SessionContext,
-    database::DatabaseInner,
-    ddl,
+    ExecutionOutcome, GeneralParameter, Request, RequestContext, RequestOutcome, RequestParams,
+    RequestTimestamp, Result, SessionContext, database::DatabaseInner,
     params::validated_parameter_name,
-    transaction::{DatabaseDraft, require_committed},
 };
+
+mod execution;
+mod transaction;
 
 /// Movable session selected to one catalog graph identity.
 ///
@@ -33,11 +29,10 @@ use crate::{
 /// require_sync::<selene_db::Session>();
 /// ```
 ///
-/// Transaction and `SESSION` controls return feature-not-supported instead of
-/// reporting state that would disappear after the call. Database-catalog
-/// statements are parsed through the selected graph and dispatched after its
-/// request lease is released. Relative graph and graph-type references resolve
-/// against the selected graph's schema. Successful catalog statements return
+/// Transaction controls use facade-owned detached state and the single Part 1
+/// publication authority. `SESSION` controls remain deferred. Relative graph
+/// and graph-type references resolve against the selected graph's schema.
+/// Successful catalog statements return
 /// [`ExecutionOutcome::OmittedResult`]; their failures carry the same
 /// [`ErrorKind`](crate::ErrorKind) and GQLSTATUS as the equivalent
 /// [`Catalog`](crate::Catalog) call.
@@ -137,187 +132,6 @@ impl Session {
             Err(error) => RequestOutcome::failed(context, error),
         }
     }
-
-    fn execute_active_request(
-        &self,
-        request: &Request,
-        context: &RequestContext,
-    ) -> Result<ExecutionOutcome> {
-        self.validate_context_references()?;
-        let current_graph = self.context.current_graph();
-        let graph_id = LowerGraphId::new(current_graph.id.get()).map_err(|source| {
-            Error::invalid_session_reference(Error::from_catalog_invariant(source))
-        })?;
-        let audit_bytes = self
-            .context
-            .principal()
-            .and_then(crate::Principal::audit_bytes_arc);
-        let input = context.lower_input(self.context.time_zone().seconds())?;
-        match self.inner.prepare_catalog_request(
-            graph_id,
-            &current_graph.path,
-            audit_bytes,
-            request.source(),
-            input,
-        )? {
-            PreparedSessionExecution::Complete(CatalogSessionOutput::RequestOutcome(output)) => {
-                ExecutionOutcome::from_engine(output)
-            }
-            PreparedSessionExecution::Deferred(prepared) => {
-                if let Some(command) = prepared.database_catalog_command().cloned() {
-                    ddl::execute(&self.inner, &self.context.current_schema().path, command)
-                } else {
-                    self.inner.execute_prepared_mutation(
-                        graph_id,
-                        &current_graph.path,
-                        self.context
-                            .principal()
-                            .and_then(crate::Principal::audit_bytes_arc),
-                        prepared,
-                    )
-                }
-            }
-            PreparedSessionExecution::Complete(
-                CatalogSessionOutput::Statement(_)
-                | CatalogSessionOutput::DatabaseCatalog(_)
-                | CatalogSessionOutput::Prepared(_),
-            ) => Err(Error::unsupported_engine_outcome()),
-            PreparedSessionExecution::Complete(_) => Err(Error::unsupported_engine_outcome()),
-        }
-    }
-
-    fn validate_context_references(&self) -> Result<()> {
-        let snapshot = CatalogReadSnapshot {
-            state: self.inner.state.load_full(),
-        };
-        let references_are_current = snapshot
-            .matches_schema_reference(self.context.current_schema())
-            && snapshot.matches_graph_reference(self.context.current_graph())
-            && self
-                .context
-                .home_schema()
-                .is_none_or(|schema| snapshot.matches_schema_reference(schema))
-            && self
-                .context
-                .home_graph()
-                .is_none_or(|graph| snapshot.matches_graph_reference(graph));
-        if references_are_current {
-            Ok(())
-        } else {
-            Err(Error::stale_session_reference())
-        }
-    }
-}
-
-impl DatabaseInner {
-    /// Parse and plan once, then execute reads or defer mutations.
-    ///
-    /// A database-catalog command is returned unexecuted. The facade dispatches
-    /// it only after this method releases the graph lease.
-    fn prepare_catalog_request(
-        &self,
-        id: LowerGraphId,
-        path: &ObjectPath,
-        audit_bytes: Option<Arc<[u8]>>,
-        source: &str,
-        request: selene_gql::RequestExecutionInput,
-    ) -> Result<PreparedSessionExecution> {
-        self.with_graph_request(id, path, |graph| {
-            let mut session = match audit_bytes {
-                Some(audit_bytes) => selene_gql::Session::with_principal(graph, audit_bytes),
-                None => selene_gql::Session::new(graph),
-            };
-            let prepared = session
-                .prepare_source_catalog_request(source, &self.procedures, request)
-                .map_err(Error::from_engine)?;
-            if prepared.is_read_only() {
-                session
-                    .execute_prepared_catalog_request(prepared, &self.procedures)
-                    .map(PreparedSessionExecution::Complete)
-                    .map_err(Error::from_engine)
-            } else {
-                Ok(PreparedSessionExecution::Deferred(prepared))
-            }
-        })
-    }
-
-    fn execute_prepared_mutation(
-        &self,
-        id: LowerGraphId,
-        _path: &ObjectPath,
-        audit_bytes: Option<Arc<[u8]>>,
-        prepared: PreparedCatalogRequest,
-    ) -> Result<ExecutionOutcome> {
-        self.with_mutation_reservation(|reservation| {
-            let base = self.state.load_full();
-            let mut draft = DatabaseDraft::new(&base, &reservation);
-            let instance = draft.pin_graph(&base, id)?;
-            let snapshot = instance.graph.read();
-            let stale_plan = prepared.graph_id().get() != id.get()
-                || prepared.graph_generation() != snapshot.meta.generation
-                || prepared.schema_version() != instance.graph.schema_version();
-            let scratch = SharedGraph::try_from_graph(snapshot.as_ref().clone())
-                .map_err(Error::invalid_graph_type_source)?;
-            drop(snapshot);
-            let mut session = match audit_bytes {
-                Some(audit_bytes) => selene_gql::Session::with_principal(&scratch, audit_bytes),
-                None => selene_gql::Session::new(&scratch),
-            };
-            let prepared = if stale_plan {
-                session
-                    .reprepare_source_catalog_request(prepared, &self.procedures)
-                    .map_err(Error::from_engine)?
-            } else {
-                prepared
-            };
-            if prepared.is_read_only() || prepared.is_database_catalog() {
-                return Err(Error::catalog_invariant(
-                    "selected mutation changed category while replanning",
-                ));
-            }
-            let staged = session
-                .execute_prepared_catalog_request_unpublished(prepared, &self.procedures)
-                .map_err(Error::from_engine)?;
-            let (output, prepared_graph) = staged.into_parts();
-            drop(session);
-            drop(scratch);
-
-            draft.attach_prepared_graph(id, prepared_graph)?;
-            require_committed(self.publish_database_draft(reservation, draft)?)?;
-            ExecutionOutcome::from_engine(output)
-        })
-    }
-
-    pub(crate) fn with_graph_request<T>(
-        &self,
-        id: LowerGraphId,
-        _path: &impl std::fmt::Display,
-        execute: impl FnOnce(&selene_graph::SharedGraph) -> Result<T>,
-    ) -> Result<T> {
-        let observed = self.state.load_full();
-        let instance = observed
-            .graphs
-            .get(&id)
-            .cloned()
-            .ok_or_else(Error::stale_session_reference)?;
-        #[cfg(test)]
-        let _depth = crate::database::GraphRequestDepth::enter();
-        let _lease = instance.lifecycle.read();
-        let current = self.state.load_full();
-        if current
-            .graphs
-            .get(&id)
-            .is_none_or(|registered| !Arc::ptr_eq(registered, &instance))
-        {
-            return Err(Error::stale_session_reference());
-        }
-        execute(&instance.graph)
-    }
-}
-
-enum PreparedSessionExecution {
-    Complete(CatalogSessionOutput),
-    Deferred(PreparedCatalogRequest),
 }
 
 #[cfg(test)]
@@ -387,5 +201,65 @@ mod tests {
             session.execute_request(Request::new("RETURN 1")),
             RequestOutcome::Succeeded { .. }
         ));
+    }
+
+    #[test]
+    fn panic_marks_explicit_transaction_failed_and_discards_staged_work() {
+        let session = session();
+        session
+            .start_transaction(crate::TransactionAccessMode::ReadWrite)
+            .unwrap();
+        session.execute("INSERT (:BeforePanic)").unwrap();
+        let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            session.execute_request_with(
+                Request::new("RETURN 1"),
+                RequestTimestamp::from_parts(1_788_692_096, 0),
+                |_| panic!("injected transaction request panic"),
+            )
+        }));
+
+        assert!(panic.is_err());
+        assert_eq!(
+            session.context().transaction_slot(),
+            crate::TransactionSlotState::Failed
+        );
+        session.rollback_transaction().unwrap();
+        assert_eq!(
+            session
+                .execute("MATCH (n:BeforePanic) RETURN n")
+                .unwrap()
+                .row_count(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn transaction_id_exhaustion_is_fallible_and_never_wraps() {
+        let database = Database::builder().build();
+        let catalog = database.catalog();
+        let schema = SchemaPath::regular("selene", "transaction_ids").unwrap();
+        let graph = ObjectPath::regular("selene", "transaction_ids", "main").unwrap();
+        catalog
+            .create_schema(&schema, CreatePolicy::Strict)
+            .unwrap();
+        catalog
+            .create_graph(&graph, None, CreatePolicy::Strict)
+            .unwrap();
+        catalog.inner.set_next_transaction_id(u64::MAX);
+        let session = database.session(&graph).unwrap();
+
+        let last = session
+            .start_transaction(crate::TransactionAccessMode::ReadWrite)
+            .unwrap();
+        assert_eq!(last.id().get(), u64::MAX);
+        session.rollback_transaction().unwrap();
+        let error = session
+            .start_transaction(crate::TransactionAccessMode::ReadWrite)
+            .unwrap_err();
+        assert_eq!(error.gqlstatus().unwrap().as_str(), "5GQL1");
+        assert_eq!(
+            session.context().transaction_slot(),
+            crate::TransactionSlotState::RolledBack
+        );
     }
 }

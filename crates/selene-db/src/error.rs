@@ -59,6 +59,20 @@ pub enum ErrorKind {
     /// A facade mutation was published, but acknowledgement failed. The
     /// complete mutation may be visible and must not be retried blindly.
     MutationIndeterminate,
+    /// A second transaction was requested while one was active (`25G01`).
+    ActiveTransaction,
+    /// Catalog and data modification classes were mixed (`25G02`).
+    TransactionMixing,
+    /// A write was attempted in a read-only transaction (`25G03`).
+    ReadOnlyTransaction,
+    /// A non-control statement or commit followed statement failure (`25N02`).
+    FailedTransaction,
+    /// COMMIT or ROLLBACK had no active transaction (`2D000`).
+    NoActiveTransaction,
+    /// Optimistic commit found that its pinned base was stale (`40000`).
+    TransactionRollback,
+    /// The monotonic transaction-ID domain is exhausted (`5GQL1`).
+    TransactionIdExhausted,
     /// The source is not valid GQL.
     InvalidGql,
     /// A decoded request/session parameter name does not match GQL `$name` spelling.
@@ -97,6 +111,20 @@ impl GqlStatus {
     pub const VALIDATION_MODE_RELAXED_WRITE: Self = Self(*b"01N01");
     /// Statement completion is unknown after an irreversible publication.
     pub const STATEMENT_COMPLETION_UNKNOWN: Self = Self(*b"40003");
+    /// Optimistic transaction conflict rolled the transaction back.
+    pub const TRANSACTION_ROLLBACK: Self = Self(*b"40000");
+    /// A transaction is already active.
+    pub const ACTIVE_TRANSACTION: Self = Self(*b"25G01");
+    /// Catalog/data transaction mixing is unsupported.
+    pub const INVALID_TRANSACTION_MIXING: Self = Self(*b"25G02");
+    /// A write was attempted in a read-only transaction.
+    pub const READ_ONLY_TRANSACTION: Self = Self(*b"25G03");
+    /// The transaction is failed until demarcation.
+    pub const IN_FAILED_TRANSACTION: Self = Self(*b"25N02");
+    /// A transaction termination command had no active transaction.
+    pub const INVALID_TRANSACTION_TERMINATION: Self = Self(*b"2D000");
+    /// An implementation-defined program limit was exhausted.
+    pub const PROGRAM_LIMIT_EXCEEDED: Self = Self(*b"5GQL1");
     /// Implementation-defined runtime failure fallback.
     pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"5GQL0");
     /// "Invalid syntax", used when a catalog name fails the identifier profile.
@@ -164,6 +192,13 @@ impl ErrorKind {
             Self::CatalogRestrictViolation => Some(GqlStatus::DEPENDENT_OBJECT_ERROR),
             Self::MutationCanceled => Some(GqlStatus::OPERATION_CANCELLED),
             Self::MutationIndeterminate => Some(GqlStatus::STATEMENT_COMPLETION_UNKNOWN),
+            Self::ActiveTransaction => Some(GqlStatus::ACTIVE_TRANSACTION),
+            Self::TransactionMixing => Some(GqlStatus::INVALID_TRANSACTION_MIXING),
+            Self::ReadOnlyTransaction => Some(GqlStatus::READ_ONLY_TRANSACTION),
+            Self::FailedTransaction => Some(GqlStatus::IN_FAILED_TRANSACTION),
+            Self::NoActiveTransaction => Some(GqlStatus::INVALID_TRANSACTION_TERMINATION),
+            Self::TransactionRollback => Some(GqlStatus::TRANSACTION_ROLLBACK),
+            Self::TransactionIdExhausted => Some(GqlStatus::PROGRAM_LIMIT_EXCEEDED),
             Self::StaleGraphSelection
             | Self::InvalidAuthorizationId
             | Self::InvalidPrincipalId
@@ -291,13 +326,6 @@ impl Error {
         Self::facade(
             ErrorKind::CatalogObjectWrongKind,
             format!("catalog path {path} is a {actual}, not a {expected}"),
-        )
-    }
-
-    pub(crate) fn stale_graph(path: &impl fmt::Display) -> Self {
-        Self::facade(
-            ErrorKind::StaleGraphSelection,
-            format!("selected graph {path} is stale or invalidated"),
         )
     }
 
@@ -479,6 +507,69 @@ impl Error {
             ErrorKind::MutationIndeterminate,
             "database mutation was published but acknowledgement failed; the complete state is visible and the mutation must not be retried blindly",
         )
+    }
+
+    pub(crate) fn active_transaction() -> Self {
+        Self::facade(
+            ErrorKind::ActiveTransaction,
+            "a GQL transaction is already active on this session",
+        )
+    }
+
+    pub(crate) fn transaction_mixing() -> Self {
+        Self::facade(
+            ErrorKind::TransactionMixing,
+            "catalog and data modifications cannot be mixed in one transaction",
+        )
+    }
+
+    pub(crate) fn read_only_transaction() -> Self {
+        Self::facade(
+            ErrorKind::ReadOnlyTransaction,
+            "a modifying statement is not allowed in a read-only transaction",
+        )
+    }
+
+    pub(crate) fn in_failed_transaction() -> Self {
+        Self::facade(
+            ErrorKind::FailedTransaction,
+            "the transaction is failed; ROLLBACK is required",
+        )
+    }
+
+    pub(crate) fn no_active_transaction() -> Self {
+        Self::facade(
+            ErrorKind::NoActiveTransaction,
+            "COMMIT or ROLLBACK requires an active transaction",
+        )
+    }
+
+    pub(crate) fn transaction_rollback() -> Self {
+        Self::facade(
+            ErrorKind::TransactionRollback,
+            "the transaction base changed and the detached work was rolled back",
+        )
+    }
+
+    pub(crate) fn transaction_id_exhausted() -> Self {
+        Self::facade(
+            ErrorKind::TransactionIdExhausted,
+            "the monotonic transaction ID domain is exhausted",
+        )
+    }
+
+    pub(crate) fn invalid_transaction_transition() -> Self {
+        Self::catalog_invariant("invalid facade transaction state transition")
+    }
+
+    pub(crate) fn selected_maintenance_unsupported() -> Self {
+        Self {
+            kind: ErrorKind::FeatureNotSupported,
+            status: Some(GqlStatus::FEATURE_NOT_SUPPORTED),
+            message: "selected maintenance is outside the deferred detached-maintenance boundary"
+                .to_owned(),
+            source: None,
+        }
     }
 
     pub(crate) fn identifier_exhausted(kind: &str) -> Self {

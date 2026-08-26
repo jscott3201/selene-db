@@ -76,7 +76,10 @@ pub use pipeline::execute_pipeline;
 pub use plan_cache::{PlanCache, PlanCacheStats, SharedPlanCache, SharedPlanCacheStats};
 pub(crate) use plan_runner::execute_plan;
 #[doc(hidden)]
-pub use prepared_catalog::{PreparedCatalogMutationOutput, PreparedCatalogRequest};
+pub use prepared_catalog::{
+    PreparedCatalogMutationOutput, PreparedCatalogRequest, PreparedCatalogRequestKind,
+    PreparedTransactionControl,
+};
 pub use request::{RequestExecutionInput, RequestParameter};
 #[doc(hidden)]
 pub use request_runtime::RequestRuntimeHandle;

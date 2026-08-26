@@ -4,7 +4,9 @@ use std::{mem, panic::AssertUnwindSafe, sync::Arc};
 
 use selene_graph::write_txn::PreparedGraphCommit;
 
-use crate::{DatabaseCatalogCommand, ExecutionPlan, ProcedureRegistry, StatementCategory};
+use crate::{
+    DatabaseCatalogCommand, ExecutionPlan, PipelineOp, ProcedureRegistry, StatementCategory, TxOp,
+};
 
 use super::{
     CatalogSessionOutput, ExecutionOutcome as RuntimeExecutionOutcome, ExecutorError,
@@ -29,7 +31,63 @@ pub struct PreparedCatalogRequest {
     schema_version: u64,
 }
 
+/// Hidden selected-facade statement classification retained after one compile pass.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreparedCatalogRequestKind {
+    /// Query or read-only procedure.
+    ReadOnly,
+    /// Graph-data modification.
+    DataModifying,
+    /// Graph-schema or database-catalog modification.
+    CatalogModifying,
+    /// Derived-state maintenance, which the detached facade rejects.
+    Maintenance,
+    /// Bare transaction demarcation handled by the facade state machine.
+    TransactionControl(PreparedTransactionControl),
+}
+
+/// Hidden bare transaction operation classified from the prepared plan.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreparedTransactionControl {
+    /// `START TRANSACTION`.
+    Start,
+    /// `COMMIT`.
+    Commit,
+    /// `ROLLBACK`.
+    Rollback,
+}
+
 impl PreparedCatalogRequest {
+    /// Return the selected-facade classification from the already analyzed plan.
+    #[must_use]
+    pub fn kind(&self) -> PreparedCatalogRequestKind {
+        match self.plan.category {
+            StatementCategory::ReadOnly => PreparedCatalogRequestKind::ReadOnly,
+            StatementCategory::DataModifying => PreparedCatalogRequestKind::DataModifying,
+            StatementCategory::CatalogModifying => PreparedCatalogRequestKind::CatalogModifying,
+            StatementCategory::Maintenance => PreparedCatalogRequestKind::Maintenance,
+            StatementCategory::TransactionControl => {
+                PreparedCatalogRequestKind::TransactionControl(
+                    match self.plan.pipeline.as_slice() {
+                        [PipelineOp::Tx(TxOp::Start { .. })] => PreparedTransactionControl::Start,
+                        [PipelineOp::Tx(TxOp::Commit { .. })] => PreparedTransactionControl::Commit,
+                        [PipelineOp::Tx(TxOp::Rollback { .. })] => {
+                            PreparedTransactionControl::Rollback
+                        }
+                        _ => unreachable!(
+                            "transaction-control plans contain one transaction operation"
+                        ),
+                    },
+                )
+            }
+            StatementCategory::SessionControl => {
+                unreachable!("selected session controls are rejected during preparation")
+            }
+        }
+    }
+
     /// Return whether this is exactly one database-catalog command.
     #[must_use]
     pub fn is_database_catalog(&self) -> bool {
@@ -295,15 +353,18 @@ mod tests {
     }
 
     #[test]
-    fn selected_maintenance_is_rejected_during_preparation() {
+    fn selected_maintenance_is_classified_then_rejected_before_execution() {
         let graph = SharedGraph::new(GraphId::new(62));
         let registry = crate::BuiltinProcedureRegistry::new();
         let mut session = Session::new(&graph);
 
-        let error = session
+        let prepared = session
             .prepare_source_catalog_request("CALL selene.compact()", &registry, request())
-            .err()
-            .expect("selected maintenance is rejected before execution");
+            .expect("selected maintenance is classified without execution");
+        assert_eq!(prepared.kind(), PreparedCatalogRequestKind::Maintenance);
+        let error = session
+            .execute_prepared_catalog_request(prepared, &registry)
+            .expect_err("selected maintenance is rejected before execution");
 
         assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
         assert_eq!(graph.read().meta.generation, 0);

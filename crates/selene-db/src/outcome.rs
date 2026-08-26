@@ -248,7 +248,7 @@ impl ExecutionOutcome {
     }
 }
 
-/// Summary of an auto-committed write.
+/// Summary of a staged explicit write or committed implicit write.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WriteSummary {
     change_count: usize,
@@ -256,7 +256,7 @@ pub struct WriteSummary {
 }
 
 impl WriteSummary {
-    /// Construct a write summary from committed change and returned-row counts.
+    /// Construct a write summary from change and returned-row counts.
     #[must_use]
     pub const fn new(change_count: usize, returned_row_count: Option<usize>) -> Self {
         Self {
