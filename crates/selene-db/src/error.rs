@@ -54,6 +54,11 @@ pub enum ErrorKind {
     InvalidGraphType,
     /// Catalog identity or immutable-state validation failed internally.
     CatalogInvariant,
+    /// A facade mutation was canceled before publication and is not visible.
+    MutationCanceled,
+    /// A facade mutation was published, but acknowledgement failed. The
+    /// complete mutation may be visible and must not be retried blindly.
+    MutationIndeterminate,
     /// The source is not valid GQL.
     InvalidGql,
     /// A decoded request/session parameter name does not match GQL `$name` spelling.
@@ -90,6 +95,8 @@ impl GqlStatus {
     pub const NULL_VALUE_ELIMINATED_IN_SET_FUNCTION: Self = Self(*b"01G11");
     /// Runtime warning for a relaxed validation-mode write.
     pub const VALIDATION_MODE_RELAXED_WRITE: Self = Self(*b"01N01");
+    /// Statement completion is unknown after an irreversible publication.
+    pub const STATEMENT_COMPLETION_UNKNOWN: Self = Self(*b"40003");
     /// Implementation-defined runtime failure fallback.
     pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"5GQL0");
     /// "Invalid syntax", used when a catalog name fails the identifier profile.
@@ -99,6 +106,8 @@ impl GqlStatus {
     pub const INVALID_REFERENCE: Self = Self(*b"42002");
     /// GQLSTATUS used when a facade mode does not support a GQL feature.
     pub const FEATURE_NOT_SUPPORTED: Self = Self(*b"42N01");
+    /// GQLSTATUS used when a facade mutation is canceled before publication.
+    pub const OPERATION_CANCELLED: Self = Self(*b"5GQL2");
     /// Duplicate catalog object under strict creation (selene-db subclass).
     pub const DUPLICATE_OBJECT: Self = Self(*b"42N10");
     /// Class-level "dependent object error", used for RESTRICT violations.
@@ -153,6 +162,8 @@ impl ErrorKind {
             | Self::CatalogReferenceViolation => Some(GqlStatus::INVALID_REFERENCE),
             Self::CatalogObjectAlreadyExists => Some(GqlStatus::DUPLICATE_OBJECT),
             Self::CatalogRestrictViolation => Some(GqlStatus::DEPENDENT_OBJECT_ERROR),
+            Self::MutationCanceled => Some(GqlStatus::OPERATION_CANCELLED),
+            Self::MutationIndeterminate => Some(GqlStatus::STATEMENT_COMPLETION_UNKNOWN),
             Self::StaleGraphSelection
             | Self::InvalidAuthorizationId
             | Self::InvalidPrincipalId
@@ -202,6 +213,8 @@ impl Error {
         let kind = match status.as_str() {
             "42001" => ErrorKind::InvalidGql,
             "42N01" => ErrorKind::FeatureNotSupported,
+            "40003" => ErrorKind::MutationIndeterminate,
+            "5GQL2" => ErrorKind::MutationCanceled,
             _ => ErrorKind::Execution,
         };
         Self {
@@ -454,6 +467,20 @@ impl Error {
         Self::facade(ErrorKind::CatalogInvariant, message)
     }
 
+    pub(crate) fn mutation_canceled() -> Self {
+        Self::facade(
+            ErrorKind::MutationCanceled,
+            "database mutation was canceled before publication and is not visible",
+        )
+    }
+
+    pub(crate) fn mutation_indeterminate() -> Self {
+        Self::facade(
+            ErrorKind::MutationIndeterminate,
+            "database mutation was published but acknowledgement failed; the complete state is visible and the mutation must not be retried blindly",
+        )
+    }
+
     pub(crate) fn identifier_exhausted(kind: &str) -> Self {
         Self::facade(
             ErrorKind::CatalogInvariant,
@@ -480,7 +507,8 @@ impl Error {
     /// Catalog failures carry the code selected by their [`ErrorKind`] whether
     /// the request came from Rust or GQL; engine failures copy the engine's
     /// code; session/authorization-hook, internal invariant, stale-selection,
-    /// and graph-type definition failures have none.
+    /// and graph-type definition failures have none. Indeterminate mutation
+    /// failures carry `40003` and mean the complete state may already be visible.
     #[must_use]
     pub const fn gqlstatus(&self) -> Option<GqlStatus> {
         self.status

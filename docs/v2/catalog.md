@@ -57,21 +57,34 @@ that encapsulates the former lifecycle-writer mutex.
 - validated graph-type definitions keyed by catalog `GraphTypeId`; and
 - kind-local ID high-water marks.
 
-A lifetime-free `DatabaseDraft` pins the exact outer allocation, catalog
-generation, selected graph identity, and graph generation. Direct lifecycle
-commands and selected-session writes use the coordinator's same reservation.
+A lifetime-free `DatabaseDraft` stores only detached catalog, graph-type,
+high-water, graph-delta, and pinned identity/generation metadata. It never owns
+an outer `DatabaseState`, `GraphInstance`, `SharedGraph`, transaction, guard,
+committer, or provider. The reservation is instead a borrowed, non-`Send`
+capability whose invariant lifetime is tied to the stack-local writer guard;
+the higher-ranked closure API prevents retaining or returning it. Both draft
+construction and publication require that capability. Direct lifecycle
+commands and selected-session writes therefore use the coordinator's same held
+reservation.
+
 Catalog staging and graph `PreparedGraphCommit` staging do not publish. The
-authority revalidates the pinned base immediately before performing its one
-outer store; that store is the sole facade visibility cut-line. Descriptor
-state, graph snapshots, runtime maps, and high-water marks are therefore never
-published separately.
+authority reloads and revalidates the current outer state immediately before
+publication, composes the next catalog/runtime maps from that authoritative
+state, and constructs any replacement CORE-only `SharedGraph` at the last
+possible point after every pre-store failpoint. No fallible or cancelable phase
+follows successful replacement construction before the one outer store. That
+store is the sole facade visibility cut-line, so descriptor state, graph
+snapshots, runtime maps, and high-water marks are never published separately.
 
 Pre-store validation failure or cancellation retains the exact prior outer
 allocation, generation, runtime maps, procedure state, graph IDs, and
-high-water marks. A post-store acknowledgement failure is `Indeterminate`: the
-complete new state is visible even though acknowledgement was uncertain. These
-outcomes are in-memory and durability-independent until M09. A same-path
-recreation or replacement still receives a fresh stable ID.
+high-water marks. Cancellation is publicly reported as `MutationCanceled` /
+`5GQL2`. A post-store acknowledgement failure is publicly reported as
+`MutationIndeterminate` / `40003`: the complete new state is already visible
+even though acknowledgement was uncertain. Callers must inspect current state
+and must not blindly retry an indeterminate mutation. These outcomes are
+in-memory and durability-independent until M09. A same-path recreation or
+replacement still receives a fresh stable ID.
 
 `CatalogReadSnapshot` loads the outer state in O(1). Its facade summaries do not
 expose lower graph instances, schema definitions, row positions, mutators,
@@ -255,6 +268,8 @@ contexts or physical table types.
 | missing object or parent, wrong kind, invalid path shape | structured reference error | `42002` |
 | invalid catalog name | `InvalidCatalogName` | `42001` |
 | RESTRICT dependency | `CatalogRestrictViolation` | `G1000` |
+| canceled before the outer store | `MutationCanceled` | `5GQL2` |
+| published but acknowledgement uncertain | `MutationIndeterminate`; complete state is visible and blind retry is unsafe | `40003` |
 | stale home or current session identity | `StaleSessionReference` | none |
 | invalid authorization/principal ID or home declaration | structured session error | none |
 | missing/failing provider or denying/failing policy | structured authorization error | none |

@@ -1,6 +1,6 @@
 //! Database-owned catalog lifecycle service and immutable read snapshots.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use selene_catalog::{
     CatalogDescriptor as LowerDescriptor, CatalogObjectId, CatalogObjectKind, CatalogPayload,
@@ -8,7 +8,7 @@ use selene_catalog::{
     SchemaId as LowerSchemaId,
 };
 use selene_core::GraphId as CoreGraphId;
-use selene_graph::SharedGraph;
+use selene_graph::SeleneGraph;
 
 use crate::{
     CatalogReadSnapshot, Error, GraphDescriptor, GraphTypeDefinition, GraphTypeDescriptor,
@@ -105,8 +105,8 @@ impl Catalog {
     ) -> Result<CreateOutcome<SchemaDescriptor>> {
         reject_replace(policy, "schema")?;
         self.inner.with_mutation_reservation(|reservation| {
-            let mut draft = DatabaseDraft::new(&self.inner, &reservation);
-            let base = draft.base();
+            let base = self.inner.state.load_full();
+            let mut draft = DatabaseDraft::new(&base, &reservation);
             ensure_catalog(&base, path.catalog())?;
             if let Some(existing) = base.catalog.schema(&path.schema.0) {
                 let summary = schema_summary(&base, existing)?;
@@ -131,14 +131,9 @@ impl Catalog {
             let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
             let mut high_water = base.high_water;
             high_water.schema = raw;
-            draft.next = DatabaseState {
-                catalog,
-                graphs: base.graphs.clone(),
-                graph_types: base.graph_types.clone(),
-                high_water,
-            };
-            let created =
-                created_summary(draft.state(), CatalogObjectId::Schema(id), schema_summary)?;
+            draft.catalog = catalog;
+            draft.high_water = high_water;
+            let created = created_summary(&draft, CatalogObjectId::Schema(id), schema_summary)?;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
             Ok(CreateOutcome::Created(created))
         })
@@ -152,8 +147,8 @@ impl Catalog {
         policy: CreatePolicy,
     ) -> Result<CreateOutcome<GraphTypeDescriptor>> {
         self.inner.with_mutation_reservation(|reservation| {
-            let mut draft = DatabaseDraft::new(&self.inner, &reservation);
-            let base = draft.base();
+            let base = self.inner.state.load_full();
+            let mut draft = DatabaseDraft::new(&base, &reservation);
             let schema = require_schema(&base, &path.schema_path())?;
             let mut replaced = None;
             if let Some(existing) = base.catalog.schema_object(schema, &path.object.0) {
@@ -195,17 +190,11 @@ impl Catalog {
             graph_types.insert(id, runtime);
             let mut high_water = base.high_water;
             high_water.graph_type = raw;
-            draft.next = DatabaseState {
-                catalog,
-                graphs: base.graphs.clone(),
-                graph_types,
-                high_water,
-            };
-            let created = created_summary(
-                draft.state(),
-                CatalogObjectId::GraphType(id),
-                graph_type_summary,
-            )?;
+            draft.catalog = catalog;
+            draft.graph_types = graph_types;
+            draft.high_water = high_water;
+            let created =
+                created_summary(&draft, CatalogObjectId::GraphType(id), graph_type_summary)?;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
             match replaced {
                 Some((_, dropped)) => Ok(CreateOutcome::Replaced { dropped, created }),
@@ -228,8 +217,8 @@ impl Catalog {
         policy: CreatePolicy,
     ) -> Result<CreateOutcome<GraphDescriptor>> {
         self.inner.with_mutation_reservation(|reservation| {
-            let mut draft = DatabaseDraft::new(&self.inner, &reservation);
-            let base = draft.base();
+            let base = self.inner.state.load_full();
+            let mut draft = DatabaseDraft::new(&base, &reservation);
             let schema = require_schema(&base, &path.schema_path())?;
             let mut replaced = None;
             let mut replaced_instance = None;
@@ -259,10 +248,9 @@ impl Catalog {
             let id = LowerGraphId::new(raw).map_err(Error::from_catalog_invariant)?;
             let mut transaction =
                 CatalogTransaction::new(&base.catalog).map_err(Error::from_catalog_invariant)?;
-            let mut graphs = base.graphs.clone();
             if let Some((dropped, _)) = &replaced {
                 transaction.remove(CatalogObjectId::Graph(*dropped));
-                graphs.remove(dropped);
+                draft.remove_graph(*dropped);
             }
             let descriptor = LowerDescriptor::graph(
                 id,
@@ -277,25 +265,15 @@ impl Catalog {
                 .insert(descriptor)
                 .map_err(Error::from_catalog_invariant)?;
             self.inner.after_descriptor_staging()?;
-            let builder = SharedGraph::builder(core_graph_id(id));
-            let graph = match runtime {
-                Some(definition) => builder.bound_to((*definition).clone()),
-                None => Ok(builder),
-            }
-            .and_then(selene_graph::SharedGraphBuilder::build)
-            .map_err(Error::invalid_graph_type_source)?;
+            let mut graph = SeleneGraph::new(core_graph_id(id));
+            graph.meta.bound_type = runtime;
             let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-            graphs.insert(id, Arc::new(GraphInstance::new(graph)));
             let mut high_water = base.high_water;
             high_water.graph = raw;
-            draft.next = DatabaseState {
-                catalog,
-                graphs,
-                graph_types: base.graph_types.clone(),
-                high_water,
-            };
-            let created =
-                created_summary(draft.state(), CatalogObjectId::Graph(id), graph_summary)?;
+            draft.catalog = catalog;
+            draft.high_water = high_water;
+            draft.replace_graph(id, graph)?;
+            let created = created_summary(&draft, CatalogObjectId::Graph(id), graph_summary)?;
             self.inner.after_graph_construction()?;
             if let Some((dropped, _)) = &replaced {
                 draft.forget_graph(core_graph_id(*dropped));
@@ -318,8 +296,8 @@ impl Catalog {
         policy: DropPolicy,
     ) -> Result<DropOutcome<GraphDescriptor>> {
         self.inner.with_mutation_reservation(|reservation| {
-            let mut draft = DatabaseDraft::new(&self.inner, &reservation);
-            let base = draft.base();
+            let base = self.inner.state.load_full();
+            let mut draft = DatabaseDraft::new(&base, &reservation);
             let Some(descriptor) = find_object(&base, path)? else {
                 return missing_outcome(policy, path, "graph");
             };
@@ -335,14 +313,8 @@ impl Catalog {
             transaction.remove(CatalogObjectId::Graph(id));
             self.inner.after_descriptor_staging()?;
             let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-            let mut graphs = base.graphs.clone();
-            graphs.remove(&id);
-            draft.next = DatabaseState {
-                catalog,
-                graphs,
-                graph_types: base.graph_types.clone(),
-                high_water: base.high_water,
-            };
+            draft.catalog = catalog;
+            draft.remove_graph(id);
             draft.forget_graph(core_graph_id(id));
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
             Ok(DropOutcome::Dropped(summary))
@@ -356,8 +328,8 @@ impl Catalog {
         policy: DropPolicy,
     ) -> Result<DropOutcome<GraphTypeDescriptor>> {
         self.inner.with_mutation_reservation(|reservation| {
-            let mut draft = DatabaseDraft::new(&self.inner, &reservation);
-            let base = draft.base();
+            let base = self.inner.state.load_full();
+            let mut draft = DatabaseDraft::new(&base, &reservation);
             let Some(descriptor) = find_object(&base, path)? else {
                 return missing_outcome(policy, path, "graph type");
             };
@@ -373,12 +345,8 @@ impl Catalog {
             let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
             let mut graph_types = base.graph_types.clone();
             graph_types.remove(&id);
-            draft.next = DatabaseState {
-                catalog,
-                graphs: base.graphs.clone(),
-                graph_types,
-                high_water: base.high_water,
-            };
+            draft.catalog = catalog;
+            draft.graph_types = graph_types;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
             Ok(DropOutcome::Dropped(summary))
         })
@@ -414,8 +382,8 @@ impl Catalog {
         policy: DropPolicy,
     ) -> Result<DropOutcome<SchemaDescriptor>> {
         self.inner.with_mutation_reservation(|reservation| {
-            let mut draft = DatabaseDraft::new(&self.inner, &reservation);
-            let base = draft.base();
+            let base = self.inner.state.load_full();
+            let mut draft = DatabaseDraft::new(&base, &reservation);
             ensure_catalog(&base, path.catalog())?;
             let Some(descriptor) = base.catalog.schema(&path.schema.0) else {
                 return missing_outcome(policy, path, "schema");
@@ -433,12 +401,7 @@ impl Catalog {
             transaction.remove(CatalogObjectId::Schema(id));
             self.inner.after_descriptor_staging()?;
             let catalog = transaction.build().map_err(Error::from_catalog_invariant)?;
-            draft.next = DatabaseState {
-                catalog,
-                graphs: base.graphs.clone(),
-                graph_types: base.graph_types.clone(),
-                high_water: base.high_water,
-            };
+            draft.catalog = catalog;
             require_committed(self.inner.publish_database_draft(reservation, draft)?)?;
             Ok(DropOutcome::Dropped(summary))
         })
@@ -525,15 +488,22 @@ fn missing_outcome<T>(
 }
 
 fn created_summary<T>(
-    state: &DatabaseState,
+    draft: &DatabaseDraft,
     id: CatalogObjectId,
     summarize: impl FnOnce(&DatabaseState, &LowerDescriptor) -> Result<T>,
 ) -> Result<T> {
+    let state = DatabaseState {
+        publication: 0,
+        catalog: draft.catalog.clone(),
+        graphs: BTreeMap::new(),
+        graph_types: draft.graph_types.clone(),
+        high_water: draft.high_water,
+    };
     let descriptor = state
         .catalog
         .descriptor(id)
         .ok_or_else(|| Error::catalog_invariant("created descriptor is missing"))?;
-    summarize(state, descriptor)
+    summarize(&state, descriptor)
 }
 
 pub(crate) const fn core_graph_id(id: LowerGraphId) -> CoreGraphId {

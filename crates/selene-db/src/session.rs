@@ -249,8 +249,9 @@ impl DatabaseInner {
         prepared: PreparedCatalogRequest,
     ) -> Result<ExecutionOutcome> {
         self.with_mutation_reservation(|reservation| {
-            let mut draft = DatabaseDraft::new(self, &reservation);
-            let instance = draft.pin_graph(id)?;
+            let base = self.state.load_full();
+            let mut draft = DatabaseDraft::new(&base, &reservation);
+            let instance = draft.pin_graph(&base, id)?;
             let snapshot = instance.graph.read();
             let stale_plan = prepared.graph_id().get() != id.get()
                 || prepared.graph_generation() != snapshot.meta.generation
@@ -282,7 +283,6 @@ impl DatabaseInner {
             drop(scratch);
 
             draft.attach_prepared_graph(id, prepared_graph)?;
-            draft.materialize_prepared_graph(id)?;
             require_committed(self.publish_database_draft(reservation, draft)?)?;
             ExecutionOutcome::from_engine(output)
         })

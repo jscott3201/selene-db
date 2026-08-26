@@ -74,15 +74,32 @@ fn assert_failure_preserves_outer_state<T: std::fmt::Debug>(
     operation: impl FnOnce() -> Result<T>,
 ) {
     let before = catalog.inner.state.load_full();
+    let constructions = catalog
+        .inner
+        .replacement_graph_constructions
+        .load(std::sync::atomic::Ordering::Relaxed);
     *catalog.inner.failure.lock() = Some(point);
     let error = operation().unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::CatalogInvariant);
+    let expected = if point == FailurePoint::BeforePublication {
+        ErrorKind::MutationCanceled
+    } else {
+        ErrorKind::CatalogInvariant
+    };
+    assert_eq!(error.kind(), expected);
     let after = catalog.inner.state.load_full();
     assert!(Arc::ptr_eq(&before, &after));
     assert_eq!(before.catalog.generation(), after.catalog.generation());
     assert_eq!(before.graphs.len(), after.graphs.len());
     assert_eq!(before.graph_types.len(), after.graph_types.len());
     assert_eq!(before.high_water, after.high_water);
+    assert_eq!(
+        catalog
+            .inner
+            .replacement_graph_constructions
+            .load(std::sync::atomic::Ordering::Relaxed),
+        constructions,
+        "pre-store failures must precede replacement runtime construction"
+    );
     assert_outer_complete(&after);
 }
 

@@ -230,6 +230,8 @@ pub(crate) struct DatabaseInner {
     pub(crate) failure: Mutex<Option<crate::catalog::FailurePoint>>,
     #[cfg(test)]
     pub(crate) drop_blocked: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    #[cfg(test)]
+    pub(crate) replacement_graph_constructions: std::sync::atomic::AtomicUsize,
 }
 
 impl DatabaseInner {
@@ -237,6 +239,7 @@ impl DatabaseInner {
         Self {
             config,
             state: ArcSwap::from(Arc::new(DatabaseState {
+                publication: 0,
                 catalog: initial_snapshot(),
                 graphs: BTreeMap::new(),
                 graph_types: BTreeMap::new(),
@@ -248,6 +251,8 @@ impl DatabaseInner {
             failure: Mutex::new(None),
             #[cfg(test)]
             drop_blocked: Mutex::new(None),
+            #[cfg(test)]
+            replacement_graph_constructions: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -280,6 +285,7 @@ impl Drop for GraphRequestDepth {
 }
 
 pub(crate) struct DatabaseState {
+    pub(crate) publication: u64,
     pub(crate) catalog: CatalogSnapshot,
     pub(crate) graphs: BTreeMap<GraphId, Arc<GraphInstance>>,
     pub(crate) graph_types: BTreeMap<GraphTypeId, Arc<GraphTypeDef>>,

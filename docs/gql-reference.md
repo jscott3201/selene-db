@@ -41,6 +41,12 @@ graph. Reads execute on that pinned live graph. Selected data/engine-catalog
 mutations execute on a CORE-only scratch graph and become visible through one
 facade `DatabaseState` publication; database-catalog statements are dispatched
 through the same reservation-aware service used by the Rust lifecycle API.
+The reservation capability cannot escape its writer-lock closure, and staged
+drafts contain detached graph content rather than live graph runtimes. A
+pre-publication cancellation returns `MutationCanceled` / `5GQL2` with no
+visibility. A post-publication acknowledgement failure returns
+`MutationIndeterminate` / `40003`; the complete mutation is visible, so callers
+must inspect state rather than blindly retrying the statement.
 
 ---
 
