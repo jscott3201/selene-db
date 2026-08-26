@@ -1135,7 +1135,7 @@ Model root and child execution contexts with working record/table, declared resu
 - M06 replaces table physical storage while preserving this semantic/outcome API.
 
 <a id="m03-pr04"></a>
-## M03-PR04 — Implement the Serializable Transaction State Machine and Demarcation
+## M03-PR04 — Deliver Serializable Transactions in Two Parts: Atomic Publication Authority, then Session Demarcation
 
 - **Owner:** M03
 - **State:** Unmerged
@@ -1144,16 +1144,18 @@ Model root and child execution contexts with working record/table, declared resu
 - **Issues:** None
 - **Commit scope:** `transaction`
 
-Unify implicit auto-commit and explicit START/COMMIT/ROLLBACK under one session-owned transaction object with precise active, failed, committing, rolled-back, committed, and indeterminate states.
+Deliver two actual PRs under the single M03-PR04 machine-plan ID: Part 1 establishes facade-owned atomic transaction staging and publication authority, and Part 2 implements session transaction state and demarcation exclusively on that authority. Completion requires both parts; M03-PR04 remains Unmerged, and its dependents remain blocked, until Part 2 completes the full contract.
 
 ### Scope
 
-- Define `Transaction`, `TransactionId`, characteristics/access mode, state enum, catalog snapshot/base generation, graph snapshots/deltas, and outcome classification.
-- Route START/COMMIT/ROLLBACK commands and implicit procedure auto-start through one state machine.
-- Enforce at most one active transaction per session, one request within one transaction, and serial statement visibility within the transaction.
-- Stage catalog and graph changes without publication until successful commit; failed procedure execution attempts rollback.
-- Define allowed mixing of catalog- and data-modifying work for the initial profile and return exact errors for unsupported mixes.
-- Provide a durability-independent commit interface that M09 will implement with append/flush/publish phases.
+- Part 1 — authority ownership: add a `DatabaseInner`-level, lifetime-free coordinator and mutation reservation shared by selected-session mutation and direct facade catalog-mutation funnels.
+- Part 1 — staging: pin base identity/generation and hold catalog and graph drafts that can validate and stage without publishing; graph-local publication is forbidden for facade-staged work.
+- Part 1 — publication: serialize the mutation funnels and cross one outer `DatabaseState` publication barrier so catalog and graph become visible together.
+- Part 1 — outcomes: provide durability-independent in-memory commit authority with canceled, committed, and indeterminate outcomes for later M09 prepare/flush integration.
+- Part 2 — state: replace the vacant session transaction slot with stored `Transaction`/`TransactionId`, characteristics and access mode, pinned catalog/graph bases, drafts, and precise active, failed, committing, rolled-back, committed, and indeterminate states.
+- Part 2 — demarcation: route START/COMMIT/ROLLBACK and implicit procedure auto-start through one state machine backed only by the Part 1 authority.
+- Part 2 — semantics: enforce at most one active transaction per session and one request at a time within it, with serial intra-transaction statement visibility and no pre-commit visibility to other sessions.
+- Part 2 — policy and diagnostics: define allowed catalog/data modification mixing for the initial profile, attempt required rollback after failed procedure execution, and return exact transaction-state, access-mode, and unsupported-mix GQLSTATUS records.
 
 ### Non-goals
 
@@ -1164,39 +1166,44 @@ Unify implicit auto-commit and explicit START/COMMIT/ROLLBACK under one session-
 
 ### Acceptance evidence
 
-- Implicit one-statement and explicit multi-request transactions share tests and produce equivalent committed state where semantics align.
-- Successor statements observe successful predecessor changes inside the same transaction; other sessions do not before publication.
-- Failed statements/procedures trigger the required rollback attempt and leave no catalog/graph publication.
-- Active-state, duplicate START, COMMIT/ROLLBACK without active transaction, read-only writes, and unsupported mixing return expected GQLSTATUS.
-- Catalog and graph deltas are committed or rolled back together in memory.
-- Commit authority interface has explicit canceled, committed, and indeterminate outcomes for M09.
+- Part 1: staging and prepare operations never publish; only the single outer `DatabaseState` barrier can make a complete catalog/graph bundle visible.
+- Part 1: validation, staging, preparation, failure, and cancellation paths that return canceled leave both catalog and graph unchanged; post-publication acknowledgement uncertainty returns indeterminate without exposing partial state.
+- Part 1: coordinator state is lifetime-free and stores no guards, `SharedGraph`, or borrowed graph `WriteTxn` values across requests.
+- Part 1: direct facade catalog mutations and selected-session mutations serialize through the same reservation, and concurrent readers observe only the complete old or complete new `DatabaseState`.
+- Part 1: the durability-independent authority reports explicit canceled, committed, and indeterminate outcomes and proves catalog and graph drafts publish or remain unpublished together in memory.
+- Part 1 alone does not mark M03-PR04 Merged or unblock any dependent; the sole work-item status remains Unmerged until all final Part 2 evidence passes.
+- Part 2 final: implicit one-statement and explicit multi-request transactions use the Part 1 authority, share transition tests, and produce equivalent committed state where semantics align.
+- Part 2 final: successor statements observe successful predecessor changes inside the same transaction, while other sessions observe nothing before publication.
+- Part 2 final: failed statements/procedures trigger the required rollback attempt and leave no catalog/graph publication.
+- Part 2 final: active-state, duplicate START, COMMIT/ROLLBACK without an active transaction, read-only writes, unsupported mixing, repeated demarcation, and authority outcomes return exact expected GQLSTATUS records.
+- Part 2 final: catalog and graph deltas commit or roll back together in memory through the Part 1 authority, including canceled, committed, and indeterminate commit outcomes.
 
 ### Tests and gates
 
-- State-machine model/property tests over command sequences.
-- Multi-request explicit transaction integration tests.
-- Cross-session visibility tests.
-- Failure injection in validation/catalog/graph preparation/publication abstraction.
-- Read-only and mixing policy tests with exact statuses.
-- Mutation tests for transition guards.
+- Part 1: focused staging tests prove catalog and graph drafts never publish before the outer barrier and publish as one complete `DatabaseState`.
+- Part 1: failpoints cover validation, catalog/graph staging, authority prepare/flush, outer publication, acknowledgement, cancellation, and exact outcome classification without partial publication.
+- Part 1: concurrency tests cover direct-catalog/selected-session serialization and reader old-or-new visibility; compile-time/type evidence proves coordinator state stores no guards, `SharedGraph`, or borrowed `WriteTxn`.
+- Part 2: state-machine model/property and transition-guard mutation tests cover command sequences, repeated demarcation, and authority outcomes.
+- Part 2: multi-request explicit, implicit auto-commit equivalence, serial intra-transaction visibility, and cross-session visibility integration tests.
+- Part 2: read-only, access-mode, catalog/data mixing, rollback-attempt, and exact GQLSTATUS tests.
 
 ### Review focus
 
-- One state machine and atomic catalog/data staging.
-- Precise rollback versus indeterminate classification.
-- No hidden publication in mutators.
-- Serializable semantics.
+- Part 1: one facade-owned coordinator, non-publishing catalog/graph staging, no hidden graph-local publication, and one outer `DatabaseState` barrier.
+- Part 1: failpoint outcome precision, mutation-funnel serialization, complete old/new reader visibility, and lifetime-free stored state.
+- Part 2: one explicit non-reentrant state machine, implicit/explicit unification, one active transaction/request, and serializable multi-request visibility.
+- Part 2: exact transition, access/mixing, rollback, committed, canceled, and indeterminate diagnostics with no coordination path outside Part 1 authority.
 
 ### Stop conditions
 
-- Current graph commit cannot be prevented from publishing before catalog coordination.
-- Catalog/data atomic staging requires an ownership change larger than this PR; split a prerequisite.
-- Commit outcome vocabulary cannot map to current error/status model without ambiguity.
+- Part 1 owns the current graph-publication and cross-layer ownership stop conditions; REPLAN if a non-publishing graph staging primitive with one outer publication boundary is not feasible.
+- Part 1 must REPLAN rather than store guards, `SharedGraph`, or borrowed `WriteTxn` values, permit graph-local publication, or leave direct catalog mutation outside the common reservation.
+- Part 2 must REPLAN if it cannot consume only the Part 1 authority or if commit outcomes and transaction transitions cannot map to the current error/status model without ambiguity.
 
 ### Bridge and deletion
 
-- Use an in-memory commit authority adapter until M09.
-- Delete catalog DDL auto-commit bridge from M02-PR04.
+- The M02-PR04 catalog DDL auto-commit adapter may remain through Part 1 only; Part 2 deletes it when all implicit and explicit work moves onto the transaction state machine.
+- The Part 1 in-memory authority remains until M09 supplies durability; neither delivery part implements WAL or persistence durability.
 
 <a id="m03-pr05"></a>
 ## M03-PR05 — Complete Session Commands, Working Schema/Graph, Close, and Multi-Request Semantics
