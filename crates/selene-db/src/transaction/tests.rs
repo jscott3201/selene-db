@@ -198,6 +198,10 @@ fn selected_session_reports_indeterminate_with_complete_graph_visible() {
         session.context().transaction_slot(),
         TransactionSlotState::Indeterminate
     );
+    assert_eq!(
+        session.context().transaction_retains_detached_state(),
+        Some(false)
+    );
     let after = database.catalog().snapshot();
     assert!(!before.shares_state_with(&after));
     let visible = session
@@ -392,6 +396,10 @@ fn selected_pre_store_failpoints_leave_exact_state_and_next_id() {
         assert_eq!(
             session.context().transaction_slot(),
             TransactionSlotState::RolledBack
+        );
+        assert_eq!(
+            session.context().transaction_retains_detached_state(),
+            Some(false)
         );
 
         let after = inner.state.load_full();

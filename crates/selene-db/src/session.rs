@@ -262,4 +262,57 @@ mod tests {
             crate::TransactionSlotState::RolledBack
         );
     }
+
+    #[test]
+    fn failed_and_terminal_transactions_release_all_detached_state() {
+        let session = session();
+
+        session
+            .start_transaction(crate::TransactionAccessMode::ReadWrite)
+            .unwrap();
+        assert_eq!(
+            session.context().transaction_retains_detached_state(),
+            Some(true)
+        );
+        session.execute("INSERT (:Explicit)").unwrap();
+        session.commit_transaction().unwrap();
+        assert_eq!(
+            session.context().transaction_retains_detached_state(),
+            Some(false)
+        );
+
+        session
+            .start_transaction(crate::TransactionAccessMode::ReadOnly)
+            .unwrap();
+        session.commit_transaction().unwrap();
+        assert_eq!(
+            session.context().transaction_retains_detached_state(),
+            Some(false)
+        );
+
+        session
+            .start_transaction(crate::TransactionAccessMode::ReadWrite)
+            .unwrap();
+        session.rollback_transaction().unwrap();
+        assert_eq!(
+            session.context().transaction_retains_detached_state(),
+            Some(false)
+        );
+
+        session
+            .start_transaction(crate::TransactionAccessMode::ReadWrite)
+            .unwrap();
+        session.execute("RETURN 1 / 0").unwrap_err();
+        assert_eq!(
+            session.context().transaction_retains_detached_state(),
+            Some(false)
+        );
+
+        session.execute("ROLLBACK").unwrap();
+        session.execute("INSERT (:Implicit)").unwrap();
+        assert_eq!(
+            session.context().transaction_retains_detached_state(),
+            Some(false)
+        );
+    }
 }

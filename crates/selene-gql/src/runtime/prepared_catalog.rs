@@ -5,7 +5,8 @@ use std::{mem, panic::AssertUnwindSafe, sync::Arc};
 use selene_graph::write_txn::PreparedGraphCommit;
 
 use crate::{
-    DatabaseCatalogCommand, ExecutionPlan, PipelineOp, ProcedureRegistry, StatementCategory, TxOp,
+    DatabaseCatalogCommand, ExecutionPlan, PipelineOp, ProcedureRegistry, Statement,
+    StatementCategory, TxOp,
 };
 
 use super::{
@@ -57,6 +58,25 @@ pub enum PreparedTransactionControl {
     Commit,
     /// `ROLLBACK`.
     Rollback,
+}
+
+/// Parse only enough source to recognize one bare transaction control.
+///
+/// This graph-independent path is reserved for facade sessions whose selected
+/// context is already stale and therefore cannot prepare a normal request. A
+/// caller either executes the returned control or rejects the non-control; it
+/// must not parse the same source again.
+#[doc(hidden)]
+pub fn parse_transaction_control(
+    source: &str,
+) -> Result<Option<PreparedTransactionControl>, ExecutorError> {
+    let statement = crate::parse(source).map_err(|source| ExecutorError::Parse { source })?;
+    Ok(match statement {
+        Statement::StartTransaction { .. } => Some(PreparedTransactionControl::Start),
+        Statement::Commit { .. } => Some(PreparedTransactionControl::Commit),
+        Statement::Rollback { .. } => Some(PreparedTransactionControl::Rollback),
+        _ => None,
+    })
 }
 
 impl PreparedCatalogRequest {
@@ -323,6 +343,22 @@ mod tests {
             jiff::Timestamp::new(1_788_692_096, 0).unwrap(),
             jiff::tz::TimeZone::UTC,
         )
+    }
+
+    #[test]
+    fn control_only_parser_classifies_bare_controls_without_a_graph() {
+        for (source, expected) in [
+            ("START TRANSACTION", PreparedTransactionControl::Start),
+            (" COMMIT ", PreparedTransactionControl::Commit),
+            ("ROLLBACK", PreparedTransactionControl::Rollback),
+        ] {
+            assert_eq!(parse_transaction_control(source).unwrap(), Some(expected));
+        }
+        assert_eq!(parse_transaction_control("RETURN 1").unwrap(), None);
+        assert!(matches!(
+            parse_transaction_control("RETURN (").unwrap_err(),
+            ExecutorError::Parse { .. }
+        ));
     }
 
     #[test]

@@ -170,25 +170,18 @@ pub(crate) enum MutationMode {
 pub(crate) struct DetachedTransaction {
     descriptor: Transaction,
     draft: Option<DatabaseDraft>,
-    control_graph: Box<selene_graph::SeleneGraph>,
     mutation_mode: Option<MutationMode>,
     explicit: bool,
 }
 
 impl DetachedTransaction {
-    pub(crate) fn new(
-        descriptor: Transaction,
-        draft: DatabaseDraft,
-        explicit: bool,
-    ) -> Result<Self> {
-        let control_graph = Box::new(draft.selected_graph()?.clone());
-        Ok(Self {
+    pub(crate) const fn new(descriptor: Transaction, draft: DatabaseDraft, explicit: bool) -> Self {
+        Self {
             descriptor,
             draft: Some(draft),
-            control_graph,
             mutation_mode: None,
             explicit,
-        })
+        }
     }
 
     pub(crate) const fn descriptor(&self) -> &Transaction {
@@ -197,10 +190,6 @@ impl DetachedTransaction {
 
     pub(crate) const fn is_explicit(&self) -> bool {
         self.explicit
-    }
-
-    pub(crate) fn control_graph(&self) -> &selene_graph::SeleneGraph {
-        &self.control_graph
     }
 
     pub(crate) const fn mutation_mode(&self) -> Option<MutationMode> {
@@ -235,7 +224,10 @@ impl DetachedTransaction {
         self.descriptor.state = transition(Some(self.descriptor.state), event)?;
         if matches!(
             self.descriptor.state,
-            TransactionState::Failed | TransactionState::RolledBack
+            TransactionState::Failed
+                | TransactionState::RolledBack
+                | TransactionState::Committed
+                | TransactionState::Indeterminate
         ) {
             self.draft = None;
         }
@@ -249,6 +241,11 @@ impl DetachedTransaction {
             TransactionState::RolledBack
         };
         self.draft = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn retains_detached_state(&self) -> bool {
+        self.draft.is_some()
     }
 }
 

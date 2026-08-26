@@ -424,6 +424,15 @@ impl SessionContext {
             .map(|transaction| transaction.descriptor().clone())
     }
 
+    #[cfg(test)]
+    pub(crate) fn transaction_retains_detached_state(&self) -> Option<bool> {
+        self.state
+            .borrow()
+            .transaction
+            .as_ref()
+            .map(crate::transaction::DetachedTransaction::retains_detached_state)
+    }
+
     /// Return the session termination state.
     #[must_use]
     pub const fn termination(&self) -> SessionTerminationState {

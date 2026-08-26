@@ -71,7 +71,7 @@ impl Session {
                 graph.id,
                 draft.pinned_graph_generation()?,
             );
-            DetachedTransaction::new(descriptor, draft, explicit)
+            Ok(DetachedTransaction::new(descriptor, draft, explicit))
         })?;
         let descriptor = detached.descriptor().clone();
         slot.replace(detached);
@@ -100,6 +100,7 @@ impl Session {
         if transaction.descriptor().access_mode() == TransactionAccessMode::ReadOnly
             || !transaction.draft()?.is_modified()
         {
+            drop(transaction.take_draft()?);
             transaction.transition(TransitionEvent::CommitSucceeded)?;
             return Ok(transaction.descriptor().clone());
         }

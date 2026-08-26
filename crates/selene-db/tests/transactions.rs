@@ -1,8 +1,8 @@
 //! Facade transaction demarcation, visibility, access, mixing, and conflicts.
 
 use selene_db::{
-    CreatePolicy, Database, Error, ObjectPath, SchemaPath, Session, TransactionAccessMode,
-    TransactionSlotState, TransactionState, WriteSummary,
+    CreatePolicy, Database, DropPolicy, Error, ErrorKind, ObjectPath, SchemaPath, Session,
+    TransactionAccessMode, TransactionSlotState, TransactionState, WriteSummary,
 };
 
 fn schema(name: &str) -> SchemaPath {
@@ -420,4 +420,51 @@ fn dropping_a_session_with_staged_work_publishes_nothing() {
     session.execute("INSERT (:DroppedSession)").unwrap();
     drop(session);
     assert_eq!(count(&observer, "DroppedSession"), 0);
+}
+
+#[test]
+fn stale_failed_and_terminal_controls_need_no_retained_graph_snapshot() {
+    let (database, path, session, _observer) = fixture("tx_stale_control");
+    let original = database.catalog().snapshot().resolve_graph(&path).unwrap();
+
+    session.execute("START TRANSACTION").unwrap();
+    session.execute("RETURN (").unwrap_err();
+    assert_eq!(
+        session.context().transaction_slot(),
+        TransactionSlotState::Failed
+    );
+
+    database
+        .catalog()
+        .drop_graph(&path, DropPolicy::Strict)
+        .unwrap();
+    let replacement = database
+        .catalog()
+        .create_graph(&path, None, CreatePolicy::Strict)
+        .unwrap();
+    let selene_db::CreateOutcome::Created(replacement) = replacement else {
+        panic!("recreated graph must have a fresh identity");
+    };
+    assert_ne!(replacement.id, original.id);
+
+    let rollback = session.execute("ROLLBACK").unwrap();
+    assert_eq!(rollback.diagnostics().primary().status().as_str(), "00001");
+    let rolled_back = session.context().transaction().unwrap();
+    assert_eq!(rolled_back.state(), TransactionState::RolledBack);
+    assert_eq!(rolled_back.selected_graph(), original.id);
+
+    for source in ["COMMIT", "ROLLBACK"] {
+        let error = session.execute(source).unwrap_err();
+        assert_eq!(status(&error), "2D000", "{source}");
+    }
+    let start = session.execute("START TRANSACTION").unwrap_err();
+    assert_eq!(start.kind(), ErrorKind::StaleSessionReference);
+    assert_eq!(session.context().transaction().unwrap(), rolled_back);
+
+    let replacement_session = database.session(&path).unwrap();
+    let started = replacement_session
+        .start_transaction(TransactionAccessMode::ReadWrite)
+        .unwrap();
+    assert_eq!(started.selected_graph(), replacement.id);
+    replacement_session.rollback_transaction().unwrap();
 }

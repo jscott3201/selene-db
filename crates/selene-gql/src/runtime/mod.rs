@@ -78,7 +78,7 @@ pub(crate) use plan_runner::execute_plan;
 #[doc(hidden)]
 pub use prepared_catalog::{
     PreparedCatalogMutationOutput, PreparedCatalogRequest, PreparedCatalogRequestKind,
-    PreparedTransactionControl,
+    PreparedTransactionControl, parse_transaction_control,
 };
 pub use request::{RequestExecutionInput, RequestParameter};
 #[doc(hidden)]

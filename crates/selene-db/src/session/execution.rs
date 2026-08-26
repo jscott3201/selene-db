@@ -19,6 +19,11 @@ use crate::{
 use super::Session;
 use crate::database::DatabaseInner;
 
+enum CheckedRequest {
+    Prepared(PreparedCatalogRequest),
+    TransactionControl(PreparedTransactionControl),
+}
+
 impl Session {
     pub(super) fn execute_active_request(
         &self,
@@ -37,7 +42,12 @@ impl Session {
                     error
                 }
             })?;
-        self.dispatch_prepared(prepared, &mut slot)
+        match prepared {
+            CheckedRequest::Prepared(prepared) => self.dispatch_prepared(prepared, &mut slot),
+            CheckedRequest::TransactionControl(control) => {
+                self.execute_transaction_control(control, &mut slot)
+            }
+        }
     }
 
     fn prepare_checked_request(
@@ -45,7 +55,7 @@ impl Session {
         request: &Request,
         context: &RequestContext,
         slot: &TransactionCheckout<'_>,
-    ) -> Result<PreparedCatalogRequest> {
+    ) -> Result<CheckedRequest> {
         let graph = self.context.current_graph();
         let graph_id = LowerGraphId::new(graph.id.get()).map_err(|source| {
             Error::invalid_session_reference(Error::from_catalog_invariant(source))
@@ -58,33 +68,20 @@ impl Session {
         match slot.as_ref() {
             Some(transaction) if transaction.descriptor().state() == TransactionState::Active => {
                 let snapshot = transaction.draft()?.selected_graph()?.clone();
-                self.inner.prepare_catalog_request_from_snapshot(
-                    snapshot,
-                    audit,
-                    request.source(),
-                    input,
-                )
+                self.inner
+                    .prepare_catalog_request_from_snapshot(snapshot, audit, request.source(), input)
+                    .map(CheckedRequest::Prepared)
             }
             Some(transaction) => match self.validate_context_references() {
-                Ok(()) => self.inner.prepare_catalog_request(
-                    graph_id,
-                    &graph.path,
-                    audit,
-                    request.source(),
-                    input,
-                ),
+                Ok(()) => self
+                    .inner
+                    .prepare_catalog_request(graph_id, &graph.path, audit, request.source(), input)
+                    .map(CheckedRequest::Prepared),
                 Err(reference_error) => {
-                    let prepared = self.inner.prepare_catalog_request_from_snapshot(
-                        transaction.control_graph().clone(),
-                        audit,
-                        request.source(),
-                        input,
-                    )?;
-                    if matches!(
-                        prepared.kind(),
-                        PreparedCatalogRequestKind::TransactionControl(_)
-                    ) {
-                        Ok(prepared)
+                    if let Some(control) = selene_gql::parse_transaction_control(request.source())
+                        .map_err(Error::from_engine)?
+                    {
+                        Ok(CheckedRequest::TransactionControl(control))
                     } else if transaction.descriptor().state() == TransactionState::Failed {
                         Err(Error::in_failed_transaction())
                     } else {
@@ -94,13 +91,9 @@ impl Session {
             },
             None => {
                 self.validate_context_references()?;
-                self.inner.prepare_catalog_request(
-                    graph_id,
-                    &graph.path,
-                    audit,
-                    request.source(),
-                    input,
-                )
+                self.inner
+                    .prepare_catalog_request(graph_id, &graph.path, audit, request.source(), input)
+                    .map(CheckedRequest::Prepared)
             }
         }
     }
