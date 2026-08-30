@@ -1138,13 +1138,13 @@ Model root and child execution contexts with working record/table, declared resu
 ## M03-PR04 — Deliver Serializable Transactions in Two Parts: Atomic Publication Authority, then Session Demarcation
 
 - **Owner:** M03
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** Critical / L
 - **Dependencies:** M03-PR03, M02-PR04
 - **Issues:** None
 - **Commit scope:** `transaction`
 
-Deliver two actual PRs under the single M03-PR04 machine-plan ID: Part 1 establishes facade-owned atomic transaction staging and publication authority, and Part 2 implements session transaction state and demarcation exclusively on that authority. Completion requires both parts; M03-PR04 remains Unmerged, and its dependents remain blocked, until Part 2 completes the full contract.
+Delivered facade-owned atomic transaction staging/publication authority plus session transaction state and demarcation on that sole authority in the two merged delivery parts.
 
 ### Scope
 
@@ -1171,7 +1171,7 @@ Deliver two actual PRs under the single M03-PR04 machine-plan ID: Part 1 establi
 - Part 1: coordinator state is lifetime-free and stores no guards, `SharedGraph`, or borrowed graph `WriteTxn` values across requests.
 - Part 1: direct facade catalog mutations and selected-session mutations serialize through the same reservation, and concurrent readers observe only the complete old or complete new `DatabaseState`.
 - Part 1: the durability-independent authority reports explicit canceled, committed, and indeterminate outcomes and proves catalog and graph drafts publish or remain unpublished together in memory.
-- Part 1 alone does not mark M03-PR04 Merged or unblock any dependent; the sole work-item status remains Unmerged until all final Part 2 evidence passes.
+- Both delivery parts merged; the final Part 2 evidence completed M03-PR04 and unblocked its dependents.
 - Part 2 final: implicit one-statement and explicit multi-request transactions use the Part 1 authority, share transition tests, and produce equivalent committed state where semantics align.
 - Part 2 final: successor statements observe successful predecessor changes inside the same transaction, while other sessions observe nothing before publication.
 - Part 2 final: failed statements/procedures trigger the required rollback attempt and leave no catalog/graph publication.
@@ -1206,7 +1206,7 @@ Deliver two actual PRs under the single M03-PR04 machine-plan ID: Part 1 establi
 - The Part 1 in-memory authority remains until M09 supplies durability; neither delivery part implements WAL or persistence durability.
 
 <a id="m03-pr05"></a>
-## M03-PR05 — Complete Session Commands, Working Schema/Graph, Close, and Multi-Request Semantics
+## M03-PR05 — Deliver Persistent Session Controls and Generation-Safe Plan Reuse
 
 - **Owner:** M03
 - **State:** Unmerged
@@ -1215,19 +1215,21 @@ Deliver two actual PRs under the single M03-PR04 machine-plan ID: Part 1 establi
 - **Issues:** None
 - **Commit scope:** `session`
 
-Finish the context control plane with SET/RESET/CLOSE behavior, scoped working schema/graph resolution, session lifecycle cleanup, and generation-safe plan reuse.
+Finish the facade context control plane with selected SET/RESET/CLOSE behavior, atomic multi-request state, and generation-safe prepared-plan reuse without absorbing full AT SCHEMA or USE GRAPH execution.
 
 ### Scope
 
-- Implement selected profile forms for session schema, graph, time zone, parameter, reset, reset-all, and close commands with implication-closed feature states.
-- Resolve current working schema references and working graph sites during annotation with nested AT SCHEMA/USE GRAPH scopes.
-- Define close behavior with active transaction rollback and termination flag handling.
-- Invalidate or re-analyze cached plans when session defaults, catalog generations, graph type generations, procedure generations, or profile hash change.
-- Delete remaining old session layout/adapters and direct executor session mutation.
-- Add multi-request scenario tests covering state persistence, reset, failure, drop/recreate, and close.
+- Implement selected facade forms for SESSION SET SCHEMA, catalog-reference SESSION SET PROPERTY GRAPH, value parameters, time zone, RESET targets/reset-all, and CLOSE with implication-closed feature states.
+- Validate and resolve a complete SET/RESET before one facade state replacement so failures preserve every prior characteristic and parameter.
+- Define close behavior with active/failed transaction rollback and release, terminal state, exact outcomes, and rejection before future parse/cache lookup.
+- Reuse request-independent prepared plans only when a private complete facade stamp matches catalog/schema/graph/graph-type/runtime/registry/profile/session generations; always bind fresh request input.
+- Delete the selected-facade session-control rejection/direct transient lower-session mutation bridge while retaining the valid lower-engine session API.
+- Add multi-request scenarios for persistence, request shadowing, reset, failure, switching, transaction interaction, drop/recreate, cache invalidation, and close.
 
 ### Non-goals
 
+- No AT SCHEMA grammar/execution, USE GRAPH focused syntax, cross-graph statement execution, or full catalog-aware semantic tree; M05-PR02 owns these lexical scope/site semantics.
+- No GP16/GQ01 claim or GS01/GS02/GS10 through GS14 expansion.
 - No connection/network lifecycle.
 - No nested directories/search path list.
 - No arbitrary simultaneous requests in one session.
@@ -1236,19 +1238,19 @@ Finish the context control plane with SET/RESET/CLOSE behavior, scoped working s
 ### Acceptance evidence
 
 - Every claimed session feature passes direct and implied-feature tests; unsupported forms are flagged truthfully.
-- SET/RESET failures do not partially mutate context.
-- Nested working schema/graph scopes resolve deterministically and restore outer scope.
-- Dropping/recreating an object with the same name does not let an old plan bind to the new object ID accidentally.
-- Close with/without active transaction has exact outcomes and makes the session unusable afterward.
-- All old session fields/adapters are removed.
+- SET/RESET failures do not partially mutate context, defaults, dependencies, or cached plans; request snapshots remain immutable and shadow session parameters.
+- Schema/graph switches and resets resolve through stable descriptors without implementing nested AT/USE scopes.
+- Every cache dependency dimension causes a miss; dropping/recreating a same-name object never binds an old plan to the new ID and request values are rebound on a true hit.
+- Close with no, active, failed, or stale-selected transaction/context state rolls back/releases detached state, returns the exact outcome, and makes the session unusable afterward.
+- The old selected-facade session-control rejection/direct transient-mutation bridge is absent.
 
 ### Tests and gates
 
 - Positive/negative parser/analyzer/runtime session command corpus.
 - Multi-request state-machine scenarios.
-- Nested scope resolution snapshots.
-- Plan-cache invalidation tests across context/catalog/profile changes.
-- Close/rollback failure injection tests.
+- Schema/graph switch and reset scenarios without AT/USE lexical scope execution.
+- Plan-cache hit, request-rebinding, and invalidation tests across every stamp dimension.
+- Close/rollback/release tests for no, active, failed, repeated, future, and stale-selection cases.
 - Conformance implication/evidence gate updates.
 
 ### Review focus
@@ -1256,18 +1258,21 @@ Finish the context control plane with SET/RESET/CLOSE behavior, scoped working s
 - Implication closure for RESET ALL.
 - Object ID/generation-safe plan cache.
 - Atomic session mutations.
-- Old session bridge deletion.
+- Old selected-facade bridge deletion without removing the lower-engine public/test path.
+- Strict exclusion of AT SCHEMA, USE GRAPH, GP16, GQ01, and M04/M05 public-contract work.
 
 ### Stop conditions
 
-- A selected session feature implies unimplemented reference-value behavior; withdraw claim or split implementation, never ignore implication.
-- Plan cache cannot express all dependencies.
-- Close semantics conflict with active commit authority behavior.
+- A selected session feature necessarily implies unsupported reference-value or full-expression behavior; withdraw the claim or replan, never ignore implication.
+- The complete plan dependency stamp requires crate inversion or a new public M04 identity/generation contract.
+- Close semantics conflict with the existing transaction rollback/publication authority.
+- Full AT/USE semantic scope, persisted format work, or the D-021 size cap becomes necessary.
 
 ### Bridge and deletion
 
-- Delete all old Session layout and direct executor context paths.
-- M05 may replace annotation internals but not the public context semantics.
+- Delete the selected-facade SessionControl rejection and transient lower-session mutation path; preserve the independent lower-engine Session API.
+- M04-PR01 replaces the private dependency stamp with final public identity/generation contracts.
+- M05-PR02 owns full catalog-aware lexical AT SCHEMA/USE GRAPH scope and semantic-site resolution and may replace annotation internals without changing public context semantics.
 
 <a id="m04-pr01"></a>
 ## M04-PR01 — Formalize Stable Element Identity, Reference Handles, and Generation Tokens
@@ -1332,6 +1337,7 @@ Create the identity contract that separates persistent object/element IDs, sessi
 
 - Internal legacy `RowIndex` may remain as a private alias while call sites migrate.
 - M04-PR02 deletes row-indexed public methods and completes the boundary.
+- Replace M03-PR05's private facade dependency stamp with the final public identity/generation contract.
 
 <a id="m04-pr02"></a>
 ## M04-PR02 — Introduce Typed Generation-Bound Candidate Sets and Remove Row Bitmap APIs

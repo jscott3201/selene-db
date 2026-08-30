@@ -74,6 +74,8 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
             SessionResetTarget::AllCharacteristics => {
                 record_feature(uses, FeatureId::GS04, *span);
             }
+            SessionResetTarget::Schema => record_feature(uses, FeatureId::GS05, *span),
+            SessionResetTarget::Graph => record_feature(uses, FeatureId::GS06, *span),
             SessionResetTarget::Parameters => record_feature(uses, FeatureId::GS08, *span),
             SessionResetTarget::TimeZone => record_feature(uses, FeatureId::GS07, *span),
             SessionResetTarget::Parameter(_) => {

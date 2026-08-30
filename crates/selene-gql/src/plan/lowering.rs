@@ -149,8 +149,14 @@ fn lower_statement_kind(
             }))
         }
         AnalyzedStatementKind::SessionSetGraph { target, span } => {
+            if let crate::SessionSetGraphTarget::SchemaReference(reference) = target {
+                return Ok(session_plan(SessionOp::SetSchema {
+                    reference: reference.clone(),
+                    span: *span,
+                }));
+            }
             Ok(session_plan(SessionOp::SetGraph {
-                target: *target,
+                target: target.clone(),
                 span: *span,
             }))
         }
@@ -167,6 +173,8 @@ fn session_reset_op(target: &crate::SessionResetTarget, span: SourceSpan) -> Ses
     use crate::SessionResetTarget;
     match target {
         SessionResetTarget::AllCharacteristics => SessionOp::ResetAllCharacteristics { span },
+        SessionResetTarget::Schema => SessionOp::ResetSchema { span },
+        SessionResetTarget::Graph => SessionOp::ResetGraph { span },
         SessionResetTarget::Parameters => SessionOp::ResetParameters { span },
         SessionResetTarget::TimeZone => SessionOp::ResetTimeZone { span },
         SessionResetTarget::Parameter(param) => SessionOp::ResetParameter {

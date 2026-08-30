@@ -66,6 +66,7 @@ row, not formal conformance status.
 | DDL (`CREATE/DROP SCHEMA`, `CREATE/DROP GRAPH`, `CREATE/DROP GRAPH TYPE`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | Schema/graph management and a bounded named closed-graph path execute through the `selene-db` catalog service. The graph-type source accepts property-free named node types with implied singleton labels. Complete GC03/GG02/GG20/GG21 support remains unsupported: properties, edges/endpoints, explicit key labels, COPY OF/LIKE/external sources, and inline graph types are absent. Both additive `ALTER` forms are implementation-defined surfaces. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries are runtime-supported as `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full, single selected graph | The facade owns detached serializable demarcation over the Part 1 authority. Rust can additionally request read-only access. Multi-graph transactions (`GT03`) remain unsupported. |
+| Session control (`SESSION SET`, `RESET`, `CLOSE`) | Selected facade forms | Schema/graph, time-zone, and value-parameter characteristics persist across requests; RESET uses creation/home/generated defaults; CLOSE releases active/failed transaction state and rejects future requests with `2DN01`. |
 | Maintenance procedures | Lower engine only | Selected facade sessions reject maintenance with `42N01` before live maintenance execution at the explicit detached-maintenance boundary; direct lower-engine maintenance remains supported. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are runtime-supported (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
@@ -948,7 +949,48 @@ exactly one graph.
 
 ---
 
-## 10. GQL Flagger
+## 10. Session control
+
+Selected facade sessions persist these control forms:
+
+```gql
+SESSION SET SCHEMA /memory
+SESSION SET PROPERTY GRAPH episodes
+SESSION SET VALUE $limit INTEGER = 20
+SESSION SET TIME ZONE 'America/New_York'
+SESSION RESET PARAMETER $limit
+SESSION RESET SCHEMA
+SESSION RESET GRAPH
+SESSION RESET TIME ZONE
+SESSION RESET ALL CHARACTERISTICS
+SESSION CLOSE
+```
+
+Absolute schema references omit the fixed facade catalog (`/memory` means
+`/selene/memory`). Graph references may be current-schema-relative or absolute.
+`SET` evaluates and resolves completely before replacing state; an error leaves
+all prior characteristics intact. Request parameters shadow the snapshotted
+session dictionary for that request without changing it. RESET restores
+principal home descriptors where supplied, otherwise the session's creation
+schema/graph, plus generated time-zone and parameter defaults.
+
+The facade cache reuses request-independent compiled plans only while its full
+catalog/schema/graph/graph-type/runtime/procedure/profile/session dependency
+stamp matches. Fresh request parameter values are bound after a hit. A drop and
+same-name recreation never rebinds an old session or plan to the new object ID.
+
+`SESSION CLOSE` returns successful completion with omitted result. It rolls
+back and releases active or failed detached transaction state, clears private
+session state, and causes repeated close and every future request to fail with
+`2DN01`. The independent lower-engine `selene_gql::Session` remains available
+for engine use and tests.
+
+Graph/binding-table parameters and subquery or full-simple-expression SET
+initializers remain unsupported (`GS01`, `GS02`, `GS10`–`GS14`). `AT SCHEMA`,
+focused `USE GRAPH`, cross-graph statement execution, GP16, and GQ01 are not
+implemented by this session-control slice.
+
+## 11. GQL Flagger
 
 The Flagger looks up each parser-observed feature's generated admission
 disposition. A record is accepted if and only if it is a direct ISO selection
@@ -985,7 +1027,7 @@ not expose internal paths. This inventory is not a release conformance claim.
 
 ---
 
-## 11. Error categories
+## 12. Error categories
 
 selene-db separates errors by phase. Each phase has its own error enum
 with `miette::Diagnostic` derives and `GQLSTATUS`-aligned codes.
@@ -1003,7 +1045,7 @@ diagnostic codes follow the GQLSTATUS table in
 
 ---
 
-## 12. What's NOT supported
+## 13. What's NOT supported
 
 The current c5 surface is deliberately narrow. The list below names what is
 explicitly absent. `selene_profile::capability` returns the canonical status and

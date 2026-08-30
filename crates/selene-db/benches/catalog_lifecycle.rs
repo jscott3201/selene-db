@@ -7,7 +7,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use std::{hint::black_box, sync::Arc, time::Duration};
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_db::{
     AllowAllAuthorizationPolicy, AuthHookError, AuthorizationId, CreatePolicy, Database,
     DropPolicy, ExecutionOutcome, GeneralParameter, GqlType, ObjectPath, Principal, PrincipalId,
@@ -568,6 +568,63 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
         );
     }
     request_setup.finish();
+
+    let controls_database = graph_fixture(2);
+    let controls = controls_database
+        .session(&graph("graphs", "graph_00000"))
+        .expect("session-control fixture resolves");
+    controls.execute("RETURN 1").expect("warm cache succeeds");
+    let mut control = c.benchmark_group("catalog_lifecycle/session_control");
+    control.bench_function("prepared_cache_hit", |b| {
+        b.iter(|| {
+            assert_eq!(
+                black_box(&controls)
+                    .execute(black_box("RETURN 1"))
+                    .expect("cache-hit request succeeds")
+                    .row_count(),
+                Some(1)
+            );
+        });
+    });
+    control.bench_function("characteristic_miss_reprepare", |b| {
+        b.iter_batched(
+            || {
+                controls
+                    .execute("SESSION SET TIME ZONE '+00:00'")
+                    .expect("untimed characteristic change succeeds");
+            },
+            |()| {
+                assert_eq!(
+                    controls
+                        .execute(black_box("RETURN 1"))
+                        .expect("dependency miss reparses")
+                        .row_count(),
+                    Some(1)
+                );
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    control.bench_function("set_reset_graph_resolve", |b| {
+        b.iter(|| {
+            controls
+                .execute(black_box("SESSION SET GRAPH graph_00001"))
+                .expect("graph switch succeeds");
+            controls
+                .execute(black_box("SESSION RESET GRAPH"))
+                .expect("graph reset succeeds");
+        });
+    });
+    control.bench_function("repeated_short_query_10", |b| {
+        b.iter(|| {
+            for _ in 0..10 {
+                black_box(&controls)
+                    .execute(black_box("RETURN 1"))
+                    .expect("repeated request succeeds");
+            }
+        });
+    });
+    control.finish();
 }
 
 criterion_group! {

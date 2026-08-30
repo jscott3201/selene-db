@@ -81,6 +81,8 @@ pub enum ErrorKind {
     DuplicateParameter,
     /// A request was started while this single-session slot was occupied.
     RequestAlreadyActive,
+    /// A request was issued after `SESSION CLOSE` (`2DN01`).
+    SessionClosed,
     /// The requested GQL feature is not supported by this facade mode.
     FeatureNotSupported,
     /// Parsing, analysis, planning, or execution failed for another reason.
@@ -123,6 +125,8 @@ impl GqlStatus {
     pub const IN_FAILED_TRANSACTION: Self = Self(*b"25N02");
     /// A transaction termination command had no active transaction.
     pub const INVALID_TRANSACTION_TERMINATION: Self = Self(*b"2D000");
+    /// A request was issued against a closed session.
+    pub const SESSION_CLOSED: Self = Self(*b"2DN01");
     /// An implementation-defined program limit was exhausted.
     pub const PROGRAM_LIMIT_EXCEEDED: Self = Self(*b"5GQL1");
     /// Implementation-defined runtime failure fallback.
@@ -197,6 +201,7 @@ impl ErrorKind {
             Self::ReadOnlyTransaction => Some(GqlStatus::READ_ONLY_TRANSACTION),
             Self::FailedTransaction => Some(GqlStatus::IN_FAILED_TRANSACTION),
             Self::NoActiveTransaction => Some(GqlStatus::INVALID_TRANSACTION_TERMINATION),
+            Self::SessionClosed => Some(GqlStatus::SESSION_CLOSED),
             Self::TransactionRollback => Some(GqlStatus::TRANSACTION_ROLLBACK),
             Self::TransactionIdExhausted => Some(GqlStatus::PROGRAM_LIMIT_EXCEEDED),
             Self::StaleGraphSelection
@@ -451,11 +456,10 @@ impl Error {
         )
     }
 
-    pub(crate) fn invalid_request_time_zone(source: jiff::Error) -> Self {
-        Self::with_source(
-            ErrorKind::CatalogInvariant,
-            "the session time-zone displacement is outside the runtime range",
-            source,
+    pub(crate) fn session_closed() -> Self {
+        Self::facade(
+            ErrorKind::SessionClosed,
+            "the session is closed; open a new session",
         )
     }
 

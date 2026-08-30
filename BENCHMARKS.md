@@ -252,10 +252,29 @@ scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalo
 | `catalog_lifecycle/request_setup/1000` (three repeats) | 197.69–201.31 µs; 202.95–209.45 µs; 184.76–191.45 µs |
 
 The current rows varied substantially across repeated quick runs. These
-measurements do not support an improvement claim. The facade request path
-deliberately bypasses the source-plan cache so every call has the analyzed
-parameter-use contract needed for preflight; a later cache design must retain
-that contract rather than skip request validation.
+measurements do not support an improvement claim.
+
+#### M03-PR05 persistent session-control rows
+
+The `catalog_lifecycle/session_control` group measures a validated prepared-plan
+hit, reprepare after a session-characteristic dependency miss, SET/RESET graph
+resolution, and ten repeated short requests. The facade cache retains only the
+request-independent compiled plan and always binds fresh request values.
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/session_control
+```
+
+Recorded on 2026-08-29 on arm64 macOS 26.7 (25G220), rustc 1.97.1, with
+mimalloc. This is one 10-sample quick run; the rows are characterization, not
+regression thresholds or performance claims.
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/session_control/prepared_cache_hit` | 882.27–920.48 ns |
+| `catalog_lifecycle/session_control/characteristic_miss_reprepare` | 916.43–935.03 ns |
+| `catalog_lifecycle/session_control/set_reset_graph_resolve` | 15.000–15.854 µs |
+| `catalog_lifecycle/session_control/repeated_short_query_10` | 8.9000–9.0822 µs |
 
 #### M03-PR03 execution-context microbenchmarks
 

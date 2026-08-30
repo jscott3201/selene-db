@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use selene_catalog::GraphId as LowerGraphId;
 use selene_gql::{
-    CatalogSessionOutput, PreparedCatalogRequest, PreparedCatalogRequestKind,
-    PreparedTransactionControl,
+    CatalogSessionOutput, PreparedCatalogPlan, PreparedCatalogRequest, PreparedCatalogRequestKind,
+    PreparedSessionControl, PreparedTransactionControl,
 };
 use selene_graph::SharedGraph;
 
@@ -22,6 +22,7 @@ use crate::database::DatabaseInner;
 enum CheckedRequest {
     Prepared(PreparedCatalogRequest),
     TransactionControl(PreparedTransactionControl),
+    GraphIndependentSessionControl(PreparedSessionControl),
 }
 
 impl Session {
@@ -47,6 +48,9 @@ impl Session {
             CheckedRequest::TransactionControl(control) => {
                 self.execute_transaction_control(control, &mut slot)
             }
+            CheckedRequest::GraphIndependentSessionControl(control) => {
+                self.execute_graph_independent_session_control(control, &mut slot)
+            }
         }
     }
 
@@ -60,7 +64,7 @@ impl Session {
         let graph_id = LowerGraphId::new(graph.id.get()).map_err(|source| {
             Error::invalid_session_reference(Error::from_catalog_invariant(source))
         })?;
-        let input = context.lower_input(self.context.time_zone().seconds())?;
+        let input = context.lower_input(self.context.time_zone_value());
         let audit = self
             .context
             .principal()
@@ -82,6 +86,11 @@ impl Session {
                         .map_err(Error::from_engine)?
                     {
                         Ok(CheckedRequest::TransactionControl(control))
+                    } else if let Some(control) =
+                        selene_gql::parse_graph_independent_session_control(request.source())
+                            .map_err(Error::from_engine)?
+                    {
+                        Ok(CheckedRequest::GraphIndependentSessionControl(control))
                     } else if transaction.descriptor().state() == TransactionState::Failed {
                         Err(Error::in_failed_transaction())
                     } else {
@@ -90,10 +99,41 @@ impl Session {
                 }
             },
             None => {
-                self.validate_context_references()?;
-                self.inner
-                    .prepare_catalog_request(graph_id, &graph.path, audit, request.source(), input)
-                    .map(CheckedRequest::Prepared)
+                let stamp = match self.capture_dependency_stamp() {
+                    Ok(stamp) => stamp,
+                    Err(reference_error) => {
+                        if let Some(control) =
+                            selene_gql::parse_graph_independent_session_control(request.source())
+                                .map_err(Error::from_engine)?
+                        {
+                            return Ok(CheckedRequest::GraphIndependentSessionControl(control));
+                        }
+                        return Err(reference_error);
+                    }
+                };
+                let key = context.plan_key(request.source());
+                if let Some(plan) = self.context.cached_plan(&key, &stamp) {
+                    let prepared =
+                        self.inner
+                            .bind_cached_plan(graph_id, &graph.path, plan, input)?;
+                    return Ok(CheckedRequest::Prepared(prepared));
+                }
+                let prepared = self.inner.prepare_catalog_request(
+                    graph_id,
+                    &graph.path,
+                    audit,
+                    request.source(),
+                    input,
+                )?;
+                if matches!(
+                    prepared.kind(),
+                    PreparedCatalogRequestKind::ReadOnly
+                        | PreparedCatalogRequestKind::DataModifying
+                        | PreparedCatalogRequestKind::CatalogModifying
+                ) {
+                    self.context.cache_plan(key, stamp, prepared.cached_plan());
+                }
+                Ok(CheckedRequest::Prepared(prepared))
             }
         }
     }
@@ -115,6 +155,9 @@ impl Session {
                     return Err(Self::fail_statement(transaction, error));
                 }
                 Err(error)
+            }
+            PreparedCatalogRequestKind::SessionControl => {
+                self.execute_session_control(prepared, slot)
             }
             PreparedCatalogRequestKind::ReadOnly => self.execute_read(prepared, slot),
             PreparedCatalogRequestKind::DataModifying => {
@@ -231,9 +274,14 @@ impl Session {
         let snapshot = CatalogReadSnapshot {
             state: self.inner.state.load_full(),
         };
-        let references_are_current = snapshot
-            .matches_schema_reference(self.context.current_schema())
-            && snapshot.matches_graph_reference(self.context.current_graph())
+        self.validate_context_snapshot(&snapshot)
+    }
+
+    pub(super) fn validate_context_snapshot(&self, snapshot: &CatalogReadSnapshot) -> Result<()> {
+        let current_schema = self.context.current_schema();
+        let current_graph = self.context.current_graph();
+        let references_are_current = snapshot.matches_schema_reference(&current_schema)
+            && snapshot.matches_graph_reference(&current_graph)
             && self
                 .context
                 .home_schema()
@@ -249,7 +297,7 @@ impl Session {
         }
     }
 
-    fn audit_bytes(&self) -> Option<Arc<[u8]>> {
+    pub(super) fn audit_bytes(&self) -> Option<Arc<[u8]>> {
         self.context
             .principal()
             .and_then(crate::Principal::audit_bytes_arc)
@@ -257,6 +305,19 @@ impl Session {
 }
 
 impl DatabaseInner {
+    fn bind_cached_plan(
+        &self,
+        id: LowerGraphId,
+        path: &ObjectPath,
+        plan: PreparedCatalogPlan,
+        input: selene_gql::RequestExecutionInput,
+    ) -> Result<PreparedCatalogRequest> {
+        self.with_graph_request(id, path, |graph| {
+            let snapshot = graph.read();
+            plan.bind(input, &snapshot).map_err(Error::from_engine)
+        })
+    }
+
     fn prepare_catalog_request(
         &self,
         id: LowerGraphId,
@@ -409,7 +470,10 @@ fn reprepare_if_stale<'g>(
     }
 }
 
-fn lower_session<'g>(graph: &'g SharedGraph, audit: Option<Arc<[u8]>>) -> selene_gql::Session<'g> {
+pub(super) fn lower_session<'g>(
+    graph: &'g SharedGraph,
+    audit: Option<Arc<[u8]>>,
+) -> selene_gql::Session<'g> {
     match audit {
         Some(audit) => selene_gql::Session::with_principal(graph, audit),
         None => selene_gql::Session::new(graph),

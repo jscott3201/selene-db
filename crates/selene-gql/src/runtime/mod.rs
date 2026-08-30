@@ -77,8 +77,9 @@ pub use plan_cache::{PlanCache, PlanCacheStats, SharedPlanCache, SharedPlanCache
 pub(crate) use plan_runner::execute_plan;
 #[doc(hidden)]
 pub use prepared_catalog::{
-    PreparedCatalogMutationOutput, PreparedCatalogRequest, PreparedCatalogRequestKind,
-    PreparedTransactionControl, parse_transaction_control,
+    PreparedCatalogMutationOutput, PreparedCatalogPlan, PreparedCatalogRequest,
+    PreparedCatalogRequestKind, PreparedSessionControl, PreparedTransactionControl,
+    parse_graph_independent_session_control, parse_session_close, parse_transaction_control,
 };
 pub use request::{RequestExecutionInput, RequestParameter};
 #[doc(hidden)]

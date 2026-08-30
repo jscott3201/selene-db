@@ -48,11 +48,9 @@ fn session_set_keywords_require_boundaries() {
         "SESSION SET TIME ZONEx '+00:00'",
         "SESSION SET GRAPHCURRENT_GRAPH",
         "SESSION SET GRAPHx CURRENT_GRAPH",
-        "SESSION SET GRAPH CURRENT_GRAPHx",
         "SESSION SET PROPERTYGRAPH CURRENT_PROPERTY_GRAPH",
         "SESSION SET PROPERTYx GRAPH CURRENT_PROPERTY_GRAPH",
         "SESSION SET PROPERTY GRAPHx CURRENT_PROPERTY_GRAPH",
-        "SESSION SET PROPERTY GRAPH CURRENT_PROPERTY_GRAPHx",
         "SESSION SET $g GRAPHCURRENT_GRAPH",
         "SESSION SET $g PROPERTYGRAPH CURRENT_GRAPH",
         "SESSION SET $t BINDINGTABLE bindings",
@@ -98,6 +96,9 @@ fn guarded_session_keywords_still_accept_implemented_iso_forms() {
         "SESSION SET TIME ZONE '+00:00'",
         "SESSION SET GRAPH CURRENT_GRAPH",
         "SESSION SET PROPERTY GRAPH CURRENT_PROPERTY_GRAPH",
+        "SESSION RESET SCHEMA",
+        "SESSION RESET GRAPH",
+        "SESSION RESET PROPERTY GRAPH",
         "SESSION RESET",
         "SESSION RESET PARAMETERS",
         "SESSION RESET ALL PARAMETERS",
@@ -120,7 +121,4 @@ fn guarded_session_keywords_still_accept_unsupported_iso_forms() {
     assert_unsupported("SESSION SET $g GRAPH $other", FeatureId::GS12);
     assert_unsupported("SESSION SET $t BINDING TABLE bindings", FeatureId::GS02);
     assert_unsupported("SESSION SET $t BINDING TABLE $other", FeatureId::GS13);
-    assert_unsupported("SESSION RESET SCHEMA", FeatureId::GS05);
-    assert_unsupported("SESSION RESET GRAPH", FeatureId::GS06);
-    assert_unsupported("SESSION RESET PROPERTY GRAPH", FeatureId::GS06);
 }

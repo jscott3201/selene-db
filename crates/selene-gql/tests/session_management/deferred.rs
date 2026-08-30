@@ -26,24 +26,28 @@ fn keyword_first_graph_parameter_forms_still_fail_to_parse() {
 }
 
 #[test]
-fn deferred_set_schema_fails_to_parse() {
-    // SESSION SET <name> SCHEMA (D1: no schema layer) is not in the grammar.
-    assert!(parse("SESSION SET SCHEMA myschema").is_err());
-}
-
-#[test]
-fn deferred_reset_schema_and_graph_report_unsupported_features() {
-    for (source, expected) in [
-        ("SESSION RESET SCHEMA", FeatureId::GS05),
-        ("SESSION RESET GRAPH", FeatureId::GS06),
-        ("SESSION RESET PROPERTY GRAPH", FeatureId::GS06),
+fn selected_catalog_characteristics_parse_transportably() {
+    assert!(matches!(
+        parse("SESSION SET SCHEMA /memory").unwrap(),
+        Statement::SessionSetGraph {
+            target: SessionSetGraphTarget::SchemaReference(_),
+            ..
+        }
+    ));
+    assert!(matches!(
+        parse("SESSION SET GRAPH /memory/main").unwrap(),
+        Statement::SessionSetGraph {
+            target: SessionSetGraphTarget::CatalogReference(_),
+            ..
+        }
+    ));
+    assert!(parse("SESSION SET SCHEMA memory").is_err());
+    for source in [
+        "SESSION RESET SCHEMA",
+        "SESSION RESET GRAPH",
+        "SESSION RESET PROPERTY GRAPH",
     ] {
-        let error = parse(source).expect_err(source);
-        assert_eq!(error.gqlstatus().as_str(), "42N01");
-        let ParserError::UnsupportedFeature { feature_id, .. } = error else {
-            panic!("expected UnsupportedFeature for {source}");
-        };
-        assert_eq!(feature_id, expected, "{source}");
+        parse(source).unwrap_or_else(|error| panic!("{source}: {error}"));
     }
 }
 

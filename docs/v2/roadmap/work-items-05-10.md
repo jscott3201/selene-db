@@ -84,7 +84,7 @@ Resolve schemas, graphs, graph types, procedures, variables, parameters, labels,
 
 - Define analyzer scope frames and disjoint namespaces for binding variables, parameters, graph pattern variables, catalog objects, labels, and properties.
 - Resolve absolute/relative schema and object references using session/current working schema and nested scope clauses.
-- Resolve graph references/sites, including current session graph and USE GRAPH focus, to stable graph IDs/reference descriptors.
+- Resolve graph references/sites, including current session graph and USE GRAPH focus, to stable graph IDs/reference descriptors; implement full AT SCHEMA and USE GRAPH lexical scope/site semantics deferred by M03-PR05.
 - Resolve variable declarations/uses, multiply declared element variables, path/subpath variables, degree of reference, and shadowing rules.
 - Resolve procedure calls against catalog/native registry generation and argument names/signatures.
 - Emit structured ambiguity, not-found, duplicate, out-of-scope, invalid-reference, and access diagnostics with source spans.

@@ -248,10 +248,18 @@ fn rebase_statement_spans(statement: &mut Statement, offset: usize) {
             rebase_span(span, offset);
             rebase_value(value, offset);
         }
-        Statement::SessionSetTimeZone { span, .. }
-        | Statement::SessionSetGraph { span, .. }
-        | Statement::SessionReset { span, .. }
-        | Statement::SessionClose { span } => rebase_span(span, offset),
+        Statement::SessionSetTimeZone { span, .. } => rebase_span(span, offset),
+        Statement::SessionSetGraph { target, span } => {
+            rebase_span(span, offset);
+            if let crate::SessionSetGraphTarget::CatalogReference(reference)
+            | crate::SessionSetGraphTarget::SchemaReference(reference) = target
+            {
+                rebase_span(&mut reference.span, offset);
+            }
+        }
+        Statement::SessionReset { span, .. } | Statement::SessionClose { span } => {
+            rebase_span(span, offset)
+        }
     }
 }
 

@@ -11,8 +11,10 @@ const SOURCE: &str = include_str!("../../../spec/gql-profile/profile.json");
 const BASE_SUPPORTED: &str = include_str!("fixtures/m01_pr01_supported.txt");
 
 const DOWNGRADED: &[&str] = &[
-    "GC03", "GE04", "GE05", "GH02", "GG02", "GG20", "GG21", "GS04", "GV66", "GV67",
+    "GC03", "GE04", "GE05", "GH02", "GG02", "GG20", "GG21", "GV66", "GV67",
 ];
+
+const PROMOTED: &[&str] = &["GS05", "GS06"];
 
 const IMPORTED: &[(&str, &str)] = &[
     ("G030", "Null predicates"),
@@ -299,11 +301,15 @@ fn direct_target_and_surviving_compatibility_order_preserve_m01_pr01() {
     let base = BASE_SUPPORTED.lines().collect::<Vec<_>>();
     assert_eq!(base.len(), 147);
     let downgraded = DOWNGRADED.iter().copied().collect::<BTreeSet<_>>();
-    let expected_survivors = base
-        .iter()
-        .copied()
-        .filter(|id| !downgraded.contains(id) && *id != "IM_DROP_GRAPH")
-        .collect::<Vec<_>>();
+    let mut expected_survivors = Vec::new();
+    for id in base.iter().copied() {
+        if !downgraded.contains(id) && id != "IM_DROP_GRAPH" {
+            expected_survivors.push(id);
+            if id == "GS04" {
+                expected_survivors.extend(PROMOTED.iter().copied());
+            }
+        }
+    }
     assert_eq!(
         profile
             .profile()
@@ -314,12 +320,13 @@ fn direct_target_and_surviving_compatibility_order_preserve_m01_pr01() {
         expected_survivors
     );
 
-    let old_iso = base
+    let mut expected_iso = base
         .iter()
         .copied()
         .filter(|id| !id.starts_with("IM_"))
         .collect::<BTreeSet<_>>();
-    assert_eq!(old_iso.len(), 136);
+    assert_eq!(expected_iso.len(), 136);
+    expected_iso.extend(PROMOTED.iter().copied());
     assert_eq!(
         profile
             .profile()
@@ -327,7 +334,7 @@ fn direct_target_and_surviving_compatibility_order_preserve_m01_pr01() {
             .iter()
             .map(|id| id.as_str())
             .collect::<BTreeSet<_>>(),
-        old_iso
+        expected_iso
     );
 }
 
@@ -373,7 +380,6 @@ fn closure_conflicts_reject_reenabling_runtime_support() {
         ("GE05", "GV61"),
         ("GG20", "GG02"),
         ("GG21", "GG02"),
-        ("GS04", "GS05"),
         ("GV66", "GV65"),
         ("GV67", "GV65"),
     ] {
@@ -550,9 +556,9 @@ fn generated_claim_matrix_pins_counts_blockers_and_boundary() {
         .find(|(path, _)| path == std::path::Path::new("docs/gql/conformance/features.md"))
         .expect("claim matrix")
         .1;
-    assert!(markdown.contains("| Direct selections | 136 |"));
+    assert!(markdown.contains("| Direct selections | 138 |"));
     assert!(markdown.contains("| Complete Table 10 closure | 141 |"));
-    assert_eq!(markdown.matches("| direct selection | ").count(), 272);
+    assert_eq!(markdown.matches("| direct selection | ").count(), 276);
     assert!(markdown.contains("| GC03 | GC04 | transitive dependency | GC03 → GG02 → GC04 |"));
     assert!(markdown.contains("71 direct all-of relationships"));
     assert!(markdown.contains("96 endpoint features"));
