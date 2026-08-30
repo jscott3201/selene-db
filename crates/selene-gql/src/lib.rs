@@ -92,7 +92,8 @@ pub use crate::runtime::{
     RequestExecutionInput, RequestParameter, RequestRuntimeHandle, RollbackOutcome, Session,
     SessionParameterValue, SharedPlanCache, SharedPlanCacheStats, StatementOutput,
     TransactionOutcome, TxContext, WarningSink, WriteOutcome, execute_pattern, execute_pipeline,
-    execute_statement, parse_session_close, parse_transaction_control, validate_parameter_value,
+    execute_statement, parse_graph_independent_session_control, parse_session_close,
+    parse_transaction_control, validate_parameter_value,
 };
 pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken, NodeScanBudget};
 

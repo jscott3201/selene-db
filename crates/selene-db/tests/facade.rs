@@ -452,6 +452,90 @@ fn schema_and_graph_controls_switch_then_reset_to_creation_defaults() {
 }
 
 #[test]
+fn stale_graph_selection_can_reset_to_live_creation_defaults() {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    let first = graph("recovery_home", "main");
+    let alternate = graph("recovery_alternate", "archive");
+    for schema_path in [schema("recovery_home"), schema("recovery_alternate")] {
+        catalog
+            .create_schema(&schema_path, CreatePolicy::Strict)
+            .unwrap();
+    }
+    for graph_path in [&first, &alternate] {
+        catalog
+            .create_graph(graph_path, None, CreatePolicy::Strict)
+            .unwrap();
+    }
+    let select_alternate = |session: &Session, name: &str| {
+        session
+            .execute("SESSION SET SCHEMA /recovery_alternate")
+            .unwrap();
+        session
+            .execute(&format!("SESSION SET PROPERTY GRAPH {name}"))
+            .unwrap();
+    };
+    let sequential = database.session(&first).unwrap();
+    select_alternate(&sequential, "archive");
+    catalog.drop_graph(&alternate, DropPolicy::Strict).unwrap();
+    sequential.execute("SESSION RESET SCHEMA").unwrap();
+    assert_eq!(
+        sequential.context().current_schema().path,
+        schema("recovery_home")
+    );
+    sequential.execute("SESSION RESET GRAPH").unwrap();
+    assert_eq!(sequential.context().current_graph().path, first);
+    assert_eq!(single_int(&sequential.execute("RETURN 1").unwrap()), 1);
+    let reset_all_graph = graph("recovery_alternate", "reset_all");
+    catalog
+        .create_graph(&reset_all_graph, None, CreatePolicy::Strict)
+        .unwrap();
+    let reset_all = database.session(&first).unwrap();
+    select_alternate(&reset_all, "reset_all");
+    reset_all
+        .execute("SESSION SET VALUE $answer INTEGER = 42")
+        .unwrap();
+    reset_all.execute("SESSION SET TIME ZONE '+01:00'").unwrap();
+    catalog
+        .drop_graph(&reset_all_graph, DropPolicy::Strict)
+        .unwrap();
+    reset_all
+        .execute("SESSION RESET ALL CHARACTERISTICS")
+        .unwrap();
+    assert_eq!(
+        reset_all.context().current_schema().path,
+        schema("recovery_home")
+    );
+    assert_eq!(reset_all.context().current_graph().path, first);
+    assert_eq!(reset_all.context().time_zone().seconds(), 0);
+    assert!(reset_all.context().parameters().is_empty());
+    assert_eq!(single_int(&reset_all.execute("RETURN 2").unwrap()), 2);
+
+    let atomic_graph = graph("recovery_alternate", "atomic");
+    catalog
+        .create_graph(&atomic_graph, None, CreatePolicy::Strict)
+        .unwrap();
+    let atomic = database.session(&first).unwrap();
+    select_alternate(&atomic, "atomic");
+    atomic
+        .execute("SESSION SET VALUE $answer INTEGER = 42")
+        .unwrap();
+    atomic.execute("SESSION SET TIME ZONE '+01:00'").unwrap();
+    catalog.drop_graph(&first, DropPolicy::Strict).unwrap();
+    let error = atomic
+        .execute("SESSION RESET ALL CHARACTERISTICS")
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::StaleSessionReference);
+    assert_eq!(
+        atomic.context().current_schema().path,
+        schema("recovery_alternate")
+    );
+    assert_eq!(atomic.context().current_graph().path, atomic_graph);
+    assert_eq!(atomic.context().time_zone().seconds(), 3_600);
+    assert_eq!(single_int(&atomic.execute("RETURN $answer").unwrap()), 42);
+}
+
+#[test]
 fn selection_changes_reject_active_transactions_and_close_releases_all_state() {
     let (database, path) = fixture();
     let catalog = database.catalog();

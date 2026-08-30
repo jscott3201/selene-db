@@ -179,6 +179,14 @@ mod tests {
         Request::with_params("RETURN $p", params)
     }
 
+    fn request_with_any(source: &str, value: Value) -> Request {
+        let mut params = RequestParams::new();
+        params
+            .insert("value", GeneralParameter::new(GqlType::Any, value).unwrap())
+            .unwrap();
+        Request::with_params(source, params)
+    }
+
     fn outcome_int(outcome: &RequestOutcome) -> i64 {
         let ExecutionOutcome::Rows { result, .. } = outcome.execution().unwrap() else {
             panic!("expected rows");
@@ -218,6 +226,24 @@ mod tests {
             11
         );
         assert_eq!(session.context.plan_cache_stats(), (2, 3));
+    }
+
+    #[test]
+    fn facade_cache_hits_revalidate_inline_parameter_declarations() {
+        let session = session();
+        let source = "MATCH (n:NoRows) RETURN $value::STRING";
+        let warm = session.execute_request(request_with_any(
+            source,
+            Value::String(selene_core::db_string("warm").unwrap()),
+        ));
+        assert_eq!(warm.execution().unwrap().row_count(), Some(0));
+
+        let replay = session.execute_request(request_with_any(source, Value::Int(7)));
+        assert_eq!(
+            replay.error().unwrap().gqlstatus().unwrap().as_str(),
+            "22G03"
+        );
+        assert_eq!(session.context.plan_cache_stats(), (1, 1));
     }
 
     #[test]

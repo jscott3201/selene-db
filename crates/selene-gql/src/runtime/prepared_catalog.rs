@@ -5,8 +5,9 @@ use std::{mem, panic::AssertUnwindSafe, sync::Arc};
 use selene_graph::write_txn::PreparedGraphCommit;
 
 use crate::{
-    CatalogObjectReference, DatabaseCatalogCommand, ExecutionPlan, GqlType, PipelineOp,
-    ProcedureRegistry, SessionOp, SessionSetGraphTarget, Statement, StatementCategory, TxOp, Value,
+    CatalogObjectReference, DatabaseCatalogCommand, ExecutionPlan, GqlType, ParameterUse,
+    PipelineOp, ProcedureRegistry, SessionOp, SessionResetTarget, SessionSetGraphTarget, Statement,
+    StatementCategory, TxOp, Value,
 };
 
 use super::{
@@ -26,6 +27,7 @@ use super::{
 pub struct PreparedCatalogRequest {
     source: Arc<str>,
     plan: Arc<ExecutionPlan>,
+    parameter_uses: Arc<[ParameterUse]>,
     request: RequestExecutionInput,
     graph_id: selene_core::GraphId,
     graph_generation: u64,
@@ -42,6 +44,7 @@ pub struct PreparedCatalogRequest {
 pub struct PreparedCatalogPlan {
     source: Arc<str>,
     plan: Arc<ExecutionPlan>,
+    parameter_uses: Arc<[ParameterUse]>,
     graph_id: selene_core::GraphId,
     graph_generation: u64,
     schema_version: u64,
@@ -151,6 +154,32 @@ pub fn parse_session_close(source: &str) -> Result<bool, ExecutorError> {
     Ok(matches!(statement, Statement::SessionClose { .. }))
 }
 
+/// Parse one graph-independent facade recovery control.
+///
+/// The normal parser still performs generated-profile admission. Only close
+/// and supported reset controls are transported without a selected graph; no
+/// value expression or catalog reference is evaluated here.
+#[doc(hidden)]
+pub fn parse_graph_independent_session_control(
+    source: &str,
+) -> Result<Option<PreparedSessionControl>, ExecutorError> {
+    let statement = crate::parse(source).map_err(|source| ExecutorError::Parse { source })?;
+    Ok(match statement {
+        Statement::SessionClose { .. } => Some(PreparedSessionControl::Close),
+        Statement::SessionReset { target, .. } => Some(match target {
+            SessionResetTarget::AllCharacteristics => {
+                PreparedSessionControl::ResetAllCharacteristics
+            }
+            SessionResetTarget::Schema => PreparedSessionControl::ResetSchema,
+            SessionResetTarget::Graph => PreparedSessionControl::ResetGraph,
+            SessionResetTarget::Parameters => PreparedSessionControl::ResetParameters,
+            SessionResetTarget::TimeZone => PreparedSessionControl::ResetTimeZone,
+            SessionResetTarget::Parameter(name) => PreparedSessionControl::ResetParameter(name),
+        }),
+        _ => None,
+    })
+}
+
 impl PreparedCatalogRequest {
     /// Return the selected-facade classification from the already analyzed plan.
     #[must_use]
@@ -184,6 +213,7 @@ impl PreparedCatalogRequest {
         PreparedCatalogPlan {
             source: Arc::clone(&self.source),
             plan: Arc::clone(&self.plan),
+            parameter_uses: Arc::clone(&self.parameter_uses),
             graph_id: self.graph_id,
             graph_generation: self.graph_generation,
             schema_version: self.schema_version,
@@ -243,17 +273,27 @@ impl PreparedCatalogRequest {
 }
 
 impl PreparedCatalogPlan {
-    /// Bind fresh per-request execution input without retaining prior values.
-    #[must_use]
-    pub fn bind(&self, request: RequestExecutionInput) -> PreparedCatalogRequest {
-        PreparedCatalogRequest {
+    /// Validate and bind fresh per-request input without retaining prior values.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same parameter-contract or reference diagnostic as a fresh
+    /// parse/analyze request preflight.
+    pub fn bind(
+        &self,
+        request: RequestExecutionInput,
+        graph: &selene_graph::SeleneGraph,
+    ) -> Result<PreparedCatalogRequest, ExecutorError> {
+        super::request::validate(&request, &self.parameter_uses, graph)?;
+        Ok(PreparedCatalogRequest {
             source: Arc::clone(&self.source),
             plan: Arc::clone(&self.plan),
+            parameter_uses: Arc::clone(&self.parameter_uses),
             request,
             graph_id: self.graph_id,
             graph_generation: self.graph_generation,
             schema_version: self.schema_version,
-        }
+        })
     }
 }
 
@@ -295,7 +335,11 @@ impl<'g> Session<'g> {
                 )
             });
         debug_assert!(prepared_graph.is_none());
-        let CatalogSessionOutput::Prepared(plan) = result? else {
+        let CatalogSessionOutput::Prepared {
+            plan,
+            parameter_uses,
+        } = result?
+        else {
             return Err(ExecutorError::ImplementationDefined {
                 detail: "selected request preparation did not return an owned plan",
             });
@@ -303,6 +347,7 @@ impl<'g> Session<'g> {
         Ok(PreparedCatalogRequest {
             source: Arc::from(source),
             plan,
+            parameter_uses,
             request,
             graph_id,
             graph_generation,
@@ -495,6 +540,23 @@ mod tests {
         ));
         assert!(parse_session_close(" SESSION CLOSE ").unwrap());
         assert!(!parse_session_close("RETURN 1").unwrap());
+        for source in [
+            "SESSION RESET",
+            "SESSION RESET SCHEMA",
+            "SESSION RESET GRAPH",
+        ] {
+            assert!(
+                parse_graph_independent_session_control(source)
+                    .unwrap()
+                    .is_some(),
+                "{source}"
+            );
+        }
+        assert!(
+            parse_graph_independent_session_control("SESSION SET TIME ZONE '+01:00'")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

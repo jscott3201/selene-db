@@ -26,9 +26,12 @@ pub(crate) enum ResolvedSessionControl {
     },
     SetSchema(SchemaDescriptor),
     SetGraph(GraphDescriptor),
-    ResetAllCharacteristics,
-    ResetSchema,
-    ResetGraph,
+    ResetAllCharacteristics {
+        schema: SchemaDescriptor,
+        graph: GraphDescriptor,
+    },
+    ResetSchema(SchemaDescriptor),
+    ResetGraph(GraphDescriptor),
     ResetParameters,
     ResetTimeZone,
     ResetParameter(selene_core::DbString),
@@ -41,9 +44,9 @@ impl ResolvedSessionControl {
             self,
             Self::SetSchema(_)
                 | Self::SetGraph(_)
-                | Self::ResetAllCharacteristics
-                | Self::ResetSchema
-                | Self::ResetGraph
+                | Self::ResetAllCharacteristics { .. }
+                | Self::ResetSchema(_)
+                | Self::ResetGraph(_)
         )
     }
 }
@@ -92,7 +95,13 @@ impl Session {
         };
         self.validate_context_snapshot(&snapshot)?;
         let generation = snapshot.generation();
-        let resolved = resolve_catalog_control(&snapshot, &self.context.current_schema(), control)?;
+        let resolved = resolve_catalog_control(
+            &snapshot,
+            &self.context.current_schema(),
+            &self.context.reset_schema_target(),
+            &self.context.reset_graph_target(),
+            control,
+        )?;
 
         if resolved.changes_selection()
             && slot.as_ref().is_some_and(|transaction| {
@@ -104,6 +113,52 @@ impl Session {
         {
             return Err(Error::active_transaction());
         }
+        self.context.apply_session_control(resolved, generation);
+        Ok(ExecutionOutcome::SUCCESSFUL_OMITTED)
+    }
+
+    pub(super) fn execute_graph_independent_session_control(
+        &self,
+        control: PreparedSessionControl,
+        slot: &mut TransactionCheckout<'_>,
+    ) -> Result<ExecutionOutcome> {
+        if matches!(control, PreparedSessionControl::Close) {
+            return self.execute_close(slot);
+        }
+        let changes_selection = match &control {
+            PreparedSessionControl::ResetAllCharacteristics
+            | PreparedSessionControl::ResetSchema
+            | PreparedSessionControl::ResetGraph => true,
+            PreparedSessionControl::ResetParameters
+            | PreparedSessionControl::ResetTimeZone
+            | PreparedSessionControl::ResetParameter(_) => false,
+            _ => {
+                return Err(Error::catalog_invariant(
+                    "graph-independent session control was not a reset",
+                ));
+            }
+        };
+        if changes_selection
+            && slot.as_ref().is_some_and(|transaction| {
+                matches!(
+                    transaction.descriptor().state(),
+                    TransactionState::Active | TransactionState::Failed
+                )
+            })
+        {
+            return Err(Error::active_transaction());
+        }
+        let snapshot = CatalogReadSnapshot {
+            state: self.inner.state.load_full(),
+        };
+        let generation = snapshot.generation();
+        let resolved = resolve_catalog_control(
+            &snapshot,
+            &self.context.current_schema(),
+            &self.context.reset_schema_target(),
+            &self.context.reset_graph_target(),
+            control,
+        )?;
         self.context.apply_session_control(resolved, generation);
         Ok(ExecutionOutcome::SUCCESSFUL_OMITTED)
     }
@@ -159,6 +214,8 @@ fn resolve_on_graph(
 fn resolve_catalog_control(
     snapshot: &CatalogReadSnapshot,
     current_schema: &SchemaDescriptor,
+    reset_schema: &SchemaDescriptor,
+    reset_graph: &GraphDescriptor,
     control: PreparedSessionControl,
 ) -> Result<ResolvedSessionControl> {
     Ok(match control {
@@ -192,10 +249,28 @@ fn resolve_catalog_control(
             | SessionSetGraphTarget::SchemaReference(_),
         ) => ResolvedSessionControl::NoOp,
         PreparedSessionControl::ResetAllCharacteristics => {
-            ResolvedSessionControl::ResetAllCharacteristics
+            if !snapshot.matches_schema_reference(reset_schema)
+                || !snapshot.matches_graph_reference(reset_graph)
+            {
+                return Err(Error::stale_session_reference());
+            }
+            ResolvedSessionControl::ResetAllCharacteristics {
+                schema: reset_schema.clone(),
+                graph: reset_graph.clone(),
+            }
         }
-        PreparedSessionControl::ResetSchema => ResolvedSessionControl::ResetSchema,
-        PreparedSessionControl::ResetGraph => ResolvedSessionControl::ResetGraph,
+        PreparedSessionControl::ResetSchema => {
+            if !snapshot.matches_schema_reference(reset_schema) {
+                return Err(Error::stale_session_reference());
+            }
+            ResolvedSessionControl::ResetSchema(reset_schema.clone())
+        }
+        PreparedSessionControl::ResetGraph => {
+            if !snapshot.matches_graph_reference(reset_graph) {
+                return Err(Error::stale_session_reference());
+            }
+            ResolvedSessionControl::ResetGraph(reset_graph.clone())
+        }
         PreparedSessionControl::ResetParameters => ResolvedSessionControl::ResetParameters,
         PreparedSessionControl::ResetTimeZone => ResolvedSessionControl::ResetTimeZone,
         PreparedSessionControl::ResetParameter(name) => {

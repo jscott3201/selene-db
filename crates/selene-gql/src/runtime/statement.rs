@@ -15,7 +15,7 @@ use super::statement_exec::{
 };
 use crate::{
     CatalogOp, DatabaseCatalogCommand, ExecutionPlan, LiveIndexCatalog, OptimizeContext,
-    PipelineOp, ProcedureRegistry, SourceSpan, StatementCategory, TxOp,
+    ParameterUse, PipelineOp, ProcedureRegistry, SourceSpan, StatementCategory, TxOp,
     analyze::analyze,
     ast::Statement,
     optimize,
@@ -47,7 +47,12 @@ pub enum CatalogSessionOutput {
     DatabaseCatalog(DatabaseCatalogCommand),
     /// A selected-facade request was compiled but deliberately not executed.
     #[doc(hidden)]
-    Prepared(Arc<ExecutionPlan>),
+    Prepared {
+        /// Optimized request-independent execution plan.
+        plan: Arc<ExecutionPlan>,
+        /// Analyzer-derived parameter-use contract for future request binds.
+        parameter_uses: Arc<[ParameterUse]>,
+    },
 }
 
 impl PartialEq for CatalogSessionOutput {
@@ -56,7 +61,9 @@ impl PartialEq for CatalogSessionOutput {
             (Self::Statement(left), Self::Statement(right)) => left == right,
             (Self::RequestOutcome(left), Self::RequestOutcome(right)) => left == right,
             (Self::DatabaseCatalog(left), Self::DatabaseCatalog(right)) => left == right,
-            (Self::Prepared(left), Self::Prepared(right)) => Arc::ptr_eq(left, right),
+            (Self::Prepared { plan: left, .. }, Self::Prepared { plan: right, .. }) => {
+                Arc::ptr_eq(left, right)
+            }
             _ => false,
         }
     }
@@ -465,6 +472,12 @@ impl Session<'_> {
         if let (Some(cache), Some(key)) = (call_plan_cache, call_plan_key) {
             cache.insert_with_source(key, source_arc, Arc::clone(&plan));
         }
+        if policy == SourceExecutionPolicy::PrepareCatalogSession {
+            return Ok(CatalogSessionOutput::Prepared {
+                plan,
+                parameter_uses: analyzed.parameters.into(),
+            });
+        }
         execute_source_plan(&plan, self, registry, policy)
     }
 
@@ -517,7 +530,7 @@ fn expect_executed(output: CatalogSessionOutput) -> Result<StatementOutput, Exec
         CatalogSessionOutput::Statement(output) => Ok(output),
         CatalogSessionOutput::RequestOutcome(_)
         | CatalogSessionOutput::DatabaseCatalog(_)
-        | CatalogSessionOutput::Prepared(_) => Err(ExecutorError::ImplementationDefined {
+        | CatalogSessionOutput::Prepared { .. } => Err(ExecutorError::ImplementationDefined {
             detail: "database-catalog interception is only enabled for the catalog-session policy",
         }),
     }
@@ -531,7 +544,9 @@ pub(super) fn execute_source_plan(
 ) -> Result<CatalogSessionOutput, ExecutorError> {
     ensure_source_policy(plan, policy)?;
     if policy == SourceExecutionPolicy::PrepareCatalogSession {
-        return Ok(CatalogSessionOutput::Prepared(Arc::new(plan.clone())));
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "prepared request plan is missing its analyzed parameter-use contract",
+        });
     }
     if policy == SourceExecutionPolicy::CatalogSession
         && let Some(command) = database_catalog_command(plan)

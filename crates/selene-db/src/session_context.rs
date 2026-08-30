@@ -479,6 +479,18 @@ impl SessionContext {
         self.state.borrow().characteristic_epoch
     }
 
+    pub(crate) fn reset_schema_target(&self) -> SchemaDescriptor {
+        self.home_schema
+            .clone()
+            .unwrap_or_else(|| self.default_schema.clone())
+    }
+
+    pub(crate) fn reset_graph_target(&self) -> GraphDescriptor {
+        self.home_graph
+            .clone()
+            .unwrap_or_else(|| self.default_graph.clone())
+    }
+
     pub(crate) fn has_parameter(&self, name: &DbString) -> bool {
         self.state.borrow().parameters.contains_key(name)
     }
@@ -521,15 +533,9 @@ impl SessionContext {
             }
             ResolvedSessionControl::SetSchema(schema) => state.current_schema = schema,
             ResolvedSessionControl::SetGraph(graph) => state.current_graph = graph,
-            ResolvedSessionControl::ResetAllCharacteristics => {
-                state.current_schema = self
-                    .home_schema
-                    .clone()
-                    .unwrap_or_else(|| self.default_schema.clone());
-                state.current_graph = self
-                    .home_graph
-                    .clone()
-                    .unwrap_or_else(|| self.default_graph.clone());
+            ResolvedSessionControl::ResetAllCharacteristics { schema, graph } => {
+                state.current_schema = schema;
+                state.current_graph = graph;
                 let displacement = TimeZoneDisplacement::from_profile();
                 let offset = jiff::tz::Offset::from_seconds(displacement.seconds())
                     .expect("generated session time-zone displacement is valid");
@@ -537,18 +543,8 @@ impl SessionContext {
                 state.time_zone_displacement = displacement;
                 state.parameters.clear();
             }
-            ResolvedSessionControl::ResetSchema => {
-                state.current_schema = self
-                    .home_schema
-                    .clone()
-                    .unwrap_or_else(|| self.default_schema.clone());
-            }
-            ResolvedSessionControl::ResetGraph => {
-                state.current_graph = self
-                    .home_graph
-                    .clone()
-                    .unwrap_or_else(|| self.default_graph.clone());
-            }
+            ResolvedSessionControl::ResetSchema(schema) => state.current_schema = schema,
+            ResolvedSessionControl::ResetGraph(graph) => state.current_graph = graph,
             ResolvedSessionControl::ResetParameters => state.parameters.clear(),
             ResolvedSessionControl::ResetTimeZone => {
                 let displacement = TimeZoneDisplacement::from_profile();
