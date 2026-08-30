@@ -185,8 +185,8 @@ fn anonymous_context_copies_generated_defaults_and_dependencies() {
     assert!(context.principal().is_none());
     assert!(context.home_schema().is_none());
     assert!(context.home_graph().is_none());
-    assert_eq!(context.current_schema(), &expected_schema);
-    assert_eq!(context.current_graph(), &expected_graph);
+    assert_eq!(context.current_schema(), expected_schema);
+    assert_eq!(context.current_graph(), expected_graph);
     assert_eq!(context.catalog_generation(), snapshot.generation());
     assert_eq!(context.time_zone().seconds(), 0);
     assert_eq!(

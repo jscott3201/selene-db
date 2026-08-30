@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::{DiagnosticBundle, Error, ExecutionOutcome, RequestParams, Result};
+use crate::{
+    DiagnosticBundle, Error, ExecutionOutcome, RequestParams, Result,
+    session::cache::RequestPlanKey,
+};
 
 /// One source statement and its request-scoped parameters.
 #[derive(Clone, Debug)]
@@ -115,16 +118,25 @@ impl RequestContext {
 
     pub(crate) fn lower_input(
         &self,
-        time_zone_seconds: i32,
-    ) -> Result<selene_gql::RequestExecutionInput> {
-        let offset = jiff::tz::Offset::from_seconds(time_zone_seconds)
-            .map_err(Error::invalid_request_time_zone)?;
-        Ok(selene_gql::RequestExecutionInput::with_runtime(
+        time_zone: jiff::tz::TimeZone,
+    ) -> selene_gql::RequestExecutionInput {
+        selene_gql::RequestExecutionInput::with_runtime(
             self.parameters.to_lower(),
             self.timestamp.lower(),
-            jiff::tz::TimeZone::fixed(offset),
+            time_zone,
             self.runtime.clone(),
-        ))
+        )
+    }
+
+    pub(crate) fn plan_key(&self, source: &str) -> RequestPlanKey {
+        RequestPlanKey {
+            source: source.to_owned(),
+            parameter_types: self
+                .parameters
+                .iter()
+                .map(|(name, parameter)| (name.to_owned(), parameter.declared_type().clone()))
+                .collect(),
+        }
     }
 }
 

@@ -323,10 +323,11 @@ session_command = { session_set | session_reset | session_close }
 session_close = { session_kw ~ close_kw }
 
 // section 7.1 <session set command> implemented branches.
-session_set            = { session_kw ~ set_kw ~ (session_set_binding_table_parameter | session_set_graph_parameter | session_set_graph | session_set_time_zone | session_set_value) }
+session_set            = { session_kw ~ set_kw ~ (session_set_binding_table_parameter | session_set_graph_parameter | session_set_schema | session_set_graph | session_set_time_zone | session_set_value) }
 session_set_binding_table_parameter = { param_ref ~ binding_kw ~ table_kw ~ (value_subquery_expr | param_ref | ident) }
 session_set_graph_parameter = { param_ref ~ property_kw? ~ graph_kw ~ (session_current_graph | param_ref) }
-session_set_graph      = { property_kw? ~ graph_kw ~ session_current_graph }
+session_set_schema     = { schema_kw ~ absolute_catalog_path }
+session_set_graph      = { property_kw? ~ graph_kw ~ (session_current_graph | graph_reference) }
 session_current_graph  = { current_property_graph_kw | current_graph_kw }
 session_set_time_zone  = { time_kw ~ zone_kw ~ string_lit }
 // <session set value parameter clause> ::= VALUE <session set parameter name>

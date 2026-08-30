@@ -8,6 +8,8 @@ use selene_profile::{current_profile_identity, current_session_defaults};
 use crate::{
     AuthorizationId, CatalogGeneration, Error, GeneralParameter, GraphDescriptor, GraphId,
     Principal, RequestContext, Result, SchemaDescriptor, SchemaId, Transaction, TransactionState,
+    session::cache::{DependencyStamp, RequestPlanKey, SessionPlanCache},
+    session::control::ResolvedSessionControl,
     transaction::DetachedTransaction,
 };
 
@@ -21,7 +23,7 @@ pub struct ProfileIdentity {
 }
 
 impl ProfileIdentity {
-    fn current() -> Self {
+    pub(crate) fn current() -> Self {
         let identity = current_profile_identity();
         Self {
             profile_id: identity.profile_id().to_owned(),
@@ -67,6 +69,10 @@ impl TimeZoneDisplacement {
         Self {
             seconds: current_session_defaults().time_zone().seconds(),
         }
+    }
+
+    pub(crate) const fn from_seconds(seconds: i32) -> Self {
+        Self { seconds }
     }
 
     /// Return the signed UTC displacement in seconds.
@@ -151,9 +157,11 @@ impl From<TransactionState> for TransactionSlotState {
 pub enum SessionTerminationState {
     /// The session accepts requests.
     Active,
+    /// The session rejects every future request.
+    Closed,
 }
 
-/// Immutable dependencies captured when a session is created.
+/// Snapshot of the session's current stable dependencies.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionDependencySummary {
     current_schema: SchemaId,
@@ -205,11 +213,18 @@ pub(crate) struct SessionContextParts {
     pub(crate) catalog_generation: CatalogGeneration,
 }
 
-#[derive(Default)]
 struct SessionState {
+    current_schema: SchemaDescriptor,
+    current_graph: GraphDescriptor,
+    catalog_generation: CatalogGeneration,
+    time_zone: jiff::tz::TimeZone,
+    time_zone_displacement: TimeZoneDisplacement,
     parameters: BTreeMap<DbString, GeneralParameter>,
     active_request: Option<Arc<RequestContext>>,
     transaction: Option<DetachedTransaction>,
+    termination: SessionTerminationState,
+    characteristic_epoch: u64,
+    plan_cache: SessionPlanCache,
 }
 
 pub(crate) struct ActiveRequestGuard<'a> {
@@ -236,6 +251,10 @@ impl TransactionCheckout<'_> {
         transaction: DetachedTransaction,
     ) -> Option<DetachedTransaction> {
         self.transaction.replace(transaction)
+    }
+
+    pub(crate) fn take(&mut self) -> Option<DetachedTransaction> {
+        self.transaction.take()
     }
 }
 
@@ -286,37 +305,39 @@ pub struct SessionContext {
     principal: Option<Principal>,
     home_schema: Option<SchemaDescriptor>,
     home_graph: Option<GraphDescriptor>,
-    current_schema: SchemaDescriptor,
-    current_graph: GraphDescriptor,
-    catalog_generation: CatalogGeneration,
-    dependencies: SessionDependencySummary,
-    time_zone: TimeZoneDisplacement,
+    default_schema: SchemaDescriptor,
+    default_graph: GraphDescriptor,
+    profile: ProfileIdentity,
     state: RefCell<SessionState>,
-    termination: SessionTerminationState,
 }
 
 impl SessionContext {
     pub(crate) fn new(parts: SessionContextParts) -> Self {
         let profile = ProfileIdentity::current();
-        let dependencies = SessionDependencySummary {
-            current_schema: parts.current_schema.id,
-            current_graph: parts.current_graph.id,
-            home_schema: parts.home_schema.as_ref().map(|schema| schema.id),
-            home_graph: parts.home_graph.as_ref().map(|graph| graph.id),
-            profile,
-        };
+        let displacement = TimeZoneDisplacement::from_profile();
+        let offset = jiff::tz::Offset::from_seconds(displacement.seconds())
+            .expect("generated session time-zone displacement is valid");
         Self {
             authorization_id: parts.authorization_id,
             principal: parts.principal,
             home_schema: parts.home_schema,
             home_graph: parts.home_graph,
-            current_schema: parts.current_schema,
-            current_graph: parts.current_graph,
-            catalog_generation: parts.catalog_generation,
-            dependencies,
-            time_zone: TimeZoneDisplacement::from_profile(),
-            state: RefCell::new(SessionState::default()),
-            termination: SessionTerminationState::Active,
+            default_schema: parts.current_schema.clone(),
+            default_graph: parts.current_graph.clone(),
+            profile,
+            state: RefCell::new(SessionState {
+                current_schema: parts.current_schema,
+                current_graph: parts.current_graph,
+                catalog_generation: parts.catalog_generation,
+                time_zone: jiff::tz::TimeZone::fixed(offset),
+                time_zone_displacement: displacement,
+                parameters: BTreeMap::new(),
+                active_request: None,
+                transaction: None,
+                termination: SessionTerminationState::Active,
+                characteristic_epoch: 0,
+                plan_cache: SessionPlanCache::default(),
+            }),
         }
     }
 
@@ -346,38 +367,45 @@ impl SessionContext {
 
     /// Return the copied current schema descriptor.
     #[must_use]
-    pub const fn current_schema(&self) -> &SchemaDescriptor {
-        &self.current_schema
+    pub fn current_schema(&self) -> SchemaDescriptor {
+        self.state.borrow().current_schema.clone()
     }
 
     /// Return the copied current graph descriptor.
     #[must_use]
-    pub const fn current_graph(&self) -> &GraphDescriptor {
-        &self.current_graph
+    pub fn current_graph(&self) -> GraphDescriptor {
+        self.state.borrow().current_graph.clone()
     }
 
-    /// Return the catalog generation observed at creation.
+    /// Return the catalog generation observed by the latest applied control.
     #[must_use]
-    pub const fn catalog_generation(&self) -> CatalogGeneration {
-        self.catalog_generation
+    pub fn catalog_generation(&self) -> CatalogGeneration {
+        self.state.borrow().catalog_generation
     }
 
-    /// Return the immutable catalog/profile dependency summary.
+    /// Return a snapshot of the current catalog/profile dependency summary.
     #[must_use]
-    pub const fn dependencies(&self) -> &SessionDependencySummary {
-        &self.dependencies
+    pub fn dependencies(&self) -> SessionDependencySummary {
+        let state = self.state.borrow();
+        SessionDependencySummary {
+            current_schema: state.current_schema.id,
+            current_graph: state.current_graph.id,
+            home_schema: self.home_schema.as_ref().map(|schema| schema.id),
+            home_graph: self.home_graph.as_ref().map(|graph| graph.id),
+            profile: self.profile.clone(),
+        }
     }
 
     /// Return the copied generated profile identity.
     #[must_use]
     pub const fn profile_identity(&self) -> &ProfileIdentity {
-        self.dependencies.profile_identity()
+        &self.profile
     }
 
-    /// Return the fixed session time-zone displacement.
+    /// Return the current session time-zone displacement.
     #[must_use]
-    pub const fn time_zone(&self) -> TimeZoneDisplacement {
-        self.time_zone
+    pub fn time_zone(&self) -> TimeZoneDisplacement {
+        self.state.borrow().time_zone_displacement
     }
 
     /// Return a count snapshot of the current session parameter dictionary.
@@ -435,12 +463,117 @@ impl SessionContext {
 
     /// Return the session termination state.
     #[must_use]
-    pub const fn termination(&self) -> SessionTerminationState {
-        self.termination
+    pub fn termination(&self) -> SessionTerminationState {
+        self.state.borrow().termination
     }
 
     pub(crate) fn parameter_snapshot(&self) -> BTreeMap<DbString, GeneralParameter> {
         self.state.borrow().parameters.clone()
+    }
+
+    pub(crate) fn time_zone_value(&self) -> jiff::tz::TimeZone {
+        self.state.borrow().time_zone.clone()
+    }
+
+    pub(crate) fn characteristic_epoch(&self) -> u64 {
+        self.state.borrow().characteristic_epoch
+    }
+
+    pub(crate) fn has_parameter(&self, name: &DbString) -> bool {
+        self.state.borrow().parameters.contains_key(name)
+    }
+
+    pub(crate) fn cached_plan(
+        &self,
+        key: &RequestPlanKey,
+        stamp: &DependencyStamp,
+    ) -> Option<selene_gql::PreparedCatalogPlan> {
+        self.state.borrow_mut().plan_cache.lookup(key, stamp)
+    }
+
+    pub(crate) fn cache_plan(
+        &self,
+        key: RequestPlanKey,
+        stamp: DependencyStamp,
+        plan: selene_gql::PreparedCatalogPlan,
+    ) {
+        self.state.borrow_mut().plan_cache.insert(key, stamp, plan);
+    }
+
+    pub(crate) fn apply_session_control(
+        &self,
+        control: ResolvedSessionControl,
+        catalog_generation: CatalogGeneration,
+    ) {
+        let mut state = self.state.borrow_mut();
+        match control {
+            ResolvedSessionControl::NoOp => return,
+            ResolvedSessionControl::SetValue { name, parameter } => {
+                state.parameters.insert(name, parameter);
+            }
+            ResolvedSessionControl::SetTimeZone {
+                zone,
+                displacement_seconds,
+            } => {
+                state.time_zone = zone;
+                state.time_zone_displacement =
+                    TimeZoneDisplacement::from_seconds(displacement_seconds);
+            }
+            ResolvedSessionControl::SetSchema(schema) => state.current_schema = schema,
+            ResolvedSessionControl::SetGraph(graph) => state.current_graph = graph,
+            ResolvedSessionControl::ResetAllCharacteristics => {
+                state.current_schema = self
+                    .home_schema
+                    .clone()
+                    .unwrap_or_else(|| self.default_schema.clone());
+                state.current_graph = self
+                    .home_graph
+                    .clone()
+                    .unwrap_or_else(|| self.default_graph.clone());
+                let displacement = TimeZoneDisplacement::from_profile();
+                let offset = jiff::tz::Offset::from_seconds(displacement.seconds())
+                    .expect("generated session time-zone displacement is valid");
+                state.time_zone = jiff::tz::TimeZone::fixed(offset);
+                state.time_zone_displacement = displacement;
+                state.parameters.clear();
+            }
+            ResolvedSessionControl::ResetSchema => {
+                state.current_schema = self
+                    .home_schema
+                    .clone()
+                    .unwrap_or_else(|| self.default_schema.clone());
+            }
+            ResolvedSessionControl::ResetGraph => {
+                state.current_graph = self
+                    .home_graph
+                    .clone()
+                    .unwrap_or_else(|| self.default_graph.clone());
+            }
+            ResolvedSessionControl::ResetParameters => state.parameters.clear(),
+            ResolvedSessionControl::ResetTimeZone => {
+                let displacement = TimeZoneDisplacement::from_profile();
+                let offset = jiff::tz::Offset::from_seconds(displacement.seconds())
+                    .expect("generated session time-zone displacement is valid");
+                state.time_zone = jiff::tz::TimeZone::fixed(offset);
+                state.time_zone_displacement = displacement;
+            }
+            ResolvedSessionControl::ResetParameter(name) => {
+                state.parameters.remove(&name);
+            }
+            ResolvedSessionControl::Close => {
+                state.parameters.clear();
+                state.plan_cache.clear();
+                state.termination = SessionTerminationState::Closed;
+            }
+        }
+        state.catalog_generation = catalog_generation;
+        state.plan_cache.clear();
+        state.characteristic_epoch = state.characteristic_epoch.saturating_add(1);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn plan_cache_stats(&self) -> (u64, u64) {
+        self.state.borrow().plan_cache.stats()
     }
 
     pub(crate) fn set_parameter(
@@ -448,11 +581,21 @@ impl SessionContext {
         name: DbString,
         parameter: GeneralParameter,
     ) -> Option<GeneralParameter> {
-        self.state.borrow_mut().parameters.insert(name, parameter)
+        let mut state = self.state.borrow_mut();
+        let previous = state.parameters.insert(name, parameter);
+        state.plan_cache.clear();
+        state.characteristic_epoch = state.characteristic_epoch.saturating_add(1);
+        previous
     }
 
     pub(crate) fn remove_parameter(&self, name: &str) -> Option<GeneralParameter> {
-        self.state.borrow_mut().parameters.remove(name)
+        let mut state = self.state.borrow_mut();
+        let removed = state.parameters.remove(name);
+        if removed.is_some() {
+            state.plan_cache.clear();
+            state.characteristic_epoch = state.characteristic_epoch.saturating_add(1);
+        }
+        removed
     }
 
     pub(crate) fn checkout_transaction(&self) -> TransactionCheckout<'_> {
@@ -468,6 +611,9 @@ impl SessionContext {
         context: Arc<RequestContext>,
     ) -> Result<ActiveRequestGuard<'_>> {
         let mut state = self.state.borrow_mut();
+        if state.termination == SessionTerminationState::Closed {
+            return Err(Error::session_closed());
+        }
         if state.active_request.is_some() {
             return Err(Error::request_already_active());
         }

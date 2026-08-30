@@ -5,8 +5,8 @@ use std::{mem, panic::AssertUnwindSafe, sync::Arc};
 use selene_graph::write_txn::PreparedGraphCommit;
 
 use crate::{
-    DatabaseCatalogCommand, ExecutionPlan, PipelineOp, ProcedureRegistry, Statement,
-    StatementCategory, TxOp,
+    CatalogObjectReference, DatabaseCatalogCommand, ExecutionPlan, GqlType, PipelineOp,
+    ProcedureRegistry, SessionOp, SessionSetGraphTarget, Statement, StatementCategory, TxOp, Value,
 };
 
 use super::{
@@ -32,6 +32,21 @@ pub struct PreparedCatalogRequest {
     schema_version: u64,
 }
 
+/// Request-independent selected-facade plan suitable for facade-owned reuse.
+///
+/// The facade must validate its complete dependency stamp before binding a new
+/// [`RequestExecutionInput`]. This object intentionally retains no request
+/// parameter values, timestamp, cancellation token, or warning sink.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct PreparedCatalogPlan {
+    source: Arc<str>,
+    plan: Arc<ExecutionPlan>,
+    graph_id: selene_core::GraphId,
+    graph_generation: u64,
+    schema_version: u64,
+}
+
 /// Hidden selected-facade statement classification retained after one compile pass.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,6 +61,53 @@ pub enum PreparedCatalogRequestKind {
     Maintenance,
     /// Bare transaction demarcation handled by the facade state machine.
     TransactionControl(PreparedTransactionControl),
+    /// Session control validated and applied by the persistent facade session.
+    SessionControl,
+}
+
+/// Fully evaluated session control returned to the persistent facade.
+///
+/// Catalog references remain unresolved until the facade captures one catalog
+/// read snapshot. No variant mutates the transient lower-engine session.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub enum PreparedSessionControl {
+    /// An `IF NOT EXISTS` assignment whose target already exists.
+    NoOp,
+    /// Bind one evaluated scalar session parameter.
+    SetValue {
+        /// Database-string parameter name without the leading `$`.
+        param: selene_core::DbString,
+        /// Declared type, or `ANY` when the source omitted one.
+        declared_type: GqlType,
+        /// Evaluated parameter value.
+        value: Value,
+    },
+    /// Replace the session time zone.
+    SetTimeZone {
+        /// Parsed IANA, POSIX, or fixed-offset time zone.
+        zone: jiff::tz::TimeZone,
+        /// Offset at the immutable request timestamp for facade diagnostics.
+        displacement_seconds: i32,
+    },
+    /// Resolve and select a schema through the facade catalog.
+    SetSchema(CatalogObjectReference),
+    /// Resolve and select a graph through the facade catalog.
+    SetGraph(SessionSetGraphTarget),
+    /// Reset all session characteristics.
+    ResetAllCharacteristics,
+    /// Reset the current schema.
+    ResetSchema,
+    /// Reset the current graph.
+    ResetGraph,
+    /// Reset all session parameters.
+    ResetParameters,
+    /// Reset the session time zone.
+    ResetTimeZone,
+    /// Reset one named session parameter.
+    ResetParameter(selene_core::DbString),
+    /// Terminate the persistent facade session.
+    Close,
 }
 
 /// Hidden bare transaction operation classified from the prepared plan.
@@ -79,6 +141,16 @@ pub fn parse_transaction_control(
     })
 }
 
+/// Parse only enough source to recognize a bare `SESSION CLOSE`.
+///
+/// This graph-independent path lets the facade release transaction state and
+/// terminate even when its formerly selected graph has been dropped.
+#[doc(hidden)]
+pub fn parse_session_close(source: &str) -> Result<bool, ExecutorError> {
+    let statement = crate::parse(source).map_err(|source| ExecutorError::Parse { source })?;
+    Ok(matches!(statement, Statement::SessionClose { .. }))
+}
+
 impl PreparedCatalogRequest {
     /// Return the selected-facade classification from the already analyzed plan.
     #[must_use]
@@ -102,9 +174,34 @@ impl PreparedCatalogRequest {
                     },
                 )
             }
-            StatementCategory::SessionControl => {
-                unreachable!("selected session controls are rejected during preparation")
-            }
+            StatementCategory::SessionControl => PreparedCatalogRequestKind::SessionControl,
+        }
+    }
+
+    /// Return a request-independent plan for facade-owned dependency-stamped reuse.
+    #[must_use]
+    pub fn cached_plan(&self) -> PreparedCatalogPlan {
+        PreparedCatalogPlan {
+            source: Arc::clone(&self.source),
+            plan: Arc::clone(&self.plan),
+            graph_id: self.graph_id,
+            graph_generation: self.graph_generation,
+            schema_version: self.schema_version,
+        }
+    }
+
+    /// Return the target and guard for a session-value assignment.
+    #[must_use]
+    pub fn session_set_value_target(&self) -> Option<(&selene_core::DbString, bool)> {
+        match self.plan.pipeline.as_slice() {
+            [
+                PipelineOp::Session(SessionOp::SetValue {
+                    param,
+                    if_not_exists,
+                    ..
+                }),
+            ] => Some((param, *if_not_exists)),
+            _ => None,
         }
     }
 
@@ -142,6 +239,21 @@ impl PreparedCatalogRequest {
     #[must_use]
     pub const fn schema_version(&self) -> u64 {
         self.schema_version
+    }
+}
+
+impl PreparedCatalogPlan {
+    /// Bind fresh per-request execution input without retaining prior values.
+    #[must_use]
+    pub fn bind(&self, request: RequestExecutionInput) -> PreparedCatalogRequest {
+        PreparedCatalogRequest {
+            source: Arc::clone(&self.source),
+            plan: Arc::clone(&self.plan),
+            request,
+            graph_id: self.graph_id,
+            graph_generation: self.graph_generation,
+            schema_version: self.schema_version,
+        }
     }
 }
 
@@ -206,6 +318,28 @@ impl<'g> Session<'g> {
         registry: &dyn ProcedureRegistry,
     ) -> Result<PreparedCatalogRequest, ExecutorError> {
         self.prepare_source_catalog_request(&prepared.source, registry, prepared.request)
+    }
+
+    /// Evaluate and validate one selected session control without mutating the
+    /// transient lower-engine session.
+    #[doc(hidden)]
+    pub fn resolve_prepared_session_control(
+        &mut self,
+        prepared: PreparedCatalogRequest,
+        registry: &dyn ProcedureRegistry,
+        skip_if_exists: bool,
+    ) -> Result<PreparedSessionControl, ExecutorError> {
+        let [PipelineOp::Session(op)] = prepared.plan.pipeline.as_slice() else {
+            return Err(ExecutorError::ImplementationDefined {
+                detail: "session-control plan did not contain exactly one session operation",
+            });
+        };
+        let (result, _, _, prepared_graph) =
+            self.with_facade_request(prepared.request, false, |session| {
+                super::pipeline::session::prepare(op, session, registry, skip_if_exists)
+            });
+        debug_assert!(prepared_graph.is_none());
+        result
     }
 
     /// Execute a prepared request without enabling unpublished writes.
@@ -359,6 +493,8 @@ mod tests {
             parse_transaction_control("RETURN (").unwrap_err(),
             ExecutorError::Parse { .. }
         ));
+        assert!(parse_session_close(" SESSION CLOSE ").unwrap());
+        assert!(!parse_session_close("RETURN 1").unwrap());
     }
 
     #[test]

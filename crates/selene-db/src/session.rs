@@ -8,6 +8,8 @@ use crate::{
     params::validated_parameter_name,
 };
 
+pub(crate) mod cache;
+pub(crate) mod control;
 mod execution;
 mod transaction;
 
@@ -30,8 +32,10 @@ mod transaction;
 /// ```
 ///
 /// Transaction controls use facade-owned detached state and the single Part 1
-/// publication authority. `SESSION` controls remain deferred. Relative graph
-/// and graph-type references resolve against the selected graph's schema.
+/// publication authority. Selected `SESSION SET`/`RESET` controls persist in
+/// facade state, while `SESSION CLOSE` releases transaction state and rejects
+/// future requests. Relative graph and graph-type references resolve against
+/// the current session schema.
 /// Successful catalog statements return
 /// [`ExecutionOutcome::OmittedResult`]; their failures carry the same
 /// [`ErrorKind`](crate::ErrorKind) and GQLSTATUS as the equivalent
@@ -70,6 +74,9 @@ impl Session {
         name: &str,
         parameter: GeneralParameter,
     ) -> Result<Option<GeneralParameter>> {
+        if self.context.termination() == crate::SessionTerminationState::Closed {
+            return Err(crate::Error::session_closed());
+        }
         let name = validated_parameter_name(name)?;
         Ok(self.context.set_parameter(name, parameter))
     }
@@ -80,6 +87,9 @@ impl Session {
     ///
     /// Returns an invalid-name diagnostic when `name` would not parse after `$`.
     pub fn remove_parameter(&self, name: &str) -> Result<Option<GeneralParameter>> {
+        if self.context.termination() == crate::SessionTerminationState::Closed {
+            return Err(crate::Error::session_closed());
+        }
         let name = validated_parameter_name(name)?;
         Ok(self.context.remove_parameter(name.as_str()))
     }
@@ -139,8 +149,9 @@ mod tests {
     use std::{panic::AssertUnwindSafe, sync::Arc};
 
     use crate::{
-        CreatePolicy, Database, ErrorKind, ObjectPath, Request, RequestOutcome, RequestSlotState,
-        RequestTimestamp, SchemaPath,
+        CreatePolicy, Database, ErrorKind, ExecutionOutcome, GeneralParameter, GqlType, ObjectPath,
+        Request, RequestOutcome, RequestParams, RequestSlotState, RequestTimestamp, SchemaPath,
+        Value,
     };
 
     fn session() -> super::Session {
@@ -155,6 +166,58 @@ mod tests {
             .create_graph(&graph, None, CreatePolicy::Strict)
             .unwrap();
         database.session(&graph).unwrap()
+    }
+
+    fn request_with_int(value: i64) -> Request {
+        let mut params = RequestParams::new();
+        params
+            .insert(
+                "p",
+                GeneralParameter::new(GqlType::Integer, Value::Int(value)).unwrap(),
+            )
+            .unwrap();
+        Request::with_params("RETURN $p", params)
+    }
+
+    fn outcome_int(outcome: &RequestOutcome) -> i64 {
+        let ExecutionOutcome::Rows { result, .. } = outcome.execution().unwrap() else {
+            panic!("expected rows");
+        };
+        let Value::Int(value) = result.rows()[0].values()[0] else {
+            panic!("expected integer");
+        };
+        value
+    }
+
+    #[test]
+    fn facade_cache_hits_rebind_request_values_and_misses_on_catalog_generation() {
+        let session = session();
+        assert_eq!(session.context.plan_cache_stats(), (0, 0));
+        session.execute("RETURN 1").unwrap();
+        session.execute("RETURN 1").unwrap();
+        assert_eq!(session.context.plan_cache_stats(), (1, 1));
+
+        assert_eq!(
+            outcome_int(&session.execute_request(request_with_int(7))),
+            7
+        );
+        assert_eq!(
+            outcome_int(&session.execute_request(request_with_int(9))),
+            9
+        );
+        assert_eq!(session.context.plan_cache_stats(), (2, 2));
+
+        crate::Catalog::new(Arc::clone(&session.inner))
+            .create_schema(
+                &SchemaPath::regular("selene", "cache_generation").unwrap(),
+                CreatePolicy::Strict,
+            )
+            .unwrap();
+        assert_eq!(
+            outcome_int(&session.execute_request(request_with_int(11))),
+            11
+        );
+        assert_eq!(session.context.plan_cache_stats(), (2, 3));
     }
 
     #[test]

@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GS05
+// expects: parse-ok
+SESSION RESET SCHEMA

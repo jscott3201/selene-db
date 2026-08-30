@@ -4,11 +4,17 @@ use pest::iterators::Pair;
 use selene_profile::FeatureId;
 
 use crate::{
-    ast::{SessionResetTarget, SessionSetGraphTarget, Statement},
+    ast::{
+        CatalogObjectReference, CatalogPathSegment, IdentifierForm, SessionResetTarget,
+        SessionSetGraphTarget, Statement,
+    },
     error::ParserError,
 };
 
-use super::{Rule, db_string_param, expr, first_child, span, unexpected_pair, unsupported_feature};
+use super::{
+    Rule, db_string_pair, db_string_param, expr, first_child, span, unexpected_pair,
+    unsupported_feature,
+};
 
 /// Build a `session_command` parse tree into a session-control [`Statement`].
 pub(super) fn build_session_command(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -31,6 +37,7 @@ fn build_session_set(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
                 child.as_rule(),
                 Rule::session_set_binding_table_parameter
                     | Rule::session_set_graph_parameter
+                    | Rule::session_set_schema
                     | Rule::session_set_graph
                     | Rule::session_set_time_zone
                     | Rule::session_set_value
@@ -42,11 +49,30 @@ fn build_session_set(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
             build_session_set_binding_table_parameter(inner)
         }
         Rule::session_set_graph_parameter => build_session_set_graph_parameter(inner),
+        Rule::session_set_schema => build_session_set_schema(inner),
         Rule::session_set_graph => build_session_set_graph(inner),
         Rule::session_set_time_zone => build_session_set_time_zone(inner),
         Rule::session_set_value => build_session_set_value(inner),
         _ => Err(unexpected_pair(inner, "expected SESSION SET target")),
     }
+}
+
+fn build_session_set_schema(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
+    let source_span = span(&pair);
+    let reference = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::absolute_catalog_path)
+        .ok_or_else(|| {
+            ParserError::syntax(
+                "SESSION SET SCHEMA is missing a schema reference",
+                source_span,
+                None,
+            )
+        })?;
+    Ok(Statement::SessionSetGraph {
+        target: SessionSetGraphTarget::SchemaReference(build_absolute_reference(reference)?),
+        span: source_span,
+    })
 }
 
 fn build_session_set_binding_table_parameter(
@@ -88,7 +114,12 @@ fn build_session_set_graph(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
     let source_span = span(&pair);
     let target_pair = pair
         .into_inner()
-        .find(|child| child.as_rule() == Rule::session_current_graph)
+        .find(|child| {
+            matches!(
+                child.as_rule(),
+                Rule::session_current_graph | Rule::graph_reference
+            )
+        })
         .ok_or_else(|| {
             ParserError::syntax(
                 "SESSION SET GRAPH is missing a current graph expression",
@@ -96,13 +127,19 @@ fn build_session_set_graph(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
                 None,
             )
         })?;
-    let target = if target_pair
-        .as_str()
-        .eq_ignore_ascii_case("CURRENT_PROPERTY_GRAPH")
-    {
-        SessionSetGraphTarget::CurrentPropertyGraph
-    } else {
-        SessionSetGraphTarget::CurrentGraph
+    let target = match target_pair.as_rule() {
+        Rule::session_current_graph
+            if target_pair
+                .as_str()
+                .eq_ignore_ascii_case("CURRENT_PROPERTY_GRAPH") =>
+        {
+            SessionSetGraphTarget::CurrentPropertyGraph
+        }
+        Rule::session_current_graph => SessionSetGraphTarget::CurrentGraph,
+        Rule::graph_reference => {
+            SessionSetGraphTarget::CatalogReference(build_graph_reference(target_pair)?)
+        }
+        _ => unreachable!("target filter admits current graph or graph reference"),
     };
     Ok(Statement::SessionSetGraph {
         target,
@@ -205,12 +242,8 @@ fn build_session_reset(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     };
     let inner = first_child(args)?;
     let target = match inner.as_rule() {
-        Rule::session_reset_schema => {
-            return Err(unsupported_feature(&inner, FeatureId::GS05));
-        }
-        Rule::session_reset_graph => {
-            return Err(unsupported_feature(&inner, FeatureId::GS06));
-        }
+        Rule::session_reset_schema => SessionResetTarget::Schema,
+        Rule::session_reset_graph => SessionResetTarget::Graph,
         Rule::session_reset_time_zone => SessionResetTarget::TimeZone,
         Rule::session_reset_all => reset_all_target(&inner),
         Rule::session_reset_parameter => {
@@ -231,6 +264,53 @@ fn build_session_reset(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     Ok(Statement::SessionReset {
         target,
         span: source_span,
+    })
+}
+
+fn build_graph_reference(pair: Pair<'_, Rule>) -> Result<CatalogObjectReference, ParserError> {
+    let source_span = span(&pair);
+    let inner = first_child(pair)?;
+    match inner.as_rule() {
+        Rule::absolute_catalog_path => build_absolute_reference(inner),
+        Rule::ident => Ok(CatalogObjectReference {
+            absolute: false,
+            segments: vec![catalog_segment(inner)?],
+            span: source_span,
+        }),
+        _ => Err(unexpected_pair(inner, "unexpected graph reference child")),
+    }
+}
+
+fn build_absolute_reference(pair: Pair<'_, Rule>) -> Result<CatalogObjectReference, ParserError> {
+    let source_span = span(&pair);
+    let segments = pair
+        .into_inner()
+        .filter(|child| child.as_rule() == Rule::ident)
+        .map(catalog_segment)
+        .collect::<Result<Vec<_>, _>>()?;
+    if segments.is_empty() {
+        return Err(ParserError::syntax(
+            "catalog path has no segments",
+            source_span,
+            None,
+        ));
+    }
+    Ok(CatalogObjectReference {
+        absolute: true,
+        segments,
+        span: source_span,
+    })
+}
+
+fn catalog_segment(pair: Pair<'_, Rule>) -> Result<CatalogPathSegment, ParserError> {
+    let form = if pair.as_str().starts_with(['"', '`']) {
+        IdentifierForm::Delimited
+    } else {
+        IdentifierForm::Regular
+    };
+    Ok(CatalogPathSegment {
+        name: db_string_pair(pair)?,
+        form,
     })
 }
 

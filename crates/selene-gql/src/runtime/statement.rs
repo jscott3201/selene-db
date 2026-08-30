@@ -561,7 +561,9 @@ fn ensure_source_policy(
         SourceExecutionPolicy::CatalogSession | SourceExecutionPolicy::PrepareCatalogSession
     ) {
         let feature = match plan.category {
-            StatementCategory::SessionControl => {
+            StatementCategory::SessionControl
+                if policy == SourceExecutionPolicy::CatalogSession =>
+            {
                 Some("session control in a selected facade session")
             }
             StatementCategory::TransactionControl
@@ -572,7 +574,9 @@ fn ensure_source_policy(
             StatementCategory::Maintenance if policy == SourceExecutionPolicy::CatalogSession => {
                 Some("maintenance outside the selected facade detached-maintenance boundary")
             }
-            StatementCategory::TransactionControl | StatementCategory::Maintenance => None,
+            StatementCategory::SessionControl
+            | StatementCategory::TransactionControl
+            | StatementCategory::Maintenance => None,
             StatementCategory::ReadOnly
             | StatementCategory::DataModifying
             | StatementCategory::CatalogModifying => None,

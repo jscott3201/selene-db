@@ -4,6 +4,9 @@ use super::*;
 fn implication_consistent_session_features_are_supported() {
     for id in [
         FeatureId::GS03,
+        FeatureId::GS04,
+        FeatureId::GS05,
+        FeatureId::GS06,
         FeatureId::GS07,
         FeatureId::GS08,
         FeatureId::GS15,
@@ -14,11 +17,11 @@ fn implication_consistent_session_features_are_supported() {
 }
 
 #[test]
-fn reset_all_is_admitted_independently_from_runtime_status() {
+fn reset_all_is_supported_with_all_implied_reset_features() {
     let record = capability(FeatureId::GS04).expect("GS04 capability");
-    assert_eq!(record.status, CapabilityStatus::Unsupported);
+    assert_eq!(record.status, CapabilityStatus::Supported);
     assert_eq!(record.flagger_status, FlaggerStatus::Accepted);
-    assert!(!record.non_support_rationale.is_empty());
+    assert!(record.non_support_rationale.is_empty());
     selene_gql::parse("SESSION RESET ALL CHARACTERISTICS").expect("GS04 syntax is admitted");
 }
 
@@ -27,8 +30,6 @@ fn deferred_session_features_have_d1_rationale() {
     for id in [
         FeatureId::GS01,
         FeatureId::GS02,
-        FeatureId::GS05,
-        FeatureId::GS06,
         FeatureId::GS10,
         FeatureId::GS11,
         FeatureId::GS12,

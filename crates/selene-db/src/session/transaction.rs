@@ -188,7 +188,9 @@ impl Session {
     }
 
     fn ensure_no_active_request(&self) -> Result<()> {
-        if self.context.current_request().is_some() {
+        if self.context.termination() == crate::SessionTerminationState::Closed {
+            Err(Error::session_closed())
+        } else if self.context.current_request().is_some() {
             Err(Error::request_already_active())
         } else {
             Ok(())

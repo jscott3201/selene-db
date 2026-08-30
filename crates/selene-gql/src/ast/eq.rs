@@ -67,9 +67,15 @@ fn scrub_statement(statement: &mut Statement) {
             *span = SourceSpan::default();
             *zone_source_kind = CharacterStringLiteralKind::Escaped;
         }
-        Statement::SessionSetGraph { span, .. }
-        | Statement::SessionReset { span, .. }
-        | Statement::SessionClose { span } => {
+        Statement::SessionSetGraph { target, span } => {
+            *span = SourceSpan::default();
+            if let crate::SessionSetGraphTarget::CatalogReference(reference)
+            | crate::SessionSetGraphTarget::SchemaReference(reference) = target
+            {
+                reference.span = SourceSpan::default();
+            }
+        }
+        Statement::SessionReset { span, .. } | Statement::SessionClose { span } => {
             *span = SourceSpan::default();
         }
     }

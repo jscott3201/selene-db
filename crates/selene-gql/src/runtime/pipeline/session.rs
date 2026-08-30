@@ -1,7 +1,9 @@
 //! Session-control statement executor (ISO/IEC 39075:2024 section 7).
 //!
-//! Each session command mutates [`Session`] state directly and returns
-//! [`StatementOutput::Empty`]. `SESSION SET VALUE` evaluates its right-hand
+//! Bare lower-engine commands mutate [`Session`] state directly and return
+//! [`StatementOutput::Empty`]. Selected facade commands use [`prepare`] to
+//! validate and evaluate without mutating that transient session.
+//! `SESSION SET VALUE` evaluates its right-hand
 //! side against an empty binding row (the value is restricted to a
 //! `<value specification>`, so GS14 is runtime-unsupported) and binds the result as a
 //! session-local parameter. `SESSION SET TIME ZONE` parses the time-zone
@@ -15,8 +17,8 @@ use crate::{
     GqlType, ImplDefinedCaps, ProcedureRegistry, SessionOp, SourceSpan, ValueExpr,
     plan::SubqueryRegistry,
     runtime::{
-        Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError, Session,
-        StatementOutput, TxContext, evaluator,
+        Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError,
+        PreparedSessionControl, Session, StatementOutput, TxContext, evaluator,
     },
 };
 
@@ -43,6 +45,17 @@ pub(crate) fn execute(
             *span,
         ),
         SessionOp::SetTimeZone { zone, span } => set_time_zone(session, zone, *span),
+        SessionOp::SetSchema { span, .. } => Err(ExecutorError::FeatureNotSupportedYet {
+            feature: "catalog schema switching requires a selected facade session",
+            span: *span,
+        }),
+        SessionOp::SetGraph {
+            target: crate::SessionSetGraphTarget::CatalogReference(_),
+            span,
+        } => Err(ExecutorError::FeatureNotSupportedYet {
+            feature: "catalog graph switching requires a selected facade session",
+            span: *span,
+        }),
         SessionOp::SetGraph { .. } => {
             // D1 has exactly one graph; both current-graph expressions resolve
             // to the session's embedded graph and leave state unchanged.
@@ -50,6 +63,12 @@ pub(crate) fn execute(
         }
         SessionOp::ResetAllCharacteristics { .. } => {
             session.reset_characteristics();
+            Ok(StatementOutput::Empty)
+        }
+        SessionOp::ResetSchema { .. } | SessionOp::ResetGraph { .. } => {
+            // Persistent schema/graph characteristics are facade-owned. A
+            // bare lower session has one fixed graph, so both resets are a
+            // truthful no-op at this lower-engine seam.
             Ok(StatementOutput::Empty)
         }
         SessionOp::ResetParameters { .. } => {
@@ -69,6 +88,68 @@ pub(crate) fn execute(
             Ok(StatementOutput::Empty)
         }
     }
+}
+
+/// Evaluate and validate one facade-owned session operation without mutating
+/// the transient lower-engine session.
+pub(crate) fn prepare(
+    op: &SessionOp,
+    session: &Session<'_>,
+    registry: &dyn ProcedureRegistry,
+    skip_if_exists: bool,
+) -> Result<PreparedSessionControl, ExecutorError> {
+    Ok(match op {
+        SessionOp::SetValue {
+            param,
+            declared_type,
+            value,
+            span,
+            ..
+        } => {
+            if skip_if_exists {
+                return Ok(PreparedSessionControl::NoOp);
+            }
+            let evaluated = evaluate_constant(session, registry, value)?;
+            if let Some(declared_type) = declared_type {
+                crate::runtime::parameter_type::validate_declared_type(
+                    param.clone(),
+                    &evaluated,
+                    declared_type,
+                    *span,
+                )?;
+            }
+            PreparedSessionControl::SetValue {
+                param: param.clone(),
+                declared_type: declared_type.clone().unwrap_or(GqlType::Any),
+                value: evaluated,
+            }
+        }
+        SessionOp::SetTimeZone { zone, span } => {
+            let zone = parse_time_zone(zone, *span)?;
+            let displacement_seconds = zone
+                .to_offset(session.effective_request_timestamp())
+                .seconds();
+            PreparedSessionControl::SetTimeZone {
+                zone,
+                displacement_seconds,
+            }
+        }
+        SessionOp::SetSchema { reference, .. } => {
+            PreparedSessionControl::SetSchema(reference.clone())
+        }
+        SessionOp::SetGraph { target, .. } => PreparedSessionControl::SetGraph(target.clone()),
+        SessionOp::ResetAllCharacteristics { .. } => {
+            PreparedSessionControl::ResetAllCharacteristics
+        }
+        SessionOp::ResetSchema { .. } => PreparedSessionControl::ResetSchema,
+        SessionOp::ResetGraph { .. } => PreparedSessionControl::ResetGraph,
+        SessionOp::ResetParameters { .. } => PreparedSessionControl::ResetParameters,
+        SessionOp::ResetTimeZone { .. } => PreparedSessionControl::ResetTimeZone,
+        SessionOp::ResetParameter { param, .. } => {
+            PreparedSessionControl::ResetParameter(param.clone())
+        }
+        SessionOp::Close { .. } => PreparedSessionControl::Close,
+    })
 }
 
 fn set_value(

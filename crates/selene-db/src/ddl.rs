@@ -195,7 +195,7 @@ const fn drop_policy(if_exists: bool) -> DropPolicy {
     }
 }
 
-fn resolve_schema(
+pub(crate) fn resolve_schema(
     current_schema: &SchemaPath,
     reference: &CatalogObjectReference,
 ) -> Result<SchemaPath> {
@@ -215,7 +215,7 @@ fn resolve_schema(
     }
 }
 
-fn resolve_graph(
+pub(crate) fn resolve_graph(
     current_schema: &SchemaPath,
     reference: &CatalogObjectReference,
 ) -> Result<ObjectPath> {

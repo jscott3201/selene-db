@@ -149,7 +149,8 @@ lifecycle lease, lower transaction context, binding registry, or execution
   monotonic nonzero ID, access mode, precise lifecycle state, pinned publication
   and generation summaries, statement count, and staged graph-change count.
   `transaction_slot()` reports vacant, active, failed, committing, rolled back,
-  committed, or indeterminate. M03-PR05 still owns session termination changes.
+  committed, or indeterminate. Selected SET/RESET controls persist in this
+  facade state, and SESSION CLOSE terminates it after releasing transaction state.
 
 An explicit authorization ID is resolved by `PrincipalProvider`. Provider
 `None` is an error for that explicit ID. Optional principal home paths resolve
@@ -239,8 +240,9 @@ Selected maintenance procedures remain rejected before lower live-maintenance
 execution with `42N01`. This is an explicit deferred detached-maintenance
 boundary, not a Part 2 bridge: maintenance does not auto-start, and an attempt
 inside an active transaction fails that transaction. Direct lower-engine
-maintenance behavior is unchanged. Session set/reset/close behavior remains
-owned by M03-PR05. A
+maintenance behavior is unchanged. M03-PR05 routes selected session controls
+through persistent facade state while preserving the independent lower-engine
+session path. A
 bare lower executor session rejects every database-catalog command
 with the implementation-defined status `5GQL0`; it does not reinterpret `DROP
 GRAPH` as a storage reset.
@@ -315,10 +317,12 @@ or crash contract. Existing lower `Mutator::factory_reset` remains available
 for engine and recovery use, but it is not a GQL database-catalog route.
 
 - M03-PR03 owns execution context/stack and binding-table parameter support.
-- M03-PR04 Part 1 owns in-memory staging/publication authority; Part 2 supplies
-  explicit transaction state/demarcation and multi-request visibility. The
-  machine-plan item remains `Unmerged` until the delivery PR merges.
-- M03-PR05 owns session controls.
+- M03-PR04 merged both delivery parts: the sole in-memory staging/publication
+  authority plus explicit transaction demarcation and multi-request visibility.
+- M03-PR05 owns persistent facade session controls and its temporary private
+  generation-safe plan dependency stamp.
+- M04-PR01 finalizes public identity/generation contracts; M05-PR02 owns full
+  `AT SCHEMA` / `USE GRAPH` lexical scope and semantic-site resolution.
 - M05 owns replacing the temporary facade re-export of lower `Value` and
   `GqlType` semantic types.
 - Later milestones may broaden catalog object families without changing

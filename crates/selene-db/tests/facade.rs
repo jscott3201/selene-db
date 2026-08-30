@@ -4,8 +4,9 @@ use std::error::Error as _;
 
 use selene_db::{
     CreatePolicy, Database, DatabaseBuilder, DatabaseConfig, DeclaredType, DropPolicy, ErrorKind,
-    ExecutionOutcome, GqlStatus, GqlType, ObjectPath, OpenMode, Request, RequestOutcome,
-    SchemaPath, Session, Value, WriteSummary,
+    ExecutionOutcome, GeneralParameter, GqlStatus, GqlType, ObjectPath, OpenMode, Request,
+    RequestOutcome, RequestParams, SchemaPath, Session, SessionTerminationState,
+    TransactionAccessMode, TransactionSlotState, Value, WriteSummary,
 };
 
 fn schema(name: &str) -> SchemaPath {
@@ -33,6 +34,16 @@ fn row_count(outcome: ExecutionOutcome) -> usize {
     outcome
         .row_count()
         .unwrap_or_else(|| panic!("expected row result, got {outcome:?}"))
+}
+
+fn single_int(outcome: &ExecutionOutcome) -> i64 {
+    let ExecutionOutcome::Rows { result, .. } = outcome else {
+        panic!("expected rows, got {outcome:?}");
+    };
+    let Value::Int(value) = result.rows()[0].values()[0] else {
+        panic!("expected integer result");
+    };
+    value
 }
 
 #[test]
@@ -322,7 +333,7 @@ fn graph_drop_clears_procedure_state_only_after_successful_publication() {
 }
 
 #[test]
-fn transaction_controls_work_while_deferred_session_controls_do_not_poison() {
+fn transaction_and_session_controls_persist_and_close_terminally() {
     let (database, path) = fixture();
     let session = database.session(&path).unwrap();
 
@@ -340,23 +351,12 @@ fn transaction_controls_work_while_deferred_session_controls_do_not_poison() {
     session.execute("START TRANSACTION").unwrap();
     session.execute("ROLLBACK").unwrap();
 
-    let controls = ["SESSION SET VALUE $answer = 42", "SESSION CLOSE"];
-
-    for source in controls.into_iter().chain(controls) {
-        let error = session.execute(source).expect_err(source);
-        assert_eq!(error.kind(), ErrorKind::FeatureNotSupported, "{source}");
-        assert_eq!(
-            error.gqlstatus(),
-            Some(GqlStatus::FEATURE_NOT_SUPPORTED),
-            "{source}"
-        );
-    }
-
+    session.execute("SESSION SET VALUE $answer = 42").unwrap();
     assert_eq!(
         row_count(
             session
-                .execute("RETURN 1")
-                .expect("normal query works after repeated rejection")
+                .execute("RETURN $answer")
+                .expect("session value persists across requests")
         ),
         1
     );
@@ -370,6 +370,158 @@ fn transaction_controls_work_while_deferred_session_controls_do_not_poison() {
                 .unwrap()
         ),
         1
+    );
+    session.execute("SESSION CLOSE").unwrap();
+    let error = session.execute("RETURN 1").unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::SessionClosed);
+    assert_eq!(error.gqlstatus(), Some(GqlStatus::SESSION_CLOSED));
+}
+
+#[test]
+fn session_characteristics_are_atomic_persistent_and_request_shadowed() {
+    let (database, path) = fixture();
+    let session = database.session(&path).unwrap();
+    session
+        .execute("SESSION SET VALUE $answer INTEGER = 42")
+        .unwrap();
+    assert_eq!(single_int(&session.execute("RETURN $answer").unwrap()), 42);
+
+    let mut params = RequestParams::new();
+    params
+        .insert(
+            "answer",
+            GeneralParameter::new(GqlType::Integer, Value::Int(7)).unwrap(),
+        )
+        .unwrap();
+    let shadowed = session.execute_request(Request::with_params("RETURN $answer", params));
+    assert_eq!(single_int(shadowed.execution().unwrap()), 7);
+    assert_eq!(single_int(&session.execute("RETURN $answer").unwrap()), 42);
+
+    session
+        .execute("SESSION SET VALUE $answer STRING = 99")
+        .unwrap_err();
+    assert_eq!(single_int(&session.execute("RETURN $answer").unwrap()), 42);
+    session.execute("SESSION SET TIME ZONE '+01:00'").unwrap();
+    assert_eq!(session.context().time_zone().seconds(), 3_600);
+    session.execute("SESSION RESET PARAMETER $answer").unwrap();
+    assert!(session.execute("RETURN $answer").is_err());
+    session
+        .execute("SESSION RESET ALL CHARACTERISTICS")
+        .unwrap();
+    assert_eq!(session.context().time_zone().seconds(), 0);
+}
+
+#[test]
+fn schema_and_graph_controls_switch_then_reset_to_creation_defaults() {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    let first = graph("scope_one", "main");
+    let second = graph("scope_two", "archive");
+    for schema_path in [schema("scope_one"), schema("scope_two")] {
+        catalog
+            .create_schema(&schema_path, CreatePolicy::Strict)
+            .unwrap();
+    }
+    for graph_path in [&first, &second] {
+        catalog
+            .create_graph(graph_path, None, CreatePolicy::Strict)
+            .unwrap();
+    }
+    let session = database.session(&first).unwrap();
+    session.execute("SESSION SET SCHEMA /scope_two").unwrap();
+    session
+        .execute("SESSION SET PROPERTY GRAPH archive")
+        .unwrap();
+    assert_eq!(session.context().current_schema().path, schema("scope_two"));
+    assert_eq!(session.context().current_graph().path, second);
+    session.execute("INSERT (:Selected)").unwrap();
+    assert_eq!(
+        database
+            .session(&graph("scope_two", "archive"))
+            .unwrap()
+            .execute("MATCH (n:Selected) RETURN n")
+            .unwrap()
+            .row_count(),
+        Some(1)
+    );
+
+    session.execute("SESSION RESET SCHEMA").unwrap();
+    session.execute("SESSION RESET GRAPH").unwrap();
+    assert_eq!(session.context().current_schema().path, schema("scope_one"));
+    assert_eq!(session.context().current_graph().path, first);
+}
+
+#[test]
+fn selection_changes_reject_active_transactions_and_close_releases_all_state() {
+    let (database, path) = fixture();
+    let catalog = database.catalog();
+    let alternate = graph("memory", "alternate");
+    catalog
+        .create_graph(&alternate, None, CreatePolicy::Strict)
+        .unwrap();
+    let session = database.session(&path).unwrap();
+    session
+        .start_transaction(TransactionAccessMode::ReadWrite)
+        .unwrap();
+    let error = session.execute("SESSION SET GRAPH alternate").unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::ActiveTransaction);
+    assert_eq!(session.context().current_graph().path, path);
+    session.execute("INSERT (:Discarded)").unwrap();
+    session.execute("SESSION CLOSE").unwrap();
+    assert_eq!(
+        session.context().termination(),
+        SessionTerminationState::Closed
+    );
+    assert_eq!(
+        session.context().transaction_slot(),
+        TransactionSlotState::Vacant
+    );
+    assert_eq!(
+        database
+            .session(&graph("memory", "main"))
+            .unwrap()
+            .execute("MATCH (n:Discarded) RETURN n")
+            .unwrap()
+            .row_count(),
+        Some(0)
+    );
+    for error in [
+        session.execute("SESSION CLOSE").unwrap_err(),
+        session.execute("RETURN 1").unwrap_err(),
+    ] {
+        assert_eq!(error.gqlstatus(), Some(GqlStatus::SESSION_CLOSED));
+    }
+}
+
+#[test]
+fn close_works_for_failed_transactions_and_stale_graph_selections() {
+    let (database, path) = fixture();
+    let failed = database.session(&path).unwrap();
+    failed
+        .start_transaction(TransactionAccessMode::ReadWrite)
+        .unwrap();
+    failed.execute("INSERT (:Discarded)").unwrap();
+    failed.execute("RETURN 1 / 0").unwrap_err();
+    failed.execute("SESSION CLOSE").unwrap();
+    assert_eq!(
+        failed.context().transaction_slot(),
+        TransactionSlotState::Vacant
+    );
+
+    let stale_path = graph("memory", "stale");
+    database
+        .catalog()
+        .create_graph(&stale_path, None, CreatePolicy::Strict)
+        .unwrap();
+    let stale = database.session(&stale_path).unwrap();
+    database
+        .catalog()
+        .drop_graph(&stale_path, DropPolicy::Strict)
+        .unwrap();
+    stale.execute("SESSION CLOSE").unwrap();
+    assert_eq!(
+        stale.context().termination(),
+        SessionTerminationState::Closed
     );
 }
 
