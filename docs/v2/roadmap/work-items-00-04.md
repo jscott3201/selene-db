@@ -1365,12 +1365,14 @@ Deliver M04-PR02 in two independently D-021-bounded parts: Part 1 establishes gr
 
 - Deliver this existing work item in exactly two reviewable parts; each part independently stays within D-021's default of at most 25 production files and roughly 1,500 net non-generated lines.
 - Part 1 — graph substrate: introduce private `NodeRow` and `EdgeRow` storage wrappers, sealed element-kind markers, and `CandidateSet<Node>` / `CandidateSet<Edge>` (or equivalent distinct types).
-- Part 1 — candidate contract: bind each set to database/graph identity, immutable snapshot generation, element kind, and private representation; provide graph-owned union/intersection/difference, cardinality, contains-by-ID, stable-ID iteration, and trusted internal row iteration.
+- Part 1 — candidate contract: bind each set in `selene-graph` to lower `GraphId`, immutable graph generation, and a private ephemeral snapshot-layout token; carry node/edge kind through sealed markers, and provide graph-owned union/intersection/difference, cardinality, contains-by-ID, stable-ID iteration, and trusted internal row iteration.
 - Part 1 — producers: migrate graph-owned `live_nodes`, `nodes_with_label`, `nodes_with_property_*`, edge counterparts, index-provider results, maintained candidate state, bitmap producers, and internal row consumers to the typed substrate.
 - Part 1 — temporary bridge: retain a strictly temporary lower-layer row compatibility bridge only where required for named Part 2 downstream consumers; it cannot cross the stable `selene-db` facade or be advertised as a compatibility promise.
-- Part 2 — downstream migration: move algorithms, GQL, facade/testing adapters, optimizer adapters, and private projections to typed candidates or ID-safe resolvers while preserving the existing lower-to-upper dependency direction.
+- Part 2 — downstream migration: move algorithms, GQL, facade/testing adapters, optimizer adapters, and private projections to typed candidates or ID-safe resolvers; validate facade `DatabaseId` at facade/session ingress while preserving the existing lower-to-upper dependency direction.
+- Existing `VectorCandidateSet` remains an explicitly unbound sorted/deduplicated stable-`NodeId` input helper outside `CandidateSet<Node>`, the graph/generation/layout binding, and the temporary row bridge; in Part 2, the pinned `SeleneGraph` snapshot is the sole owner that binds it or other unbound stable-`NodeId` inputs into `CandidateSet<Node>`, and Part 2 does not delete it.
+- Part 2 — unbound-ID binding: canonicalize duplicate inputs and filter `NodeId::TOMBSTONE`, absent IDs, and IDs not live in the pinned snapshot; generic candidate binding validates stable-ID liveness only, while vector scoring retains its own contract of skipping missing or non-vector property values.
 - Part 2 — final deletion: delete every remaining repository-public `RowIndex` type/signature, raw-row conversion/signature, row-indexed bitmap producer, repeated row→ID loop, legacy row alias/adapter, and the Part 1 bridge; close #1093 only with this final evidence.
-- Both parts reject cross-graph, cross-generation, and cross-kind algebra with typed errors rather than silently translating.
+- Typed set algebra rejects graph, generation, or snapshot-layout mismatches with typed errors rather than silently translating; node/edge kind mismatch is prevented at compile time by sealed kind markers, without requiring an erased runtime kind API merely to return an error.
 
 ### Non-goals
 
@@ -1378,15 +1380,20 @@ Deliver M04-PR02 in two independently D-021-bounded parts: Part 1 establishes gr
 - No public row iterator escape hatch.
 - No query batch representation yet.
 - No change to stable NodeId/EdgeId or M04-PR01 reference validity semantics.
-- No new store-identity or persisted-format semantics; M09 owns them.
+- No facade `DatabaseId`, lower database/store identity, or M09 store/persisted-format semantics in `selene-graph`; M09 owns persisted store identity.
+- No deletion or reclassification of existing `VectorCandidateSet` as a typed, row-backed, graph-bound, generation-bound, layout-bound, or bridge candidate set.
+- No redefinition of serialized `core_provider` `NodeRow`/`EdgeRow` payload types.
 - No new work-item ID, D-021 exception, or compatibility promise for the temporary Part 1 bridge.
 
 ### Acceptance evidence
 
 - Part 1: private storage uses distinct `NodeRow`/`EdgeRow` wrappers, typed generation-bound candidates expose graph-owned algebra/stable-ID iteration, and graph-owned producers/internal row consumers migrate without unchecked row→ID reinterpretation.
-- Part 1: database, graph, generation, and kind mismatch tests pass; ID iteration remains correct before/after compaction and snapshot publication.
+- Part 1: graph, generation, and snapshot-layout mismatch tests pass, sealed node/edge candidate kinds cannot mix at compile time, and same-`GraphId` independent runtimes reject one another even when their generations match.
+- Part 1: compaction/remap with unchanged graph generation rejects old row-backed candidates against the new layout, while freshly produced candidates iterate the same surviving stable IDs.
+- Part 1: each `CandidateSet` retains its non-reused Arc-style layout identity for its lifetime; same-layout clones/publication and non-remapping index/derived-state rebuilds preserve it, while generation still rejects changed mutation/publication state.
 - Part 1: any remaining row bridge is strictly lower-layer and named for Part 2 deletion, does not cross the stable `selene-db` facade, and is not documented as compatibility; M04-PR02 remains `Unmerged`, #1093 remains open, and dependents remain blocked.
-- Part 2 final: every algorithm, GQL, facade/testing adapter, optimizer adapter, and private projection consumer named by #1093 uses typed candidates or an ID-safe resolver without dependency inversion.
+- Part 2: pinned-snapshot binding canonicalizes duplicates, filters tombstone, absent/deleted, and other non-live IDs, and rebinds surviving stable IDs through the newly pinned snapshot after compaction/remap or recovery/open; generic binding remains liveness-only and vector scoring retains missing/non-vector skip behavior.
+- Part 2 final: every algorithm, GQL, facade/testing adapter, optimizer adapter, and private projection consumer named by #1093 uses typed candidates or an ID-safe resolver, facade/session ingress validates facade `DatabaseId`, and unbound `VectorCandidateSet` IDs bind through the pinned graph snapshot without dependency inversion.
 - Part 2 final: repository-public API contains no `RowIndex`, raw-row conversion/signature, or row-indexed bitmap producer; repeated row→ID loops, legacy row aliases/adapters, and the Part 1 bridge are deleted.
 - Part 2 final: candidate-set performance is within reviewed bounds of raw bitmap operations for in-generation algebra and downstream projection/query overhead is separately reported.
 - Each delivery part records at most 25 production files and roughly 1,500 net non-generated lines; exceeding either default requires stop/replan rather than an implicit exception.
@@ -1394,18 +1401,20 @@ Deliver M04-PR02 in two independently D-021-bounded parts: Part 1 establishes gr
 
 ### Tests and gates
 
-- Part 1: property tests compare candidate algebra with an ID `BTreeSet` reference and cover compaction, publication-generation mismatch, ID iteration, and mutation guards.
+- Part 1: property tests compare candidate algebra with an ID `BTreeSet` reference and cover publication-generation mismatch, ID iteration, and mutation guards.
+- Part 1: token-retention tests cover `CandidateSet`-held token lifetime, same-layout `SeleneGraph` clone/write/snapshot ancestry, ordinary same-layout publication, non-remapping index/derived-state rebuilds, and generation rejection despite token preservation.
+- Part 1: token-remint regressions cover independent/new same-`GraphId` and same-generation runtimes, `SharedGraph::try_from_graph` including facade scratch/detached runtimes, recovery/open, and unchanged-generation `compact_core`/other remaps; old candidates reject on layout mismatch, while freshly produced candidates yield the same surviving stable IDs.
 - Part 1: compile-fail tests cover node/edge candidate kind mixing, `NodeRow`/`EdgeRow` mixing, and private rows crossing new typed graph boundaries.
 - Part 1: graph producer/index/maintained-state regressions and boundary tests prove the temporary bridge stays below the stable facade and is used only by named Part 2 consumers.
-- Part 2: algorithms/GQL/facade/testing candidate, optimizer, projection, query, and index regression suites plus the dependency-direction audit.
+- Part 2: algorithms/GQL/facade/testing candidate, optimizer, projection, query, and index regression suites cover facade `DatabaseId` ingress plus pinned-snapshot binding of duplicate, `NodeId::TOMBSTONE`, absent/deleted, and vector-property-missing/non-vector inputs before and after compaction/remap and recovery/open, plus the dependency-direction audit.
 - Part 2 final: public API snapshot and row-arithmetic lint prove deletion of existing public row signatures/conversions/bitmap producers, repeated row→ID loops, and the Part 1 bridge.
 - Each part: changed-production-file and net non-generated-line accounting proves independent D-021 default-cap compliance.
 
 ### Review focus
 
-- Part 1: private `NodeRow`/`EdgeRow` kind safety, generation/graph binding, complete graph-owned producer migration, and no physical row leak through the stable facade.
+- Part 1: private `NodeRow`/`EdgeRow` kind safety, lower `GraphId`/generation/layout binding and token lifecycle, complete graph-owned producer migration, and no physical row leak through the stable facade.
 - Part 1: the lower-layer bridge is the minimum required by named Part 2 consumers, carries an explicit deletion owner, and creates no compatibility promise.
-- Part 2: all downstream algorithms/GQL/facade/testing adapters and private projections migrate without dependency inversion; no hidden repository-public raw-row escape or bridge remains.
+- Part 2: all downstream algorithms/GQL/facade/testing adapters and private projections migrate with facade `DatabaseId` validation and sole-owner, liveness-only pinned-snapshot binding for unbound stable IDs, without dependency inversion or vector-specific rules in generic candidates; no hidden repository-public raw-row escape or bridge remains.
 - Each part independently satisfies the D-021 default cap; Part 1 does not change M04-PR02 status, close #1093, or unblock dependents.
 - Performance evidence separates Part 1 representation/ID-resolution overhead from final Part 2 downstream migration overhead.
 
@@ -1420,6 +1429,7 @@ Deliver M04-PR02 in two independently D-021-bounded parts: Part 1 establishes gr
 ### Bridge and deletion
 
 - Part 1 only: a strictly temporary lower-layer row compatibility bridge may remain solely for named Part 2 downstream consumers; it must not cross the stable `selene-db` facade or be advertised/documented as compatibility.
+- Existing `VectorCandidateSet` is outside the temporary row-bridge contract and remains an unbound stable-`NodeId` helper after Part 2.
 - The Part 1 bridge and any temporary `RowCandidates`, `RowIndex`, raw-row conversion, or adapter surface carry explicit Part 2 deletion ownership and do not complete M04-PR02, close #1093, or unblock dependents.
 - Part 2 deletes the bridge and every remaining legacy row alias/adapter or repository-public row surface; final acceptance has no compatibility bridge.
 
