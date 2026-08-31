@@ -1284,15 +1284,15 @@ Finish the facade context control plane with selected SET/RESET/CLOSE behavior, 
 - **Issues:** None
 - **Commit scope:** `identity`
 
-Establish canonical opaque `DatabaseId` plus stable catalog/graph/node/edge IDs, ID-only reference validity, and checked graph/catalog generation contracts without absorbing repository-wide row migration or M09 persistence identity.
+Establish canonical opaque `DatabaseId` plus separate non-durable facade `GraphRef`/`NodeRef`/`EdgeRef` handles over existing stable graph/node/edge IDs, ID-only reference validity, and checked graph/catalog generation contracts without changing legacy `Value` encoding, absorbing row migration, or defining M09 persistence identity.
 
 ### Scope
 
-- Define canonical opaque `DatabaseId` as the local database-instance root, plus distinct stable ID types for catalog objects, graphs, nodes, and edges.
+- Define canonical opaque `DatabaseId` as the local database-instance root and intentionally re-export the existing stable lower `NodeId`/`EdgeId` through the facade alongside existing typed catalog identities; do not unify every historical lower ID wrapper.
 - Define checked monotonic transitions for `GraphGeneration` and `CatalogGeneration`; defer `StoreId`, store epoch, and persisted-format identity semantics to M09.
-- Add typed `GraphRef`, `NodeRef`, and `EdgeRef` as local database-instance/session-request values carrying only stable database, graph, and referent IDs; generation is not part of semantic reference identity and references are not durable stored values.
+- Add separate typed facade `GraphRef`, `NodeRef`, and `EdgeRef` handles as local database-instance/session-request values carrying only stable database, graph, and referent IDs; generation is not part of semantic reference identity and these handles are not the durable bare-ID `selene_core::Value` variants.
 - Specify runtime dereference behavior for wrong database/graph, dropped graphs, deleted elements, drop/recreate, copied references, compaction, and generation changes, including the `42002`/`42N03` boundary.
-- Require stable catalog/graph/node/edge IDs to round-trip through the repository's supported recovery/reopen paths; closing and reopening as a new database instance creates a distinct `DatabaseId`, so old runtime references fail `42002` rather than retargeting.
+- Document stable catalog/graph/node/edge IDs as the semantic identities future supported recovery/reopen must preserve; the current facade remains in-memory and M09 owns persisted open/recovery, where each opened facade instance receives a distinct `DatabaseId` and old runtime references fail `42002` rather than retargeting.
 - Keep raw ID construction controlled for codecs/tests; introduce no new public row conversions/signatures or physical-row leaks through the stable `selene-db` facade or newly introduced identity/reference APIs.
 - Replace M03-PR05's private dependency stamp with typed identity and generation components without making generation part of reference identity; add focused identity audit tests.
 
@@ -1302,15 +1302,16 @@ Establish canonical opaque `DatabaseId` plus stable catalog/graph/node/edge IDs,
 - No `NodeRow`/`EdgeRow` rollout or repository-wide migration/removal of existing row-indexed public APIs; M04-PR02 owns that boundary.
 - No directionality.
 - No cross-database globally routable identifiers.
-- No new `StoreId`, store epoch, persisted-format, or durable stored-reference semantics; M09 owns those decisions, while existing supported stable-ID recovery/reopen correctness remains in scope.
+- No new `StoreId`, store epoch, persisted-format, facade reopen API, or durable facade-handle semantics; M09 owns those decisions and tests.
+- No `selene_core::Value` variant order/encoding, property-type, serde/rkyv, WAL/snapshot codec, or lower recovery-format change; existing bare-ID reference variants remain an explicit compatibility bridge.
 - No UUID/string format promise for element IDs beyond the selected type contract.
 
 ### Acceptance evidence
 
 - `DatabaseId` is the canonical opaque local database root and the stable ID kinds are distinct without promising globally routable or persisted store identity.
-- `GraphRef`, `NodeRef`, and `EdgeRef` are local database-instance/session-request values carrying only stable database/graph/referent IDs; they are not durable stored references and no generation field participates in equality or validity.
+- Facade `GraphRef`, `NodeRef`, and `EdgeRef` are local database-instance/session-request handles carrying only stable database/graph/referent IDs; they are opaque, not serde/rkyv/durable stored values, distinct from legacy `Value` variants, and no generation field participates in equality or validity.
 - Wrong database/graph, dropped graph, deleted element, and drop/recreate runtime dereferences return `42002 invalid-reference`, while analyzer/name resolution continues to use `42N03 undefined-reference`.
-- Supported recovery/reopen round trips preserve stable catalog/graph/node/edge IDs, assign the reopened instance a distinct `DatabaseId`, and make references from the closed instance fail `42002 invalid-reference` rather than retarget.
+- Two independently built current in-memory instances have distinct `DatabaseId` values and reject each other's handles with `42002`; the M09 reopen contract records the same instance-isolation rule without inventing an M04 reopen API.
 - Copied live references continue to resolve across compaction and generation changes; old references do not retarget after drop/recreate.
 - ID kind mixups are compile-time errors.
 - Checked graph/catalog generation transitions and the typed M03-PR05 dependency-stamp replacement have overflow and stale-state tests without making generations reference identity.
@@ -1321,8 +1322,8 @@ Establish canonical opaque `DatabaseId` plus stable catalog/graph/node/edge IDs,
 - Compile-fail tests for ID kind mixups and physical rows crossing newly introduced identity/reference API boundaries.
 - Copied-reference, compaction, and generation-change property tests.
 - Wrong-database, wrong-graph, delete, drop, and drop/recreate dereference tests for `42002`, plus analyzer/name-resolution regressions for `42N03`.
-- Supported recovery/reopen round-trip tests asserting unchanged stable IDs, a distinct reopened `DatabaseId`, and `42002` for references from the closed instance.
-- Codec round-trip and malformed ID tests.
+- Current two-instance tests asserting distinct `DatabaseId` values and `42002` for old/cross-instance references; persisted reopen tests remain assigned to M09.
+- Compile/rustdoc evidence that facade handles are public but opaque and non-durable, plus explicit validated bridge tests for legacy bare-ID `Value` references.
 - Checked graph/catalog generation overflow and stale dependency-stamp tests.
 - Mutation tests around stable-ID liveness/reference validation without generation-based invalidation.
 
@@ -1346,6 +1347,7 @@ Establish canonical opaque `DatabaseId` plus stable catalog/graph/node/edge IDs,
 - Existing row-indexed APIs and private row aliases may remain unchanged in M04-PR01; M04-PR02's two-part delivery owns private `NodeRow`/`EdgeRow` wrappers and repository-wide removal of existing public row surfaces.
 - M04-PR02 owns all downstream algorithm/GQL candidate and projection migration while preserving the existing dependency direction.
 - Replace M03-PR05's private facade dependency stamp with typed stable identity and checked generation components; generation remains outside semantic reference identity.
+- Retain durable bare-ID `selene_core::Value` reference variants only as an explicit lower-engine compatibility bridge; M05-PR03 owns semantic/runtime carrier migration and M09-PR08 owns encoded variant/codec deletion.
 
 <a id="m04-pr02"></a>
 ## M04-PR02 — Introduce Typed Generation-Bound Candidate Sets and Remove Row Bitmap APIs

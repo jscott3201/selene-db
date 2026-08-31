@@ -276,6 +276,30 @@ regression thresholds or performance claims.
 | `catalog_lifecycle/session_control/set_reset_graph_resolve` | 15.000–15.854 µs |
 | `catalog_lifecycle/session_control/repeated_short_query_10` | 8.9000–9.0822 µs |
 
+#### M04-PR01 facade reference validation
+
+The `catalog_lifecycle/reference_validation` group measures successful runtime
+validation for one database-scoped graph, node, or edge handle. The fixture has
+one graph, two live nodes, and one live edge. Graph validation also resolves and
+copies its facade descriptor; node/edge rows cover the stable-ID liveness lookup
+under the selected graph lifecycle lease. These are characterization rows, not
+regression thresholds or an improvement claim.
+
+```bash
+scripts/run-benches.sh --bench catalog_lifecycle --compile-only
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/reference_validation
+```
+
+Recorded on 2026-08-31 on arm64 macOS 26.7 (25G220), rustc 1.97.1, with
+mimalloc and the M04-PR01 worktree based on
+`6de963c991c476a9853df13280fc46ae0e1192d8`. This is one 10-sample quick run.
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/reference_validation/graph` | 64.686–67.491 ns |
+| `catalog_lifecycle/reference_validation/node` | 50.063–53.285 ns |
+| `catalog_lifecycle/reference_validation/edge` | 50.252–55.794 ns |
+
 #### M03-PR03 execution-context microbenchmarks
 
 Bench bin: `execution_context`. The focused rows cover root construction,

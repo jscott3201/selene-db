@@ -41,8 +41,8 @@ mod transaction;
 /// [`ErrorKind`](crate::ErrorKind) and GQLSTATUS as the equivalent
 /// [`Catalog`](crate::Catalog) call.
 pub struct Session {
-    inner: Arc<DatabaseInner>,
-    context: SessionContext,
+    pub(crate) inner: Arc<DatabaseInner>,
+    pub(crate) context: SessionContext,
     not_sync: PhantomData<Cell<()>>,
 }
 

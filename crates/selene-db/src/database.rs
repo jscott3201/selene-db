@@ -22,7 +22,7 @@ use selene_graph::{GraphTypeDef, SharedGraph};
 
 use crate::{
     AuthorizationDecision, AuthorizationRequest, Catalog, CatalogReadSnapshot, DatabaseConfig,
-    Error, GraphDescriptor, ObjectPath, Principal, Result, SchemaDescriptor, Session,
+    DatabaseId, Error, GraphDescriptor, ObjectPath, Principal, Result, SchemaDescriptor, Session,
     SessionContext, SessionOptions,
     session_context::SessionContextParts,
     transaction::{MutationCoordinator, TransactionId},
@@ -36,7 +36,7 @@ const CATALOG_NAME: &str = "selene";
 /// ownership root and remain usable after every `Database` handle is dropped.
 #[derive(Clone)]
 pub struct Database {
-    inner: Arc<DatabaseInner>,
+    pub(crate) inner: Arc<DatabaseInner>,
 }
 
 impl Database {
@@ -220,7 +220,9 @@ impl DatabaseBuilder {
 
     /// Build a database.
     ///
-    /// The current builder has no fallible configuration or I/O path.
+    /// The current builder has no fallible configuration or I/O path. It panics
+    /// only if this process exhausts the non-wrapping facade [`DatabaseId`]
+    /// allocation domain.
     #[must_use]
     pub fn build(self) -> Database {
         Database {
@@ -230,6 +232,7 @@ impl DatabaseBuilder {
 }
 
 pub(crate) struct DatabaseInner {
+    pub(crate) database_id: DatabaseId,
     pub(crate) config: DatabaseConfig,
     pub(crate) state: ArcSwap<DatabaseState>,
     pub(crate) transactions: MutationCoordinator,
@@ -246,6 +249,7 @@ pub(crate) struct DatabaseInner {
 impl DatabaseInner {
     fn new(config: DatabaseConfig) -> Self {
         Self {
+            database_id: DatabaseId::allocate(),
             config,
             state: ArcSwap::from(Arc::new(DatabaseState {
                 publication: 0,

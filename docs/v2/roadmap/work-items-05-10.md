@@ -142,13 +142,13 @@ Resolve schemas, graphs, graph types, procedures, variables, parameters, labels,
 - **Issues:** None
 - **Commit scope:** `types`
 
-Replace scattered expression/value type enums with interned structural descriptors that can represent the selected GQL value, record, list, path, reference, object, and binding-table types exactly enough for annotation and results.
+Replace scattered expression/value type enums with interned structural descriptors that can represent the selected GQL value, record, list, path, database-scoped reference, object, and binding-table types exactly enough for annotation and results, and migrate semantic/runtime reference carriers off the M04 legacy bare-ID bridge.
 
 ### Scope
 
 - Define interned immutable data/base/value/object/reference/list/record/path/binding-table descriptors with material/nullable/immaterial and open/closed characteristics.
 - Define assignability, comparability, identity/distinct/equality/order capability, field combination/amend/restrict, list element/cardinality, and type-normal-form operations for the selected profile.
-- Represent graph/node/edge/table reference types with optional constraining object types and stable descriptor IDs.
+- Represent graph/node/edge/table reference types with optional constraining object types and stable descriptor IDs; migrate request/result/runtime carriers to M04's database-scoped facade reference contract rather than treating legacy bare-ID `Value` variants as complete references.
 - Build binding-table schemas from closed record types plus preferred column order and ordered/unordered metadata.
 - Refactor parameter/property/procedure/result typing to use descriptors or explicit adapters.
 - Keep unsupported dynamic-union or optional types truthful in the profile rather than approximating them with `Any`.
@@ -194,6 +194,7 @@ Replace scattered expression/value type enums with interned structural descripto
 ### Bridge and deletion
 
 - Old expression/type enums may convert to descriptors temporarily.
+- Delete semantic/runtime dependence on legacy bare-ID `selene_core::Value` reference variants after migrating request/result carriers to M04 facade references; M09-PR08 retains ownership of encoded variant/codec deletion.
 - Delete adapters in M05-PR06 and M06 as physical columns land.
 
 <a id="m05-pr04"></a>
@@ -2067,7 +2068,7 @@ Make format 2 the only writable/readable runtime format, detect 1.x only enough 
 
 ### Scope
 
-- Inventory and delete all production 1.x writer/reader/manifest/snapshot/audit/recovery structs, codecs, magic constants, compatibility adapters, and feature flags.
+- Inventory and delete all production 1.x writer/reader/manifest/snapshot/audit/recovery structs, codecs, magic constants, compatibility adapters, and feature flags, including the legacy encoded bare-ID `selene_core::Value` graph/node/edge reference variants and codecs after M05-PR03 carrier migration.
 - Implement a minimal header/version probe that recognizes known 1.x artifacts/store roots and returns `UnsupportedFormat` with found/expected version and rebuild guidance without decoding data.
 - Route all database create/open/checkpoint/commit/recovery through the format 2 authority.
 - Update public errors, docs, examples, tests, release artifacts, and package features to remove migration/compatibility expectations.
@@ -2083,7 +2084,7 @@ Make format 2 the only writable/readable runtime format, detect 1.x only enough 
 
 ### Acceptance evidence
 
-- Repository production code contains no 1.x decoder/writer/recovery branch or compatibility feature.
+- Repository production code contains no 1.x decoder/writer/recovery branch, compatibility feature, or legacy encoded bare-ID `Value` reference variant/codec.
 - Known 1.x fixtures return the typed unsupported error and their directory hashes are unchanged after open attempts.
 - All format 2 create/commit/checkpoint/reopen/crash/fuzz tests pass through the sole path.
 - Public docs/errors consistently state no migration and no 1.x support.
@@ -2114,7 +2115,7 @@ Make format 2 the only writable/readable runtime format, detect 1.x only enough 
 
 ### Bridge and deletion
 
-- Delete every legacy persistence bridge.
+- Delete every legacy persistence bridge, including encoded bare-ID `selene_core::Value` graph/node/edge reference variants and codecs after M05-PR03 removes runtime dependence.
 - Test-only 1.x fixtures remain solely to assert safe rejection.
 
 <a id="m10-pr01"></a>

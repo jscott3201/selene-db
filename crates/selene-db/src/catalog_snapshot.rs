@@ -39,10 +39,24 @@ impl CatalogGeneration {
         Self(generation.get())
     }
 
+    #[cfg(test)]
+    pub(crate) const fn from_raw(generation: u64) -> Self {
+        Self(generation)
+    }
+
     /// Return the nonzero generation number.
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0
+    }
+
+    /// Return the checked next generation, or `None` at `u64::MAX`.
+    #[must_use]
+    pub const fn checked_next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(next) => Some(Self(next)),
+            None => None,
+        }
     }
 }
 
@@ -216,6 +230,15 @@ impl CatalogReadSnapshot {
             .as_ref()
             == Some(expected)
     }
+
+    pub(crate) fn graph_by_id(&self, id: GraphId) -> Result<Option<GraphDescriptor>> {
+        let lower = LowerGraphId::new(id.0).map_err(Error::from_catalog_invariant)?;
+        self.state
+            .catalog
+            .descriptor(CatalogObjectId::Graph(lower))
+            .map(|descriptor| graph_summary(&self.state, descriptor))
+            .transpose()
+    }
 }
 
 pub(crate) fn next_id(current: u64, kind: &'static str) -> Result<u64> {
@@ -379,4 +402,18 @@ fn object_path(state: &DatabaseState, descriptor: &LowerDescriptor) -> Result<Ob
         PathSegment(schema.name().clone()),
         PathSegment(descriptor.name().clone()),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CatalogGeneration;
+
+    #[test]
+    fn catalog_generation_transition_is_checked() {
+        assert_eq!(
+            CatalogGeneration::from_raw(7).checked_next(),
+            Some(CatalogGeneration::from_raw(8))
+        );
+        assert_eq!(CatalogGeneration::from_raw(u64::MAX).checked_next(), None);
+    }
 }
