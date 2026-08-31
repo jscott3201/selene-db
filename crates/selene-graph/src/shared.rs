@@ -12,6 +12,7 @@ use parking_lot::{Mutex, RwLock};
 use selene_core::GraphId;
 use selene_persist::{AuditLog, WalConfig, WalWriter};
 
+use crate::candidate_set::RuntimeLineage;
 use crate::committer_batch::CommitBatching;
 use crate::core_provider::{CoreProvider, DurableState};
 use crate::durable_provider::DurableProvider;
@@ -105,6 +106,8 @@ use crate::write_txn::WriteTxn;
 /// back through [`SharedGraph::recover`], which re-reads the durable state and
 /// tells you which side of the commit point the store actually landed on.
 pub struct SharedGraph {
+    pub(crate) graph_id: GraphId,
+    pub(crate) runtime_lineage: RuntimeLineage,
     shared: Arc<RwLock<Arc<SeleneGraph>>>,
     snapshot: Arc<ArcSwap<SeleneGraph>>,
     schema_version: Arc<AtomicU64>,
@@ -287,6 +290,10 @@ impl SharedGraph {
         // every `begin_write` transaction clone the `Arc`, not the `Vec`.
         let providers: Arc<[Arc<dyn IndexProvider>]> = providers.into();
         let mut graph = graph;
+        // Runtime attachment is an ownership boundary: independent, recovered,
+        // detached, and facade-scratch graphs receive fresh runtime and layout
+        // identities before any provider can observe them.
+        graph.remint_runtime_attachment();
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
         crate::property_index::rebuild_edge_property_indexes(&mut graph)?;
@@ -318,6 +325,12 @@ impl SharedGraph {
             });
         }
 
+        for provider in providers.iter() {
+            provider.attach_runtime(&graph)?;
+        }
+
+        let graph_id = graph.meta.graph_id;
+        let runtime_lineage = graph.runtime_lineage.clone();
         let graph = Arc::new(graph);
         snapshot.store(Arc::clone(&graph));
         let shared = Arc::new(RwLock::new(graph));
@@ -336,6 +349,8 @@ impl SharedGraph {
                 batching,
             });
         Ok(Self {
+            graph_id,
+            runtime_lineage,
             shared,
             snapshot,
             schema_version,

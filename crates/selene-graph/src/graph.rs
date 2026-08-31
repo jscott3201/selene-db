@@ -13,10 +13,11 @@ use smallvec::SmallVec;
 use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::adjacency::AdjacencyEntry;
+use crate::candidate_set::{LayoutToken, RuntimeLineage};
 use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
 use crate::id_map::{EngineIdMap, engine_id_map};
-use crate::store::{EdgeStore, NodeStore, RowIndex};
+use crate::store::{EdgeRow, EdgeStore, NodeRow, NodeStore, RowIndex};
 use crate::text_index::TextIndex;
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 use crate::vector_index::VectorIndex;
@@ -57,11 +58,15 @@ pub struct GraphMeta {
 /// Immutable graph snapshot.
 #[derive(Clone, Debug)]
 pub struct SeleneGraph {
+    /// Non-persisted identity of this snapshot's physical row layout ancestry.
+    pub(crate) layout: LayoutToken,
+    /// Non-persisted identity of the owning shared runtime ancestry.
+    pub(crate) runtime_lineage: RuntimeLineage,
     /// Snapshot metadata.
     pub meta: GraphMeta,
-    /// Node storage.
+    /// Node storage. Public raw-column access is the M04-PR02 Part 2 bridge.
     pub node_store: NodeStore,
-    /// Edge storage.
+    /// Edge storage. Public raw-column access is the M04-PR02 Part 2 bridge.
     pub edge_store: EdgeStore,
     /// Outgoing adjacency keyed by source node.
     pub adjacency_out: EngineIdMap<NodeId, AdjacencyEntry>,
@@ -87,9 +92,9 @@ pub struct SeleneGraph {
     /// external id can stay stable while the row is remapped by compaction
     /// (D22 / BRIEF-Item-4a). The persistent chunked tree keeps snapshot clones
     /// cheap.
-    pub node_id_to_row: EngineIdMap<NodeId, RowIndex>,
+    pub(crate) node_id_to_row: EngineIdMap<NodeId, NodeRow>,
     /// External `EdgeId -> RowIndex` lookup (inverse of [`EdgeStore::row_to_id`]).
-    pub edge_id_to_row: EngineIdMap<EdgeId, RowIndex>,
+    pub(crate) edge_id_to_row: EngineIdMap<EdgeId, EdgeRow>,
 }
 
 impl SeleneGraph {
@@ -97,6 +102,8 @@ impl SeleneGraph {
     #[must_use]
     pub fn new(graph_id: GraphId) -> Self {
         Self {
+            layout: LayoutToken::new(),
+            runtime_lineage: RuntimeLineage::new(),
             meta: GraphMeta {
                 graph_id,
                 generation: 0,
@@ -134,6 +141,9 @@ impl SeleneGraph {
 
     /// Bitmap of alive node *row indices*.
     ///
+    /// Temporary M04-PR02 Part 2 bridge; new lower callers use
+    /// [`Self::live_node_candidates`].
+    ///
     /// Returned bitmap is row-indexed (matching `nodes_with_label`), not
     /// `NodeId`-indexed; consumers convert a row to its external `NodeId` via
     /// [`Self::node_id_for_row`] (never by `row + 1` arithmetic — the external id
@@ -163,6 +173,9 @@ impl SeleneGraph {
 
     /// Bitmap of alive edge *row indices*.
     ///
+    /// Temporary M04-PR02 Part 2 bridge; new lower callers use
+    /// [`Self::live_edge_candidates`].
+    ///
     /// The edge-side sibling of [`Self::live_nodes`]. The returned bitmap is
     /// row-indexed (matching `edges_with_label`), not `EdgeId`-indexed; consumers
     /// convert a row to its external `EdgeId` via [`Self::edge_id_for_row`] (never
@@ -178,6 +191,8 @@ impl SeleneGraph {
 
     /// Map an external [`NodeId`] to its internal [`RowIndex`].
     ///
+    /// Temporary M04-PR02 Part 2 bridge; new lower code uses private typed rows.
+    ///
     /// Returns `None` for a never-committed (aborted-tx hole) id. A deleted id
     /// still resolves — to its now-dead row — so liveness, not existence,
     /// distinguishes it (the row's `alive` bit is clear). This is the map-backed
@@ -185,37 +200,57 @@ impl SeleneGraph {
     /// while BRIEF-Item-4b compaction renumbers the row.
     #[must_use]
     pub fn row_for_node_id(&self, id: NodeId) -> Option<RowIndex> {
-        self.node_id_to_row.get(&id).copied()
+        self.node_row_for_id(id).map(NodeRow::into_bridge)
     }
 
     /// Map an external [`EdgeId`] to its internal [`RowIndex`]; see
     /// [`Self::row_for_node_id`].
+    /// Temporary M04-PR02 Part 2 bridge.
     #[must_use]
     pub fn row_for_edge_id(&self, id: EdgeId) -> Option<RowIndex> {
-        self.edge_id_to_row.get(&id).copied()
+        self.edge_row_for_id(id).map(EdgeRow::into_bridge)
     }
 
     /// Recover the external [`NodeId`] bound to a materialized [`RowIndex`].
+    ///
+    /// Temporary M04-PR02 Part 2 bridge.
     ///
     /// Reads the `row_to_id` column (the persistence-stable per-row id), never
     /// synthesizing `row + 1`. Returns `None` past the column end or for a
     /// never-committed hole row (which holds [`NodeId::TOMBSTONE`]).
     #[must_use]
     pub fn node_id_for_row(&self, row: RowIndex) -> Option<NodeId> {
+        self.node_id_for_node_row(NodeRow::new(row.get()))
+    }
+
+    pub(crate) fn node_row_for_id(&self, id: NodeId) -> Option<NodeRow> {
+        self.node_id_to_row.get(&id).copied()
+    }
+
+    pub(crate) fn edge_row_for_id(&self, id: EdgeId) -> Option<EdgeRow> {
+        self.edge_id_to_row.get(&id).copied()
+    }
+
+    pub(crate) fn node_id_for_node_row(&self, row: NodeRow) -> Option<NodeId> {
         self.node_store
             .row_to_id
-            .get(row.get() as usize)
+            .get(row.index())
             .copied()
             .filter(|id| *id != NodeId::TOMBSTONE)
     }
 
     /// Recover the external [`EdgeId`] bound to a materialized [`RowIndex`]; see
     /// [`Self::node_id_for_row`].
+    /// Temporary M04-PR02 Part 2 bridge.
     #[must_use]
     pub fn edge_id_for_row(&self, row: RowIndex) -> Option<EdgeId> {
+        self.edge_id_for_edge_row(EdgeRow::new(row.get()))
+    }
+
+    pub(crate) fn edge_id_for_edge_row(&self, row: EdgeRow) -> Option<EdgeId> {
         self.edge_store
             .row_to_id
-            .get(row.get() as usize)
+            .get(row.index())
             .copied()
             .filter(|id| *id != EdgeId::TOMBSTONE)
     }
@@ -294,12 +329,18 @@ impl SeleneGraph {
     }
 
     /// Return the bitmap of node rows carrying `label`.
+    ///
+    /// Temporary M04-PR02 Part 2 bridge; use [`Self::node_label_candidates`]
+    /// for graph-owned lower work.
     #[must_use]
     pub fn nodes_with_label(&self, label: &DbString) -> Option<&RoaringBitmap> {
         self.idx_label.get(label)
     }
 
     /// Return the bitmap of edge rows carrying `label`.
+    ///
+    /// Temporary M04-PR02 Part 2 bridge; use [`Self::edge_label_candidates`]
+    /// for graph-owned lower work.
     #[must_use]
     pub fn edges_with_label(&self, label: &DbString) -> Option<&RoaringBitmap> {
         self.idx_edge_label.get(label)
@@ -494,6 +535,9 @@ impl SeleneGraph {
 
     /// Return rows matching `value` under a registered property index.
     ///
+    /// The raw bitmap result is the temporary M04-PR02 Part 2 bridge; new lower
+    /// callers use [`Self::node_property_eq_candidates`].
+    ///
     /// `None` means the index cannot answer and the caller must scan; every
     /// probe on this type shares that contract. It covers three cases: no index
     /// is registered for `(label, property)`, the supplied value cannot be used
@@ -520,6 +564,8 @@ impl SeleneGraph {
 
     /// Return the union of node rows matching any indexed scalar value.
     ///
+    /// The raw bitmap result is the temporary M04-PR02 Part 2 bridge.
+    ///
     /// Shares the tri-state contract documented on
     /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
     /// omits live rows it cannot key, so the caller must scan.
@@ -542,6 +588,8 @@ impl SeleneGraph {
 
     /// Return edge rows matching `value` under a registered edge property index.
     ///
+    /// The raw bitmap result is the temporary M04-PR02 Part 2 bridge.
+    ///
     /// Shares the tri-state contract documented on
     /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
     /// omits live rows it cannot key, so the caller must scan.
@@ -558,6 +606,8 @@ impl SeleneGraph {
     }
 
     /// Return the union of edge rows matching any indexed scalar value.
+    ///
+    /// The raw bitmap result is the temporary M04-PR02 Part 2 bridge.
     ///
     /// Shares the tri-state contract documented on
     /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
@@ -581,6 +631,8 @@ impl SeleneGraph {
 
     /// Return rows matching `range` under a registered property index.
     ///
+    /// The raw bitmap result is the temporary M04-PR02 Part 2 bridge.
+    ///
     /// Shares the tri-state contract documented on
     /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
     /// omits live rows it cannot key, so the caller must scan.
@@ -600,6 +652,8 @@ impl SeleneGraph {
     }
 
     /// Return edge rows matching `range` under a registered edge property index.
+    ///
+    /// The raw bitmap result is the temporary M04-PR02 Part 2 bridge.
     ///
     /// Shares the tri-state contract documented on
     /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
@@ -621,6 +675,8 @@ impl SeleneGraph {
 
     /// Return rows whose string property key starts with `prefix`.
     ///
+    /// The raw bitmap result is the temporary M04-PR02 Part 2 bridge.
+    ///
     /// Shares the tri-state contract documented on
     /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
     /// omits live rows it cannot key, so the caller must scan.
@@ -637,15 +693,20 @@ impl SeleneGraph {
     }
 
     fn live_node_row(&self, id: NodeId) -> Option<usize> {
-        let row = self.row_for_node_id(id)?.get();
-        ((row as usize) < self.node_store.len() && self.node_store.is_alive(row))
-            .then_some(row as usize)
+        let row = self.node_row_for_id(id)?;
+        (row.index() < self.node_store.len() && self.node_store.is_row_alive(row))
+            .then_some(row.index())
     }
 
     fn live_edge_row(&self, id: EdgeId) -> Option<usize> {
-        let row = self.row_for_edge_id(id)?.get();
-        ((row as usize) < self.edge_store.len() && self.edge_store.is_alive(row))
-            .then_some(row as usize)
+        let row = self.edge_row_for_id(id)?;
+        (row.index() < self.edge_store.len() && self.edge_store.is_row_alive(row))
+            .then_some(row.index())
+    }
+
+    pub(crate) fn remint_runtime_attachment(&mut self) {
+        self.runtime_lineage = RuntimeLineage::new();
+        self.layout = LayoutToken::new();
     }
 }
 

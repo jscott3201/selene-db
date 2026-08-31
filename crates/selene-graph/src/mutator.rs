@@ -25,7 +25,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
 use crate::id_map::get_or_insert_default;
 use crate::index_provider::{IndexProvider, ProviderTag};
-use crate::store::RowIndex;
+use crate::store::{EdgeRow, NodeRow};
 use crate::type_validator::{EntityId, TypeViolation};
 use crate::write_txn::WriteTxn;
 
@@ -67,6 +67,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                     rows: graph.node_store.len() as u64,
                     max_rows: u32::MAX as u64,
                 })?;
+            let row = NodeRow::new(row);
             // BRIEF-153 fix-cycle C2: run property-index admission BEFORE
             // mutating row state so a cap-exhaustion error rolls back
             // cleanly with no half-written row. Index updates only touch
@@ -77,25 +78,36 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &mut graph.property_index,
                 &labels,
                 &props,
-                row,
+                row.get(),
             )?;
             crate::composite_property_index::apply_node_create(
                 &mut graph.composite_property_index,
                 &labels,
                 &props,
-                row,
+                row.get(),
             )?;
-            crate::vector_index::apply_node_create(&mut graph.vector_index, &labels, &props, row)?;
-            crate::text_index::apply_node_create(&mut graph.text_index, &labels, &props, row, id);
+            crate::vector_index::apply_node_create(
+                &mut graph.vector_index,
+                &labels,
+                &props,
+                row.get(),
+            )?;
+            crate::text_index::apply_node_create(
+                &mut graph.text_index,
+                &labels,
+                &props,
+                row.get(),
+                id,
+            );
             graph.node_store.labels.push(labels.clone());
             graph.node_store.properties.push(props.clone());
             graph.node_store.row_to_id.push(id);
-            graph.node_store.alive_mut().insert(row);
+            graph.node_store.alive_mut().insert(row.get());
             // BRIEF-Item-4a: bind the external id to its row in both directions.
             // The live commit path never re-runs `rebuild_id_maps`, so the
             // `id -> row` map must be populated here. The row is remappable once
             // 4b compaction renumbers rows under stable ids.
-            graph.node_id_to_row.insert_cow(id, RowIndex::new(row));
+            graph.node_id_to_row.insert_cow(id, row);
             insert_node_labels(&mut graph.idx_label, row, &labels);
         }
         self.txn.changes.push(Change::NodeCreated {
@@ -136,21 +148,22 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                     rows: graph.edge_store.len() as u64,
                     max_rows: u32::MAX as u64,
                 })?;
+            let row = EdgeRow::new(row);
             crate::property_index::apply_edge_create(
                 &mut graph.edge_property_index,
                 &label,
                 &props,
-                row,
+                row.get(),
             )?;
             graph.edge_store.label.push(label.clone());
             graph.edge_store.source.push(source);
             graph.edge_store.target.push(target);
             graph.edge_store.properties.push(props.clone());
             graph.edge_store.row_to_id.push(id);
-            graph.edge_store.alive_mut().insert(row);
+            graph.edge_store.alive_mut().insert(row.get());
             // BRIEF-Item-4a: bind the external edge id to its row (live path).
-            graph.edge_id_to_row.insert_cow(id, RowIndex::new(row));
-            insert_index_row(&mut graph.idx_edge_label, label.clone(), row);
+            graph.edge_id_to_row.insert_cow(id, row);
+            insert_index_row(&mut graph.idx_edge_label, label.clone(), row.get());
 
             get_or_insert_default(&mut graph.adjacency_out, source).add(AdjacencyEdge {
                 label: label.clone(),
@@ -188,7 +201,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .node_store
             .labels
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let mut labels = old_labels.clone();
@@ -210,7 +223,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .node_store
             .properties
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let mut props = old_props.clone();
@@ -228,7 +241,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
@@ -236,7 +249,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::vector_index::apply_node_update(
                 &mut graph.vector_index,
@@ -244,7 +257,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::text_index::apply_node_update(
                 &mut graph.text_index,
@@ -252,16 +265,16 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
                 id,
             );
-            graph.node_store.labels.set(row, labels);
-            graph.node_store.properties.set(row, props);
+            graph.node_store.labels.set(row.index(), labels);
+            graph.node_store.properties.set(row.index(), props);
             for label in labels_diff.added.iter().cloned() {
-                insert_index_row(&mut graph.idx_label, label, row as u32);
+                insert_index_row(&mut graph.idx_label, label, row.get());
             }
             for label in labels_diff.removed.iter() {
-                remove_index_row(&mut graph.idx_label, label, row as u32);
+                remove_index_row(&mut graph.idx_label, label, row.get());
             }
         }
 
@@ -286,7 +299,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .edge_store
             .label
-            .get(row)
+            .get(row.index())
             .cloned()
             .ok_or(GraphError::EdgeNotFound { id })?;
         let old_props = self
@@ -294,20 +307,20 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .edge_store
             .properties
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let mut props = old_props.clone();
         apply_property_diff(&mut props, &props_diff)?;
         {
             let graph = self.txn.guard_mut();
-            graph.edge_store.properties.set(row, props.clone());
+            graph.edge_store.properties.set(row.index(), props.clone());
             crate::property_index::apply_edge_update(
                 &mut graph.edge_property_index,
                 &label,
                 &old_props,
                 &props,
-                row as u32,
+                row.get(),
             )?;
         }
         self.txn.changes.push(Change::EdgeUpdated {
@@ -360,48 +373,46 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn.read()
     }
 
-    fn require_live_node(&self, id: NodeId) -> GraphResult<usize> {
+    fn require_live_node(&self, id: NodeId) -> GraphResult<NodeRow> {
         let graph = self.txn.read();
         // Map-backed: a never-committed (aborted-tx hole) id is absent from the
         // map -> NotFound. A deleted id stays mapped to its dead row -> NotAlive.
         let row = graph
-            .row_for_node_id(id)
-            .ok_or(GraphError::NodeNotFound { id })?
-            .get();
-        if row as usize >= graph.node_store.len() {
+            .node_row_for_id(id)
+            .ok_or(GraphError::NodeNotFound { id })?;
+        if row.index() >= graph.node_store.len() {
             return Err(GraphError::NodeNotFound { id });
         }
-        if !graph.node_store.is_alive(row) {
+        if !graph.node_store.is_row_alive(row) {
             return Err(GraphError::NodeNotAlive { id });
         }
-        Ok(row as usize)
+        Ok(row)
     }
 
-    fn require_live_edge(&self, id: EdgeId) -> GraphResult<usize> {
+    fn require_live_edge(&self, id: EdgeId) -> GraphResult<EdgeRow> {
         let graph = self.txn.read();
         let row = graph
-            .row_for_edge_id(id)
-            .ok_or(GraphError::EdgeNotFound { id })?
-            .get();
-        if row as usize >= graph.edge_store.len() {
+            .edge_row_for_id(id)
+            .ok_or(GraphError::EdgeNotFound { id })?;
+        if row.index() >= graph.edge_store.len() {
             return Err(GraphError::EdgeNotFound { id });
         }
-        if !graph.edge_store.is_alive(row) {
+        if !graph.edge_store.is_row_alive(row) {
             return Err(GraphError::EdgeNotAlive { id });
         }
-        Ok(row as usize)
+        Ok(row)
     }
 }
 
-fn insert_node_labels(index: &mut MapM<DbString, RoaringBitmap>, row: u32, labels: &LabelSet) {
+fn insert_node_labels(index: &mut MapM<DbString, RoaringBitmap>, row: NodeRow, labels: &LabelSet) {
     for label in labels.iter().cloned() {
-        insert_index_row(index, label, row);
+        insert_index_row(index, label, row.get());
     }
 }
 
-fn remove_node_labels(index: &mut MapM<DbString, RoaringBitmap>, row: u32, labels: &LabelSet) {
+fn remove_node_labels(index: &mut MapM<DbString, RoaringBitmap>, row: NodeRow, labels: &LabelSet) {
     for label in labels.iter() {
-        remove_index_row(index, label, row);
+        remove_index_row(index, label, row.get());
     }
 }
 

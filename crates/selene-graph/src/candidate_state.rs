@@ -13,10 +13,10 @@ use selene_core::{Change, DbString, NodeId};
 #[cfg(test)]
 use selene_core::{EdgeId, LabelSet};
 
+use crate::candidate_set::RuntimeLineageLease;
 use crate::index_provider::{
     IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
 };
-use crate::store::RowIndex;
 use crate::{SeleneGraph, VectorCandidateSet};
 
 #[path = "candidate_state/state.rs"]
@@ -107,6 +107,7 @@ impl CandidateStateSpec {
 pub struct MaintainedCandidateStateProvider {
     specs: Vec<CandidateStateSpec>,
     state: Mutex<CandidateState>,
+    runtime_lease: Mutex<Option<RuntimeLineageLease>>,
 }
 
 impl MaintainedCandidateStateProvider {
@@ -126,6 +127,7 @@ impl MaintainedCandidateStateProvider {
         validate_unique_specs(&specs)?;
         Ok(Self {
             state: Mutex::new(CandidateState::new(&specs)),
+            runtime_lease: Mutex::new(None),
             specs,
         })
     }
@@ -155,21 +157,21 @@ impl MaintainedCandidateStateProvider {
     /// Returns [`ProviderError`] if live row-to-id mappings are inconsistent.
     pub fn rebuild_from_graph(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
         let mut rebuilt = CandidateState::new(&self.specs);
-        for row in graph.live_nodes() {
-            let row = RowIndex::new(row);
-            let id = graph.node_id_for_row(row).ok_or_else(|| {
-                inconsistent(format!("live node row {} has no external id", row.get()))
-            })?;
+        let nodes = graph.live_node_candidates();
+        for id in nodes
+            .iter_ids(graph)
+            .map_err(|error| inconsistent(error.to_string()))?
+        {
             let labels = graph
                 .node_labels(id)
                 .ok_or_else(|| inconsistent(format!("live node {id} has no label column entry")))?;
             rebuilt.node_labels.insert(id, labels.clone());
         }
-        for row in graph.live_edges() {
-            let row = RowIndex::new(row);
-            let id = graph.edge_id_for_row(row).ok_or_else(|| {
-                inconsistent(format!("live edge row {} has no external id", row.get()))
-            })?;
+        let edges = graph.live_edge_candidates();
+        for id in edges
+            .iter_ids(graph)
+            .map_err(|error| inconsistent(error.to_string()))?
+        {
             let label = graph
                 .edge_label(id)
                 .ok_or_else(|| inconsistent(format!("live edge {id} has no label")))?;
@@ -407,6 +409,20 @@ impl IndexProvider for MaintainedCandidateStateProvider {
 
     fn rebuild_from_graph(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
         MaintainedCandidateStateProvider::rebuild_from_graph(self, graph)
+    }
+
+    fn attach_runtime(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
+        let mut lease = self.runtime_lease.lock();
+        if let Some(active) = lease.as_ref().and_then(RuntimeLineageLease::upgrade) {
+            if active.same_as(&graph.runtime_lineage) {
+                return Ok(());
+            }
+            return Err(inconsistent(
+                "candidate-state provider is already attached to a live runtime".to_owned(),
+            ));
+        }
+        *lease = Some(graph.runtime_lineage.downgrade());
+        Ok(())
     }
 
     fn on_commit_applied(&self, generation: u64) -> Result<(), ProviderError> {

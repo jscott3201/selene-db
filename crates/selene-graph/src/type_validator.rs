@@ -310,16 +310,18 @@ pub fn validate_entity_state(
     type_def: &GraphTypeDef,
 ) -> Result<Vec<TypeWarning>, TypeViolation> {
     let mut warnings = Vec::new();
-    for row in graph.node_store.alive.iter() {
-        let id = graph
-            .node_id_for_row(crate::store::RowIndex::new(row))
-            .expect("alive node row has a mapped external id (BRIEF-Item-4a)");
+    let nodes = graph.live_node_candidates();
+    for id in nodes
+        .iter_ids(graph)
+        .expect("graph-owned node candidates match their snapshot")
+    {
         warnings.extend(validate_node_state(id, graph, type_def)?.1);
     }
-    for row in graph.edge_store.alive.iter() {
-        let id = graph
-            .edge_id_for_row(crate::store::RowIndex::new(row))
-            .expect("alive edge row has a mapped external id (BRIEF-Item-4a)");
+    let edges = graph.live_edge_candidates();
+    for id in edges
+        .iter_ids(graph)
+        .expect("graph-owned edge candidates match their snapshot")
+    {
         warnings.extend(validate_edge_state(id, graph, type_def)?.1);
     }
     validate_unique_property_state(graph, type_def)?;

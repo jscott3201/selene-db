@@ -10,7 +10,7 @@ use selene_core::Change;
 
 use crate::Mutator;
 use crate::error::GraphResult;
-use crate::store::RowIndex;
+use crate::store::{EdgeRow, NodeRow};
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Factory-reset the entire graph: wipe every node and edge and reset the
@@ -61,9 +61,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
         let mut expansion = Vec::with_capacity(node_rows.len() + edge_rows.len());
         for row in node_rows {
+            let row = NodeRow::new(row);
             // Every row came from the alive bitmap, so its external id is mapped
             // (an unmapped row would be a never-committed hole, never alive).
-            let Some(id) = self.txn.read().node_id_for_row(RowIndex::new(row)) else {
+            let Some(id) = self.txn.read().node_id_for_node_row(row) else {
                 continue;
             };
             // remove_node_row scrubs idx_label, property/composite indexes,
@@ -71,7 +72,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             // discarded here because the alive-edge bitmap below is the
             // authoritative superset (it also covers untyped edges between
             // untyped nodes), so we clear every edge row directly.
-            let _ = self.remove_node_row(id, row as usize)?;
+            let _ = self.remove_node_row(id, row)?;
             expansion.push(Change::NodeDeleted { id });
         }
 
@@ -79,19 +80,20 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         // edges from adjacency but did NOT clear edge liveness / edge-label
         // index, so iterate the full alive-edge set captured before removal.
         for row in edge_rows {
+            let row = EdgeRow::new(row);
             // Defensive: a row may already be dead if it shared two truncated
             // endpoints — remove_edge_row is only called for still-alive rows.
-            if !self.txn.read().edge_store.is_alive(row) {
+            if !self.txn.read().edge_store.is_row_alive(row) {
                 continue;
             }
-            let Some(id) = self.txn.read().edge_id_for_row(RowIndex::new(row)) else {
+            let Some(id) = self.txn.read().edge_id_for_edge_row(row) else {
                 continue;
             };
             debug_assert!(
-                self.txn.read().row_for_edge_id(id) == Some(RowIndex::new(row)),
+                self.txn.read().edge_row_for_id(id) == Some(row),
                 "edge row/id round-trip must hold"
             );
-            self.remove_edge_row(id, row as usize)?;
+            self.remove_edge_row(id, row)?;
             expansion.push(Change::EdgeDeleted { id });
         }
 

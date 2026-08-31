@@ -6,7 +6,7 @@ use super::{Mutator, remove_index_row, remove_node_labels};
 use crate::adjacency::AdjacencyEntry;
 use crate::error::{GraphError, GraphResult};
 use crate::id_map::EngineIdMap;
-use crate::store::RowIndex;
+use crate::store::{EdgeRow, NodeRow};
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Delete an alive node and cascade delete incident edges.
@@ -31,18 +31,18 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// edges of **every** edge type touching the node (derived from both
     /// adjacency directions) in ascending order, so no dangling edge can
     /// survive.
-    pub(super) fn remove_node_row(&mut self, id: NodeId, row: usize) -> GraphResult<Vec<EdgeId>> {
+    pub(super) fn remove_node_row(&mut self, id: NodeId, row: NodeRow) -> GraphResult<Vec<EdgeId>> {
         let graph = self.txn.read();
         let labels = graph
             .node_store
             .labels
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let props = graph
             .node_store
             .properties
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let incident_capacity = graph.adjacency_out.get(&id).map_or(0, AdjacencyEntry::len)
@@ -60,35 +60,38 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         }
         {
             let graph = self.txn.guard_mut();
-            remove_node_labels(&mut graph.idx_label, row as u32, &labels);
+            remove_node_labels(&mut graph.idx_label, row, &labels);
             crate::property_index::apply_node_delete(
                 &mut graph.property_index,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::composite_property_index::apply_node_delete(
                 &mut graph.composite_property_index,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::vector_index::apply_node_delete(
                 &mut graph.vector_index,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::text_index::apply_node_delete(
                 &mut graph.text_index,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
                 id,
             );
-            graph.node_store.labels.set(row, LabelSet::new());
-            graph.node_store.properties.set(row, PropertyMap::new());
-            graph.node_store.alive_mut().remove(row as u32);
+            graph.node_store.labels.set(row.index(), LabelSet::new());
+            graph
+                .node_store
+                .properties
+                .set(row.index(), PropertyMap::new());
+            graph.node_store.alive_mut().remove(row.get());
             // BRIEF-Item-4a: KEEP the real external id in row_to_id for the now
             // dead row (and keep the id -> row map entry). A deleted id stays
             // resolvable -> its dead row -> NodeNotAlive, identically across the
@@ -147,15 +150,16 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         let mut node_tombstones = Vec::with_capacity(matched_rows.len());
         let mut incident_edges = BTreeSet::new();
         for row in matched_rows {
+            let row = NodeRow::new(row);
             // Skip rows that are not alive (defensive: idx_label is kept in
             // lockstep with liveness, but a dead row must never be re-removed).
-            if !self.txn.read().node_store.is_alive(row) {
+            if !self.txn.read().node_store.is_row_alive(row) {
                 continue;
             }
-            let Some(id) = self.txn.read().node_id_for_row(RowIndex::new(row)) else {
+            let Some(id) = self.txn.read().node_id_for_node_row(row) else {
                 continue;
             };
-            incident_edges.extend(self.remove_node_row(id, row as usize)?);
+            incident_edges.extend(self.remove_node_row(id, row)?);
             node_tombstones.push(Change::NodeDeleted { id });
         }
         if node_tombstones.is_empty() {
@@ -168,13 +172,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             let row = self
                 .txn
                 .read()
-                .row_for_edge_id(edge_id)
-                .ok_or(GraphError::EdgeNotFound { id: edge_id })?
-                .get();
+                .edge_row_for_id(edge_id)
+                .ok_or(GraphError::EdgeNotFound { id: edge_id })?;
             // An incident edge may already be gone if two truncated endpoints
             // shared it; remove_edge_row is only called for still-alive rows.
-            if self.txn.read().edge_store.is_alive(row) {
-                self.remove_edge_row_inner(edge_id, row as usize, false)?;
+            if self.txn.read().edge_store.is_row_alive(row) {
+                self.remove_edge_row_inner(edge_id, row, false)?;
                 expansion.push(Change::EdgeDeleted { id: edge_id });
             }
         }
@@ -204,13 +207,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         }
         let mut expansion = Vec::with_capacity(matched_rows.len());
         for row in matched_rows {
-            if !self.txn.read().edge_store.is_alive(row) {
+            let row = EdgeRow::new(row);
+            if !self.txn.read().edge_store.is_row_alive(row) {
                 continue;
             }
-            let Some(id) = self.txn.read().edge_id_for_row(RowIndex::new(row)) else {
+            let Some(id) = self.txn.read().edge_id_for_edge_row(row) else {
                 continue;
             };
-            self.remove_edge_row(id, row as usize)?;
+            self.remove_edge_row(id, row)?;
             expansion.push(Change::EdgeDeleted { id });
         }
         if expansion.is_empty() {
@@ -243,37 +247,37 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ///
     /// Shared change-free core for [`Self::delete_edge_inner`] and the truncate
     /// paths; callers own changeset accounting.
-    pub(super) fn remove_edge_row(&mut self, id: EdgeId, row: usize) -> GraphResult<()> {
+    pub(super) fn remove_edge_row(&mut self, id: EdgeId, row: EdgeRow) -> GraphResult<()> {
         self.remove_edge_row_inner(id, row, true)
     }
 
     fn remove_edge_row_inner(
         &mut self,
         id: EdgeId,
-        row: usize,
+        row: EdgeRow,
         remove_adjacency: bool,
     ) -> GraphResult<()> {
         let graph = self.txn.read();
         let label = graph
             .edge_store
             .label
-            .get(row)
+            .get(row.index())
             .cloned()
             .ok_or(GraphError::EdgeNotFound { id })?;
         let source = *graph
             .edge_store
             .source
-            .get(row)
+            .get(row.index())
             .ok_or(GraphError::EdgeNotFound { id })?;
         let target = *graph
             .edge_store
             .target
-            .get(row)
+            .get(row.index())
             .ok_or(GraphError::EdgeNotFound { id })?;
         let props = graph
             .edge_store
             .properties
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let graph = self.txn.guard_mut();
@@ -281,12 +285,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             &mut graph.edge_property_index,
             &label,
             &props,
-            row as u32,
+            row.get(),
         )?;
-        graph.edge_store.alive_mut().remove(row as u32);
+        graph.edge_store.alive_mut().remove(row.get());
         // BRIEF-Item-4a: keep the real id in row_to_id for the dead row (see
         // remove_node_row); only never-committed holes carry EdgeId::TOMBSTONE.
-        remove_index_row(&mut graph.idx_edge_label, &label, row as u32);
+        remove_index_row(&mut graph.idx_edge_label, &label, row.get());
         // GRAPH-05: remove the edge from each endpoint's adjacency entry in
         // place (no full-`SmallVec` clone), dropping the map key only when the
         // entry becomes empty. In a node-delete cascade the hub endpoint's
@@ -296,10 +300,13 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             remove_edge_from_adjacency(&mut graph.adjacency_out, source, id);
             remove_edge_from_adjacency(&mut graph.adjacency_in, target, id);
         }
-        graph.edge_store.label.set(row, db_string("")?);
-        graph.edge_store.source.set(row, NodeId::TOMBSTONE);
-        graph.edge_store.target.set(row, NodeId::TOMBSTONE);
-        graph.edge_store.properties.set(row, PropertyMap::new());
+        graph.edge_store.label.set(row.index(), db_string("")?);
+        graph.edge_store.source.set(row.index(), NodeId::TOMBSTONE);
+        graph.edge_store.target.set(row.index(), NodeId::TOMBSTONE);
+        graph
+            .edge_store
+            .properties
+            .set(row.index(), PropertyMap::new());
         Ok(())
     }
 
@@ -315,12 +322,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             let source = *graph
                 .edge_store
                 .source
-                .get(row)
+                .get(row.index())
                 .ok_or(GraphError::EdgeNotFound { id: edge_id })?;
             let target = *graph
                 .edge_store
                 .target
-                .get(row)
+                .get(row.index())
                 .ok_or(GraphError::EdgeNotFound { id: edge_id })?;
             outgoing.entry(source).or_default().push(edge_id);
             incoming.entry(target).or_default().push(edge_id);

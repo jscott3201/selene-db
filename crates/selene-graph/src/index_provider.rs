@@ -176,6 +176,19 @@ pub trait IndexProvider: Send + Sync + 'static {
         })
     }
 
+    /// Attach this provider to the final private runtime ancestry for `graph`.
+    ///
+    /// Construction calls this after reminting, rebuilding, and validating the
+    /// graph but before exposing the shared runtime. Providers without
+    /// runtime-exclusive state retain the default no-op behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when the provider cannot attach safely.
+    fn attach_runtime(&self, _graph: &SeleneGraph) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
     /// Observe that every change for a committed graph generation was applied.
     ///
     /// Live fan-out calls this only after the provider's mutation callback path

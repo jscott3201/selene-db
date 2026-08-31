@@ -351,6 +351,17 @@ fn provider_snapshot_and_wal_replay_preserve_delete_reverse_state() {
         candidate_nodes(&recovered_provider, &name),
         vec![active, stale]
     );
+    let recovered_snapshot = recovered.read();
+    assert_eq!(
+        recovered
+            .node_candidate_set(&name, &recovered_snapshot)
+            .unwrap()
+            .unwrap()
+            .iter_ids(&recovered_snapshot)
+            .unwrap()
+            .collect::<Vec<_>>(),
+        [active, stale]
+    );
 }
 
 #[test]

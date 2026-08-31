@@ -13,7 +13,7 @@ use crate::graph::SeleneGraph;
 use crate::parallel_scan::{should_parallelize_scan, try_reduce_bitmap_chunks};
 #[cfg(test)]
 use crate::shared::SharedGraph;
-use crate::store::RowIndex;
+use crate::store::NodeRow;
 use crate::vector_index::VectorIndexSearchHit;
 #[path = "vector_search/types.rs"]
 mod types;
@@ -90,17 +90,22 @@ impl SeleneGraph {
         if k == 0 {
             return Ok(Vec::new());
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        let label_candidates = self.node_label_candidates(label);
+        if label_candidates.is_empty() {
             return Ok(Vec::new());
-        };
+        }
         let query_dimension = u32::try_from(query.dimension()).ok();
         let vector_index = query_dimension.and_then(|dimension| {
             self.vector_index_for(label, property)
                 .filter(|index| index.dimension() == dimension)
         });
-        let rows = vector_index
+        let indexed_candidates = vector_index
             .as_ref()
-            .map_or(label_rows, |index| index.rows());
+            .map(|index| crate::CandidateSet::from_node_rows(self, index.rows().clone()));
+        let rows = indexed_candidates
+            .as_ref()
+            .unwrap_or(&label_candidates)
+            .bitmap();
         let scorer = metric.bind_query(query).map_err(GraphError::from)?;
         if should_parallelize_exact_scan(rows, k) {
             return self.exact_vector_search_parallel(label, property, scorer, k, rows, checker);
@@ -117,15 +122,15 @@ impl SeleneGraph {
             if !self.node_store.is_alive(raw_row) {
                 continue;
             }
-            let row = RowIndex::new(raw_row);
-            let node_id = self
-                .node_id_for_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "label index row {raw_row} for {} has no node id",
-                        label.as_str()
-                    ),
-                })?;
+            let row = NodeRow::new(raw_row);
+            let node_id =
+                self.node_id_for_node_row(row)
+                    .ok_or_else(|| GraphError::Inconsistent {
+                        reason: format!(
+                            "label index row {raw_row} for {} has no node id",
+                            label.as_str()
+                        ),
+                    })?;
             let properties = self
                 .node_store
                 .properties
@@ -190,15 +195,15 @@ impl SeleneGraph {
             if !self.node_store.is_alive(raw_row) {
                 continue;
             }
-            let row = RowIndex::new(raw_row);
-            let node_id = self
-                .node_id_for_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "vector search row {raw_row} for {} has no node id",
-                        label.as_str()
-                    ),
-                })?;
+            let row = NodeRow::new(raw_row);
+            let node_id =
+                self.node_id_for_node_row(row)
+                    .ok_or_else(|| GraphError::Inconsistent {
+                        reason: format!(
+                            "vector search row {raw_row} for {} has no node id",
+                            label.as_str()
+                        ),
+                    })?;
             let properties = self
                 .node_store
                 .properties
@@ -528,9 +533,9 @@ fn ann_row_hits_to_node_hits(
         if !graph.node_store.is_alive(hit.row) {
             continue;
         }
-        let row = RowIndex::new(hit.row);
+        let row = NodeRow::new(hit.row);
         let node_id = graph
-            .node_id_for_row(row)
+            .node_id_for_node_row(row)
             .ok_or_else(|| GraphError::Inconsistent {
                 reason: format!(
                     "ANN vector index row {} for {} has no node id",
@@ -577,9 +582,9 @@ fn rerank_ann_row_candidates(
         if !graph.node_store.is_alive(hit.row) {
             continue;
         }
-        let row = RowIndex::new(hit.row);
+        let row = NodeRow::new(hit.row);
         let node_id = graph
-            .node_id_for_row(row)
+            .node_id_for_node_row(row)
             .ok_or_else(|| GraphError::Inconsistent {
                 reason: format!("ANN vector candidate row {} has no node id", hit.row),
             })?;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::NodeRow;
 use selene_core::db_string;
 
 #[test]
@@ -49,7 +50,7 @@ fn node_labels_returns_some_for_alive_node() {
     graph.node_store.row_to_id.push(NodeId::new(1));
     graph
         .node_id_to_row
-        .insert_cow(NodeId::new(1), RowIndex::new(0));
+        .insert_cow(NodeId::new(1), NodeRow::new(0));
     graph.node_store.alive_mut().insert(0);
     assert_eq!(
         graph
@@ -84,7 +85,7 @@ fn persistent_maps_share_on_clone_and_diverge_on_mutation() {
     original.idx_label.insert_cow(label.clone(), bitmap);
     original
         .node_id_to_row
-        .insert_cow(NodeId::new(1), RowIndex::new(0));
+        .insert_cow(NodeId::new(1), NodeRow::new(0));
 
     let label_refs = original.idx_label.strong_count();
     let id_refs = original.node_id_to_row.strong_count();
@@ -94,7 +95,7 @@ fn persistent_maps_share_on_clone_and_diverge_on_mutation() {
 
     fork.idx_label.get_mut_cow(&label).unwrap().insert(1);
     fork.node_id_to_row
-        .insert_cow(NodeId::new(2), RowIndex::new(1));
+        .insert_cow(NodeId::new(2), NodeRow::new(1));
 
     assert_eq!(original.idx_label.strong_count(), label_refs);
     assert_eq!(fork.idx_label.strong_count(), 1);
