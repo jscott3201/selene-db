@@ -3,15 +3,16 @@
 use selene_core::DbString;
 
 use crate::{
-    CANDIDATE_STATE_PROVIDER_TAG, CandidateSet, Node, ProviderError, ProviderTag, SharedGraph,
-    VectorCandidateSet, VectorCandidateStateInfo,
+    CANDIDATE_STATE_PROVIDER_TAG, CandidateSet, Node, ProviderError, ProviderTag, SeleneGraph,
+    SharedGraph, VectorCandidateSet, VectorCandidateStateInfo,
 };
 
 impl SharedGraph {
     /// Look up snapshot-bound maintained node candidates by name.
     ///
-    /// `Ok(None)` means no maintained provider is registered or the name is
-    /// unknown. The returned set retains the exact snapshot layout identity.
+    /// `graph` must be caller-pinned from this shared graph; the returned set
+    /// remains usable with it after publication. `Ok(None)` means no maintained
+    /// provider is registered or the name is unknown.
     ///
     /// # Errors
     ///
@@ -19,13 +20,13 @@ impl SharedGraph {
     pub fn node_candidate_set(
         &self,
         name: &DbString,
+        graph: &SeleneGraph,
     ) -> Result<Option<CandidateSet<Node>>, ProviderError> {
-        let snapshot = self.read();
         let Some(provider) = self.index_provider_by_tag(ProviderTag(CANDIDATE_STATE_PROVIDER_TAG))
         else {
             return Ok(None);
         };
-        provider.node_candidate_set(name, &snapshot)
+        provider.node_candidate_set(name, graph)
     }
 
     /// Look up a generation-checked maintained vector candidate set by name.

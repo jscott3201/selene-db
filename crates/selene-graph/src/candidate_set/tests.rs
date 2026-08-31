@@ -7,8 +7,8 @@ use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, db_st
 
 use super::*;
 use crate::{
-    CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, SharedGraph,
-    TypedIndexKind, compact_core,
+    CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, ProviderError,
+    SharedGraph, TypedIndexKind, compact_core,
 };
 
 fn label(value: &str) -> DbString {
@@ -421,13 +421,21 @@ fn label_property_and_maintained_state_producers_bind_stable_ids() {
             .collect::<Vec<_>>(),
         vec![edge]
     );
-    drop(graph);
-    let maintained = shared.node_candidate_set(&state_name).unwrap().unwrap();
-    let graph = shared.read();
-    assert_eq!(
-        maintained.iter_ids(&graph).unwrap().collect::<Vec<_>>(),
-        vec![ada, bob]
-    );
+    let pinned = graph;
+    let maintained = shared
+        .node_candidate_set(&state_name, &pinned)
+        .unwrap()
+        .unwrap();
+    shared.begin_write().commit().unwrap();
+    let newer = shared.read();
+    let observed = maintained.iter_ids(&pinned).unwrap().collect::<Vec<_>>();
+    assert_eq!(observed, [ada, bob]);
+    assert!(matches!(
+        maintained.iter_ids(&newer),
+        Err(CandidateSetError::GenerationMismatch { .. })
+    ));
+    let stale = shared.node_candidate_set(&state_name, &pinned);
+    assert!(matches!(stale, Err(ProviderError::Inconsistent { .. })));
 }
 
 proptest! {
