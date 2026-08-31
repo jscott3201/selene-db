@@ -1278,7 +1278,7 @@ Finish the facade context control plane with selected SET/RESET/CLOSE behavior, 
 ## M04-PR01 — Formalize Stable Element Identity, Reference Handles, and Generation Tokens
 
 - **Owner:** M04
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / M
 - **Dependencies:** M02-PR03, M03-PR01
 - **Issues:** None
