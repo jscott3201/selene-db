@@ -10,9 +10,9 @@ use std::{hint::black_box, sync::Arc, time::Duration};
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_db::{
     AllowAllAuthorizationPolicy, AuthHookError, AuthorizationId, CreatePolicy, Database,
-    DropPolicy, ExecutionOutcome, GeneralParameter, GqlType, ObjectPath, Principal, PrincipalId,
-    PrincipalProvider, Request, RequestParams, SchemaPath, SessionOptions, TransactionAccessMode,
-    Value,
+    DropPolicy, EdgeId, ExecutionOutcome, GeneralParameter, GqlType, NodeId, ObjectPath, Principal,
+    PrincipalId, PrincipalProvider, Request, RequestParams, SchemaPath, SessionOptions,
+    TransactionAccessMode, Value,
 };
 
 const OMITTED: ExecutionOutcome = ExecutionOutcome::SUCCESSFUL_OMITTED;
@@ -625,6 +625,48 @@ fn bench_catalog_lifecycle(c: &mut Criterion) {
         });
     });
     control.finish();
+
+    let reference_database = graph_fixture(1);
+    let reference_path = graph("graphs", "graph_00000");
+    let reference_session = reference_database
+        .session(&reference_path)
+        .expect("reference fixture session resolves");
+    reference_session
+        .execute("INSERT (:BenchA)-[:BENCH_LINK]->(:BenchB) FINISH")
+        .expect("reference fixture elements are created");
+    let graph_reference = reference_database
+        .graph_reference(&reference_path)
+        .expect("graph reference is issued");
+    let node_reference = reference_session
+        .node_reference(NodeId::new(1))
+        .expect("node reference is issued");
+    let edge_reference = reference_session
+        .edge_reference(EdgeId::new(1))
+        .expect("edge reference is issued");
+    let mut references = c.benchmark_group("catalog_lifecycle/reference_validation");
+    references.throughput(Throughput::Elements(1));
+    references.bench_function("graph", |b| {
+        b.iter(|| {
+            black_box(&reference_database)
+                .resolve_graph_reference(black_box(graph_reference))
+                .expect("live graph reference validates")
+        });
+    });
+    references.bench_function("node", |b| {
+        b.iter(|| {
+            black_box(&reference_session)
+                .resolve_node_reference(black_box(node_reference))
+                .expect("live node reference validates")
+        });
+    });
+    references.bench_function("edge", |b| {
+        b.iter(|| {
+            black_box(&reference_session)
+                .resolve_edge_reference(black_box(edge_reference))
+                .expect("live edge reference validates")
+        });
+    });
+    references.finish();
 }
 
 criterion_group! {

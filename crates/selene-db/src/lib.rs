@@ -113,6 +113,7 @@ mod ddl;
 mod diagnostic;
 mod error;
 mod graph_type;
+mod handle;
 mod outcome;
 mod params;
 mod path;
@@ -136,6 +137,7 @@ pub use database::{Database, DatabaseBuilder};
 pub use diagnostic::{DiagnosticBundle, GqlStatusObject};
 pub use error::{Error, ErrorKind, GqlStatus};
 pub use graph_type::{GraphTypeBuilder, GraphTypeDefinition, NodeTypeDefinition};
+pub use handle::{DatabaseId, EdgeRef, GraphGeneration, GraphRef, NodeRef};
 pub use outcome::{
     DeclaredType, ExecutionOutcome, RegularResult, ResultDescriptor, ResultField, ResultRow,
     WriteSummary,
@@ -143,9 +145,17 @@ pub use outcome::{
 pub use params::{GeneralParameter, RequestParams};
 pub use path::{CatalogPath, ObjectPath, PathSegment, SchemaPath};
 pub use request::{Request, RequestContext, RequestOutcome, RequestTimestamp};
-/// GQL value type intentionally re-exported for typed request parameters.
+/// Stable lower graph edge identity intentionally exposed for facade references.
+pub use selene_core::EdgeId;
+/// Stable lower graph node identity intentionally exposed for facade references.
+pub use selene_core::NodeId;
+/// Durable lower-engine value type retained as a compatibility bridge.
 ///
-/// M05 owns replacing this temporary lower semantic bridge.
+/// Its bare-ID `GraphRef`, `NodeRef`, and `EdgeRef` variants are not the
+/// database-scoped facade handle types with those names. M05-PR03 owns runtime
+/// carrier migration; M09-PR08 owns deletion of the legacy encoded variants and
+/// codecs. Conversion to facade handles always requires explicit facade
+/// issuance and validation.
 pub use selene_core::Value;
 /// Parsed GQL type intentionally re-exported for typed request parameters.
 ///

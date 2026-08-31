@@ -4,8 +4,8 @@ use selene_catalog::{CatalogObjectId, GraphId as LowerGraphId, GraphTypeId as Lo
 use selene_gql::{PreparedCatalogPlan, ProcedureRegistry};
 
 use crate::{
-    CatalogReadSnapshot, Error, GqlType, ProfileIdentity, Result, catalog_snapshot,
-    session::Session,
+    CatalogGeneration, CatalogReadSnapshot, DatabaseId, Error, GqlType, GraphGeneration, GraphId,
+    GraphTypeId, ProfileIdentity, Result, SchemaId, catalog_snapshot, session::Session,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -14,19 +14,34 @@ pub(crate) struct RequestPlanKey {
     pub(crate) parameter_types: Vec<(String, GqlType)>,
 }
 
-/// Complete temporary facade dependency stamp.
+/// Complete typed facade dependency stamp.
 ///
-/// M04-PR01 replaces this private identity/generation bridge with final public
-/// catalog reference types. M05-PR02 replaces its semantic-site assumptions.
+/// Stable identities and state generations are distinct: generation changes
+/// invalidate a cached plan but never change facade reference equality.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DependencyStamp {
-    pub(crate) catalog_generation: u64,
-    pub(crate) schema: (u64, u64),
-    pub(crate) graph: (u64, u64, u64, u64),
-    pub(crate) graph_type: Option<(u64, u64)>,
+    pub(crate) database: DatabaseId,
+    pub(crate) catalog_generation: CatalogGeneration,
+    pub(crate) schema: CatalogIdentityStamp<SchemaId>,
+    pub(crate) graph: GraphDependencyStamp,
+    pub(crate) graph_type: Option<CatalogIdentityStamp<GraphTypeId>>,
     pub(crate) procedure_registry_version: u64,
     pub(crate) profile: ProfileStamp,
     pub(crate) characteristic_epoch: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CatalogIdentityStamp<I> {
+    id: I,
+    created_at: CatalogGeneration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GraphDependencyStamp {
+    id: GraphId,
+    created_at: CatalogGeneration,
+    generation: GraphGeneration,
+    schema_version: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,7 +137,10 @@ impl Session {
                     .descriptor(CatalogObjectId::GraphType(lower))
                     .ok_or_else(Error::stale_session_reference)?;
                 let summary = catalog_snapshot::graph_type_summary(&snapshot.state, descriptor)?;
-                Ok((summary.id.get(), summary.created_at.get()))
+                Ok(CatalogIdentityStamp {
+                    id: summary.id,
+                    created_at: summary.created_at,
+                })
             })
             .transpose()?;
         let lower_graph = LowerGraphId::new(graph.id.get()).map_err(|source| {
@@ -135,14 +153,18 @@ impl Session {
                     Ok((runtime_generation, runtime.schema_version()))
                 })?;
         Ok(DependencyStamp {
-            catalog_generation: snapshot.generation().get(),
-            schema: (schema.id.get(), schema.created_at.get()),
-            graph: (
-                graph.id.get(),
-                graph.created_at.get(),
-                runtime_generation,
+            database: self.inner.database_id,
+            catalog_generation: snapshot.generation(),
+            schema: CatalogIdentityStamp {
+                id: schema.id,
+                created_at: schema.created_at,
+            },
+            graph: GraphDependencyStamp {
+                id: graph.id,
+                created_at: graph.created_at,
+                generation: GraphGeneration::from_raw(runtime_generation),
                 schema_version,
-            ),
+            },
             graph_type,
             procedure_registry_version: self.inner.procedures.registry_version(),
             profile: ProfileStamp::from(self.context.profile_identity()),
@@ -158,10 +180,22 @@ mod tests {
     fn stamp() -> DependencyStamp {
         let profile = ProfileStamp::from(&ProfileIdentity::current());
         DependencyStamp {
-            catalog_generation: 1,
-            schema: (2, 3),
-            graph: (4, 5, 6, 7),
-            graph_type: Some((8, 9)),
+            database: DatabaseId::from_raw(1),
+            catalog_generation: CatalogGeneration::from_raw(1),
+            schema: CatalogIdentityStamp {
+                id: SchemaId(2),
+                created_at: CatalogGeneration::from_raw(3),
+            },
+            graph: GraphDependencyStamp {
+                id: GraphId(4),
+                created_at: CatalogGeneration::from_raw(5),
+                generation: GraphGeneration::from_raw(6),
+                schema_version: 7,
+            },
+            graph_type: Some(CatalogIdentityStamp {
+                id: GraphTypeId(8),
+                created_at: CatalogGeneration::from_raw(9),
+            }),
             procedure_registry_version: 10,
             profile,
             characteristic_epoch: 11,
@@ -173,30 +207,39 @@ mod tests {
         let base = stamp();
         let mut variants = Vec::new();
         let mut changed = base.clone();
-        changed.catalog_generation += 1;
+        changed.database = DatabaseId::from_raw(2);
         variants.push(changed);
         let mut changed = base.clone();
-        changed.schema.0 += 1;
+        changed.catalog_generation = changed.catalog_generation.checked_next().unwrap();
         variants.push(changed);
         let mut changed = base.clone();
-        changed.schema.1 += 1;
+        changed.schema.id = SchemaId(changed.schema.id.get() + 1);
         variants.push(changed);
-        for index in 0..4 {
-            let mut changed = base.clone();
-            let graph = &mut changed.graph;
-            match index {
-                0 => graph.0 += 1,
-                1 => graph.1 += 1,
-                2 => graph.2 += 1,
-                _ => graph.3 += 1,
-            }
-            variants.push(changed);
-        }
+        let mut changed = base.clone();
+        changed.schema.created_at = changed.schema.created_at.checked_next().unwrap();
+        variants.push(changed);
+        let mut changed = base.clone();
+        changed.graph.id = GraphId(changed.graph.id.get() + 1);
+        variants.push(changed);
+        let mut changed = base.clone();
+        changed.graph.created_at = changed.graph.created_at.checked_next().unwrap();
+        variants.push(changed);
+        let mut changed = base.clone();
+        changed.graph.generation = changed.graph.generation.checked_next().unwrap();
+        variants.push(changed);
+        let mut changed = base.clone();
+        changed.graph.schema_version += 1;
+        variants.push(changed);
         let mut changed = base.clone();
         changed.graph_type = None;
         variants.push(changed);
         let mut changed = base.clone();
-        changed.graph_type.as_mut().unwrap().1 += 1;
+        let graph_type = changed.graph_type.as_mut().unwrap();
+        graph_type.id = GraphTypeId(graph_type.id.get() + 1);
+        variants.push(changed);
+        let mut changed = base.clone();
+        let graph_type = changed.graph_type.as_mut().unwrap();
+        graph_type.created_at = graph_type.created_at.checked_next().unwrap();
         variants.push(changed);
         let mut changed = base.clone();
         changed.procedure_registry_version += 1;

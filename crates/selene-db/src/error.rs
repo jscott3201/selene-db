@@ -30,6 +30,9 @@ pub enum ErrorKind {
     /// A catalog object reference crosses a prohibited ownership boundary
     /// (`42002`).
     CatalogReferenceViolation,
+    /// A facade runtime handle has wrong ownership or no longer names a live
+    /// graph element (`42002`).
+    RuntimeInvalidReference,
     /// A session's selected stable graph identity is no longer registered.
     StaleGraphSelection,
     /// An authorization identifier is empty or exceeds the database-string limit.
@@ -191,7 +194,8 @@ impl ErrorKind {
             Self::InvalidCatalogName | Self::InvalidParameterName => Some(GqlStatus::SYNTAX_ERROR),
             Self::CatalogObjectNotFound
             | Self::CatalogObjectWrongKind
-            | Self::CatalogReferenceViolation => Some(GqlStatus::INVALID_REFERENCE),
+            | Self::CatalogReferenceViolation
+            | Self::RuntimeInvalidReference => Some(GqlStatus::INVALID_REFERENCE),
             Self::CatalogObjectAlreadyExists => Some(GqlStatus::DUPLICATE_OBJECT),
             Self::CatalogRestrictViolation => Some(GqlStatus::DEPENDENT_OBJECT_ERROR),
             Self::MutationCanceled => Some(GqlStatus::OPERATION_CANCELLED),
@@ -414,6 +418,13 @@ impl Error {
             ErrorKind::InvalidSessionReference,
             "the selected session reference is invalid",
             source,
+        )
+    }
+
+    pub(crate) fn invalid_runtime_reference(detail: &str) -> Self {
+        Self::facade(
+            ErrorKind::RuntimeInvalidReference,
+            format!("invalid runtime reference: {detail}"),
         )
     }
 

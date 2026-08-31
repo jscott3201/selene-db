@@ -2427,7 +2427,7 @@
       "milestone": "M04",
       "number": 1,
       "title": "Formalize Stable Element Identity, Reference Handles, and Generation Tokens",
-      "outcome": "Establish canonical opaque `DatabaseId` plus stable catalog/graph/node/edge IDs, ID-only reference validity, and checked graph/catalog generation contracts without absorbing repository-wide row migration or M09 persistence identity.",
+      "outcome": "Establish canonical opaque `DatabaseId` plus separate non-durable facade `GraphRef`/`NodeRef`/`EdgeRef` handles over existing stable graph/node/edge IDs, ID-only reference validity, and checked graph/catalog generation contracts without changing legacy `Value` encoding, absorbing row migration, or defining M09 persistence identity.",
       "dependencies": [
         "M02-PR03",
         "M03-PR01"
@@ -2450,11 +2450,11 @@
         "docs/v2/identity.md"
       ],
       "scope": [
-        "Define canonical opaque `DatabaseId` as the local database-instance root, plus distinct stable ID types for catalog objects, graphs, nodes, and edges.",
+        "Define canonical opaque `DatabaseId` as the local database-instance root and intentionally re-export the existing stable lower `NodeId`/`EdgeId` through the facade alongside existing typed catalog identities; do not unify every historical lower ID wrapper.",
         "Define checked monotonic transitions for `GraphGeneration` and `CatalogGeneration`; defer `StoreId`, store epoch, and persisted-format identity semantics to M09.",
-        "Add typed `GraphRef`, `NodeRef`, and `EdgeRef` as local database-instance/session-request values carrying only stable database, graph, and referent IDs; generation is not part of semantic reference identity and references are not durable stored values.",
+        "Add separate typed facade `GraphRef`, `NodeRef`, and `EdgeRef` handles as local database-instance/session-request values carrying only stable database, graph, and referent IDs; generation is not part of semantic reference identity and these handles are not the durable bare-ID `selene_core::Value` variants.",
         "Specify runtime dereference behavior for wrong database/graph, dropped graphs, deleted elements, drop/recreate, copied references, compaction, and generation changes, including the `42002`/`42N03` boundary.",
-        "Require stable catalog/graph/node/edge IDs to round-trip through the repository's supported recovery/reopen paths; closing and reopening as a new database instance creates a distinct `DatabaseId`, so old runtime references fail `42002` rather than retargeting.",
+        "Document stable catalog/graph/node/edge IDs as the semantic identities future supported recovery/reopen must preserve; the current facade remains in-memory and M09 owns persisted open/recovery, where each opened facade instance receives a distinct `DatabaseId` and old runtime references fail `42002` rather than retargeting.",
         "Keep raw ID construction controlled for codecs/tests; introduce no new public row conversions/signatures or physical-row leaks through the stable `selene-db` facade or newly introduced identity/reference APIs.",
         "Replace M03-PR05's private dependency stamp with typed identity and generation components without making generation part of reference identity; add focused identity audit tests."
       ],
@@ -2463,25 +2463,27 @@
         "No `NodeRow`/`EdgeRow` rollout or repository-wide migration/removal of existing row-indexed public APIs; M04-PR02 owns that boundary.",
         "No directionality.",
         "No cross-database globally routable identifiers.",
-        "No new `StoreId`, store epoch, persisted-format, or durable stored-reference semantics; M09 owns those decisions, while existing supported stable-ID recovery/reopen correctness remains in scope.",
+        "No new `StoreId`, store epoch, persisted-format, facade reopen API, or durable facade-handle semantics; M09 owns those decisions and tests.",
+        "No `selene_core::Value` variant order/encoding, property-type, serde/rkyv, WAL/snapshot codec, or lower recovery-format change; existing bare-ID reference variants remain an explicit compatibility bridge.",
         "No UUID/string format promise for element IDs beyond the selected type contract."
       ],
       "design": [
         "`DatabaseId` is an opaque local database-instance root, not a durable or globally routable identity and not M09's `StoreId` or store epoch.",
         "Stable catalog/graph/node/edge IDs are semantic identities independent of private rows; they round-trip unchanged through supported recovery/reopen paths and remain stable across compaction and generation changes without defining a new persisted format.",
-        "`GraphRef`, `NodeRef`, and `EdgeRef` are local session/request values: they copy the reference rather than the referent, carry no generation, are not durable stored references, and validate access by stable database/graph/referent IDs plus liveness.",
+        "Facade `GraphRef`, `NodeRef`, and `EdgeRef` are local session/request handles distinct from the same-named legacy `Value` variants: they copy the reference rather than the referent, carry no generation, are not durable stored references, and validate access by stable database/graph/referent IDs plus liveness.",
         "Wrong database/graph, dropped graph, deleted element, and drop/recreate dereference failures return `42002 invalid-reference`; `42N03 undefined-reference` remains analyzer/name resolution.",
         "Drop/recreate produces distinct stable identities, so an old reference remains invalid rather than retargeting to the recreated graph or element.",
-        "Closing an instance invalidates its runtime references and reopening creates a distinct `DatabaseId`; recovered stable element IDs remain unchanged, but an old reference returns `42002 invalid-reference` rather than retargeting.",
+        "Independent current in-memory builds prove instance isolation; M09 must preserve stable semantic IDs on supported reopen while assigning a distinct `DatabaseId`, so an old reference returns `42002 invalid-reference` rather than retargeting.",
+        "M05-PR03 owns semantic/runtime carrier migration away from legacy bare-ID `Value` references; M09-PR08 owns deletion of their encoded variants and codecs.",
         "Checked generations identify physical candidate, plan, and catalog state; they are never semantic reference identity.",
         "Opaque IDs have explicit codec boundaries and no arithmetic in ordinary code.",
         "Debug/display representations are not parsing contracts unless explicitly documented."
       ],
       "acceptance": [
         "`DatabaseId` is the canonical opaque local database root and the stable ID kinds are distinct without promising globally routable or persisted store identity.",
-        "`GraphRef`, `NodeRef`, and `EdgeRef` are local database-instance/session-request values carrying only stable database/graph/referent IDs; they are not durable stored references and no generation field participates in equality or validity.",
+        "Facade `GraphRef`, `NodeRef`, and `EdgeRef` are local database-instance/session-request handles carrying only stable database/graph/referent IDs; they are opaque, not serde/rkyv/durable stored values, distinct from legacy `Value` variants, and no generation field participates in equality or validity.",
         "Wrong database/graph, dropped graph, deleted element, and drop/recreate runtime dereferences return `42002 invalid-reference`, while analyzer/name resolution continues to use `42N03 undefined-reference`.",
-        "Supported recovery/reopen round trips preserve stable catalog/graph/node/edge IDs, assign the reopened instance a distinct `DatabaseId`, and make references from the closed instance fail `42002 invalid-reference` rather than retarget.",
+        "Two independently built current in-memory instances have distinct `DatabaseId` values and reject each other's handles with `42002`; the M09 reopen contract records the same instance-isolation rule without inventing an M04 reopen API.",
         "Copied live references continue to resolve across compaction and generation changes; old references do not retarget after drop/recreate.",
         "ID kind mixups are compile-time errors.",
         "Checked graph/catalog generation transitions and the typed M03-PR05 dependency-stamp replacement have overflow and stale-state tests without making generations reference identity.",
@@ -2491,8 +2493,8 @@
         "Compile-fail tests for ID kind mixups and physical rows crossing newly introduced identity/reference API boundaries.",
         "Copied-reference, compaction, and generation-change property tests.",
         "Wrong-database, wrong-graph, delete, drop, and drop/recreate dereference tests for `42002`, plus analyzer/name-resolution regressions for `42N03`.",
-        "Supported recovery/reopen round-trip tests asserting unchanged stable IDs, a distinct reopened `DatabaseId`, and `42002` for references from the closed instance.",
-        "Codec round-trip and malformed ID tests.",
+        "Current two-instance tests asserting distinct `DatabaseId` values and `42002` for old/cross-instance references; persisted reopen tests remain assigned to M09.",
+        "Compile/rustdoc evidence that facade handles are public but opaque and non-durable, plus explicit validated bridge tests for legacy bare-ID `Value` references.",
         "Checked graph/catalog generation overflow and stale dependency-stamp tests.",
         "Mutation tests around stable-ID liveness/reference validation without generation-based invalidation."
       ],
@@ -2521,7 +2523,8 @@
       "bridge": [
         "Existing row-indexed APIs and private row aliases may remain unchanged in M04-PR01; M04-PR02's two-part delivery owns private `NodeRow`/`EdgeRow` wrappers and repository-wide removal of existing public row surfaces.",
         "M04-PR02 owns all downstream algorithm/GQL candidate and projection migration while preserving the existing dependency direction.",
-        "Replace M03-PR05's private facade dependency stamp with typed stable identity and checked generation components; generation remains outside semantic reference identity."
+        "Replace M03-PR05's private facade dependency stamp with typed stable identity and checked generation components; generation remains outside semantic reference identity.",
+        "Retain durable bare-ID `selene_core::Value` reference variants only as an explicit lower-engine compatibility bridge; M05-PR03 owns semantic/runtime carrier migration and M09-PR08 owns encoded variant/codec deletion."
       ],
       "commit_scope": "identity",
       "file": "docs/v2/roadmap/work-items-00-04.md#m04-pr01",
@@ -3087,7 +3090,7 @@
       "milestone": "M05",
       "number": 3,
       "title": "Implement Structural Type Descriptors, Nullability, References, and Binding Table Schemas",
-      "outcome": "Replace scattered expression/value type enums with interned structural descriptors that can represent the selected GQL value, record, list, path, reference, object, and binding-table types exactly enough for annotation and results.",
+      "outcome": "Replace scattered expression/value type enums with interned structural descriptors that can represent the selected GQL value, record, list, path, database-scoped reference, object, and binding-table types exactly enough for annotation and results, and migrate semantic/runtime reference carriers off the M04 legacy bare-ID bridge.",
       "dependencies": [
         "M05-PR02",
         "M03-PR03"
@@ -3099,7 +3102,8 @@
       "crates": [
         "selene-core",
         "selene-gql",
-        "selene-catalog"
+        "selene-catalog",
+        "selene-db"
       ],
       "expected_paths": [
         "crates/selene-core/src/types/**",
@@ -3110,7 +3114,7 @@
       "scope": [
         "Define interned immutable data/base/value/object/reference/list/record/path/binding-table descriptors with material/nullable/immaterial and open/closed characteristics.",
         "Define assignability, comparability, identity/distinct/equality/order capability, field combination/amend/restrict, list element/cardinality, and type-normal-form operations for the selected profile.",
-        "Represent graph/node/edge/table reference types with optional constraining object types and stable descriptor IDs.",
+        "Represent graph/node/edge/table reference types with optional constraining object types and stable descriptor IDs; migrate request/result/runtime carriers to M04's database-scoped facade reference contract rather than treating legacy bare-ID `Value` variants as complete references.",
         "Build binding-table schemas from closed record types plus preferred column order and ordered/unordered metadata.",
         "Refactor parameter/property/procedure/result typing to use descriptors or explicit adapters.",
         "Keep unsupported dynamic-union or optional types truthful in the profile rather than approximating them with `Any`."
@@ -3123,7 +3127,7 @@
       ],
       "design": [
         "Descriptors are canonical/interned by structural normal form and stable within a database/profile generation.",
-        "Runtime `Value` variants do not alone define declared type; sites/results carry descriptors.",
+        "Runtime `Value` variants do not alone define declared type; sites/results carry descriptors, and legacy bare-ID reference variants remain an explicit adapter until this work item migrates their semantic/runtime consumers.",
         "Null is one value included in nullable types; empty/omitted result type is distinct from null.",
         "Open types are explicit descriptors, not missing metadata.",
         "Type operations are pure and model-tested; analyzer calls them instead of reimplementing rules per expression."
@@ -3166,6 +3170,7 @@
       ],
       "bridge": [
         "Old expression/type enums may convert to descriptors temporarily.",
+        "Delete semantic/runtime dependence on legacy bare-ID `selene_core::Value` reference variants after migrating request/result carriers to M04 facade references; M09-PR08 retains ownership of encoded variant/codec deletion.",
         "Delete adapters in M05-PR06 and M06 as physical columns land."
       ],
       "commit_scope": "types",
@@ -5819,7 +5824,7 @@
         "CHANGELOG.md"
       ],
       "scope": [
-        "Inventory and delete all production 1.x writer/reader/manifest/snapshot/audit/recovery structs, codecs, magic constants, compatibility adapters, and feature flags.",
+        "Inventory and delete all production 1.x writer/reader/manifest/snapshot/audit/recovery structs, codecs, magic constants, compatibility adapters, and feature flags, including the legacy encoded bare-ID `selene_core::Value` graph/node/edge reference variants and codecs after M05-PR03 carrier migration.",
         "Implement a minimal header/version probe that recognizes known 1.x artifacts/store roots and returns `UnsupportedFormat` with found/expected version and rebuild guidance without decoding data.",
         "Route all database create/open/checkpoint/commit/recovery through the format 2 authority.",
         "Update public errors, docs, examples, tests, release artifacts, and package features to remove migration/compatibility expectations.",
@@ -5840,7 +5845,7 @@
         "Documentation says rebuild/import from source data rather than implying a hidden migration path."
       ],
       "acceptance": [
-        "Repository production code contains no 1.x decoder/writer/recovery branch or compatibility feature.",
+        "Repository production code contains no 1.x decoder/writer/recovery branch, compatibility feature, or legacy encoded bare-ID `Value` reference variant/codec.",
         "Known 1.x fixtures return the typed unsupported error and their directory hashes are unchanged after open attempts.",
         "All format 2 create/commit/checkpoint/reopen/crash/fuzz tests pass through the sole path.",
         "Public docs/errors consistently state no migration and no 1.x support.",
@@ -5876,7 +5881,7 @@
         "Format 2 crash/fuzz evidence is not green."
       ],
       "bridge": [
-        "Delete every legacy persistence bridge.",
+        "Delete every legacy persistence bridge, including encoded bare-ID `selene_core::Value` graph/node/edge reference variants and codecs after M05-PR03 removes runtime dependence.",
         "Test-only 1.x fixtures remain solely to assert safe rejection."
       ],
       "commit_scope": "persist",
