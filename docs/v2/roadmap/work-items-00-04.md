@@ -1284,47 +1284,55 @@ Finish the facade context control plane with selected SET/RESET/CLOSE behavior, 
 - **Issues:** None
 - **Commit scope:** `identity`
 
-Create the identity contract that separates persistent object/element IDs, session/request reference values, private storage rows, and graph/catalog generations.
+Establish canonical opaque `DatabaseId` plus stable catalog/graph/node/edge IDs, ID-only reference validity, and checked graph/catalog generation contracts without absorbing repository-wide row migration or M09 persistence identity.
 
 ### Scope
 
-- Define distinct stable ID types for catalog objects, graphs, nodes, and edges; define private `NodeRow`/`EdgeRow` wrappers inside graph storage.
-- Define `GraphGeneration`, `CatalogGeneration`, and optional store epoch types with checked monotonic transitions.
-- Add typed `GraphRef`, `NodeRef`, and `EdgeRef` values/handles carrying database/graph identity and referent ID, with generation validation policy.
-- Specify behavior for deleted referents, dropped graphs, copied reference values, compaction, and graph reopen/recovery.
-- Remove public constructors/conversions that make accidental row→ID reinterpretation easy; raw ID construction remains controlled for codecs/tests only.
-- Add identity audit lints/tests covering public signatures and internal conversion funnels.
+- Define canonical opaque `DatabaseId` as the local database-instance root, plus distinct stable ID types for catalog objects, graphs, nodes, and edges.
+- Define checked monotonic transitions for `GraphGeneration` and `CatalogGeneration`; defer `StoreId`, store epoch, and persisted-format identity semantics to M09.
+- Add typed `GraphRef`, `NodeRef`, and `EdgeRef` as local database-instance/session-request values carrying only stable database, graph, and referent IDs; generation is not part of semantic reference identity and references are not durable stored values.
+- Specify runtime dereference behavior for wrong database/graph, dropped graphs, deleted elements, drop/recreate, copied references, compaction, and generation changes, including the `42002`/`42N03` boundary.
+- Require stable catalog/graph/node/edge IDs to round-trip through the repository's supported recovery/reopen paths; closing and reopening as a new database instance creates a distinct `DatabaseId`, so old runtime references fail `42002` rather than retargeting.
+- Keep raw ID construction controlled for codecs/tests; introduce no new public row conversions/signatures or physical-row leaks through the stable `selene-db` facade or newly introduced identity/reference APIs.
+- Replace M03-PR05's private dependency stamp with typed identity and generation components without making generation part of reference identity; add focused identity audit tests.
 
 ### Non-goals
 
 - No candidate-set API yet.
+- No `NodeRow`/`EdgeRow` rollout or repository-wide migration/removal of existing row-indexed public APIs; M04-PR02 owns that boundary.
 - No directionality.
 - No cross-database globally routable identifiers.
+- No new `StoreId`, store epoch, persisted-format, or durable stored-reference semantics; M09 owns those decisions, while existing supported stable-ID recovery/reopen correctness remains in scope.
 - No UUID/string format promise for element IDs beyond the selected type contract.
 
 ### Acceptance evidence
 
-- Public API inspection finds no `RowIndex`, raw row `u32`, or unchecked row-to-ID conversion.
-- Compaction changes rows while all live stable IDs and reference values continue to resolve correctly.
-- Deleted/dropped referents produce the selected invalid-reference GQLSTATUS on access but reference copying remains allowed.
+- `DatabaseId` is the canonical opaque local database root and the stable ID kinds are distinct without promising globally routable or persisted store identity.
+- `GraphRef`, `NodeRef`, and `EdgeRef` are local database-instance/session-request values carrying only stable database/graph/referent IDs; they are not durable stored references and no generation field participates in equality or validity.
+- Wrong database/graph, dropped graph, deleted element, and drop/recreate runtime dereferences return `42002 invalid-reference`, while analyzer/name resolution continues to use `42N03 undefined-reference`.
+- Supported recovery/reopen round trips preserve stable catalog/graph/node/edge IDs, assign the reopened instance a distinct `DatabaseId`, and make references from the closed instance fail `42002 invalid-reference` rather than retarget.
+- Copied live references continue to resolve across compaction and generation changes; old references do not retarget after drop/recreate.
 - ID kind mixups are compile-time errors.
-- Generation/epoch transitions have overflow and stale-state tests.
-- Internal codecs use explicit audited constructors rather than broad public `new(raw)` paths.
+- Checked graph/catalog generation transitions and the typed M03-PR05 dependency-stamp replacement have overflow and stale-state tests without making generations reference identity.
+- Internal codecs/tests use explicit audited raw-ID constructors rather than broad public `new(raw)` paths, and the stable facade plus new identity/reference APIs expose no physical row.
 
 ### Tests and gates
 
-- Compile-fail tests for ID kind and private row boundaries.
-- Compaction/reference property tests.
-- Delete/drop/recreate invalid-reference tests.
+- Compile-fail tests for ID kind mixups and physical rows crossing newly introduced identity/reference API boundaries.
+- Copied-reference, compaction, and generation-change property tests.
+- Wrong-database, wrong-graph, delete, drop, and drop/recreate dereference tests for `42002`, plus analyzer/name-resolution regressions for `42N03`.
+- Supported recovery/reopen round-trip tests asserting unchanged stable IDs, a distinct reopened `DatabaseId`, and `42002` for references from the closed instance.
 - Codec round-trip and malformed ID tests.
-- Repository row-arithmetic script updates.
-- Mutation tests around liveness/reference validation.
+- Checked graph/catalog generation overflow and stale dependency-stamp tests.
+- Mutation tests around stable-ID liveness/reference validation without generation-based invalidation.
 
 ### Review focus
 
-- No physical identity leaks.
-- Reference invalidation semantics.
-- Generation use is precise rather than over-invalidating.
+- Opaque local `DatabaseId` is not confused with globally routable or M09 store identity.
+- ID-only reference shapes, exact liveness/invalidation semantics, and the runtime `42002` versus analyzer `42N03` split.
+- Supported stable-ID recovery/reopen correctness without durable runtime references or a new persisted-format promise.
+- Generation use is precise and never semantic reference identity.
+- No new physical-row leak and no repository-wide row migration absorbed from M04-PR02.
 - Codec/internal constructor containment.
 
 ### Stop conditions
@@ -1335,9 +1343,9 @@ Create the identity contract that separates persistent object/element IDs, sessi
 
 ### Bridge and deletion
 
-- Internal legacy `RowIndex` may remain as a private alias while call sites migrate.
-- M04-PR02 deletes row-indexed public methods and completes the boundary.
-- Replace M03-PR05's private facade dependency stamp with the final public identity/generation contract.
+- Existing row-indexed APIs and private row aliases may remain unchanged in M04-PR01; M04-PR02's two-part delivery owns private `NodeRow`/`EdgeRow` wrappers and repository-wide removal of existing public row surfaces.
+- M04-PR02 owns all downstream algorithm/GQL candidate and projection migration while preserving the existing dependency direction.
+- Replace M03-PR05's private facade dependency stamp with typed stable identity and checked generation components; generation remains outside semantic reference identity.
 
 <a id="m04-pr02"></a>
 ## M04-PR02 — Introduce Typed Generation-Bound Candidate Sets and Remove Row Bitmap APIs
@@ -1349,59 +1357,69 @@ Create the identity contract that separates persistent object/element IDs, sessi
 - **Issues:** #1093
 - **Commit scope:** `graph`
 
-Close #1093 by replacing every public row-indexed bitmap producer with typed node/edge candidate sets whose storage representation is private and safe for set algebra.
+Deliver M04-PR02 in two independently D-021-bounded parts: Part 1 establishes graph substrate/producers and a strictly temporary lower-layer row bridge; Part 2 migrates downstream consumers, removes every remaining repository-public row surface and the bridge, and closes #1093.
 
 ### Scope
 
-- Add sealed element-kind markers and `CandidateSet<Node>` / `CandidateSet<Edge>` (or equivalent distinct types).
-- Bind each set to database/graph identity, immutable snapshot generation, element kind, and private bitmap/selection representation.
-- Provide union/intersection/difference, cardinality, contains-by-ID, ID iteration, and internal row iteration only inside trusted graph modules.
-- Replace `live_nodes`, `nodes_with_label`, `nodes_with_property_*`, edge counterparts, index-provider results, maintained candidate state, and optimizer adapters.
-- Reject cross-graph, cross-generation, and cross-kind algebra with typed errors rather than silently translating.
-- Delete public raw bitmap methods and repeated hand-written row→ID loops; update issue #1093 closure evidence.
+- Deliver this existing work item in exactly two reviewable parts; each part independently stays within D-021's default of at most 25 production files and roughly 1,500 net non-generated lines.
+- Part 1 — graph substrate: introduce private `NodeRow` and `EdgeRow` storage wrappers, sealed element-kind markers, and `CandidateSet<Node>` / `CandidateSet<Edge>` (or equivalent distinct types).
+- Part 1 — candidate contract: bind each set to database/graph identity, immutable snapshot generation, element kind, and private representation; provide graph-owned union/intersection/difference, cardinality, contains-by-ID, stable-ID iteration, and trusted internal row iteration.
+- Part 1 — producers: migrate graph-owned `live_nodes`, `nodes_with_label`, `nodes_with_property_*`, edge counterparts, index-provider results, maintained candidate state, bitmap producers, and internal row consumers to the typed substrate.
+- Part 1 — temporary bridge: retain a strictly temporary lower-layer row compatibility bridge only where required for named Part 2 downstream consumers; it cannot cross the stable `selene-db` facade or be advertised as a compatibility promise.
+- Part 2 — downstream migration: move algorithms, GQL, facade/testing adapters, optimizer adapters, and private projections to typed candidates or ID-safe resolvers while preserving the existing lower-to-upper dependency direction.
+- Part 2 — final deletion: delete every remaining repository-public `RowIndex` type/signature, raw-row conversion/signature, row-indexed bitmap producer, repeated row→ID loop, legacy row alias/adapter, and the Part 1 bridge; close #1093 only with this final evidence.
+- Both parts reject cross-graph, cross-generation, and cross-kind algebra with typed errors rather than silently translating.
 
 ### Non-goals
 
 - No stable serialization format for candidate sets; they are snapshot-local ephemeral values.
 - No public row iterator escape hatch.
 - No query batch representation yet.
-- No change to stable NodeId/EdgeId semantics.
+- No change to stable NodeId/EdgeId or M04-PR01 reference validity semantics.
+- No new store-identity or persisted-format semantics; M09 owns them.
+- No new work-item ID, D-021 exception, or compatibility promise for the temporary Part 1 bridge.
 
 ### Acceptance evidence
 
-- Repository public API contains no row-indexed `RoaringBitmap` return type.
-- All consumers named in #1093 migrate to typed candidates or private projection APIs.
-- Set algebra mismatch tests cover database, graph, generation, and kind.
-- ID iteration remains correct before/after compaction and snapshot publication.
-- Candidate-set performance is within reviewed bounds of raw bitmap operations for in-generation algebra.
-- Issue #1093 can be closed with direct tests and docs rather than warning-only mitigation.
+- Part 1: private storage uses distinct `NodeRow`/`EdgeRow` wrappers, typed generation-bound candidates expose graph-owned algebra/stable-ID iteration, and graph-owned producers/internal row consumers migrate without unchecked row→ID reinterpretation.
+- Part 1: database, graph, generation, and kind mismatch tests pass; ID iteration remains correct before/after compaction and snapshot publication.
+- Part 1: any remaining row bridge is strictly lower-layer and named for Part 2 deletion, does not cross the stable `selene-db` facade, and is not documented as compatibility; M04-PR02 remains `Unmerged`, #1093 remains open, and dependents remain blocked.
+- Part 2 final: every algorithm, GQL, facade/testing adapter, optimizer adapter, and private projection consumer named by #1093 uses typed candidates or an ID-safe resolver without dependency inversion.
+- Part 2 final: repository-public API contains no `RowIndex`, raw-row conversion/signature, or row-indexed bitmap producer; repeated row→ID loops, legacy row aliases/adapters, and the Part 1 bridge are deleted.
+- Part 2 final: candidate-set performance is within reviewed bounds of raw bitmap operations for in-generation algebra and downstream projection/query overhead is separately reported.
+- Each delivery part records at most 25 production files and roughly 1,500 net non-generated lines; exceeding either default requires stop/replan rather than an implicit exception.
+- Only merged Part 2 with all final tests, docs, and deletion evidence completes M04-PR02, unblocks dependents, and permits #1093 closure.
 
 ### Tests and gates
 
-- Property tests comparing candidate algebra against ID `BTreeSet` reference.
-- Compaction/generation mismatch tests.
-- Compile-fail tests for node/edge kind mixing and private rows.
-- Algorithms/query/index regression suite.
-- Public API snapshot and row-arithmetic lint.
-- Mutation tests for mismatch guards and ID resolution.
+- Part 1: property tests compare candidate algebra with an ID `BTreeSet` reference and cover compaction, publication-generation mismatch, ID iteration, and mutation guards.
+- Part 1: compile-fail tests cover node/edge candidate kind mixing, `NodeRow`/`EdgeRow` mixing, and private rows crossing new typed graph boundaries.
+- Part 1: graph producer/index/maintained-state regressions and boundary tests prove the temporary bridge stays below the stable facade and is used only by named Part 2 consumers.
+- Part 2: algorithms/GQL/facade/testing candidate, optimizer, projection, query, and index regression suites plus the dependency-direction audit.
+- Part 2 final: public API snapshot and row-arithmetic lint prove deletion of existing public row signatures/conversions/bitmap producers, repeated row→ID loops, and the Part 1 bridge.
+- Each part: changed-production-file and net non-generated-line accounting proves independent D-021 default-cap compliance.
 
 ### Review focus
 
-- No hidden raw-row escape.
-- Generation and graph binding.
-- All downstream consumers migrated.
-- Performance evidence separates representation overhead from ID resolution.
+- Part 1: private `NodeRow`/`EdgeRow` kind safety, generation/graph binding, complete graph-owned producer migration, and no physical row leak through the stable facade.
+- Part 1: the lower-layer bridge is the minimum required by named Part 2 consumers, carries an explicit deletion owner, and creates no compatibility promise.
+- Part 2: all downstream algorithms/GQL/facade/testing adapters and private projections migrate without dependency inversion; no hidden repository-public raw-row escape or bridge remains.
+- Each part independently satisfies the D-021 default cap; Part 1 does not change M04-PR02 status, close #1093, or unblock dependents.
+- Performance evidence separates Part 1 representation/ID-resolution overhead from final Part 2 downstream migration overhead.
 
 ### Stop conditions
 
 - A downstream API fundamentally requires persistent candidate serialization; split a separately designed feature.
 - Generation binding causes unacceptable query-plan invalidation; investigate resolver ownership, do not remove safety.
-- PR exceeds size cap due unrelated algorithms cleanup; split adapters.
+- Either delivery part would exceed 25 production files or roughly 1,500 net non-generated lines; stop/replan rather than grant an implicit D-021 exception or add a third delivery under this record.
+- Part 1 requires a row bridge through the stable `selene-db` facade, an advertised compatibility promise, or downstream migration beyond the named minimum; stop/replan rather than broaden Part 1.
+- Part 2 requires dependency inversion or cannot delete every remaining repository-public row surface and the Part 1 bridge; stop/replan rather than claim completion.
 
 ### Bridge and deletion
 
-- No public compatibility bridge.
-- A crate-private `RowCandidates` helper can exist but must not cross crate/public boundaries.
+- Part 1 only: a strictly temporary lower-layer row compatibility bridge may remain solely for named Part 2 downstream consumers; it must not cross the stable `selene-db` facade or be advertised/documented as compatibility.
+- The Part 1 bridge and any temporary `RowCandidates`, `RowIndex`, raw-row conversion, or adapter surface carry explicit Part 2 deletion ownership and do not complete M04-PR02, close #1093, or unblock dependents.
+- Part 2 deletes the bridge and every remaining legacy row alias/adapter or repository-public row surface; final acceptance has no compatibility bridge.
 
 <a id="m04-pr03"></a>
 ## M04-PR03 — Add Explicit Directed and Undirected Edge Storage
