@@ -54,24 +54,22 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     fn node_can_be_deleted(&self, id: NodeId) -> GraphResult<bool> {
         let graph = self.txn.read();
         let row = graph
-            .row_for_node_id(id)
-            .ok_or(GraphError::NodeNotFound { id })?
-            .get();
-        if row as usize >= graph.node_store.len() {
+            .node_row_for_id(id)
+            .ok_or(GraphError::NodeNotFound { id })?;
+        if row.index() >= graph.node_store.len() {
             return Err(GraphError::NodeNotFound { id });
         }
-        Ok(graph.node_store.is_alive(row))
+        Ok(graph.node_store.is_row_alive(row))
     }
 
     fn edge_can_be_deleted(&self, id: EdgeId) -> GraphResult<bool> {
         let graph = self.txn.read();
         let row = graph
-            .row_for_edge_id(id)
-            .ok_or(GraphError::EdgeNotFound { id })?
-            .get();
-        if row as usize >= graph.edge_store.len() {
+            .edge_row_for_id(id)
+            .ok_or(GraphError::EdgeNotFound { id })?;
+        if row.index() >= graph.edge_store.len() {
             return Err(GraphError::EdgeNotFound { id });
         }
-        Ok(graph.edge_store.is_alive(row))
+        Ok(graph.edge_store.is_row_alive(row))
     }
 }

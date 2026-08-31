@@ -16,8 +16,7 @@ use selene_core::{EdgeId, LabelSet};
 use crate::index_provider::{
     IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
 };
-use crate::store::RowIndex;
-use crate::{SeleneGraph, VectorCandidateSet};
+use crate::{CandidateSet, Node, SeleneGraph, VectorCandidateSet};
 
 #[path = "candidate_state/state.rs"]
 mod state;
@@ -155,21 +154,21 @@ impl MaintainedCandidateStateProvider {
     /// Returns [`ProviderError`] if live row-to-id mappings are inconsistent.
     pub fn rebuild_from_graph(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
         let mut rebuilt = CandidateState::new(&self.specs);
-        for row in graph.live_nodes() {
-            let row = RowIndex::new(row);
-            let id = graph.node_id_for_row(row).ok_or_else(|| {
-                inconsistent(format!("live node row {} has no external id", row.get()))
-            })?;
+        let nodes = graph.live_node_candidates();
+        for id in nodes
+            .iter_ids(graph)
+            .map_err(|error| inconsistent(error.to_string()))?
+        {
             let labels = graph
                 .node_labels(id)
                 .ok_or_else(|| inconsistent(format!("live node {id} has no label column entry")))?;
             rebuilt.node_labels.insert(id, labels.clone());
         }
-        for row in graph.live_edges() {
-            let row = RowIndex::new(row);
-            let id = graph.edge_id_for_row(row).ok_or_else(|| {
-                inconsistent(format!("live edge row {} has no external id", row.get()))
-            })?;
+        let edges = graph.live_edge_candidates();
+        for id in edges
+            .iter_ids(graph)
+            .map_err(|error| inconsistent(error.to_string()))?
+        {
             let label = graph
                 .edge_label(id)
                 .ok_or_else(|| inconsistent(format!("live edge {id} has no label")))?;
@@ -238,6 +237,32 @@ impl MaintainedCandidateStateProvider {
             .members
             .get_mut(name)
             .map(|members| VectorCandidateSet::from_canonical_nodes(members.candidate_nodes())))
+    }
+
+    /// Return typed node candidates for `name` bound to `graph`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when maintained state is stale or contains an
+    /// ID that is not live in the supplied snapshot.
+    pub fn node_candidate_set(
+        &self,
+        name: &DbString,
+        graph: &SeleneGraph,
+    ) -> Result<Option<CandidateSet<Node>>, ProviderError> {
+        let mut state = self.state.lock();
+        if state.generation != graph.meta.generation {
+            return Err(inconsistent(format!(
+                "candidate-state generation {} does not match graph generation {}",
+                state.generation, graph.meta.generation
+            )));
+        }
+        let Some(members) = state.members.get_mut(name) else {
+            return Ok(None);
+        };
+        CandidateSet::try_from_ids(graph, members.candidate_nodes())
+            .map(Some)
+            .ok_or_else(|| inconsistent("candidate state references a non-live node".to_owned()))
     }
 
     /// Return generation-checked metadata for every configured candidate set.
@@ -420,6 +445,14 @@ impl IndexProvider for MaintainedCandidateStateProvider {
         generation: u64,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
         self.candidate_set_at_generation(name, generation)
+    }
+
+    fn node_candidate_set(
+        &self,
+        name: &DbString,
+        graph: &SeleneGraph,
+    ) -> Result<Option<CandidateSet<Node>>, ProviderError> {
+        MaintainedCandidateStateProvider::node_candidate_set(self, name, graph)
     }
 
     fn vector_candidate_state_infos(

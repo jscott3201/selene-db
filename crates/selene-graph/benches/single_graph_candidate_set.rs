@@ -12,6 +12,7 @@ use selene_graph::{
     VectorNeighborDirection, VectorNeighborSearchOptions,
 };
 
+mod physical;
 mod single_graph_candidate_set_algebra_fixture;
 
 use single_graph_candidate_set_algebra_fixture::VectorCandidateAlgebraFixture;
@@ -75,6 +76,7 @@ pub(super) fn bench_vector_candidate_set(c: &mut Criterion) {
     bench_candidate_set_scoring(&mut group);
     bench_candidate_set_algebra(&mut group);
     group.finish();
+    physical::bench_physical_candidate_set(c);
     bench_candidate_state(c);
 }
 

@@ -16,7 +16,7 @@ use super::{
     COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS, CompactionStats, compact_core,
 };
 use crate::error::GraphError;
-use crate::store::RowIndex;
+use crate::store::{EdgeRow, NodeRow, RowIndex};
 use crate::{AdjacencyEntry, CompactionReport, SeleneGraph, SharedGraph};
 
 fn prop(key: &str, value: Value) -> PropertyMap {
@@ -515,7 +515,7 @@ fn graph_with_one_live_node() -> SeleneGraph {
     graph.node_store.alive_mut().insert(0);
     graph
         .node_id_to_row
-        .insert_cow(NodeId::new(1), RowIndex::new(0));
+        .insert_cow(NodeId::new(1), NodeRow::new(0));
     graph
 }
 
@@ -551,7 +551,7 @@ fn compaction_rejects_edge_with_dead_endpoint() {
     graph.edge_store.alive_mut().insert(0);
     graph
         .edge_id_to_row
-        .insert_cow(EdgeId::new(1), RowIndex::new(0));
+        .insert_cow(EdgeId::new(1), EdgeRow::new(0));
 
     let GraphError::Inconsistent { reason } = expect_compact_inconsistent(&graph) else {
         unreachable!("helper returns only Inconsistent");

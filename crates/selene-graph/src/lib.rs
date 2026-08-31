@@ -11,6 +11,7 @@
 #![deny(missing_docs)]
 
 pub mod adjacency;
+pub mod candidate_set;
 pub mod candidate_state;
 mod candidate_state_shared;
 mod checkpoint;
@@ -53,6 +54,7 @@ pub mod vector_search;
 pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
+pub use candidate_set::{CandidateKind, CandidateSet, CandidateSetError, Edge, Node};
 pub use candidate_state::{
     CANDIDATE_STATE_PROVIDER_TAG, CANDIDATE_STATE_SUB, CandidateStateSpec,
     MaintainedCandidateStateProvider,

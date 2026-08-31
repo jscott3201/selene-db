@@ -1439,6 +1439,24 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_set/from_nodes_reverse_l256_r256_o128` | 186.33 ns (quick) | Builds a canonical candidate set from 256 reverse-sorted node ids. PR-local canonical-input guard A/B: 199.68 ns → 186.33 ns by using an early-exit ascending check before the existing sort/dedup path. |
 | `graph_vector_candidate_set/from_nodes_sorted_l256_r256_o128` | 108.15 ns (quick) | Builds a canonical candidate set from 256 already-canonical node ids. PR-local canonical-input fast path A/B: 190.68 ns → 108.15 ns by skipping redundant sort/dedup work. |
 | `graph_vector_candidate_set/from_search_hits_l256_r256_o128` | 179.8 ns (quick) | Builds a canonical candidate set from 256 vector-search hits, covering ANN/search-output composition. |
+
+M04-PR02 Part 1 physical candidate-set characterization (not an improvement
+claim): `scripts/run-benches.sh --profile quick --bench single_graph --filter
+graph_physical_candidate_set`. Host: Apple M5, arm64, macOS 26.7, mimalloc;
+Criterion quick profile (10 samples). Each fixture has 1,000 nodes; `d1`, `d10`,
+and `d50` select 10, 100, and 500 rows, with 50% left/right overlap. Values are
+median raw bridge / typed candidate time for d1 / d10 / d50.
+
+| Operation | d1 | d10 | d50 | Notes |
+|---|---:|---:|---:|---|
+| union | 27.933 / 38.476 ns | 105.68 / 113.48 ns | 359.96 / 382.07 ns | Both paths clone one roaring bitmap; typed adds exact-scope validation and retains layout identity. |
+| intersection | 26.112 / 35.358 ns | 120.13 / 131.27 ns | 552.64 / 555.20 ns | Same 50%-overlap row sets. |
+| difference | 31.754 / 33.151 ns | 120.13 / 127.78 ns | 530.77 / 559.84 ns | Same 50%-overlap row sets. |
+| stable-ID iteration | 19.135 / 23.615 ns | 201.03 / 197.42 ns | 941.66 / 998.64 ns | Raw bridge maps each row with `node_id_for_row`; typed validates once, then yields stable IDs in row order. |
+| contains | 1.7423 / 6.8456 ns | 2.6099 / 7.9034 ns | 3.1626 / 8.3128 ns | Typed includes graph/generation/layout validation and ID-to-private-row translation. |
+| label producer | 9.7287 / 26.102 ns | 10.281 / 28.328 ns | 9.3896 / 39.819 ns | Raw returns a borrowed bitmap; typed retains an owned snapshot-scoped candidate set. |
+| property equality producer | 10.608 / 31.862 ns | 11.561 / 34.556 ns | 10.881 / 43.436 ns | Maintained I64 property index; raw returns `Cow`, typed owns the scoped result. |
+
 | `graph_vector_index_rebuild/hnsw_l2_dim128_default` | 118.9 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; compact level-0 links preserve the same link counts while reclaiming 150 stale HNSW entries. |
 | `graph_vector_index_rebuild/hnsw_l2_dim128_m24ef64` | 200.7 ms (quick) | Tuned `M=24, ef_construction=64` rebuild row; keeps the high-recall research config covered with compacted post-rebuild level-0 links. |
 | `graph_vector_index_rebuild/hnsw_cos_dim128_default` | 146.1 ms (quick) | Same rebuild fixture for 128-dim HNSW cosine, covering construction-side scorer reuse for metrics with bound query state. |

@@ -10,7 +10,7 @@ use std::fmt;
 
 use selene_core::{Change, DbString};
 
-use crate::{SeleneGraph, VectorCandidateSet};
+use crate::{CandidateSet, Node, SeleneGraph, VectorCandidateSet};
 
 /// Stable 4-byte ASCII identifier for an [`IndexProvider`] registration.
 ///
@@ -205,6 +205,23 @@ pub trait IndexProvider: Send + Sync + 'static {
         _name: &DbString,
         _generation: u64,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
+        Ok(None)
+    }
+
+    /// Return provider-owned, snapshot-bound node candidates for `name`.
+    ///
+    /// This graph-owned typed path is canonical for lower-layer consumers.
+    /// Providers that do not own named candidate state return `Ok(None)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when state is stale or cannot be bound to the
+    /// exact supplied snapshot.
+    fn node_candidate_set(
+        &self,
+        _name: &DbString,
+        _graph: &SeleneGraph,
+    ) -> Result<Option<CandidateSet<Node>>, ProviderError> {
         Ok(None)
     }
 

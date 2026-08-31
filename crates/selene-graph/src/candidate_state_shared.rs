@@ -3,12 +3,35 @@
 use selene_core::DbString;
 
 use crate::{
-    CANDIDATE_STATE_PROVIDER_TAG, ProviderError, ProviderTag, SharedGraph, VectorCandidateSet,
-    VectorCandidateStateInfo,
+    CANDIDATE_STATE_PROVIDER_TAG, CandidateSet, Node, ProviderError, ProviderTag, SharedGraph,
+    VectorCandidateSet, VectorCandidateStateInfo,
 };
 
 impl SharedGraph {
+    /// Look up snapshot-bound maintained node candidates by name.
+    ///
+    /// `Ok(None)` means no maintained provider is registered or the name is
+    /// unknown. The returned set retains the exact snapshot layout identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when provider state is stale or inconsistent.
+    pub fn node_candidate_set(
+        &self,
+        name: &DbString,
+    ) -> Result<Option<CandidateSet<Node>>, ProviderError> {
+        let snapshot = self.read();
+        let Some(provider) = self.index_provider_by_tag(ProviderTag(CANDIDATE_STATE_PROVIDER_TAG))
+        else {
+            return Ok(None);
+        };
+        provider.node_candidate_set(name, &snapshot)
+    }
+
     /// Look up a generation-checked maintained vector candidate set by name.
+    ///
+    /// This stable-ID result is the temporary M04-PR02 Part 2 bridge. New
+    /// lower-layer consumers use [`Self::node_candidate_set`].
     ///
     /// `Ok(None)` means no maintained candidate-state provider is registered or
     /// the provider has no set named `name`. The returned set is tied to the

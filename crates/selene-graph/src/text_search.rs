@@ -19,7 +19,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::parallel_scan::{should_parallelize_scan, try_reduce_bitmap_chunks};
 use crate::shared::SharedGraph;
-use crate::store::RowIndex;
+use crate::store::NodeRow;
 
 pub(crate) const TEXT_SEARCH_CANCEL_STRIDE: usize = 1024;
 #[cfg(not(test))]
@@ -176,9 +176,11 @@ impl SeleneGraph {
         if query_terms.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        let candidates = self.node_label_candidates(label);
+        if candidates.is_empty() {
             return Ok(Vec::new());
-        };
+        }
+        let label_rows = candidates.bitmap();
 
         let scan = TextScan::new(self, label, property, &query_terms, allowed_rows);
         let chunk = if should_parallelize_text_scan(label_rows, k) {
@@ -247,16 +249,16 @@ impl<'a> TextScan<'a> {
         if !self.graph.node_store.is_alive(raw_row) {
             return Ok(None);
         }
-        let row = RowIndex::new(raw_row);
-        let node_id = self
-            .graph
-            .node_id_for_row(row)
-            .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!(
-                    "label index row {raw_row} for {} has no node id",
-                    self.label.as_str()
-                ),
-            })?;
+        let row = NodeRow::new(raw_row);
+        let node_id =
+            self.graph
+                .node_id_for_node_row(row)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "label index row {raw_row} for {} has no node id",
+                        self.label.as_str()
+                    ),
+                })?;
         let properties = self
             .graph
             .node_store

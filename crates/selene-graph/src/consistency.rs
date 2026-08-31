@@ -312,18 +312,31 @@ impl SeleneGraph {
     fn check_adjacency(&self) -> Result<(), String> {
         let mut out_reference: EngineIdMap<NodeId, Vec<AdjacencyEdge>> = engine_id_map();
         let mut in_reference: EngineIdMap<NodeId, Vec<AdjacencyEdge>> = engine_id_map();
-        for row in self.edge_store.alive.iter() {
-            let Some(edge_id) = self.edge_id_for_row(crate::store::RowIndex::new(row)) else {
-                return Err(format!("alive edge row {row} has no mapped external id"));
+        let candidates = self.live_edge_candidates();
+        for row in candidates.edge_rows() {
+            let Some(edge_id) = self.edge_id_for_edge_row(row) else {
+                return Err(format!(
+                    "alive edge row {} has no mapped external id",
+                    row.get()
+                ));
             };
-            let Some(label) = self.edge_store.label.get(row as usize).cloned() else {
-                return Err(format!("alive edge row {row} has no label column entry"));
+            let Some(label) = self.edge_store.label.get(row.index()).cloned() else {
+                return Err(format!(
+                    "alive edge row {} has no label column entry",
+                    row.get()
+                ));
             };
-            let Some(source) = self.edge_store.source.get(row as usize).copied() else {
-                return Err(format!("alive edge row {row} has no source column entry"));
+            let Some(source) = self.edge_store.source.get(row.index()).copied() else {
+                return Err(format!(
+                    "alive edge row {} has no source column entry",
+                    row.get()
+                ));
             };
-            let Some(target) = self.edge_store.target.get(row as usize).copied() else {
-                return Err(format!("alive edge row {row} has no target column entry"));
+            let Some(target) = self.edge_store.target.get(row.index()).copied() else {
+                return Err(format!(
+                    "alive edge row {} has no target column entry",
+                    row.get()
+                ));
             };
             get_or_insert_default(&mut out_reference, source).push(AdjacencyEdge {
                 label: label.clone(),

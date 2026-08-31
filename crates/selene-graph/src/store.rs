@@ -8,10 +8,14 @@ use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
 
 use crate::chunked_vec::ChunkedVec;
 
-/// Internal storage row index — the position of a node or edge in its store's
-/// structure-of-arrays columns.
+/// Temporary untyped storage-row bridge retained for M04-PR02 Part 2.
 ///
-/// Distinct from the external [`NodeId`]/[`EdgeId`]: a `RowIndex` is dense,
+/// New graph-owned code uses private, kind-specific node and edge row types.
+/// This repository-public type exists only for the current downstream raw-row
+/// APIs and will be deleted when Part 2 migrates those callers. It is not a
+/// compatibility surface and must not be used by new APIs.
+///
+/// Distinct from the external [`NodeId`]/[`EdgeId`]: a row is dense,
 /// remappable by compaction (D22 / BRIEF-Item-4b/4c), and **never persisted** —
 /// only external ids reach the WAL, snapshot, or `Change` stream. There is **no**
 /// fixed arithmetic relationship between a row and its id: post-4c new rows are
@@ -22,6 +26,12 @@ use crate::chunked_vec::ChunkedVec;
 /// the per-store `row_to_id` reverse columns — never by index arithmetic.
 /// Keeping it a newtype lets the compiler flag any site that still conflates a
 /// row with an external id.
+///
+/// The kind-specific replacements are intentionally private:
+///
+/// ```compile_fail
+/// use selene_graph::store::{EdgeRow, NodeRow};
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RowIndex(u32);
 
@@ -42,7 +52,54 @@ impl RowIndex {
     }
 }
 
+/// Private physical node-row position.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) struct NodeRow(u32);
+
+impl NodeRow {
+    pub(crate) const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    pub(crate) const fn into_bridge(self) -> RowIndex {
+        RowIndex::new(self.0)
+    }
+}
+
+/// Private physical edge-row position.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) struct EdgeRow(u32);
+
+impl EdgeRow {
+    pub(crate) const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    pub(crate) const fn into_bridge(self) -> RowIndex {
+        RowIndex::new(self.0)
+    }
+}
+
 /// Node columns plus liveness bitmap.
+///
+/// Public column/bitmap access is a temporary M04-PR02 Part 2 deletion bridge;
+/// new graph consumers use typed candidate producers.
 #[derive(Clone, Debug)]
 pub struct NodeStore {
     /// Per-row node label sets.
@@ -57,7 +114,7 @@ pub struct NodeStore {
     /// Alive row indexes, shared copy-on-write across snapshots (B1): cloning
     /// the store bumps a refcount; mutate only through
     /// [`alive_mut`](Self::alive_mut) so a pre-clone snapshot never observes
-    /// the change.
+    /// the change. Public raw access is the M04-PR02 Part 2 bridge.
     pub alive: Arc<RoaringBitmap>,
 }
 
@@ -92,10 +149,16 @@ impl NodeStore {
         self.len() == 0
     }
 
-    /// Return true when `index` is alive.
+    /// Return true when raw bridge `index` is alive.
+    ///
+    /// This method is retained only for M04-PR02 Part 2 migration.
     #[must_use]
     pub fn is_alive(&self, index: u32) -> bool {
         self.alive.contains(index)
+    }
+
+    pub(crate) fn is_row_alive(&self, row: NodeRow) -> bool {
+        self.alive.contains(row.get())
     }
 }
 
@@ -106,6 +169,9 @@ impl Default for NodeStore {
 }
 
 /// Edge columns plus liveness bitmap.
+///
+/// Public column/bitmap access is a temporary M04-PR02 Part 2 deletion bridge;
+/// new graph consumers use typed candidate producers.
 ///
 /// Stored edges are directed by construction: every live row has exactly one
 /// source node and one target node. Undirected query patterns are a matching
@@ -127,7 +193,7 @@ pub struct EdgeStore {
     /// Alive row indexes, shared copy-on-write across snapshots (B1): cloning
     /// the store bumps a refcount; mutate only through
     /// [`alive_mut`](Self::alive_mut) so a pre-clone snapshot never observes
-    /// the change.
+    /// the change. Public raw access is the M04-PR02 Part 2 bridge.
     pub alive: Arc<RoaringBitmap>,
 }
 
@@ -164,10 +230,16 @@ impl EdgeStore {
         self.len() == 0
     }
 
-    /// Return true when `index` is alive.
+    /// Return true when raw bridge `index` is alive.
+    ///
+    /// This method is retained only for M04-PR02 Part 2 migration.
     #[must_use]
     pub fn is_alive(&self, index: u32) -> bool {
         self.alive.contains(index)
+    }
+
+    pub(crate) fn is_row_alive(&self, row: EdgeRow) -> bool {
+        self.alive.contains(row.get())
     }
 }
 

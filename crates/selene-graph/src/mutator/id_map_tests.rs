@@ -6,7 +6,7 @@
 
 use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap, db_string};
 
-use crate::store::RowIndex;
+use crate::store::{EdgeRow, NodeRow, RowIndex};
 use crate::{SeleneGraph, SharedGraph};
 
 #[test]
@@ -60,7 +60,7 @@ fn id_row_maps_round_trip_for_all_alive() {
         );
         assert_eq!(
             g.node_id_to_row.get(&id).copied(),
-            Some(RowIndex::new(row)),
+            Some(NodeRow::new(row)),
             "id->row map disagrees with row_to_id for alive {id}"
         );
     }
@@ -71,7 +71,7 @@ fn id_row_maps_round_trip_for_all_alive() {
     assert!(!g.node_store.alive.contains(1));
     assert_eq!(
         g.node_id_to_row.get(&NodeId::new(2)).copied(),
-        Some(RowIndex::new(1)),
+        Some(NodeRow::new(1)),
         "deleted node id must stay mapped (NotAlive, not NotFound)"
     );
     assert_eq!(
@@ -94,7 +94,7 @@ fn id_row_maps_round_trip_for_all_alive() {
         );
         assert_eq!(
             g.edge_id_to_row.get(&id).copied(),
-            Some(RowIndex::new(row)),
+            Some(EdgeRow::new(row)),
             "id->row map disagrees with row_to_id for alive {id}"
         );
     }
@@ -103,11 +103,11 @@ fn id_row_maps_round_trip_for_all_alive() {
     // row_to_id slots keep the real id (Option B), same as deleted nodes.
     assert_eq!(
         g.edge_id_to_row.get(&selene_core::EdgeId::new(1)).copied(),
-        Some(RowIndex::new(0))
+        Some(EdgeRow::new(0))
     );
     assert_eq!(
         g.edge_id_to_row.get(&selene_core::EdgeId::new(2)).copied(),
-        Some(RowIndex::new(1))
+        Some(EdgeRow::new(1))
     );
     assert_eq!(
         *g.edge_store.row_to_id.get(0).unwrap(),

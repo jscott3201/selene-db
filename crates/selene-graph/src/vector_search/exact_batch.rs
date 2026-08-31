@@ -11,7 +11,7 @@ use super::{
 use crate::error::GraphError;
 use crate::graph::SeleneGraph;
 use crate::parallel_scan::try_reduce_bitmap_chunks;
-use crate::store::RowIndex;
+use crate::store::NodeRow;
 
 impl SeleneGraph {
     /// Exhaustively rank vector-valued node properties for a batch of queries.
@@ -46,18 +46,23 @@ impl SeleneGraph {
         if k == 0 {
             return Ok(vec![Vec::new(); queries.len()]);
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        let label_candidates = self.node_label_candidates(label);
+        if label_candidates.is_empty() {
             return Ok(vec![Vec::new(); queries.len()]);
-        };
+        }
 
         let query_dimension = u32::try_from(first_dimension).ok();
         let vector_index = query_dimension.and_then(|dimension| {
             self.vector_index_for(label, property)
                 .filter(|index| index.dimension() == dimension)
         });
-        let rows = vector_index
+        let indexed_candidates = vector_index
             .as_ref()
-            .map_or(label_rows, |index| index.rows());
+            .map(|index| crate::CandidateSet::from_node_rows(self, index.rows().clone()));
+        let rows = indexed_candidates
+            .as_ref()
+            .unwrap_or(&label_candidates)
+            .bitmap();
         let scorers: Result<Vec<_>, GraphError> = queries
             .iter()
             .map(|query| metric.bind_query(query).map_err(GraphError::from))
@@ -162,9 +167,9 @@ impl SeleneGraph {
         if !self.node_store.is_alive(raw_row) {
             return Ok(());
         }
-        let row = RowIndex::new(raw_row);
+        let row = NodeRow::new(raw_row);
         let node_id = self
-            .node_id_for_row(row)
+            .node_id_for_node_row(row)
             .ok_or_else(|| GraphError::Inconsistent {
                 reason: format!(
                     "vector search row {raw_row} for {} has no node id",

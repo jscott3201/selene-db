@@ -46,7 +46,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::{
     CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph, VectorIndexEntry,
 };
-use crate::store::{EdgeStore, NodeStore, RowIndex};
+use crate::store::{EdgeRow, EdgeStore, NodeRow, NodeStore};
 use crate::typed_index::TypedIndex;
 
 const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
@@ -182,7 +182,7 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     for old_row in graph.node_store.alive.iter() {
         let r = old_row as usize;
         let id = graph
-            .node_id_for_row(RowIndex::new(old_row))
+            .node_id_for_node_row(NodeRow::new(old_row))
             .ok_or_else(|| GraphError::Inconsistent {
                 reason: format!("alive node row {old_row} has no external id during compaction"),
             })?;
@@ -221,7 +221,7 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     for old_row in graph.edge_store.alive.iter() {
         let r = old_row as usize;
         let id = graph
-            .edge_id_for_row(RowIndex::new(old_row))
+            .edge_id_for_edge_row(EdgeRow::new(old_row))
             .ok_or_else(|| GraphError::Inconsistent {
                 reason: format!("alive edge row {old_row} has no external id during compaction"),
             })?;

@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 
 use crate::core_provider::sections::{EdgeRow, NodeRow};
 use crate::graph::SeleneGraph;
-use crate::store::RowIndex;
+use crate::store::{EdgeRow as PhysicalEdgeRow, NodeRow as PhysicalNodeRow};
 use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
 
 pub(super) fn insert_node_row(
@@ -48,7 +48,7 @@ pub(super) fn insert_node_row(
     // this real-row branch.
     graph
         .node_id_to_row
-        .insert_cow(id, RowIndex::new(row_index as u32));
+        .insert_cow(id, PhysicalNodeRow::new(row_index as u32));
     Ok(())
 }
 
@@ -83,7 +83,7 @@ pub(super) fn insert_edge_row(
     // insert_node_row).
     graph
         .edge_id_to_row
-        .insert_cow(id, RowIndex::new(row_index as u32));
+        .insert_cow(id, PhysicalEdgeRow::new(row_index as u32));
     Ok(())
 }
 

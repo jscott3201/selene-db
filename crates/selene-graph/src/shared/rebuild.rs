@@ -14,7 +14,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::id_map::{engine_id_map, get_or_insert_default};
 use crate::index_provider::{IndexProvider, ProviderError};
-use crate::store::{EdgeStore, RowIndex};
+use crate::store::{EdgeRow, EdgeStore, NodeRow};
 
 pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
     graph.idx_label = Default::default();
@@ -62,7 +62,7 @@ pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> 
     Ok(())
 }
 
-/// Rebuild the external-id <-> [`RowIndex`] maps from the per-store `row_to_id`
+/// Rebuild the external-id <-> private physical-row maps from `row_to_id`
 /// columns, as the final id-binding step of a full rebuild (recovery /
 /// [`SharedGraph`] construction).
 ///
@@ -118,7 +118,7 @@ fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
             id = selene_core::NodeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
             graph.node_store.row_to_id.set(row, id);
         }
-        graph.node_id_to_row.insert_cow(id, RowIndex::new(raw));
+        graph.node_id_to_row.insert_cow(id, NodeRow::new(raw));
     }
     for row in 0..edge_len {
         let raw = row as u32;
@@ -135,7 +135,7 @@ fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
             id = selene_core::EdgeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
             graph.edge_store.row_to_id.set(row, id);
         }
-        graph.edge_id_to_row.insert_cow(id, RowIndex::new(raw));
+        graph.edge_id_to_row.insert_cow(id, EdgeRow::new(raw));
     }
     Ok(())
 }
@@ -171,14 +171,11 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
         let (label, source, target) = edge_row_parts(&graph.edge_store, row_index)?;
         // rebuild_id_maps ran first, so the edge id is read from the row_to_id
         // column (the persistence-stable id), never synthesized as row + 1.
-        let edge_id =
-            graph
-                .edge_id_for_row(RowIndex::new(row))
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "alive edge row {row} has no mapped external id during rebuild"
-                    ),
-                })?;
+        let edge_id = graph
+            .edge_id_for_edge_row(EdgeRow::new(row))
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: format!("alive edge row {row} has no mapped external id during rebuild"),
+            })?;
         get_or_insert_default(&mut graph.adjacency_out, source).add(AdjacencyEdge {
             label: label.clone(),
             neighbor: target,

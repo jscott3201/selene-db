@@ -50,10 +50,11 @@ pub(crate) fn validate_unique_property_state(
     }
 
     let mut seen = HashMap::new();
-    for row in graph.node_store.alive.iter() {
-        let id = graph
-            .node_id_for_row(crate::store::RowIndex::new(row))
-            .expect("alive node row has a mapped external id (BRIEF-Item-4a)");
+    let nodes = graph.live_node_candidates();
+    for id in nodes
+        .iter_ids(graph)
+        .expect("graph-owned node candidates match their snapshot")
+    {
         let (node_type_index, _) = validate_node_state(id, graph, type_def)?;
         let node_type = &type_def.node_types[node_type_index as usize];
         let empty_props = PropertyMap::new();
@@ -67,10 +68,11 @@ pub(crate) fn validate_unique_property_state(
             &mut seen,
         )?;
     }
-    for row in graph.edge_store.alive.iter() {
-        let id = graph
-            .edge_id_for_row(crate::store::RowIndex::new(row))
-            .expect("alive edge row has a mapped external id (BRIEF-Item-4a)");
+    let edges = graph.live_edge_candidates();
+    for id in edges
+        .iter_ids(graph)
+        .expect("graph-owned edge candidates match their snapshot")
+    {
         let (edge_type, _) = validate_edge_state(id, graph, type_def)?;
         let empty_props = PropertyMap::new();
         let properties = graph.edge_properties(id).unwrap_or(&empty_props);
@@ -272,10 +274,11 @@ fn validate_candidate_conflicts(
     candidate_by_key: &HashMap<UniquePropertyKey, EntityId>,
     impacted_domains: &HashSet<UniquePropertyDomain>,
 ) -> Result<(), TypeViolation> {
-    for row in graph.node_store.alive.iter() {
-        let id = graph
-            .node_id_for_row(crate::store::RowIndex::new(row))
-            .expect("alive node row has a mapped external id (BRIEF-Item-4a)");
+    let nodes = graph.live_node_candidates();
+    for id in nodes
+        .iter_ids(graph)
+        .expect("graph-owned node candidates match their snapshot")
+    {
         let (node_type_index, _) = validate_node_state(id, graph, type_def)?;
         let node_type = &type_def.node_types[node_type_index as usize];
         let empty_props = PropertyMap::new();
@@ -290,10 +293,11 @@ fn validate_candidate_conflicts(
             impacted_domains,
         )?;
     }
-    for row in graph.edge_store.alive.iter() {
-        let id = graph
-            .edge_id_for_row(crate::store::RowIndex::new(row))
-            .expect("alive edge row has a mapped external id (BRIEF-Item-4a)");
+    let edges = graph.live_edge_candidates();
+    for id in edges
+        .iter_ids(graph)
+        .expect("graph-owned edge candidates match their snapshot")
+    {
         let (edge_type, _) = validate_edge_state(id, graph, type_def)?;
         let empty_props = PropertyMap::new();
         let properties = graph.edge_properties(id).unwrap_or(&empty_props);
