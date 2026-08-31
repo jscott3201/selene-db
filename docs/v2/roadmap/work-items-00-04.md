@@ -1209,7 +1209,7 @@ Delivered facade-owned atomic transaction staging/publication authority plus ses
 ## M03-PR05 — Deliver Persistent Session Controls and Generation-Safe Plan Reuse
 
 - **Owner:** M03
-- **State:** Unmerged
+- **State:** Merged
 - **Risk / size:** High / L
 - **Dependencies:** M03-PR04
 - **Issues:** None
