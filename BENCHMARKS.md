@@ -4737,12 +4737,12 @@ Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter g
 
 | Bench | 1,024-element quick estimate | Notes |
 |---|---:|---|
-| `graph_physical_candidate_set/build_live_nodes/1024` | 9.8546 µs | Builds the generation/layout-bound node set from typed live rows and sorts stable IDs. The 10-sample quick run reported two high severe outliers, so this is directional local evidence rather than a regression threshold. |
-| `graph_physical_candidate_set/iterate_stable_ids/1024` | 108.02 ns | Iterates deterministic stable `NodeId` values without exposing physical rows. |
-| `graph_physical_candidate_set/union_full_overlap/1024` | 1.5611 µs | Validates graph/generation/layout identity and unions two fully overlapping typed sets. |
-| `graph_physical_candidate_set/intersection_full_overlap/1024` | 1.3155 µs | Validates identity and intersects two fully overlapping typed sets. |
-| `graph_physical_candidate_set/difference_full_overlap/1024` | 2.0389 µs | Validates identity and removes a fully overlapping typed set, producing empty output. |
-| `graph_physical_candidate_set/clone_snapshot/1024` | 50.950 ns | Clones the immutable graph snapshot while retaining the same Arc-style layout token. |
+| `graph_physical_candidate_set/build_live_nodes/1024` | 4.3863 µs | Builds the generation/layout-bound node set from typed live rows, retains both private binding tokens, and sorts stable IDs. One high mild outlier was reported. |
+| `graph_physical_candidate_set/iterate_stable_ids/1024` | 93.951 ns | Iterates deterministic stable `NodeId` values without exposing physical rows. One high mild outlier makes this directional local evidence rather than a regression threshold. |
+| `graph_physical_candidate_set/union_full_overlap/1024` | 21.476 µs | Validates graph/generation/physical-layout/workspace-binding identity plus every stable-ID/typed-row/liveness pairing for both operands, then unions two fully overlapping sets. One high severe outlier was reported. |
+| `graph_physical_candidate_set/intersection_full_overlap/1024` | 21.682 µs | Performs the same complete identity and trusted-entry validation before intersecting two fully overlapping sets. |
+| `graph_physical_candidate_set/difference_full_overlap/1024` | 23.812 µs | Performs complete identity and trusted-entry validation before removing a fully overlapping set and producing empty output. Two high mild outliers were reported. |
+| `graph_physical_candidate_set/clone_snapshot/1024` | 61.825 ns | Clones the immutable graph snapshot while retaining physical-layout ancestry and its current private workspace binding. |
 
 ## Retrieval scoping guards
 

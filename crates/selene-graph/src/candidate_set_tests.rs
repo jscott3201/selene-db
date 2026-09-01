@@ -1,13 +1,13 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use proptest::prelude::*;
 use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap, db_string};
 
 use crate::candidate_set::{CandidateSet, Edge, Node};
 use crate::store::{EdgeRow, NodeRow};
-use crate::{CandidateSetError, SeleneGraph, SharedGraph, WalConfig};
+use crate::{CandidateSetError, GraphError, SeleneGraph, SharedGraph, WalConfig};
 
 fn identity_graph(width: u32) -> SeleneGraph {
     let mut graph = SeleneGraph::new(GraphId::new(41));
@@ -143,6 +143,8 @@ fn candidate_identity_rejects_graph_generation_and_layout_mismatch() {
     let mut independent = identity_graph(4);
     independent.meta.graph_id = graph.meta.graph_id;
     independent.meta.generation = graph.meta.generation;
+    assert!(!nodes.shares_physical_layout_with(&independent));
+    assert!(!nodes.shares_workspace_binding_with(&independent));
     assert_eq!(
         independent.union_candidates(&nodes, &nodes).unwrap_err(),
         CandidateSetError::LayoutMismatch
@@ -150,10 +152,32 @@ fn candidate_identity_rejects_graph_generation_and_layout_mismatch() {
 }
 
 #[test]
-fn candidate_retains_non_reusable_layout_after_graph_drop() {
+fn candidate_validation_rejects_typed_mapping_drift() {
+    let mut graph = identity_graph(2);
+    let nodes = graph.live_node_candidates().unwrap();
+    let edges = graph.live_edge_candidates().unwrap();
+    graph
+        .node_rows
+        .insert_cow(NodeId::new(101), NodeRow::new(1));
+    graph
+        .edge_rows
+        .insert_cow(EdgeId::new(201), EdgeRow::new(1));
+
+    assert_eq!(
+        graph.union_candidates(&nodes, &nodes).unwrap_err(),
+        CandidateSetError::StaleEntry
+    );
+    assert_eq!(
+        graph.union_candidates(&edges, &edges).unwrap_err(),
+        CandidateSetError::StaleEntry
+    );
+}
+
+#[test]
+fn candidate_retains_non_reusable_physical_layout_after_graph_drop() {
     let graph = identity_graph(2);
     let candidates = graph.live_node_candidates().unwrap();
-    let retained = candidates.layout_weak();
+    let retained = candidates.physical_layout_weak();
     drop(graph);
     assert!(retained.upgrade().is_some());
 
@@ -166,6 +190,40 @@ fn candidate_retains_non_reusable_layout_after_graph_drop() {
     );
     drop(candidates);
     assert!(retained.upgrade().is_none());
+}
+
+#[test]
+fn mutable_workspace_candidate_retains_physical_layout_and_binding_after_graph_drop() {
+    let shared = SharedGraph::new(GraphId::new(63));
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node(LabelSet::new(), PropertyMap::new())
+        .unwrap();
+    let candidates = txn.read().live_node_candidates().unwrap();
+    let physical = candidates.physical_layout_weak();
+    let workspace = candidates.workspace_binding_weak();
+    assert!(!std::sync::Weak::ptr_eq(&physical, &workspace));
+    assert!(candidates.shares_physical_layout_with(txn.read()));
+    assert!(candidates.shares_workspace_binding_with(txn.read()));
+
+    txn.rollback();
+    let published = shared.read();
+    assert!(candidates.shares_physical_layout_with(&published));
+    assert!(!candidates.shares_workspace_binding_with(&published));
+    assert_eq!(
+        published
+            .union_candidates(&candidates, &candidates)
+            .unwrap_err(),
+        CandidateSetError::LayoutMismatch
+    );
+    drop(published);
+    drop(shared);
+
+    assert!(physical.upgrade().is_some());
+    assert!(workspace.upgrade().is_some());
+    drop(candidates);
+    assert!(physical.upgrade().is_none());
+    assert!(workspace.upgrade().is_none());
 }
 
 fn populated_shared(graph_id: GraphId) -> SharedGraph {
@@ -199,19 +257,187 @@ fn clone_and_ordinary_publication_preserve_layout_but_generation_rejects() {
     let clone = before.as_ref().clone();
     let candidates = before.live_node_candidates().unwrap();
     assert!(before.shares_layout_with(&clone));
+    assert!(candidates.shares_physical_layout_with(&before));
+    assert!(candidates.shares_workspace_binding_with(&before));
     let _ = clone.union_candidates(&candidates, &candidates).unwrap();
 
     let mut txn = shared.begin_write();
     txn.mutator()
         .create_node(LabelSet::new(), PropertyMap::new())
         .unwrap();
+    let workspace_candidates = txn.read().live_node_candidates().unwrap();
+    assert!(candidates.shares_physical_layout_with(txn.read()));
+    assert!(!candidates.shares_workspace_binding_with(txn.read()));
+    assert!(workspace_candidates.shares_physical_layout_with(&before));
+    assert!(!workspace_candidates.shares_workspace_binding_with(&before));
     txn.commit().unwrap();
     let after = shared.read();
     assert!(before.shares_layout_with(&after));
+    assert!(candidates.shares_physical_layout_with(&after));
+    assert!(!candidates.shares_workspace_binding_with(&after));
+    assert!(workspace_candidates.shares_physical_layout_with(&after));
+    assert!(workspace_candidates.shares_workspace_binding_with(&after));
+    for stale in [&candidates, &workspace_candidates] {
+        assert!(matches!(
+            after.union_candidates(stale, stale),
+            Err(CandidateSetError::GenerationMismatch { .. })
+        ));
+    }
+}
+
+#[test]
+fn explicit_rollback_rejects_candidate_from_aborted_insert() {
+    let shared = SharedGraph::new(GraphId::new(57));
+    let mut txn = shared.begin_write();
+    let aborted_id = txn
+        .mutator()
+        .create_node(LabelSet::new(), PropertyMap::new())
+        .unwrap();
+    let escaped = txn.read().live_node_candidates().unwrap();
+    assert!(escaped.contains(aborted_id));
+
+    txn.rollback();
+
+    let published = shared.read();
+    assert!(escaped.shares_physical_layout_with(&published));
+    assert!(!escaped.shares_workspace_binding_with(&published));
+    assert_eq!(
+        published.union_candidates(&escaped, &escaped).unwrap_err(),
+        CandidateSetError::LayoutMismatch
+    );
+    let fresh = published.live_node_candidates().unwrap();
+    assert!(!fresh.contains(aborted_id));
+    assert!(fresh.is_empty());
+}
+
+#[test]
+fn implicit_rollback_rejects_candidate_from_aborted_insert() {
+    let shared = SharedGraph::new(GraphId::new(58));
+    let (aborted_id, escaped) = {
+        let mut txn = shared.begin_write();
+        let aborted_id = txn
+            .mutator()
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap();
+        let escaped = txn.read().live_node_candidates().unwrap();
+        (aborted_id, escaped)
+    };
+
+    let published = shared.read();
+    assert!(escaped.shares_physical_layout_with(&published));
+    assert!(!escaped.shares_workspace_binding_with(&published));
+    assert_eq!(
+        published.union_candidates(&escaped, &escaped).unwrap_err(),
+        CandidateSetError::LayoutMismatch
+    );
+    let fresh = published.live_node_candidates().unwrap();
+    assert!(!fresh.contains(aborted_id));
+    assert!(fresh.is_empty());
+}
+
+#[test]
+fn cancelled_unpublished_preparation_rejects_abandoned_candidate() {
+    let shared = SharedGraph::new(GraphId::new(59));
+    let mut txn = shared.begin_write();
+    let aborted_id = txn
+        .mutator()
+        .create_node(LabelSet::new(), PropertyMap::new())
+        .unwrap();
+    let escaped = txn.read().live_node_candidates().unwrap();
+    let cancelled = AtomicBool::new(true);
+
+    let error = txn
+        .prepare_unpublished(None, Some(&cancelled))
+        .err()
+        .expect("preparation must observe cancellation");
+    assert!(matches!(error, GraphError::Cancelled));
+
+    let published = shared.read();
+    assert_eq!(published.meta.generation, 0);
+    assert!(escaped.shares_physical_layout_with(&published));
+    assert!(!escaped.shares_workspace_binding_with(&published));
+    assert_eq!(
+        published.union_candidates(&escaped, &escaped).unwrap_err(),
+        CandidateSetError::LayoutMismatch
+    );
+    let fresh = published.live_node_candidates().unwrap();
+    assert!(!fresh.contains(aborted_id));
+    assert!(fresh.is_empty());
+}
+
+#[test]
+fn same_mutator_deletion_rejects_stale_node_and_edge_entries_before_generation_bump() {
+    let shared = populated_shared(GraphId::new(60));
+    let generation = shared.read().meta.generation;
+    let mut txn = shared.begin_write();
+    let mut mutator = txn.mutator();
+    let candidates = mutator.read().live_node_candidates().unwrap();
+    let edge_candidates = mutator.read().live_edge_candidates().unwrap();
+
+    mutator.delete_node(NodeId::new(1)).unwrap();
+
+    assert_eq!(mutator.read().meta.generation, generation);
+    assert_eq!(
+        mutator
+            .read()
+            .union_candidates(&candidates, &candidates)
+            .unwrap_err(),
+        CandidateSetError::StaleEntry
+    );
     assert!(matches!(
-        after.union_candidates(&candidates, &candidates),
-        Err(CandidateSetError::GenerationMismatch { .. })
+        candidates.trusted_rows(mutator.read()),
+        Err(CandidateSetError::StaleEntry)
     ));
+    assert_eq!(
+        mutator
+            .read()
+            .union_candidates(&edge_candidates, &edge_candidates)
+            .unwrap_err(),
+        CandidateSetError::StaleEntry
+    );
+    assert!(matches!(
+        edge_candidates.trusted_rows(mutator.read()),
+        Err(CandidateSetError::StaleEntry)
+    ));
+}
+
+#[test]
+fn same_mutator_reset_rejects_candidate_before_generation_bump() {
+    let shared = populated_shared(GraphId::new(61));
+    let generation = shared.read().meta.generation;
+    let mut txn = shared.begin_write();
+    let mut mutator = txn.mutator();
+    let candidates = mutator.read().live_node_candidates().unwrap();
+
+    mutator.factory_reset().unwrap();
+
+    assert_eq!(mutator.read().meta.generation, generation);
+    assert_eq!(
+        mutator
+            .read()
+            .union_candidates(&candidates, &candidates)
+            .unwrap_err(),
+        CandidateSetError::LayoutMismatch
+    );
+}
+
+#[test]
+fn repeated_mutator_acquisition_conservatively_remints_workspace() {
+    let shared = populated_shared(GraphId::new(62));
+    let mut txn = shared.begin_write();
+    let candidates = {
+        let mutator = txn.mutator();
+        mutator.read().live_node_candidates().unwrap()
+    };
+
+    let second = txn.mutator();
+    assert_eq!(
+        second
+            .read()
+            .union_candidates(&candidates, &candidates)
+            .unwrap_err(),
+        CandidateSetError::LayoutMismatch
+    );
 }
 
 #[test]
@@ -223,6 +449,8 @@ fn detached_shared_attachment_remints_layout() {
     assert_eq!(attached.graph_id(), graph.graph_id());
     assert_eq!(attached.meta.generation, graph.meta.generation);
     assert!(!attached.shares_layout_with(&graph));
+    assert!(!candidates.shares_physical_layout_with(&attached));
+    assert!(!candidates.shares_workspace_binding_with(&attached));
     assert_eq!(
         attached
             .union_candidates(&candidates, &candidates)
@@ -248,6 +476,8 @@ fn compaction_remints_without_changing_generation_or_surviving_ids() {
     assert_eq!(after.meta.generation, generation);
     assert_eq!(fresh.iter().collect::<Vec<_>>(), expected_ids);
     assert!(!before.shares_layout_with(&after));
+    assert!(!candidates.shares_physical_layout_with(&after));
+    assert!(!candidates.shares_workspace_binding_with(&after));
     assert_eq!(
         after
             .union_candidates(&candidates, &candidates)
@@ -265,6 +495,8 @@ fn factory_reset_remints_before_generation_changes() {
     txn.mutator().factory_reset().unwrap();
     assert_eq!(txn.read().meta.generation, before.meta.generation);
     assert!(!txn.read().shares_layout_with(&before));
+    assert!(!candidates.shares_physical_layout_with(txn.read()));
+    assert!(!candidates.shares_workspace_binding_with(txn.read()));
     assert_eq!(
         txn.read()
             .union_candidates(&candidates, &candidates)
@@ -284,6 +516,8 @@ fn non_remapping_rebuild_preserves_layout_and_generation() {
     let after = shared.read();
     assert_eq!(after.meta.generation, generation);
     assert!(after.shares_layout_with(&before));
+    assert!(candidates.shares_physical_layout_with(&after));
+    assert!(candidates.shares_workspace_binding_with(&after));
     let _ = after.union_candidates(&candidates, &candidates).unwrap();
 }
 
@@ -322,6 +556,8 @@ fn recovery_remints_independent_layout_and_rebuilds_typed_maps() {
     let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
     let after = recovered.read();
     assert_eq!(after.meta.generation, generation);
+    assert!(!candidates.shares_physical_layout_with(&after));
+    assert!(!candidates.shares_workspace_binding_with(&after));
     assert_eq!(
         after
             .live_node_candidates()
@@ -356,10 +592,10 @@ fn typed_rows_drive_mapping_endpoint_delete_and_consistency_paths() {
         vec![NodeId::new(1), NodeId::new(2)]
     );
     assert_eq!(edges.iter().collect::<Vec<_>>(), vec![EdgeId::new(1)]);
-    for (_, row) in nodes.trusted_rows() {
+    for (_, row) in nodes.trusted_rows(&before).unwrap() {
         node_row_only(row);
     }
-    for (_, row) in edges.trusted_rows() {
+    for (_, row) in edges.trusted_rows(&before).unwrap() {
         edge_row_only(row);
     }
     assert_eq!(

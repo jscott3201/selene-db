@@ -46,24 +46,50 @@ impl CandidateKind for Edge {
 pub(crate) struct LayoutToken;
 
 #[derive(Clone, Debug)]
-pub(crate) struct SnapshotLayout(Arc<LayoutToken>);
+pub(crate) struct SnapshotLayout {
+    physical: Arc<LayoutToken>,
+    workspace_binding: Arc<LayoutToken>,
+}
 
 impl SnapshotLayout {
     pub(crate) fn new() -> Self {
-        Self(Arc::new(LayoutToken))
+        let physical = Arc::new(LayoutToken);
+        Self {
+            workspace_binding: Arc::clone(&physical),
+            physical,
+        }
     }
 
-    fn retained(&self) -> Arc<LayoutToken> {
-        Arc::clone(&self.0)
+    fn retained_physical(&self) -> Arc<LayoutToken> {
+        Arc::clone(&self.physical)
     }
 
-    fn matches(&self, token: &Arc<LayoutToken>) -> bool {
-        Arc::ptr_eq(&self.0, token)
+    fn retained_workspace_binding(&self) -> Arc<LayoutToken> {
+        Arc::clone(&self.workspace_binding)
+    }
+
+    fn matches(&self, physical: &Arc<LayoutToken>, workspace_binding: &Arc<LayoutToken>) -> bool {
+        Arc::ptr_eq(&self.physical, physical)
+            && Arc::ptr_eq(&self.workspace_binding, workspace_binding)
+    }
+
+    fn remint_candidate_binding(&mut self) {
+        self.workspace_binding = Arc::new(LayoutToken);
     }
 
     #[cfg(test)]
     pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.physical, &other.physical)
+    }
+
+    #[cfg(test)]
+    fn physical_matches(&self, token: &Arc<LayoutToken>) -> bool {
+        Arc::ptr_eq(&self.physical, token)
+    }
+
+    #[cfg(test)]
+    fn workspace_binding_matches(&self, token: &Arc<LayoutToken>) -> bool {
+        Arc::ptr_eq(&self.workspace_binding, token)
     }
 }
 
@@ -98,9 +124,11 @@ impl<K> std::fmt::Debug for CandidateRow<K> {
 /// An immutable, non-serialized set of candidates from one graph snapshot.
 ///
 /// A set is bound to the producing lower graph identity, immutable generation,
-/// and private snapshot-layout allocation. Graph-owned algebra rejects any
-/// mismatch rather than translating physical rows. Public iteration is
-/// deterministic in ascending stable-ID order and never exposes physical rows.
+/// private physical snapshot-layout allocation, and private mutable-workspace
+/// binding. Graph-owned algebra rejects any identity mismatch or stale
+/// stable-ID/typed-row pairing rather than translating physical rows. Public
+/// iteration is deterministic in ascending stable-ID order and never exposes
+/// physical rows.
 ///
 /// Node and edge sets cannot be mixed:
 ///
@@ -117,8 +145,10 @@ impl<K> std::fmt::Debug for CandidateRow<K> {
 pub struct CandidateSet<K: CandidateKind> {
     graph_id: GraphId,
     generation: u64,
-    layout: Arc<LayoutToken>,
+    physical_layout: Arc<LayoutToken>,
+    workspace_binding: Arc<LayoutToken>,
     entries: Arc<[(K::Id, CandidateRow<K>)]>,
+    entry_is_current: fn(&SeleneGraph, K::Id, &CandidateRow<K>) -> bool,
 }
 
 impl<K: CandidateKind> Clone for CandidateSet<K> {
@@ -126,8 +156,10 @@ impl<K: CandidateKind> Clone for CandidateSet<K> {
         Self {
             graph_id: self.graph_id,
             generation: self.generation,
-            layout: Arc::clone(&self.layout),
+            physical_layout: Arc::clone(&self.physical_layout),
+            workspace_binding: Arc::clone(&self.workspace_binding),
             entries: Arc::clone(&self.entries),
+            entry_is_current: self.entry_is_current,
         }
     }
 }
@@ -172,13 +204,16 @@ impl<K: CandidateKind> CandidateSet<K> {
         generation: u64,
         layout: &SnapshotLayout,
         entries: Vec<(K::Id, CandidateRow<K>)>,
+        entry_is_current: fn(&SeleneGraph, K::Id, &CandidateRow<K>) -> bool,
     ) -> Self {
         debug_assert!(entries.windows(2).all(|pair| pair[0].0 < pair[1].0));
         Self {
             graph_id,
             generation,
-            layout: layout.retained(),
+            physical_layout: layout.retained_physical(),
+            workspace_binding: layout.retained_workspace_binding(),
             entries: entries.into(),
+            entry_is_current,
         }
     }
 
@@ -195,8 +230,18 @@ impl<K: CandidateKind> CandidateSet<K> {
                 actual: self.generation,
             });
         }
-        if !graph.layout.matches(&self.layout) {
+        if !graph
+            .layout
+            .matches(&self.physical_layout, &self.workspace_binding)
+        {
             return Err(CandidateSetError::LayoutMismatch);
+        }
+        if !self
+            .entries
+            .iter()
+            .all(|(id, row)| (self.entry_is_current)(graph, *id, row))
+        {
+            return Err(CandidateSetError::StaleEntry);
         }
         Ok(())
     }
@@ -238,9 +283,23 @@ impl<K: CandidateKind> CandidateSet<K> {
         Self {
             graph_id: self.graph_id,
             generation: self.generation,
-            layout: Arc::clone(&self.layout),
+            physical_layout: Arc::clone(&self.physical_layout),
+            workspace_binding: Arc::clone(&self.workspace_binding),
             entries: entries.into(),
+            entry_is_current: self.entry_is_current,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_physical_layout_with(&self, graph: &SeleneGraph) -> bool {
+        graph.layout.physical_matches(&self.physical_layout)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_workspace_binding_with(&self, graph: &SeleneGraph) -> bool {
+        graph
+            .layout
+            .workspace_binding_matches(&self.workspace_binding)
     }
 }
 
@@ -260,21 +319,32 @@ impl CandidateSet<Node> {
             graph.meta.generation,
             &graph.layout,
             entries,
+            node_entry_is_current,
         )
     }
 
     // M04-PR02 Part 3 deletes this minimum trusted lower-row bridge after all
     // downstream consumers move to typed candidates or stable-ID resolvers.
     #[allow(dead_code)]
-    pub(crate) fn trusted_rows(&self) -> impl Iterator<Item = (NodeId, NodeRow)> + '_ {
-        self.entries
+    pub(crate) fn trusted_rows(
+        &self,
+        graph: &SeleneGraph,
+    ) -> CandidateSetResult<impl Iterator<Item = (NodeId, NodeRow)> + '_> {
+        self.validate_for(graph)?;
+        Ok(self
+            .entries
             .iter()
-            .map(|(id, row)| (*id, NodeRow::new(row.raw)))
+            .map(|(id, row)| (*id, NodeRow::new(row.raw))))
     }
 
     #[cfg(test)]
-    pub(crate) fn layout_weak(&self) -> std::sync::Weak<LayoutToken> {
-        Arc::downgrade(&self.layout)
+    pub(crate) fn physical_layout_weak(&self) -> std::sync::Weak<LayoutToken> {
+        Arc::downgrade(&self.physical_layout)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn workspace_binding_weak(&self) -> std::sync::Weak<LayoutToken> {
+        Arc::downgrade(&self.workspace_binding)
     }
 }
 
@@ -294,16 +364,36 @@ impl CandidateSet<Edge> {
             graph.meta.generation,
             &graph.layout,
             entries,
+            edge_entry_is_current,
         )
     }
 
     // M04-PR02 Part 3 deletion owner: see the node-side bridge above.
     #[allow(dead_code)]
-    pub(crate) fn trusted_rows(&self) -> impl Iterator<Item = (EdgeId, EdgeRow)> + '_ {
-        self.entries
+    pub(crate) fn trusted_rows(
+        &self,
+        graph: &SeleneGraph,
+    ) -> CandidateSetResult<impl Iterator<Item = (EdgeId, EdgeRow)> + '_> {
+        self.validate_for(graph)?;
+        Ok(self
+            .entries
             .iter()
-            .map(|(id, row)| (*id, EdgeRow::new(row.raw)))
+            .map(|(id, row)| (*id, EdgeRow::new(row.raw))))
     }
+}
+
+fn node_entry_is_current(graph: &SeleneGraph, id: NodeId, candidate: &CandidateRow<Node>) -> bool {
+    let row = NodeRow::new(candidate.raw);
+    graph.node_row_for_id(id) == Some(row)
+        && graph.node_id_for_node_row(row) == Some(id)
+        && graph.node_store.is_alive_row(row)
+}
+
+fn edge_entry_is_current(graph: &SeleneGraph, id: EdgeId, candidate: &CandidateRow<Edge>) -> bool {
+    let row = EdgeRow::new(candidate.raw);
+    graph.edge_row_for_id(id) == Some(row)
+        && graph.edge_id_for_edge_row(row) == Some(id)
+        && graph.edge_store.is_alive_row(row)
 }
 
 impl SeleneGraph {
@@ -384,6 +474,10 @@ impl SeleneGraph {
 
     pub(crate) fn remint_layout(&mut self) {
         self.layout = SnapshotLayout::new();
+    }
+
+    pub(crate) fn remint_candidate_binding(&mut self) {
+        self.layout.remint_candidate_binding();
     }
 
     #[cfg(test)]

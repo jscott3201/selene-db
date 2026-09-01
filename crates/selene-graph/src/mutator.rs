@@ -36,6 +36,13 @@ pub struct Mutator<'tx, 'g> {
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
     pub(crate) fn new(txn: &'tx mut WriteTxn<'g>) -> Self {
+        // A transaction may expose its COW working graph through `read()`. Give
+        // every mutable-workspace lease a distinct candidate binding before
+        // any mutation can occur, so candidates from aborted work cannot
+        // validate against the restored published snapshot. Reacquisition
+        // remints conservatively and never changes persisted generation
+        // semantics.
+        txn.guard_mut().remint_candidate_binding();
         Self { txn }
     }
 
