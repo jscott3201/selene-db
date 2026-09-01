@@ -10,7 +10,6 @@ use selene_core::Change;
 
 use crate::Mutator;
 use crate::error::GraphResult;
-use crate::store::RowIndex;
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Factory-reset the entire graph: wipe every node and edge and reset the
@@ -56,14 +55,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         // Snapshot every live row BEFORE any removal: removal mutates the alive
         // bitmaps and adjacency/index structures we are iterating (the same
         // clone-collect discipline truncate_node_type uses).
-        let node_rows: Vec<u32> = self.txn.read().node_store.alive.iter().collect();
-        let edge_rows: Vec<u32> = self.txn.read().edge_store.alive.iter().collect();
+        let node_rows: Vec<_> = self.txn.read().node_store.alive_rows().collect();
+        let edge_rows: Vec<_> = self.txn.read().edge_store.alive_rows().collect();
 
         let mut expansion = Vec::with_capacity(node_rows.len() + edge_rows.len());
         for row in node_rows {
             // Every row came from the alive bitmap, so its external id is mapped
             // (an unmapped row would be a never-committed hole, never alive).
-            let Some(id) = self.txn.read().node_id_for_row(RowIndex::new(row)) else {
+            let Some(id) = self.txn.read().node_id_for_node_row(row) else {
                 continue;
             };
             // remove_node_row scrubs idx_label, property/composite indexes,
@@ -71,7 +70,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             // discarded here because the alive-edge bitmap below is the
             // authoritative superset (it also covers untyped edges between
             // untyped nodes), so we clear every edge row directly.
-            let _ = self.remove_node_row(id, row as usize)?;
+            let _ = self.remove_node_row(id, row)?;
             expansion.push(Change::NodeDeleted { id });
         }
 
@@ -81,24 +80,26 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         for row in edge_rows {
             // Defensive: a row may already be dead if it shared two truncated
             // endpoints — remove_edge_row is only called for still-alive rows.
-            if !self.txn.read().edge_store.is_alive(row) {
+            if !self.txn.read().edge_store.is_alive_row(row) {
                 continue;
             }
-            let Some(id) = self.txn.read().edge_id_for_row(RowIndex::new(row)) else {
+            let Some(id) = self.txn.read().edge_id_for_edge_row(row) else {
                 continue;
             };
             debug_assert!(
-                self.txn.read().row_for_edge_id(id) == Some(RowIndex::new(row)),
+                self.txn.read().edge_row_for_id(id) == Some(row),
                 "edge row/id round-trip must hold"
             );
-            self.remove_edge_row(id, row as usize)?;
+            self.remove_edge_row(id, row)?;
             expansion.push(Change::EdgeDeleted { id });
         }
 
         // Reset the schema to open. Different from DROP TYPE (which keeps the
         // graph closed by setting bound_type = Some(next)); factory-reset clears
         // the WHOLE bound_type to None.
-        self.txn.guard_mut().meta.bound_type = None;
+        let graph = self.txn.guard_mut();
+        graph.meta.bound_type = None;
+        graph.remint_layout();
 
         // Push EXACTLY ONE declarative change (O(1) WAL) and stage the per-row
         // tombstones for subscriber fan-out, keyed to this change's index.

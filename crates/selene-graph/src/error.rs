@@ -1,6 +1,6 @@
 //! Graph-layer error types and GQLSTATUS mappings.
 
-use selene_core::{CoreError, DbString, EdgeId, NodeId};
+use selene_core::{CoreError, DbString, EdgeId, GraphId, NodeId};
 use selene_persist::PersistError;
 use smallvec::SmallVec;
 
@@ -10,6 +10,37 @@ use crate::typed_index::TypedIndexKind;
 
 /// Result alias for graph operations.
 pub type GraphResult<T> = Result<T, GraphError>;
+
+/// Result alias for snapshot-bound candidate-set validation and algebra.
+pub type CandidateSetResult<T> = Result<T, CandidateSetError>;
+
+/// Validation error raised by graph-owned candidate-set algebra.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CandidateSetError {
+    /// A candidate set belongs to a different lower graph identity.
+    #[error("candidate set belongs to graph {actual}, expected graph {expected}")]
+    GraphMismatch {
+        /// Graph identity required by the graph performing the algebra.
+        expected: GraphId,
+        /// Graph identity carried by the candidate set.
+        actual: GraphId,
+    },
+    /// A candidate set was produced from a different immutable generation.
+    #[error("candidate set belongs to generation {actual}, expected generation {expected}")]
+    GenerationMismatch {
+        /// Generation required by the graph performing the algebra.
+        expected: u64,
+        /// Generation carried by the candidate set.
+        actual: u64,
+    },
+    /// A candidate set has a different physical layout or workspace binding.
+    #[error("candidate set belongs to a different snapshot layout")]
+    LayoutMismatch,
+    /// A candidate's stable ID, typed row, or liveness no longer matches.
+    #[error("candidate set contains an entry that is stale for this snapshot")]
+    StaleEntry,
+}
 
 /// Store-assignment data-exception family.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -29,6 +29,7 @@ use selene_core::{DbString, EdgeId, NodeId};
 use crate::adjacency::AdjacencyEdge;
 use crate::graph::SeleneGraph;
 use crate::id_map::{EngineIdMap, engine_id_map, get_or_insert_default};
+use crate::store::{EdgeRow, NodeRow};
 use crate::vector_index::VectorIndexConfig;
 
 impl SeleneGraph {
@@ -70,6 +71,7 @@ impl SeleneGraph {
     /// Returns the first mismatch as a human-readable `String`.
     pub fn assert_indexes_consistent(&self) -> Result<(), String> {
         self.check_store_integrity()?;
+        self.check_typed_id_maps()?;
         self.check_label_index()?;
         self.check_edge_label_index()?;
         self.check_property_indexes()?;
@@ -85,37 +87,94 @@ impl SeleneGraph {
     /// floors clear the highest alive row.
     fn check_store_integrity(&self) -> Result<(), String> {
         let node_len = self.node_store.labels.len();
-        if self.node_store.properties.len() != node_len {
+        if self.node_store.properties.len() != node_len
+            || self.node_store.row_to_id.len() != node_len
+        {
             return Err(format!(
-                "node store column length mismatch: labels={node_len} properties={}",
-                self.node_store.properties.len()
+                "node store column length mismatch: labels={node_len} properties={} row_to_id={}",
+                self.node_store.properties.len(),
+                self.node_store.row_to_id.len()
             ));
         }
         let edge_len = self.edge_store.label.len();
         if self.edge_store.source.len() != edge_len
             || self.edge_store.target.len() != edge_len
             || self.edge_store.properties.len() != edge_len
+            || self.edge_store.row_to_id.len() != edge_len
         {
             return Err(format!(
                 "edge store column length mismatch: label={edge_len} source={} target={} \
-                 properties={}",
+                 properties={} row_to_id={}",
                 self.edge_store.source.len(),
                 self.edge_store.target.len(),
-                self.edge_store.properties.len()
+                self.edge_store.properties.len(),
+                self.edge_store.row_to_id.len()
             ));
         }
 
-        for row in self.node_store.alive.iter() {
-            if (row as usize) >= node_len {
+        for row in self.node_store.alive_rows() {
+            if row.index() >= node_len {
                 return Err(format!(
-                    "node alive bitmap references out-of-range row {row} (node store len {node_len})"
+                    "node alive bitmap references out-of-range row {} (node store len {node_len})",
+                    row.get()
                 ));
             }
         }
-        for row in self.edge_store.alive.iter() {
-            if (row as usize) >= edge_len {
+        for row in self.edge_store.alive_rows() {
+            if row.index() >= edge_len {
                 return Err(format!(
-                    "edge alive bitmap references out-of-range row {row} (edge store len {edge_len})"
+                    "edge alive bitmap references out-of-range row {} (edge store len {edge_len})",
+                    row.get()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn check_typed_id_maps(&self) -> Result<(), String> {
+        if self.node_rows.len() != self.node_id_to_row.len() {
+            return Err("typed node inverse map disagrees with the Part 3 lower-row bridge".into());
+        }
+        if self.edge_rows.len() != self.edge_id_to_row.len() {
+            return Err("typed edge inverse map disagrees with the Part 3 lower-row bridge".into());
+        }
+        for (id, row) in &self.node_rows {
+            if row.index() >= self.node_store.len()
+                || self.node_id_for_node_row(*row) != Some(*id)
+                || self.node_id_to_row.get(id).copied() != Some(row.lower_row_bridge())
+            {
+                return Err(format!(
+                    "typed node inverse map has invalid binding {id} -> {}",
+                    row.get()
+                ));
+            }
+        }
+        for (id, row) in &self.edge_rows {
+            if row.index() >= self.edge_store.len()
+                || self.edge_id_for_edge_row(*row) != Some(*id)
+                || self.edge_id_to_row.get(id).copied() != Some(row.lower_row_bridge())
+            {
+                return Err(format!(
+                    "typed edge inverse map has invalid binding {id} -> {}",
+                    row.get()
+                ));
+            }
+        }
+        for (index, id) in self.node_store.row_to_id.iter().enumerate() {
+            if *id != NodeId::TOMBSTONE
+                && self.node_rows.get(id).copied() != Some(NodeRow::new(index as u32))
+            {
+                return Err(format!(
+                    "node row {index} has no typed inverse binding for {id}"
+                ));
+            }
+        }
+        for (index, id) in self.edge_store.row_to_id.iter().enumerate() {
+            if *id != EdgeId::TOMBSTONE
+                && self.edge_rows.get(id).copied() != Some(EdgeRow::new(index as u32))
+            {
+                return Err(format!(
+                    "edge row {index} has no typed inverse binding for {id}"
                 ));
             }
         }
@@ -125,12 +184,15 @@ impl SeleneGraph {
     /// Family (1a): node label bitmaps.
     fn check_label_index(&self) -> Result<(), String> {
         let mut reference: MapM<DbString, RoaringBitmap> = MapM::new();
-        for row in self.node_store.alive.iter() {
-            let Some(labels) = self.node_store.labels.get(row as usize) else {
-                return Err(format!("alive node row {row} has no label column entry"));
+        for row in self.node_store.alive_rows() {
+            let Some(labels) = self.node_store.labels.get(row.index()) else {
+                return Err(format!(
+                    "alive node row {} has no label column entry",
+                    row.get()
+                ));
             };
             for label in labels.iter() {
-                get_or_insert_default(&mut reference, label.clone()).insert(row);
+                get_or_insert_default(&mut reference, label.clone()).insert(row.get());
             }
         }
         compare_bitmap_index("node label index", &self.idx_label, &reference)
@@ -139,11 +201,14 @@ impl SeleneGraph {
     /// Family (1b): edge label bitmaps.
     fn check_edge_label_index(&self) -> Result<(), String> {
         let mut reference: MapM<DbString, RoaringBitmap> = MapM::new();
-        for row in self.edge_store.alive.iter() {
-            let Some(label) = self.edge_store.label.get(row as usize) else {
-                return Err(format!("alive edge row {row} has no label column entry"));
+        for row in self.edge_store.alive_rows() {
+            let Some(label) = self.edge_store.label.get(row.index()) else {
+                return Err(format!(
+                    "alive edge row {} has no label column entry",
+                    row.get()
+                ));
             };
-            get_or_insert_default(&mut reference, label.clone()).insert(row);
+            get_or_insert_default(&mut reference, label.clone()).insert(row.get());
         }
         compare_bitmap_index("edge label index", &self.idx_edge_label, &reference)
     }
@@ -312,18 +377,30 @@ impl SeleneGraph {
     fn check_adjacency(&self) -> Result<(), String> {
         let mut out_reference: EngineIdMap<NodeId, Vec<AdjacencyEdge>> = engine_id_map();
         let mut in_reference: EngineIdMap<NodeId, Vec<AdjacencyEdge>> = engine_id_map();
-        for row in self.edge_store.alive.iter() {
-            let Some(edge_id) = self.edge_id_for_row(crate::store::RowIndex::new(row)) else {
-                return Err(format!("alive edge row {row} has no mapped external id"));
+        for row in self.edge_store.alive_rows() {
+            let Some(edge_id) = self.edge_id_for_edge_row(row) else {
+                return Err(format!(
+                    "alive edge row {} has no mapped external id",
+                    row.get()
+                ));
             };
-            let Some(label) = self.edge_store.label.get(row as usize).cloned() else {
-                return Err(format!("alive edge row {row} has no label column entry"));
+            let Some(label) = self.edge_store.label.get(row.index()).cloned() else {
+                return Err(format!(
+                    "alive edge row {} has no label column entry",
+                    row.get()
+                ));
             };
-            let Some(source) = self.edge_store.source.get(row as usize).copied() else {
-                return Err(format!("alive edge row {row} has no source column entry"));
+            let Some(source) = self.edge_store.source.get(row.index()).copied() else {
+                return Err(format!(
+                    "alive edge row {} has no source column entry",
+                    row.get()
+                ));
             };
-            let Some(target) = self.edge_store.target.get(row as usize).copied() else {
-                return Err(format!("alive edge row {row} has no target column entry"));
+            let Some(target) = self.edge_store.target.get(row.index()).copied() else {
+                return Err(format!(
+                    "alive edge row {} has no target column entry",
+                    row.get()
+                ));
             };
             get_or_insert_default(&mut out_reference, source).push(AdjacencyEdge {
                 label: label.clone(),

@@ -46,7 +46,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::{
     CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph, VectorIndexEntry,
 };
-use crate::store::{EdgeStore, NodeStore, RowIndex};
+use crate::store::{EdgeRow, EdgeStore, NodeRow, NodeStore};
 use crate::typed_index::TypedIndex;
 
 const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
@@ -179,15 +179,21 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
         graph.node_store.alive.len() as usize,
         Default::default(),
     );
-    for old_row in graph.node_store.alive.iter() {
-        let r = old_row as usize;
+    for old_row in graph.node_store.alive_rows() {
+        let r = old_row.index();
         let id = graph
-            .node_id_for_row(RowIndex::new(old_row))
+            .node_id_for_node_row(old_row)
             .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!("alive node row {old_row} has no external id during compaction"),
+                reason: format!(
+                    "alive node row {} has no external id during compaction",
+                    old_row.get()
+                ),
             })?;
         let column_missing = |col: &str| GraphError::Inconsistent {
-            reason: format!("node {col} column missing live row {old_row} during compaction"),
+            reason: format!(
+                "node {col} column missing live row {} during compaction",
+                old_row.get()
+            ),
         };
         // Strict (fail-loud) reads, symmetric with the edge columns below: a
         // misaligned column on an alive row is corruption, not an empty row.
@@ -214,19 +220,25 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     // B1: `alive_mut` is free here — the store is freshly built, so its Arc is
     // unique and `make_mut` never clones.
     for new_row in 0..node_len {
-        nodes.alive_mut().insert(new_row);
+        nodes.mark_alive(NodeRow::new(new_row));
     }
 
     let mut edges = EdgeStore::new();
-    for old_row in graph.edge_store.alive.iter() {
-        let r = old_row as usize;
+    for old_row in graph.edge_store.alive_rows() {
+        let r = old_row.index();
         let id = graph
-            .edge_id_for_row(RowIndex::new(old_row))
+            .edge_id_for_edge_row(old_row)
             .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!("alive edge row {old_row} has no external id during compaction"),
+                reason: format!(
+                    "alive edge row {} has no external id during compaction",
+                    old_row.get()
+                ),
             })?;
         let column_missing = |col: &str| GraphError::Inconsistent {
-            reason: format!("edge {col} column missing live row {old_row} during compaction"),
+            reason: format!(
+                "edge {col} column missing live row {} during compaction",
+                old_row.get()
+            ),
         };
         let source = graph
             .edge_store
@@ -274,7 +286,7 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     let edge_len = edges.label.len() as u32;
     // B1: free `make_mut` on a freshly built store (see node loop above).
     for new_row in 0..edge_len {
-        edges.alive_mut().insert(new_row);
+        edges.mark_alive(EdgeRow::new(new_row));
     }
 
     let stats = CompactionStats::from_graph(graph);

@@ -4729,6 +4729,21 @@ cycle on writes:
 | `graph_vector_active_set_maintenance_pressure/materialized_set_r60w40/...covbp10000_curbp10000_precbp10000` | 6.904 ms (`c31`) | 26.41 ms (`c32`) | Maintained active set keeps full quality and remains faster even after 40 balanced set updates per cycle. |
 | `graph_vector_active_set_maintenance_pressure/materialized_set_maintenance_w40/...` | 454.1 ns (`active248`) | 396.8 ns (`active512`) | Isolated 40-update HashSet maintenance is negligible next to exact vector rerank cost on this fixture. |
 
+## Typed physical candidate-set lifecycle
+
+Focused M04-PR02 Part 1 representation/algebra rows, measured 2026-09-01:
+
+Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_physical_candidate_set`
+
+| Bench | 1,024-element quick estimate | Notes |
+|---|---:|---|
+| `graph_physical_candidate_set/build_live_nodes/1024` | 4.3863 µs | Builds the generation/layout-bound node set from typed live rows, retains both private binding tokens, and sorts stable IDs. One high mild outlier was reported. |
+| `graph_physical_candidate_set/iterate_stable_ids/1024` | 93.951 ns | Iterates deterministic stable `NodeId` values without exposing physical rows. One high mild outlier makes this directional local evidence rather than a regression threshold. |
+| `graph_physical_candidate_set/union_full_overlap/1024` | 21.476 µs | Validates graph/generation/physical-layout/workspace-binding identity plus every stable-ID/typed-row/liveness pairing for both operands, then unions two fully overlapping sets. One high severe outlier was reported. |
+| `graph_physical_candidate_set/intersection_full_overlap/1024` | 21.682 µs | Performs the same complete identity and trusted-entry validation before intersecting two fully overlapping sets. |
+| `graph_physical_candidate_set/difference_full_overlap/1024` | 23.812 µs | Performs complete identity and trusted-entry validation before removing a fully overlapping set and producing empty output. Two high mild outliers were reported. |
+| `graph_physical_candidate_set/clone_snapshot/1024` | 61.825 ns | Clones the immutable graph snapshot while retaining physical-layout ancestry and its current private workspace binding. |
+
 ## Retrieval scoping guards
 
 Focused local P0 row, measured 2026-06-15:

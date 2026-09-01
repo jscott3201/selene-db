@@ -1,4 +1,9 @@
 //! Immutable graph snapshot and read accessors.
+//!
+//! Existing repository-public row maps, bitmap accessors, and raw row
+//! resolvers are the temporary M04-PR02 Part 3 lower-row bridge for deferred
+//! downstream migration. New graph internals use private typed rows; Part 3
+//! owns deletion of the bridge, which is not a compatibility promise.
 
 use std::borrow::Cow;
 use std::ops::RangeBounds;
@@ -13,10 +18,11 @@ use smallvec::SmallVec;
 use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::adjacency::AdjacencyEntry;
+use crate::candidate_set::SnapshotLayout;
 use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
 use crate::id_map::{EngineIdMap, engine_id_map};
-use crate::store::{EdgeStore, NodeStore, RowIndex};
+use crate::store::{EdgeRow, EdgeStore, NodeRow, NodeStore, RowIndex};
 use crate::text_index::TextIndex;
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 use crate::vector_index::VectorIndex;
@@ -90,6 +96,12 @@ pub struct SeleneGraph {
     pub node_id_to_row: EngineIdMap<NodeId, RowIndex>,
     /// External `EdgeId -> RowIndex` lookup (inverse of [`EdgeStore::row_to_id`]).
     pub edge_id_to_row: EngineIdMap<EdgeId, RowIndex>,
+    /// Typed node inverse map used by new graph internals.
+    pub(crate) node_rows: EngineIdMap<NodeId, NodeRow>,
+    /// Typed edge inverse map used by new graph internals.
+    pub(crate) edge_rows: EngineIdMap<EdgeId, EdgeRow>,
+    /// Private, non-serialized identity for this physical snapshot layout.
+    pub(crate) layout: SnapshotLayout,
 }
 
 impl SeleneGraph {
@@ -117,6 +129,9 @@ impl SeleneGraph {
             text_index: FxHashMap::default(),
             node_id_to_row: engine_id_map(),
             edge_id_to_row: engine_id_map(),
+            node_rows: engine_id_map(),
+            edge_rows: engine_id_map(),
+            layout: SnapshotLayout::new(),
         }
     }
 
@@ -176,7 +191,7 @@ impl SeleneGraph {
         &self.edge_store.alive
     }
 
-    /// Map an external [`NodeId`] to its internal [`RowIndex`].
+    /// Map an external [`NodeId`] through the temporary Part 3 lower-row bridge.
     ///
     /// Returns `None` for a never-committed (aborted-tx hole) id. A deleted id
     /// still resolves — to its now-dead row — so liveness, not existence,
@@ -185,14 +200,14 @@ impl SeleneGraph {
     /// while BRIEF-Item-4b compaction renumbers the row.
     #[must_use]
     pub fn row_for_node_id(&self, id: NodeId) -> Option<RowIndex> {
-        self.node_id_to_row.get(&id).copied()
+        self.node_row_for_id(id).map(NodeRow::lower_row_bridge)
     }
 
     /// Map an external [`EdgeId`] to its internal [`RowIndex`]; see
     /// [`Self::row_for_node_id`].
     #[must_use]
     pub fn row_for_edge_id(&self, id: EdgeId) -> Option<RowIndex> {
-        self.edge_id_to_row.get(&id).copied()
+        self.edge_row_for_id(id).map(EdgeRow::lower_row_bridge)
     }
 
     /// Recover the external [`NodeId`] bound to a materialized [`RowIndex`].
@@ -216,6 +231,30 @@ impl SeleneGraph {
         self.edge_store
             .row_to_id
             .get(row.get() as usize)
+            .copied()
+            .filter(|id| *id != EdgeId::TOMBSTONE)
+    }
+
+    pub(crate) fn node_row_for_id(&self, id: NodeId) -> Option<NodeRow> {
+        self.node_rows.get(&id).copied()
+    }
+
+    pub(crate) fn edge_row_for_id(&self, id: EdgeId) -> Option<EdgeRow> {
+        self.edge_rows.get(&id).copied()
+    }
+
+    pub(crate) fn node_id_for_node_row(&self, row: NodeRow) -> Option<NodeId> {
+        self.node_store
+            .row_to_id
+            .get(row.index())
+            .copied()
+            .filter(|id| *id != NodeId::TOMBSTONE)
+    }
+
+    pub(crate) fn edge_id_for_edge_row(&self, row: EdgeRow) -> Option<EdgeId> {
+        self.edge_store
+            .row_to_id
+            .get(row.index())
             .copied()
             .filter(|id| *id != EdgeId::TOMBSTONE)
     }
@@ -637,15 +676,15 @@ impl SeleneGraph {
     }
 
     fn live_node_row(&self, id: NodeId) -> Option<usize> {
-        let row = self.row_for_node_id(id)?.get();
-        ((row as usize) < self.node_store.len() && self.node_store.is_alive(row))
-            .then_some(row as usize)
+        let row = self.node_row_for_id(id)?;
+        (row.index() < self.node_store.len() && self.node_store.is_alive_row(row))
+            .then_some(row.index())
     }
 
     fn live_edge_row(&self, id: EdgeId) -> Option<usize> {
-        let row = self.row_for_edge_id(id)?.get();
-        ((row as usize) < self.edge_store.len() && self.edge_store.is_alive(row))
-            .then_some(row as usize)
+        let row = self.edge_row_for_id(id)?;
+        (row.index() < self.edge_store.len() && self.edge_store.is_alive_row(row))
+            .then_some(row.index())
     }
 }
 

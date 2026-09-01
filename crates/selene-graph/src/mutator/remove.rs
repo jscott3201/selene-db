@@ -16,7 +16,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .node_store
             .labels
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let old_props = self
@@ -24,7 +24,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .node_store
             .properties
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         if !old_props.contains_key(&property) {
@@ -37,14 +37,17 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         new_props.remove(&property);
         {
             let graph = self.txn.guard_mut();
-            graph.node_store.properties.set(row, new_props.clone());
+            graph
+                .node_store
+                .properties
+                .set(row.index(), new_props.clone());
             crate::property_index::apply_node_update(
                 &mut graph.property_index,
                 &labels,
                 &old_props,
                 &labels,
                 &new_props,
-                row as u32,
+                row.get(),
             )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
@@ -52,7 +55,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &new_props,
-                row as u32,
+                row.get(),
             )?;
             crate::vector_index::apply_node_update(
                 &mut graph.vector_index,
@@ -60,7 +63,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &new_props,
-                row as u32,
+                row.get(),
             )?;
         }
         self.txn
@@ -79,7 +82,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .edge_store
             .label
-            .get(row)
+            .get(row.index())
             .cloned()
             .ok_or(crate::GraphError::EdgeNotFound { id })?;
         let old_props = self
@@ -87,7 +90,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .edge_store
             .properties
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         if !old_props.contains_key(&property) {
@@ -100,13 +103,16 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         new_props.remove(&property);
         {
             let graph = self.txn.guard_mut();
-            graph.edge_store.properties.set(row, new_props.clone());
+            graph
+                .edge_store
+                .properties
+                .set(row.index(), new_props.clone());
             crate::property_index::apply_edge_update(
                 &mut graph.edge_property_index,
                 &label,
                 &old_props,
                 &new_props,
-                row as u32,
+                row.get(),
             )?;
         }
         self.txn
@@ -125,7 +131,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .node_store
             .labels
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         if !old_labels.contains(&label) {
@@ -136,22 +142,22 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .node_store
             .properties
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let mut new_labels = old_labels.clone();
         new_labels.remove(&label);
         {
             let graph = self.txn.guard_mut();
-            graph.node_store.labels.set(row, new_labels.clone());
-            remove_index_row(&mut graph.idx_label, &label, row as u32);
+            graph.node_store.labels.set(row.index(), new_labels.clone());
+            remove_index_row(&mut graph.idx_label, &label, row.get());
             crate::property_index::apply_node_update(
                 &mut graph.property_index,
                 &old_labels,
                 &props,
                 &new_labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
@@ -159,7 +165,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &props,
                 &new_labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::vector_index::apply_node_update(
                 &mut graph.vector_index,
@@ -167,7 +173,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &props,
                 &new_labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
         }
         self.txn
