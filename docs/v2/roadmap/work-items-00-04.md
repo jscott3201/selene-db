@@ -1427,6 +1427,7 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
   - `crates/selene-graph/src/json_search.rs`
   - `crates/selene-graph/src/json_search/parallel.rs`
   - `crates/selene-graph/src/json_search_candidates.rs`
+  - `crates/selene-graph/src/parallel_scan.rs`
   - `crates/selene-graph/src/reachability.rs`
   - `crates/selene-graph/src/recover.rs`
   - `crates/selene-graph/src/shared.rs`
@@ -1442,6 +1443,7 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
   - `crates/selene-graph/src/vector_search/score_candidate_batch.rs`
   - `crates/selene-graph/src/vector_search/score_expanded_batch.rs`
   - `crates/selene-graph/src/vector_search/score_neighbor_batch.rs`
+  - `crates/selene-gql/src/runtime/builtins/reachable_nodes.rs`
 - **Acceptance:**
   - Graph-owned label/property/index/JSON/text/vector/reachability producers and named lower read consumers return or consume typed candidates without exposing public rows.
   - The pinned snapshot solely binds duplicate-canonicalized unbound stable IDs and existing `VectorCandidateSet` values, filtering tombstone, absent, deleted, and otherwise non-live IDs while leaving vector-property skipping to vector scoring.
