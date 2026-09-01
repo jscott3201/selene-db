@@ -37,6 +37,9 @@ mod oneof;
 #[path = "recover_tests/provider_replay.rs"]
 mod provider_replay;
 
+#[path = "recovery_attachment_tests.rs"]
+mod recovery_attachment_tests;
+
 #[path = "recover_tests/truncate_recovery.rs"]
 mod truncate_recovery;
 
