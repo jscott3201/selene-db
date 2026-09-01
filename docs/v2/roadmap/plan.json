@@ -2662,6 +2662,7 @@
             "crates/selene-graph/src/json_search.rs",
             "crates/selene-graph/src/json_search/parallel.rs",
             "crates/selene-graph/src/json_search_candidates.rs",
+            "crates/selene-graph/src/parallel_scan.rs",
             "crates/selene-graph/src/reachability.rs",
             "crates/selene-graph/src/recover.rs",
             "crates/selene-graph/src/shared.rs",
@@ -2676,7 +2677,8 @@
             "crates/selene-graph/src/vector_search/score.rs",
             "crates/selene-graph/src/vector_search/score_candidate_batch.rs",
             "crates/selene-graph/src/vector_search/score_expanded_batch.rs",
-            "crates/selene-graph/src/vector_search/score_neighbor_batch.rs"
+            "crates/selene-graph/src/vector_search/score_neighbor_batch.rs",
+            "crates/selene-gql/src/runtime/builtins/reachable_nodes.rs"
           ],
           "max_production_files": 25,
           "max_net_non_generated_lines": 1500,
