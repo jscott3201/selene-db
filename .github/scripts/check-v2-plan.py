@@ -33,6 +33,13 @@ EXPECTED_ISSUES = {1088, 1092, 1093, 1094, 1097, 1128, 1137}
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 ANCHOR_RE = re.compile(r'<a\s+id=["\']([^"\']+)["\']\s*></a>', re.IGNORECASE)
 LOCAL_DIRECTORY_RE = re.compile(r"(?<![A-Za-z0-9/])(_[A-Za-z0-9][A-Za-z0-9_-]*)/")
+SAFE_PRODUCTION_PATH_RE = re.compile(
+    r"(?!/)(?!.*(?:^|/)\.\.?(?:/|$))(?!.*//)(?!.*\\)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"
+)
+DELIVERY_SELECTOR_RE = re.compile(r"(M(?:0[0-9]|10)-PR[0-9]{2}):([1-9][0-9]*)")
+MAX_PRODUCTION_FILES = 25
+MAX_NET_NON_GENERATED_LINES = 1_500
+NON_PRODUCTION_SOURCE_DIRS = {"tests", "benches", "examples", "docs", "generated"}
 
 
 class Check:
@@ -197,6 +204,75 @@ def check_dependency_cycles(check: Check, dependencies: dict[str, list[str]]) ->
             return
 
 
+def check_delivery_parts(check: Check, pr_id: str, parts: list[dict[str, Any]]) -> None:
+    numbers = [part["number"] for part in parts]
+    expected_numbers = list(range(1, len(parts) + 1))
+    if numbers != expected_numbers:
+        check.fail(f"{pr_id}: delivery part numbers must be sequential starting at 1; got {numbers}")
+    for part in parts:
+        location = f"{pr_id} delivery part {part['number']}"
+        paths = part["production_paths"]
+        if len(paths) > part["max_production_files"]:
+            check.fail(
+                f"{location}: production path count {len(paths)} exceeds "
+                f"max_production_files {part['max_production_files']}"
+            )
+        repeated = duplicates(paths)
+        if repeated:
+            check.fail(f"{location}: duplicate production paths: {sorted(repeated)}")
+        for path in paths:
+            if SAFE_PRODUCTION_PATH_RE.fullmatch(path) is None:
+                check.fail(f"{location}: unsafe production path {path!r}")
+        if part["max_production_files"] > MAX_PRODUCTION_FILES:
+            check.fail(f"{location}: max_production_files exceeds D-021 default {MAX_PRODUCTION_FILES}")
+        if part["max_net_non_generated_lines"] > MAX_NET_NON_GENERATED_LINES:
+            check.fail(
+                f"{location}: max_net_non_generated_lines exceeds D-021 default "
+                f"{MAX_NET_NON_GENERATED_LINES}"
+            )
+
+    transition_orders = {
+        "work_item_status_after": {"Unmerged": 0, "Merged": 1},
+        "issue_state_after": {"Open": 0, "Closed": 1},
+        "dependents_unblocked_after": {False: 0, True: 1},
+        "bridge_state_after": {"Retained": 0, "Deleted": 1},
+    }
+    for field, order in transition_orders.items():
+        previous = -1
+        for part in parts:
+            current = order[part[field]]
+            if current < previous:
+                check.fail(f"{pr_id}: {field} regresses at delivery part {part['number']}")
+            previous = current
+    for part in parts:
+        if part["dependents_unblocked_after"] and part["work_item_status_after"] != "Merged":
+            check.fail(
+                f"{pr_id} delivery part {part['number']}: dependents cannot be unblocked "
+                "before the work item is Merged"
+            )
+
+
+def check_m04_delivery_transitions(check: Check, parts: list[dict[str, Any]]) -> None:
+    expected = (
+        ("Unmerged", "Open", False, "Retained"),
+        ("Unmerged", "Open", False, "Retained"),
+        ("Merged", "Closed", True, "Deleted"),
+    )
+    fields = (
+        "work_item_status_after",
+        "issue_state_after",
+        "dependents_unblocked_after",
+        "bridge_state_after",
+    )
+    for part, values in zip(parts, expected, strict=True):
+        for field, value in zip(fields, values, strict=True):
+            if part[field] != value:
+                check.fail(
+                    f"M04-PR02 delivery part {part['number']}: {field} must be "
+                    f"{value!r}, got {part[field]!r}"
+                )
+
+
 def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
     meta = plan["meta"]
     collections = {
@@ -265,6 +341,13 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
     for pr_id, pr in prs.items():
         if pr_id[:3] != pr["milestone"] or int(pr_id[-2:]) != pr["number"]:
             check.fail(f"{pr_id}: owner milestone or number does not match ID")
+        parts = pr.get("delivery_parts", [])
+        if parts:
+            check_delivery_parts(check, pr_id, parts)
+        if pr_id == "M04-PR02" and len(parts) != 3:
+            check.fail(f"M04-PR02: delivery_parts must contain exactly 3 parts; got {len(parts)}")
+        elif pr_id == "M04-PR02":
+            check_m04_delivery_transitions(check, parts)
         for dependency in pr["dependencies"]:
             if dependency not in prs:
                 check.fail(f"{pr_id}: unknown dependency {dependency}")
@@ -308,6 +391,186 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
                 f"{prerequisite}: prerequisite status must be Merged, "
                 f"got {prs[prerequisite]['status']}"
             )
+
+
+def is_production_rust_path(raw_path: str) -> bool:
+    """Classify D-021 production files from an exact committed diff.
+
+    Production is tracked Rust below crates/<crate>/src. Test-only files and
+    nested tests/benches/examples/docs/generated trees are excluded, as are
+    conventionally named generated Rust artifacts. Standard top-level crate
+    benches, examples, tests, and docs are outside src and therefore excluded.
+    """
+    path = pathlib.PurePosixPath(raw_path)
+    parts = path.parts
+    if path.is_absolute() or len(parts) < 4 or parts[0] != "crates" or parts[2] != "src":
+        return False
+    if path.suffix != ".rs" or any(part in NON_PRODUCTION_SOURCE_DIRS for part in parts[3:-1]):
+        return False
+    name = parts[-1]
+    return not (
+        name == "tests.rs"
+        or name.endswith("_tests.rs")
+        or name == "generated.rs"
+        or name.endswith("_generated.rs")
+    )
+
+
+def run_git(check: Check, arguments: list[str], purpose: str) -> subprocess.CompletedProcess[bytes] | None:
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=check.root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as error:
+        check.fail(f"delivery diff: cannot run git for {purpose}: {error}")
+        return None
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip() or f"exit {result.returncode}"
+        check.fail(f"delivery diff: git {purpose} failed: {detail}")
+        return None
+    return result
+
+
+def resolve_commit(check: Check, revision: str, label: str) -> str | None:
+    result = run_git(
+        check,
+        ["rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}"],
+        f"resolve {label} commit {revision!r}",
+    )
+    if result is None:
+        return None
+    commit = result.stdout.decode("ascii", errors="replace").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40,64}", commit) is None:
+        check.fail(f"delivery diff: git resolved {label} to an invalid commit ID {commit!r}")
+        return None
+    return commit.lower()
+
+
+def production_diff_rows(
+    check: Check,
+    base: str,
+    head: str,
+) -> dict[str, tuple[int, int] | None] | None:
+    result = run_git(
+        check,
+        [
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--numstat",
+            "-z",
+            f"{base}...{head}",
+            "--",
+        ],
+        f"numstat {base}...{head}",
+    )
+    if result is None:
+        return None
+    rows: dict[str, tuple[int, int] | None] = {}
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        fields = record.split(b"\t", 2)
+        if len(fields) != 3:
+            check.fail("delivery diff: git numstat produced an unparseable row")
+            return None
+        try:
+            path = fields[2].decode("utf-8")
+        except UnicodeDecodeError:
+            check.fail("delivery diff: git numstat produced a non-UTF-8 path")
+            return None
+        if not is_production_rust_path(path):
+            continue
+        if fields[0] == b"-" or fields[1] == b"-":
+            rows[path] = None
+            continue
+        try:
+            rows[path] = (int(fields[0]), int(fields[1]))
+        except ValueError:
+            check.fail(f"delivery diff: git numstat counts are invalid for {path!r}")
+            return None
+    return dict(sorted(rows.items()))
+
+
+def delivery_diff_requested(check: Check, args: argparse.Namespace) -> bool:
+    values = (args.delivery_part, args.diff_base, args.diff_head)
+    if not any(value is not None for value in values):
+        return False
+    if any(value is None for value in values):
+        check.fail("delivery diff: --delivery-part, --diff-base, and --diff-head are required together")
+        return False
+    return True
+
+
+def check_delivery_part_diff(
+    check: Check,
+    plan: dict[str, Any],
+    selector: str,
+    base_revision: str,
+    head_revision: str,
+) -> str | None:
+    matched = DELIVERY_SELECTOR_RE.fullmatch(selector)
+    if matched is None:
+        check.fail(f"delivery diff: malformed selector {selector!r}; expected WORK-ITEM:PART")
+        return None
+    pr_id, number_text = matched.groups()
+    work_item = next((item for item in plan["pull_requests"] if item["id"] == pr_id), None)
+    if work_item is None:
+        check.fail(f"delivery diff: unknown work item {pr_id}")
+        return None
+    part_number = int(number_text)
+    part = next((item for item in work_item.get("delivery_parts", []) if item["number"] == part_number), None)
+    if part is None:
+        check.fail(f"delivery diff: unknown delivery part {pr_id}:{part_number}")
+        return None
+
+    base = resolve_commit(check, base_revision, "base")
+    head = resolve_commit(check, head_revision, "head")
+    if base is None or head is None:
+        return None
+    rows = production_diff_rows(check, base, head)
+    if rows is None:
+        return None
+
+    location = f"delivery diff {pr_id}:{part_number}"
+    inventory = set(part["production_paths"])
+    unlisted = sorted(set(rows) - inventory)
+    if unlisted:
+        check.fail(f"{location}: unlisted production paths: {unlisted}")
+    binary = sorted(path for path, counts in rows.items() if counts is None)
+    if binary:
+        check.fail(f"{location}: unaccountable binary production rows: {binary}")
+    changed_files = len(rows)
+    if changed_files > part["max_production_files"]:
+        check.fail(
+            f"{location}: changed production file count {changed_files} exceeds declared limit "
+            f"{part['max_production_files']}"
+        )
+    if changed_files > MAX_PRODUCTION_FILES:
+        check.fail(
+            f"{location}: changed production file count {changed_files} exceeds D-021 default "
+            f"{MAX_PRODUCTION_FILES}"
+        )
+    net_lines = sum(counts[0] - counts[1] for counts in rows.values() if counts is not None)
+    if net_lines > part["max_net_non_generated_lines"]:
+        check.fail(
+            f"{location}: net production line change {net_lines} exceeds declared limit "
+            f"{part['max_net_non_generated_lines']}"
+        )
+    if net_lines > MAX_NET_NON_GENERATED_LINES:
+        check.fail(
+            f"{location}: net production line change {net_lines} exceeds D-021 default "
+            f"{MAX_NET_NON_GENERATED_LINES}"
+        )
+    return (
+        f"delivery part diff passed: {pr_id}:{part_number} base={base} head={head} "
+        f"production_files={changed_files} net_lines={net_lines}"
+    )
 
 
 def anchors(text: str) -> set[str]:
@@ -414,6 +677,30 @@ def bullet(lines: list[str]) -> str:
     return "\n".join(f"- {line}" for line in lines)
 
 
+def render_delivery_parts(pr_id: str, parts: list[dict[str, Any]]) -> list[str]:
+    lines = ["### Delivery parts", ""]
+    for part in parts:
+        lines += [
+            f'#### Part {part["number"]} — {part["title"]}', "",
+            f'- **Outcome:** {part["outcome"]}',
+            f'- **Budgets:** at most {part["max_production_files"]} production files and '
+            f'{part["max_net_non_generated_lines"]:,} net non-generated lines.',
+            f'- **Structured state after:** work item `{part["work_item_status_after"]}`; '
+            f'issue `{part["issue_state_after"]}`; dependents unblocked '
+            f'`{str(part["dependents_unblocked_after"]).lower()}`; bridge `{part["bridge_state_after"]}`.',
+            "- **Required exact diff gate:** `python3 -B .github/scripts/check-v2-plan.py --root . "
+            f'--delivery-part {pr_id}:{part["number"]} --diff-base <exact-base-commit> '
+            "--diff-head <exact-head-commit>`",
+            "- **Exact production paths:**",
+            *(f'  - `{path}`' for path in part["production_paths"]),
+            "- **Acceptance:**",
+            *(f"  - {item}" for item in part["acceptance"]),
+            f'- **Bridge/deletion state:** {part["bridge_deletion_state"]}',
+            f'- **Completion effect:** {part["completion_effect"]}', "",
+        ]
+    return lines
+
+
 def render_work_items(plan: dict[str, Any], low: int, high: int) -> str:
     lines = [f"# Selene DB 2.0 work items M{low:02d}–M{high:02d}", "", "<!-- Generated from plan.json; do not edit by hand. -->", "",
              "The machine plan carries additional design, path, documentation, and benchmark metadata for each contract.", ""]
@@ -427,6 +714,7 @@ def render_work_items(plan: dict[str, Any], low: int, high: int) -> str:
                   f'- **Dependencies:** {", ".join(pr["dependencies"]) or "None"}',
                   f'- **Issues:** {", ".join("#" + str(issue) for issue in pr["issues"]) or "None"}',
                   f'- **Commit scope:** `{pr["commit_scope"]}`', "", pr["outcome"], "", "### Scope", "", bullet(pr["scope"]), "",
+                  *(render_delivery_parts(pr["id"], pr["delivery_parts"]) if pr.get("delivery_parts") else []),
                   "### Non-goals", "", bullet(pr["non_goals"]), "", "### Acceptance evidence", "", bullet(pr["acceptance"]), "",
                   "### Tests and gates", "", bullet(pr["tests"]), "", "### Review focus", "", bullet(pr["review_focus"]), "",
                   "### Stop conditions", "", bullet(pr["stop_conditions"]), "", "### Bridge and deletion", "", bullet(pr["bridge"]), ""]
@@ -634,12 +922,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=pathlib.Path, required=True, help="repository root")
     parser.add_argument("--write-projections", action="store_true", help="rewrite deterministic Markdown projections")
+    parser.add_argument("--delivery-part", help="delivery selector such as M04-PR02:1")
+    parser.add_argument("--diff-base", help="exact base commit or ref for delivery-part accounting")
+    parser.add_argument("--diff-head", help="exact head commit or ref for delivery-part accounting")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     check = Check(args.root)
+    diff_requested = delivery_diff_requested(check, args)
+    diff_summary = None
     plan = check.read_json(PLAN)
     schema = check.read_json(SCHEMA)
     check_closed_schema(check, schema)
@@ -653,12 +946,22 @@ def main() -> int:
     check_repository_policy(check)
     check_validation_workflows(check)
     check_executable_baseline(check)
+    if not check.errors and diff_requested and isinstance(plan, dict):
+        diff_summary = check_delivery_part_diff(
+            check,
+            plan,
+            args.delivery_part,
+            args.diff_base,
+            args.diff_head,
+        )
     if check.errors:
         print("v2 plan validation failed:", file=sys.stderr)
         for error in check.errors:
             print(f"- {error}", file=sys.stderr)
         return 1
     print("v2 plan validation passed: 11 milestones, 65 work items, 7 issues, 22 decisions")
+    if diff_summary is not None:
+        print(diff_summary)
     return 0
 
 

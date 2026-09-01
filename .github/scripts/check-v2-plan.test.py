@@ -47,15 +47,62 @@ class PlanContractTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def run_validator(self, root: pathlib.Path | None = None) -> subprocess.CompletedProcess[str]:
+    def run_validator(
+        self,
+        root: pathlib.Path | None = None,
+        *,
+        write_projections: bool = False,
+        delivery_part: str | None = None,
+        diff_base: str | None = None,
+        diff_head: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        command = [sys.executable, "-B", str(CHECKER), "--root", str(root or self.root)]
+        if write_projections:
+            command.append("--write-projections")
+        for option, value in (
+            ("--delivery-part", delivery_part),
+            ("--diff-base", diff_base),
+            ("--diff-head", diff_head),
+        ):
+            if value is not None:
+                command.extend((option, value))
         return subprocess.run(
-            [sys.executable, "-B", str(CHECKER), "--root", str(root or self.root)],
+            command,
             cwd=ROOT,
             check=False,
             capture_output=True,
             text=True,
             timeout=30,
         )
+
+    def git(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def commit_all(self, message: str) -> str:
+        self.git("add", "--all")
+        self.git(
+            "-c",
+            "user.name=Selene Plan Test",
+            "-c",
+            "user.email=plan-test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+        )
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def write_production_file(self, relative: str, content: str) -> None:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
 
     def read_plan(self) -> dict[str, Any]:
         return json.loads((self.root / PLAN).read_text(encoding="utf-8"))
@@ -125,6 +172,108 @@ class PlanContractTests(unittest.TestCase):
         projection = self.root / "docs" / "v2" / "roadmap" / "work-items-00-04.md"
         projection.write_text(projection.read_text(encoding="utf-8") + "\n", encoding="utf-8")
         self.assert_failure(self.run_validator(), "projection is stale")
+        regenerated = self.run_validator(write_projections=True)
+        self.assertEqual(regenerated.returncode, 0, regenerated.stderr)
+        current = self.run_validator()
+        self.assertEqual(current.returncode, 0, current.stderr)
+
+    def test_m04_pr02_missing_delivery_parts_fails(self) -> None:
+        def remove_parts(plan: dict[str, Any]) -> None:
+            next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02").pop("delivery_parts")
+
+        result = self.mutate_plan(remove_parts)
+        self.assert_failure(result, "M04-PR02: delivery_parts must contain exactly 3 parts; got 0")
+
+    def test_m04_pr02_fewer_delivery_parts_fails(self) -> None:
+        def remove_part(plan: dict[str, Any]) -> None:
+            next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"].pop()
+
+        result = self.mutate_plan(remove_part)
+        self.assert_failure(result, "M04-PR02: delivery_parts must contain exactly 3 parts; got 2")
+
+    def test_delivery_part_numbers_must_be_sequential(self) -> None:
+        def skip_number(plan: dict[str, Any]) -> None:
+            parts = next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"]
+            parts[1]["number"] = 4
+
+        result = self.mutate_plan(skip_number)
+        self.assert_failure(result, "delivery part numbers must be sequential starting at 1; got [1, 4, 3]")
+
+    def test_delivery_part_path_count_cannot_exceed_file_budget(self) -> None:
+        def lower_budget(plan: dict[str, Any]) -> None:
+            parts = next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"]
+            parts[0]["max_production_files"] = len(parts[0]["production_paths"]) - 1
+
+        result = self.mutate_plan(lower_budget)
+        self.assert_failure(result, "production path count 17 exceeds max_production_files 16")
+
+    def test_m04_pr02_structured_transitions_are_pinned(self) -> None:
+        original = self.read_plan()
+        early_changes = (
+            ("work_item_status_after", "Merged", "work_item_status_after must be 'Unmerged'"),
+            ("issue_state_after", "Closed", "issue_state_after must be 'Open'"),
+            ("dependents_unblocked_after", True, "dependents_unblocked_after must be False"),
+            ("bridge_state_after", "Deleted", "bridge_state_after must be 'Retained'"),
+        )
+        cases: list[tuple[int, str, Any, str]] = [
+            (part_index, field, value, message)
+            for part_index in (0, 1)
+            for field, value, message in early_changes
+        ]
+        cases.append((2, "work_item_status_after", "Unmerged", "work_item_status_after must be 'Merged'"))
+        for part_index, field, value, message in cases:
+            with self.subTest(part=part_index + 1, field=field):
+                plan = json.loads(json.dumps(original))
+                work_item = next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")
+                work_item["delivery_parts"][part_index][field] = value
+                self.write_plan(plan)
+                self.assert_failure(self.run_validator(), message)
+        self.write_plan(original)
+
+    def test_delivery_diff_allows_listed_production_path(self) -> None:
+        base = self.commit_all("base")
+        self.write_production_file("crates/selene-graph/src/candidate_set.rs", "pub struct CandidateSet;\n")
+        self.write_production_file("crates/selene-graph/src/tests/unlisted.rs", "compile_error!(\"test-only\");\n")
+        self.write_production_file("crates/selene-graph/src/ignored_tests.rs", "compile_error!(\"test-only\");\n")
+        for directory in ("benches", "examples", "docs", "generated"):
+            self.write_production_file(
+                f"crates/selene-graph/src/{directory}/unlisted.rs",
+                "compile_error!(\"non-production\");\n",
+            )
+        self.write_production_file("crates/selene-graph/src/generated.rs", "compile_error!(\"generated\");\n")
+        head = self.commit_all("listed production path")
+
+        result = self.run_validator(delivery_part="M04-PR02:1", diff_base=base, diff_head=head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("delivery part diff passed: M04-PR02:1", result.stdout)
+        self.assertIn("production_files=1 net_lines=1", result.stdout)
+
+    def test_delivery_diff_rejects_unlisted_production_path(self) -> None:
+        base = self.commit_all("base")
+        self.write_production_file("crates/selene-graph/src/unlisted.rs", "pub struct Unlisted;\n")
+        head = self.commit_all("unlisted production path")
+
+        result = self.run_validator(delivery_part="M04-PR02:1", diff_base=base, diff_head=head)
+        self.assert_failure(result, "unlisted production paths: ['crates/selene-graph/src/unlisted.rs']")
+
+    def test_delivery_diff_rejects_1501_net_production_lines(self) -> None:
+        base = self.commit_all("base")
+        self.write_production_file("crates/selene-graph/src/candidate_set.rs", "// counted line\n" * 1501)
+        head = self.commit_all("over-budget production path")
+
+        result = self.run_validator(delivery_part="M04-PR02:1", diff_base=base, diff_head=head)
+        self.assert_failure(result, "net production line change 1501 exceeds declared limit 1500")
+        self.assertIn("net production line change 1501 exceeds D-021 default 1500", result.stderr)
+
+    def test_delivery_diff_arguments_are_complete_and_well_formed(self) -> None:
+        partial = self.run_validator(delivery_part="M04-PR02:1")
+        self.assert_failure(partial, "--delivery-part, --diff-base, and --diff-head are required together")
+        malformed = self.run_validator(delivery_part="M04-PR02", diff_base="HEAD", diff_head="HEAD")
+        self.assert_failure(malformed, "malformed selector 'M04-PR02'; expected WORK-ITEM:PART")
+        unknown_item = self.run_validator(delivery_part="M10-PR99:1", diff_base="HEAD", diff_head="HEAD")
+        self.assert_failure(unknown_item, "unknown work item M10-PR99")
+        unknown = self.run_validator(delivery_part="M04-PR02:4", diff_base="HEAD", diff_head="HEAD")
+        self.assert_failure(unknown, "unknown delivery part M04-PR02:4")
 
     def test_corrupt_baseline_report_hash_fails(self) -> None:
         manifest_path = self.root / "docs" / "v2" / "baseline" / "manifest.json"
