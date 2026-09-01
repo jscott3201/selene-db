@@ -1,4 +1,8 @@
 //! Candidate-scoped BM25 scoring for maintained text indexes.
+//!
+//! This stable-ID compatibility scorer has no pinned graph context. Part 3 owns
+//! migrating its downstream GQL caller before a snapshot-bound typed API can
+//! replace it; this module does not claim that its inputs are graph-bound.
 
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;

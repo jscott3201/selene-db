@@ -6,6 +6,8 @@
 //! That is enough to model active/current/unresolved memory subsets without
 //! hard-coding those application labels into the engine.
 
+use std::collections::BTreeMap;
+
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -16,8 +18,7 @@ use selene_core::{EdgeId, LabelSet};
 use crate::index_provider::{
     IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
 };
-use crate::store::RowIndex;
-use crate::{SeleneGraph, VectorCandidateSet};
+use crate::{CandidateSet, Node, SeleneGraph, VectorCandidateSet};
 
 #[path = "candidate_state/state.rs"]
 mod state;
@@ -106,7 +107,19 @@ impl CandidateStateSpec {
 /// First-party provider maintaining named graph-derived candidate sets.
 pub struct MaintainedCandidateStateProvider {
     specs: Vec<CandidateStateSpec>,
-    state: Mutex<CandidateState>,
+    runtime: Mutex<CandidateStateRuntime>,
+}
+
+struct CandidateStateRuntime {
+    live: CandidateState,
+    live_typed: BTreeMap<DbString, CandidateSet<Node>>,
+    recovery: Option<StagedCandidateState>,
+}
+
+struct StagedCandidateState {
+    state: CandidateState,
+    typed: BTreeMap<DbString, CandidateSet<Node>>,
+    prepared: bool,
 }
 
 impl MaintainedCandidateStateProvider {
@@ -125,7 +138,11 @@ impl MaintainedCandidateStateProvider {
         }
         validate_unique_specs(&specs)?;
         Ok(Self {
-            state: Mutex::new(CandidateState::new(&specs)),
+            runtime: Mutex::new(CandidateStateRuntime {
+                live: CandidateState::new(&specs),
+                live_typed: BTreeMap::new(),
+                recovery: None,
+            }),
             specs,
         })
     }
@@ -154,22 +171,30 @@ impl MaintainedCandidateStateProvider {
     ///
     /// Returns [`ProviderError`] if live row-to-id mappings are inconsistent.
     pub fn rebuild_from_graph(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
+        let rebuilt = self.build_state_from_graph(graph)?;
+        let mut runtime = self.runtime.lock();
+        if let Some(recovery) = runtime.recovery.as_mut() {
+            recovery.state = rebuilt;
+            recovery.typed.clear();
+            recovery.prepared = false;
+        } else {
+            runtime.live = rebuilt;
+            runtime.live_typed.clear();
+        }
+        Ok(())
+    }
+
+    fn build_state_from_graph(&self, graph: &SeleneGraph) -> Result<CandidateState, ProviderError> {
         let mut rebuilt = CandidateState::new(&self.specs);
-        for row in graph.live_nodes() {
-            let row = RowIndex::new(row);
-            let id = graph.node_id_for_row(row).ok_or_else(|| {
-                inconsistent(format!("live node row {} has no external id", row.get()))
-            })?;
+        let nodes = graph.live_node_candidates().map_err(provider_graph_error)?;
+        for id in nodes.iter() {
             let labels = graph
                 .node_labels(id)
                 .ok_or_else(|| inconsistent(format!("live node {id} has no label column entry")))?;
             rebuilt.node_labels.insert(id, labels.clone());
         }
-        for row in graph.live_edges() {
-            let row = RowIndex::new(row);
-            let id = graph.edge_id_for_row(row).ok_or_else(|| {
-                inconsistent(format!("live edge row {} has no external id", row.get()))
-            })?;
+        let edges = graph.live_edge_candidates().map_err(provider_graph_error)?;
+        for id in edges.iter() {
             let label = graph
                 .edge_label(id)
                 .ok_or_else(|| inconsistent(format!("live edge {id} has no label")))?;
@@ -190,8 +215,7 @@ impl MaintainedCandidateStateProvider {
         }
         rebuilt.rebuild_derived(&self.specs);
         rebuilt.generation = graph.meta.generation;
-        *self.state.lock() = rebuilt;
-        Ok(())
+        Ok(rebuilt)
     }
 
     /// Return the configured spec named `name`.
@@ -203,8 +227,9 @@ impl MaintainedCandidateStateProvider {
     /// Return the current candidate set for `name`.
     #[must_use]
     pub fn candidate_set(&self, name: &DbString) -> Option<VectorCandidateSet> {
-        let mut state = self.state.lock();
-        state
+        let mut runtime = self.runtime.lock();
+        runtime
+            .live
             .members
             .get_mut(name)
             .map(|members| VectorCandidateSet::from_canonical_nodes(members.candidate_nodes()))
@@ -213,7 +238,7 @@ impl MaintainedCandidateStateProvider {
     /// Return the provider generation watermark.
     #[must_use]
     pub fn generation(&self) -> u64 {
-        self.state.lock().generation
+        self.runtime.lock().live.generation
     }
 
     /// Return the current candidate set for `name` if it matches `generation`.
@@ -227,14 +252,15 @@ impl MaintainedCandidateStateProvider {
         name: &DbString,
         generation: u64,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
-        let mut state = self.state.lock();
-        if state.generation != generation {
+        let mut runtime = self.runtime.lock();
+        if runtime.live.generation != generation {
             return Err(inconsistent(format!(
                 "candidate-state generation {} does not match graph generation {generation}",
-                state.generation
+                runtime.live.generation
             )));
         }
-        Ok(state
+        Ok(runtime
+            .live
             .members
             .get_mut(name)
             .map(|members| VectorCandidateSet::from_canonical_nodes(members.candidate_nodes())))
@@ -250,11 +276,11 @@ impl MaintainedCandidateStateProvider {
         &self,
         generation: u64,
     ) -> Result<Vec<VectorCandidateStateInfo>, ProviderError> {
-        let state = self.state.lock();
-        if state.generation != generation {
+        let runtime = self.runtime.lock();
+        if runtime.live.generation != generation {
             return Err(inconsistent(format!(
                 "candidate-state generation {} does not match graph generation {generation}",
-                state.generation
+                runtime.live.generation
             )));
         }
         Ok(self
@@ -263,7 +289,8 @@ impl MaintainedCandidateStateProvider {
             .map(|spec| VectorCandidateStateInfo {
                 name: spec.name.clone(),
                 generation,
-                candidate_count: state
+                candidate_count: runtime
+                    .live
                     .members
                     .get(&spec.name)
                     .map_or(0, |members| members.len()),
@@ -279,8 +306,9 @@ impl MaintainedCandidateStateProvider {
     /// Return true when `node` is currently a member of the named set.
     #[must_use]
     pub fn contains(&self, name: &DbString, node: NodeId) -> bool {
-        self.state
+        self.runtime
             .lock()
+            .live
             .members
             .get(name)
             .is_some_and(|members| members.contains(node))
@@ -292,15 +320,16 @@ impl MaintainedCandidateStateProvider {
         expected_generation: Option<u64>,
     ) -> Result<Vec<u8>, ProviderError> {
         ensure_state_subtag(sub_tag)?;
-        let state = self.state.lock();
+        let runtime = self.runtime.lock();
         if let Some(generation) = expected_generation
-            && state.generation != generation
+            && runtime.live.generation != generation
         {
             return Err(inconsistent(format!(
                 "candidate-state generation {} does not match checkpoint generation {generation}",
-                state.generation
+                runtime.live.generation
             )));
         }
+        let state = &runtime.live;
         let snapshot = CandidateStateSnapshot {
             version: SNAPSHOT_VERSION,
             generation: state.generation,
@@ -373,7 +402,15 @@ impl IndexProvider for MaintainedCandidateStateProvider {
             }
         }
         state.rebuild_derived(&self.specs);
-        *self.state.lock() = state;
+        let mut runtime = self.runtime.lock();
+        if let Some(recovery) = runtime.recovery.as_mut() {
+            recovery.state = state;
+            recovery.typed.clear();
+            recovery.prepared = false;
+        } else {
+            runtime.live = state;
+            runtime.live_typed.clear();
+        }
         Ok(())
     }
 
@@ -390,7 +427,15 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     }
 
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
-        self.state.lock().apply_change(&self.specs, change)
+        let mut runtime = self.runtime.lock();
+        if let Some(recovery) = runtime.recovery.as_mut() {
+            recovery.typed.clear();
+            recovery.prepared = false;
+            recovery.state.apply_change(&self.specs, change)
+        } else {
+            runtime.live_typed.clear();
+            runtime.live.apply_change(&self.specs, change)
+        }
     }
 
     fn handles_change_batches(&self) -> bool {
@@ -398,9 +443,18 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     }
 
     fn on_changes(&self, changes: &[Change]) -> Result<(), ProviderError> {
-        let mut state = self.state.lock();
-        for change in changes {
-            state.apply_change(&self.specs, change)?;
+        let mut runtime = self.runtime.lock();
+        if let Some(recovery) = runtime.recovery.as_mut() {
+            recovery.typed.clear();
+            recovery.prepared = false;
+            for change in changes {
+                recovery.state.apply_change(&self.specs, change)?;
+            }
+        } else {
+            runtime.live_typed.clear();
+            for change in changes {
+                runtime.live.apply_change(&self.specs, change)?;
+            }
         }
         Ok(())
     }
@@ -410,8 +464,124 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     }
 
     fn on_commit_applied(&self, generation: u64) -> Result<(), ProviderError> {
-        self.state.lock().generation = generation;
+        let mut runtime = self.runtime.lock();
+        if let Some(recovery) = runtime.recovery.as_mut() {
+            recovery.typed.clear();
+            recovery.prepared = false;
+            recovery.state.generation = generation;
+        } else {
+            runtime.live_typed.clear();
+            runtime.live.generation = generation;
+        }
         Ok(())
+    }
+
+    fn reserve_recovery_attachment(&self) -> Result<(), ProviderError> {
+        let mut runtime = self.runtime.lock();
+        if runtime.recovery.is_some() {
+            return Err(inconsistent(
+                "candidate-state recovery attachment is already reserved".to_owned(),
+            ));
+        }
+        runtime.recovery = Some(StagedCandidateState {
+            state: CandidateState::new(&self.specs),
+            typed: BTreeMap::new(),
+            prepared: false,
+        });
+        Ok(())
+    }
+
+    fn prepare_recovery_attachment(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
+        let mut runtime = self.runtime.lock();
+        let recovery = runtime.recovery.as_mut().ok_or_else(|| {
+            inconsistent("candidate-state recovery attachment was not reserved".to_owned())
+        })?;
+        recovery.typed.clear();
+        recovery.prepared = false;
+        if recovery.state.generation != graph.meta.generation {
+            return Err(inconsistent(format!(
+                "staged candidate-state generation {} does not match recovered graph generation {}",
+                recovery.state.generation, graph.meta.generation
+            )));
+        }
+        for spec in &self.specs {
+            let nodes = recovery
+                .state
+                .members
+                .get_mut(&spec.name)
+                .expect("candidate state has members for every validated spec")
+                .candidate_nodes();
+            let candidates = graph
+                .bind_node_candidates(nodes.iter().copied())
+                .map_err(provider_graph_error)?;
+            if candidates.len() != nodes.len() {
+                return Err(inconsistent(format!(
+                    "staged candidate set {} contains non-live recovered nodes",
+                    spec.name
+                )));
+            }
+            recovery.typed.insert(spec.name.clone(), candidates);
+        }
+        recovery.prepared = true;
+        Ok(())
+    }
+
+    fn commit_recovery_attachment(&self) {
+        let mut runtime = self.runtime.lock();
+        let recovery = runtime
+            .recovery
+            .take()
+            .expect("candidate-state recovery attachment must be reserved before commit");
+        assert!(
+            recovery.prepared,
+            "candidate-state recovery attachment must be prepared before commit"
+        );
+        runtime.live = recovery.state;
+        runtime.live_typed = recovery.typed;
+    }
+
+    fn abort_recovery_attachment(&self) {
+        self.runtime.lock().recovery = None;
+    }
+
+    fn node_candidate_set(
+        &self,
+        name: &DbString,
+        graph: &SeleneGraph,
+    ) -> Result<Option<CandidateSet<Node>>, ProviderError> {
+        let mut runtime = self.runtime.lock();
+        if runtime.live.generation != graph.meta.generation {
+            return Err(inconsistent(format!(
+                "candidate-state generation {} does not match graph generation {}",
+                runtime.live.generation, graph.meta.generation
+            )));
+        }
+        let cached_is_current = runtime
+            .live_typed
+            .get(name)
+            .is_some_and(|candidates| candidates.validate_identity_for(graph).is_ok());
+        if cached_is_current {
+            return Ok(runtime.live_typed.get(name).cloned());
+        }
+        runtime.live_typed.remove(name);
+        let Some(nodes) = runtime
+            .live
+            .members
+            .get_mut(name)
+            .map(|members| members.candidate_nodes())
+        else {
+            return Ok(None);
+        };
+        let candidates = graph
+            .bind_node_candidates(nodes.iter().copied())
+            .map_err(provider_graph_error)?;
+        if candidates.len() != nodes.len() {
+            return Err(inconsistent(format!(
+                "candidate set {name} contains nodes not live in the supplied graph snapshot"
+            )));
+        }
+        runtime.live_typed.insert(name.clone(), candidates.clone());
+        Ok(Some(candidates))
     }
 
     fn vector_candidate_set(
@@ -432,6 +602,10 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     fn declared_sub_tags(&self) -> &[SubTag] {
         SUB_TAGS
     }
+}
+
+fn provider_graph_error(error: crate::GraphError) -> ProviderError {
+    inconsistent(format!("graph candidate binding failed: {error}"))
 }
 
 #[cfg(test)]

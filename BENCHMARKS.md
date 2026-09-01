@@ -4744,6 +4744,34 @@ Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter g
 | `graph_physical_candidate_set/difference_full_overlap/1024` | 23.812 µs | Performs complete identity and trusted-entry validation before removing a fully overlapping set and producing empty output. Two high mild outliers were reported. |
 | `graph_physical_candidate_set/clone_snapshot/1024` | 61.825 ns | Clones the immutable graph snapshot while retaining physical-layout ancestry and its current private workspace binding. |
 
+Focused M04-PR02 Part 2 binding/recovery acceptance rows were measured on
+2026-09-01 with the quick Criterion profile and mimalloc on an Apple M5 with
+16 GiB RAM running macOS 26.7. These are bounded overhead observations, not
+before/after improvement claims:
+
+```text
+scripts/run-benches.sh --profile quick --bench single_graph --filter graph_physical_candidate_set
+scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set --vector-scales 1000
+scripts/run-benches.sh --profile quick --bench text_search_bm25
+scripts/run-benches.sh --profile quick --bench provider_fanout
+```
+
+| Bench | Quick estimate | Notes |
+|---|---:|---|
+| `graph_physical_candidate_set/bind_canonical_ids/1024` | 16.673 µs | Binds an already strictly ascending stable-ID input without another sort/dedup pass. |
+| `graph_physical_candidate_set/bind_noncanonical_duplicate_ids/1024` | 22.621 µs | Canonicalizes reversed duplicate stable IDs while filtering through the same liveness-only binder. |
+| `graph_physical_candidate_set/bind_vector_candidate_set/1024` | 18.232 µs | Binds a canonical stable-ID `VectorCandidateSet` without vector-property or index checks. |
+| `graph_vector_candidate_set/neighbor_candidates_depends_on_k64/1000` | 62.565 ns | Representative registered 1,000-node graph/vector row from the required bounded companion run. |
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 257.19 µs | Exact typed-candidate scan over 1,000 text nodes. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 62.088 µs | Prebuilt text-index scoring over sorted stable-ID candidates. |
+| `provider_fanout/core_only` | 178.70 µs | Representative core-only provider fan-out cycle. |
+| `provider_fanout/extra_k4` | 198.04 µs | Representative cycle with four additional providers. |
+
+The repository's registered `bfs` benchmark does not call
+`reachable_nodes_checked`, and no registered reachability row currently
+measures the changed stable-root binding path, so a BFS timing is not treated as
+relevant Part 2 evidence.
+
 ## Retrieval scoping guards
 
 Focused local P0 row, measured 2026-06-15:

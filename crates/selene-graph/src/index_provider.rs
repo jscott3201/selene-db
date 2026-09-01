@@ -10,6 +10,7 @@ use std::fmt;
 
 use selene_core::{Change, DbString};
 
+use crate::candidate_set::{CandidateSet, Node};
 use crate::{SeleneGraph, VectorCandidateSet};
 
 /// Stable 4-byte ASCII identifier for an [`IndexProvider`] registration.
@@ -188,6 +189,65 @@ pub trait IndexProvider: Send + Sync + 'static {
     /// Returns [`ProviderError`] for provider-local failures.
     fn on_commit_applied(&self, _generation: u64) -> Result<(), ProviderError> {
         Ok(())
+    }
+
+    /// Reserve private runtime attachment before recovery callbacks can run.
+    ///
+    /// Recovery reserves every supplied provider before registering any wrapper
+    /// with the persistence recovery registry. Implementations must keep live
+    /// state visible and stage callback changes privately until
+    /// [`Self::commit_recovery_attachment`] is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when this provider cannot reserve an isolated
+    /// recovery attachment. Recovery aborts this and every earlier reservation.
+    fn reserve_recovery_attachment(&self) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    /// Prepare staged recovery state against the final pinned graph snapshot.
+    ///
+    /// This hook runs only after final graph construction has reminted layout
+    /// identity and rebuilt derived indexes. Preparation remains invisible and
+    /// may perform fallible stable-ID binding; it must not publish staged state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when staged state cannot bind to `graph`.
+    fn prepare_recovery_attachment(&self, _graph: &SeleneGraph) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    /// Infallibly promote previously prepared recovery state to live state.
+    ///
+    /// Recovery calls every provider's prepare hook before it invokes the first
+    /// commit hook, so implementations must leave no fallible work here.
+    fn commit_recovery_attachment(&self) {}
+
+    /// Infallibly discard any reserved or prepared recovery state.
+    ///
+    /// This hook is called on every failed or unwound recovery path until the
+    /// attachment guard is explicitly disarmed after all commits.
+    fn abort_recovery_attachment(&self) {}
+
+    /// Return a typed maintained node candidate set bound to `graph`.
+    ///
+    /// Providers that do not own named node candidates return `Ok(None)`. A
+    /// provider that owns `name` must check its generation against the supplied
+    /// pinned snapshot and either validate a matching typed cache or bind its
+    /// stable source IDs on demand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when named state is stale or inconsistent with
+    /// the supplied snapshot.
+    fn node_candidate_set(
+        &self,
+        _name: &DbString,
+        _graph: &SeleneGraph,
+    ) -> Result<Option<CandidateSet<Node>>, ProviderError> {
+        Ok(None)
     }
 
     /// Return a provider-owned vector candidate set for `name` at `generation`.

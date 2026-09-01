@@ -15,7 +15,7 @@ use selene_core::{
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
-use crate::store::RowIndex;
+use crate::store::NodeRow;
 
 #[path = "json_search/parallel.rs"]
 mod parallel;
@@ -141,44 +141,32 @@ impl SeleneGraph {
         if k == 0 {
             return Ok(Vec::new());
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        let label_rows = self.json_label_candidate_rows(label)?;
+        if label_rows.is_empty() {
             return Ok(Vec::new());
-        };
-        if parallel::should_parallelize_json_scan(label_rows, k) {
+        }
+        if parallel::should_parallelize_json_scan(label_rows.len(), k) {
             let scan = parallel::JsonScan::new(self, label, property);
-            return parallel::contains_nodes(scan, candidate, k, label_rows, checker);
+            return parallel::contains_nodes(scan, candidate, k, &label_rows, checker);
         }
 
         let mut top_k = JsonContainmentTopK::new(k);
         let mut rows_since_check = 0usize;
-        for raw_row in label_rows.iter() {
+        for &(node_id, row) in &label_rows {
             rows_since_check += 1;
             if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
-            if !self.node_store.is_alive(raw_row) {
-                continue;
-            }
-            let row = RowIndex::new(raw_row);
-            let node_id = self
-                .node_id_for_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
+            let properties = self.node_store.properties.get(row.index()).ok_or_else(|| {
+                GraphError::Inconsistent {
                     reason: format!(
-                        "label index row {raw_row} for {} has no node id",
+                        "JSON search row {} for {} has no property row",
+                        row.get(),
                         label.as_str()
                     ),
-                })?;
-            let properties = self
-                .node_store
-                .properties
-                .get(raw_row as usize)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "JSON search row {raw_row} for {} has no property row",
-                        label.as_str()
-                    ),
-                })?;
+                }
+            })?;
             let Some(Value::Json(value)) = properties.get(property) else {
                 continue;
             };
@@ -223,44 +211,32 @@ impl SeleneGraph {
         if k == 0 || path.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        let label_rows = self.json_label_candidate_rows(label)?;
+        if label_rows.is_empty() {
             return Ok(Vec::new());
-        };
-        if parallel::should_parallelize_json_scan(label_rows, k) {
+        }
+        if parallel::should_parallelize_json_scan(label_rows.len(), k) {
             let scan = parallel::JsonScan::new(self, label, property);
-            return parallel::path_exists_nodes(scan, path, k, label_rows, checker);
+            return parallel::path_exists_nodes(scan, path, k, &label_rows, checker);
         }
 
         let mut top_k = JsonContainmentTopK::new(k);
         let mut rows_since_check = 0usize;
-        for raw_row in label_rows.iter() {
+        for &(node_id, row) in &label_rows {
             rows_since_check += 1;
             if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
-            if !self.node_store.is_alive(raw_row) {
-                continue;
-            }
-            let row = RowIndex::new(raw_row);
-            let node_id = self
-                .node_id_for_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
+            let properties = self.node_store.properties.get(row.index()).ok_or_else(|| {
+                GraphError::Inconsistent {
                     reason: format!(
-                        "label index row {raw_row} for {} has no node id",
+                        "JSON search row {} for {} has no property row",
+                        row.get(),
                         label.as_str()
                     ),
-                })?;
-            let properties = self
-                .node_store
-                .properties
-                .get(raw_row as usize)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "JSON search row {raw_row} for {} has no property row",
-                        label.as_str()
-                    ),
-                })?;
+                }
+            })?;
             let Some(Value::Json(value)) = properties.get(property) else {
                 continue;
             };
@@ -309,44 +285,32 @@ impl SeleneGraph {
         if k == 0 || path.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        let label_rows = self.json_label_candidate_rows(label)?;
+        if label_rows.is_empty() {
             return Ok(Vec::new());
-        };
-        if parallel::should_parallelize_json_scan(label_rows, k) {
+        }
+        if parallel::should_parallelize_json_scan(label_rows.len(), k) {
             let scan = parallel::JsonScan::new(self, label, property);
-            return parallel::path_contains_nodes(scan, path, candidate, k, label_rows, checker);
+            return parallel::path_contains_nodes(scan, path, candidate, k, &label_rows, checker);
         }
 
         let mut top_k = JsonContainmentTopK::new(k);
         let mut rows_since_check = 0usize;
-        for raw_row in label_rows.iter() {
+        for &(node_id, row) in &label_rows {
             rows_since_check += 1;
             if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
-            if !self.node_store.is_alive(raw_row) {
-                continue;
-            }
-            let row = RowIndex::new(raw_row);
-            let node_id = self
-                .node_id_for_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
+            let properties = self.node_store.properties.get(row.index()).ok_or_else(|| {
+                GraphError::Inconsistent {
                     reason: format!(
-                        "label index row {raw_row} for {} has no node id",
+                        "JSON search row {} for {} has no property row",
+                        row.get(),
                         label.as_str()
                     ),
-                })?;
-            let properties = self
-                .node_store
-                .properties
-                .get(raw_row as usize)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "JSON search row {raw_row} for {} has no property row",
-                        label.as_str()
-                    ),
-                })?;
+                }
+            })?;
             let Some(Value::Json(value)) = properties.get(property) else {
                 continue;
             };
@@ -391,44 +355,32 @@ impl SeleneGraph {
         if k == 0 || path.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        let label_rows = self.json_label_candidate_rows(label)?;
+        if label_rows.is_empty() {
             return Ok(Vec::new());
-        };
-        if parallel::should_parallelize_json_scan(label_rows, k) {
+        }
+        if parallel::should_parallelize_json_scan(label_rows.len(), k) {
             let scan = parallel::JsonScan::new(self, label, property);
-            return parallel::path_value_nodes(scan, path, k, label_rows, checker);
+            return parallel::path_value_nodes(scan, path, k, &label_rows, checker);
         }
 
         let mut top_k = JsonPathValueTopK::new(k);
         let mut rows_since_check = 0usize;
-        for raw_row in label_rows.iter() {
+        for &(node_id, row) in &label_rows {
             rows_since_check += 1;
             if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
-            if !self.node_store.is_alive(raw_row) {
-                continue;
-            }
-            let row = RowIndex::new(raw_row);
-            let node_id = self
-                .node_id_for_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
+            let properties = self.node_store.properties.get(row.index()).ok_or_else(|| {
+                GraphError::Inconsistent {
                     reason: format!(
-                        "label index row {raw_row} for {} has no node id",
+                        "JSON search row {} for {} has no property row",
+                        row.get(),
                         label.as_str()
                     ),
-                })?;
-            let properties = self
-                .node_store
-                .properties
-                .get(raw_row as usize)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "JSON search row {raw_row} for {} has no property row",
-                        label.as_str()
-                    ),
-                })?;
+                }
+            })?;
             let Some(Value::Json(value)) = properties.get(property) else {
                 continue;
             };
@@ -441,6 +393,20 @@ impl SeleneGraph {
             checker.note_nodes_scanned(rows_since_check)?;
         }
         Ok(top_k.into_hits())
+    }
+
+    fn json_label_candidate_rows(
+        &self,
+        label: &DbString,
+    ) -> Result<Vec<(NodeId, NodeRow)>, JsonSearchError> {
+        let candidates = self.node_candidates_with_label(label)?;
+        candidates
+            .trusted_rows(self)
+            .map_err(|error| GraphError::Inconsistent {
+                reason: format!("fresh JSON label candidates failed validation: {error}"),
+            })
+            .map(|rows| rows.collect())
+            .map_err(JsonSearchError::from)
     }
 }
 

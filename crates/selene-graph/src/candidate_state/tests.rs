@@ -209,6 +209,140 @@ fn shared_graph_resolves_generation_checked_candidate_state_set() {
 }
 
 #[test]
+fn shared_graph_resolves_typed_state_and_rebinds_after_layout_remint() {
+    let (spec, name, doc, _, _) = current_spec();
+    let provider = provider_with(spec);
+    let shared = SharedGraph::builder(GraphId::new(81_018))
+        .with_provider(provider as Arc<dyn IndexProvider>)
+        .build()
+        .unwrap();
+    let (kept, deleted) = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let kept = mutator
+            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
+            .unwrap();
+        let deleted = mutator
+            .create_node(LabelSet::single(doc), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+        (kept, deleted)
+    };
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator().delete_node(deleted).unwrap();
+        txn.commit().unwrap();
+    }
+
+    let before = shared.read();
+    let typed_before = shared
+        .node_candidate_set(&name)
+        .unwrap()
+        .expect("typed state exists");
+    assert_eq!(typed_before.iter().collect::<Vec<_>>(), vec![kept]);
+    assert_eq!(
+        shared
+            .vector_candidate_set(&name)
+            .unwrap()
+            .expect("legacy state exists")
+            .as_nodes(),
+        &[kept]
+    );
+
+    shared.compact().unwrap();
+    let after = shared.read();
+    assert!(!typed_before.shares_physical_layout_with(&after));
+    let rebound = shared
+        .node_candidate_set(&name)
+        .unwrap()
+        .expect("typed state rebinds");
+    assert_eq!(rebound.iter().collect::<Vec<_>>(), vec![kept]);
+    assert!(rebound.shares_physical_layout_with(&after));
+    drop(before);
+}
+
+#[test]
+fn recovery_callbacks_stage_invisibly_until_prepare_and_commit() {
+    let (spec, name, doc, _, _) = current_spec();
+    let shared = SharedGraph::new(GraphId::new(81_019));
+    let first = {
+        let mut txn = shared.begin_write();
+        let first = txn
+            .mutator()
+            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+        first
+    };
+    let provider = MaintainedCandidateStateProvider::from_graph([spec], &shared.read()).unwrap();
+    let second = {
+        let mut txn = shared.begin_write();
+        let second = txn
+            .mutator()
+            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+        second
+    };
+
+    provider.reserve_recovery_attachment().unwrap();
+    provider
+        .on_change(&Change::NodeCreated {
+            id: second,
+            labels: LabelSet::single(doc),
+            properties: PropertyMap::new(),
+        })
+        .unwrap();
+    provider
+        .on_commit_applied(shared.read().meta.generation)
+        .unwrap();
+    assert_eq!(candidate_nodes(&provider, &name), vec![first]);
+
+    provider
+        .prepare_recovery_attachment(&shared.read())
+        .unwrap();
+    assert_eq!(candidate_nodes(&provider, &name), vec![first]);
+    provider.commit_recovery_attachment();
+    assert_eq!(candidate_nodes(&provider, &name), vec![second]);
+    assert_eq!(
+        IndexProvider::node_candidate_set(&provider, &name, &shared.read())
+            .unwrap()
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![second]
+    );
+}
+
+#[test]
+fn recovery_abort_retains_prior_live_candidate_state() {
+    let (spec, name, doc, _, _) = current_spec();
+    let shared = SharedGraph::new(GraphId::new(81_020));
+    let first = {
+        let mut txn = shared.begin_write();
+        let first = txn
+            .mutator()
+            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+        first
+    };
+    let provider = MaintainedCandidateStateProvider::from_graph([spec], &shared.read()).unwrap();
+    provider.reserve_recovery_attachment().unwrap();
+    provider
+        .on_change(&Change::NodeCreated {
+            id: NodeId::new(first.get() + 1),
+            labels: LabelSet::single(doc),
+            properties: PropertyMap::new(),
+        })
+        .unwrap();
+
+    provider.abort_recovery_attachment();
+
+    assert_eq!(candidate_nodes(&provider, &name), vec![first]);
+}
+
+#[test]
 fn provider_can_rebuild_from_existing_graph_snapshot() {
     let (spec, name, doc, superseded, _) = current_spec();
     let shared = SharedGraph::new(GraphId::new(81_002));
@@ -351,6 +485,14 @@ fn provider_snapshot_and_wal_replay_preserve_delete_reverse_state() {
         candidate_nodes(&recovered_provider, &name),
         vec![active, stale]
     );
+    let recovered_snapshot = recovered.read();
+    let typed = recovered
+        .node_candidate_set(&name)
+        .unwrap()
+        .expect("recovered typed state exists");
+    assert_eq!(typed.iter().collect::<Vec<_>>(), vec![active, stale]);
+    assert!(typed.shares_physical_layout_with(&recovered_snapshot));
+    assert!(typed.shares_workspace_binding_with(&recovered_snapshot));
 }
 
 #[test]

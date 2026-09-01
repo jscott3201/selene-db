@@ -123,6 +123,7 @@ impl SharedGraph {
         let dir = std::fs::canonicalize(dir).map_err(selene_persist::PersistError::from)?;
         let core = CoreProvider::new_for_recovery();
         validate_recovery_provider_tags(&core, &providers)?;
+        let mut attachments = RecoveryAttachmentGuard::reserve(&providers)?;
         let mut registry = ProviderRegistry::new();
         let provider: Arc<dyn RecoveryProvider> = core.clone();
         registry.register(provider)?;
@@ -205,6 +206,8 @@ impl SharedGraph {
         // is why it is read at all — `Ok` here otherwise looks identical to a
         // reopen that lost an unacknowledged commit (#1109).
         let recovery_tail_repair = writer.tail_repair();
+        #[cfg(test)]
+        run_before_shared_construction_hook()?;
         let mut shared = Self::from_graph_with_core_and_durables(
             graph,
             providers,
@@ -215,7 +218,58 @@ impl SharedGraph {
             crate::committer_batch::CommitBatching::Off,
         )?;
         shared.recovery_tail_repair = recovery_tail_repair;
+        let final_snapshot = shared.read();
+        attachments.prepare_all(&final_snapshot)?;
+        attachments.commit_all();
+        attachments.disarm();
         Ok(shared)
+    }
+}
+
+struct RecoveryAttachmentGuard {
+    reserved: Vec<Arc<dyn IndexProvider>>,
+    armed: bool,
+}
+
+impl RecoveryAttachmentGuard {
+    fn reserve(providers: &[Arc<dyn IndexProvider>]) -> GraphResult<Self> {
+        let mut guard = Self {
+            reserved: Vec::with_capacity(providers.len()),
+            armed: true,
+        };
+        for provider in providers {
+            provider.reserve_recovery_attachment()?;
+            guard.reserved.push(Arc::clone(provider));
+        }
+        Ok(guard)
+    }
+
+    fn prepare_all(&self, graph: &crate::SeleneGraph) -> GraphResult<()> {
+        for provider in &self.reserved {
+            provider.prepare_recovery_attachment(graph)?;
+        }
+        Ok(())
+    }
+
+    fn commit_all(&self) {
+        for provider in &self.reserved {
+            provider.commit_recovery_attachment();
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RecoveryAttachmentGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        for provider in self.reserved.iter().rev() {
+            provider.abort_recovery_attachment();
+        }
     }
 }
 
@@ -230,10 +284,15 @@ fn open_recovery_writer(path: &Path, snapshot_seq: u64) -> GraphResult<WalWriter
 }
 
 #[cfg(test)]
+type SharedConstructionHook = Box<dyn FnOnce() -> GraphResult<()>>;
+
+#[cfg(test)]
 thread_local! {
     static AFTER_PERSIST_RECOVERY_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
     static BEFORE_MISSING_WAL_OPEN_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static BEFORE_SHARED_CONSTRUCTION_HOOK: std::cell::RefCell<Option<SharedConstructionHook>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -247,6 +306,13 @@ fn set_after_persist_recovery_hook(hook: impl FnOnce() + 'static) {
 #[cfg(test)]
 fn set_before_missing_wal_open_hook(hook: impl FnOnce() + 'static) {
     BEFORE_MISSING_WAL_OPEN_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+fn set_before_shared_construction_hook(hook: impl FnOnce() -> GraphResult<()> + 'static) {
+    BEFORE_SHARED_CONSTRUCTION_HOOK.with(|slot| {
         *slot.borrow_mut() = Some(Box::new(hook));
     });
 }
@@ -267,6 +333,14 @@ fn run_before_missing_wal_open_hook() {
             hook();
         }
     });
+}
+
+#[cfg(test)]
+fn run_before_shared_construction_hook() -> GraphResult<()> {
+    BEFORE_SHARED_CONSTRUCTION_HOOK.with(|slot| match slot.borrow_mut().take() {
+        Some(hook) => hook(),
+        None => Ok(()),
+    })
 }
 
 /// Recovery wrapper that drives a runtime [`IndexProvider`] through

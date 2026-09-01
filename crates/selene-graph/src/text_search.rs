@@ -17,9 +17,10 @@ use smallvec::SmallVec;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
-use crate::parallel_scan::{should_parallelize_scan, try_reduce_bitmap_chunks};
+use crate::parallel_scan::{should_parallelize_scan, try_reduce_chunks};
 use crate::shared::SharedGraph;
-use crate::store::RowIndex;
+use crate::store::NodeRow;
+use crate::{CandidateSet, Node};
 
 pub(crate) const TEXT_SEARCH_CANCEL_STRIDE: usize = 1024;
 #[cfg(not(test))]
@@ -149,12 +150,13 @@ impl SeleneGraph {
         if allowed_rows.is_empty() {
             return Ok(Vec::new());
         }
+        let allowed = self.node_candidates_from_rows(allowed_rows, "text-search row filter")?;
         self.exact_text_search_nodes_filtered_checked(
             label,
             property,
             query,
             k,
-            Some(allowed_rows),
+            Some(&allowed),
             checker,
         )
     }
@@ -165,7 +167,7 @@ impl SeleneGraph {
         property: &DbString,
         query: &str,
         k: usize,
-        allowed_rows: Option<&RoaringBitmap>,
+        allowed: Option<&CandidateSet<Node>>,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<TextSearchHit>, TextSearchError> {
         checker.check()?;
@@ -176,15 +178,22 @@ impl SeleneGraph {
         if query_terms.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        let candidates = self.node_candidates_with_label(label)?;
+        let label_rows = candidates
+            .trusted_rows(self)
+            .map_err(|error| GraphError::Inconsistent {
+                reason: format!("fresh text-search candidates failed validation: {error}"),
+            })?
+            .collect::<Vec<_>>();
+        if label_rows.is_empty() {
             return Ok(Vec::new());
-        };
+        }
 
-        let scan = TextScan::new(self, label, property, &query_terms, allowed_rows);
-        let chunk = if should_parallelize_text_scan(label_rows, k) {
-            exact_text_scan_parallel(scan, label_rows, checker)?
+        let scan = TextScan::new(self, label, property, &query_terms, allowed);
+        let chunk = if should_parallelize_text_scan(label_rows.len(), k) {
+            exact_text_scan_parallel(scan, &label_rows, checker)?
         } else {
-            exact_text_scan_serial(scan, label_rows, checker)?
+            exact_text_scan_serial(scan, &label_rows, checker)?
         };
         Ok(rank_text_docs(chunk, k))
     }
@@ -223,7 +232,7 @@ struct TextScan<'a> {
     label: &'a DbString,
     property: &'a DbString,
     query_terms: &'a [String],
-    allowed_rows: Option<&'a RoaringBitmap>,
+    allowed: Option<&'a CandidateSet<Node>>,
 }
 
 impl<'a> TextScan<'a> {
@@ -232,39 +241,30 @@ impl<'a> TextScan<'a> {
         label: &'a DbString,
         property: &'a DbString,
         query_terms: &'a [String],
-        allowed_rows: Option<&'a RoaringBitmap>,
+        allowed: Option<&'a CandidateSet<Node>>,
     ) -> Self {
         Self {
             graph,
             label,
             property,
             query_terms,
-            allowed_rows,
+            allowed,
         }
     }
 
-    fn document_for_row(self, raw_row: u32) -> Result<Option<DocumentStats>, TextSearchError> {
-        if !self.graph.node_store.is_alive(raw_row) {
-            return Ok(None);
-        }
-        let row = RowIndex::new(raw_row);
-        let node_id = self
-            .graph
-            .node_id_for_row(row)
-            .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!(
-                    "label index row {raw_row} for {} has no node id",
-                    self.label.as_str()
-                ),
-            })?;
+    fn document_for_row(
+        self,
+        (node_id, row): (NodeId, NodeRow),
+    ) -> Result<Option<DocumentStats>, TextSearchError> {
         let properties = self
             .graph
             .node_store
             .properties
-            .get(raw_row as usize)
+            .get(row.index())
             .ok_or_else(|| GraphError::Inconsistent {
                 reason: format!(
-                    "text search row {raw_row} for {} has no property row",
+                    "text search row {} for {} has no property row",
+                    row.get(),
                     self.label.as_str()
                 ),
             })?;
@@ -275,8 +275,7 @@ impl<'a> TextScan<'a> {
             node_id,
             text.as_str(),
             self.query_terms,
-            self.allowed_rows
-                .is_none_or(|allowed_rows| allowed_rows.contains(raw_row)),
+            self.allowed.is_none_or(|allowed| allowed.contains(node_id)),
         ))
     }
 }
@@ -308,16 +307,16 @@ impl TextScanChunk {
     }
 }
 
-fn should_parallelize_text_scan(rows: &RoaringBitmap, k: usize) -> bool {
-    should_parallelize_scan(rows.len(), k, TEXT_SEARCH_PARALLEL_MIN_ROWS)
+fn should_parallelize_text_scan(row_count: usize, k: usize) -> bool {
+    should_parallelize_scan(row_count as u64, k, TEXT_SEARCH_PARALLEL_MIN_ROWS)
 }
 
 fn exact_text_scan_parallel(
     scan: TextScan<'_>,
-    rows: &RoaringBitmap,
+    rows: &[(NodeId, NodeRow)],
     checker: CancellationChecker<'_>,
 ) -> Result<TextScanChunk, TextSearchError> {
-    try_reduce_bitmap_chunks(
+    try_reduce_chunks(
         rows,
         TEXT_SEARCH_PARALLEL_CHUNK_ROWS,
         checker,
@@ -329,18 +328,18 @@ fn exact_text_scan_parallel(
 
 fn exact_text_scan_serial(
     scan: TextScan<'_>,
-    rows: &RoaringBitmap,
+    rows: &[(NodeId, NodeRow)],
     checker: CancellationChecker<'_>,
 ) -> Result<TextScanChunk, TextSearchError> {
     let mut chunk = TextScanChunk::empty(scan.query_terms.len());
     let mut rows_since_check = 0usize;
-    for raw_row in rows.iter() {
+    for &entry in rows {
         rows_since_check += 1;
         if rows_since_check >= TEXT_SEARCH_CANCEL_STRIDE {
             checker.note_nodes_scanned(rows_since_check)?;
             rows_since_check = 0;
         }
-        if let Some(doc) = scan.document_for_row(raw_row)? {
+        if let Some(doc) = scan.document_for_row(entry)? {
             chunk.push(doc);
         }
     }
@@ -352,11 +351,11 @@ fn exact_text_scan_serial(
 
 fn exact_text_scan_chunk(
     scan: TextScan<'_>,
-    rows: &[u32],
+    rows: &[(NodeId, NodeRow)],
 ) -> Result<TextScanChunk, TextSearchError> {
     let mut chunk = TextScanChunk::empty(scan.query_terms.len());
-    for &raw_row in rows {
-        if let Some(doc) = scan.document_for_row(raw_row)? {
+    for &entry in rows {
+        if let Some(doc) = scan.document_for_row(entry)? {
             chunk.push(doc);
         }
     }
