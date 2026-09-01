@@ -2630,6 +2630,10 @@
           ],
           "max_production_files": 25,
           "max_net_non_generated_lines": 1500,
+          "work_item_status_after": "Unmerged",
+          "issue_state_after": "Open",
+          "dependents_unblocked_after": false,
+          "bridge_state_after": "Retained",
           "acceptance": [
             "Private `NodeRow` and `EdgeRow` cannot mix; typed candidates bind lower `GraphId`, immutable generation, and a private non-reused snapshot-layout token, reject mismatches, and expose only stable IDs publicly.",
             "Candidate union, intersection, difference, cardinality, contains-by-stable-ID, and deterministic-or-explicitly-unordered stable-ID iteration match an ID reference model.",
@@ -2663,6 +2667,10 @@
           ],
           "max_production_files": 25,
           "max_net_non_generated_lines": 1500,
+          "work_item_status_after": "Unmerged",
+          "issue_state_after": "Open",
+          "dependents_unblocked_after": false,
+          "bridge_state_after": "Retained",
           "acceptance": [
             "Graph-owned label/property/index/JSON/text/vector/reachability producers and named lower read consumers return or consume typed candidates without exposing public rows.",
             "The pinned snapshot solely binds duplicate-canonicalized unbound stable IDs and existing `VectorCandidateSet` values, filtering tombstone, absent, deleted, and otherwise non-live IDs while leaving vector-property skipping to vector scoring.",
@@ -2704,6 +2712,10 @@
           ],
           "max_production_files": 25,
           "max_net_non_generated_lines": 1500,
+          "work_item_status_after": "Merged",
+          "issue_state_after": "Closed",
+          "dependents_unblocked_after": true,
+          "bridge_state_after": "Deleted",
           "acceptance": [
             "All forecast algorithms, GQL runtime/optimizer, testing, and facade-boundary consumers use typed candidates or ID-safe resolvers without dependency inversion, and facade/session ingress validates facade `DatabaseId` where required.",
             "Public API and repository lint evidence finds no public `RowIndex`, raw-row conversion/signature, row-indexed bitmap producer, repeated row-to-ID loop, legacy row alias/adapter, or `Part 3 lower-row bridge`.",

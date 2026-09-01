@@ -1381,6 +1381,8 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
 
 - **Outcome:** Introduce compile-time-separated private node/edge rows and generation/layout-bound typed candidates with stable-ID-only public iteration and graph-owned algebra, then make graph mutation, recovery, compaction, rebuild, and consistency lifecycles preserve or remint physical identity correctly.
 - **Budgets:** at most 25 production files and 1,500 net non-generated lines.
+- **Structured state after:** work item `Unmerged`; issue `Open`; dependents unblocked `false`; bridge `Retained`.
+- **Required exact diff gate:** `python3 -B .github/scripts/check-v2-plan.py --root . --delivery-part M04-PR02:1 --diff-base <exact-base-commit> --diff-head <exact-head-commit>`
 - **Exact production paths:**
   - `crates/selene-graph/src/candidate_set.rs`
   - `crates/selene-graph/src/compaction.rs`
@@ -1411,6 +1413,8 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
 
 - **Outcome:** Move graph-owned typed candidate producers and lower graph read-path consumers onto the Part 1 substrate, add pinned-snapshot liveness-only binding for unbound stable IDs and `VectorCandidateSet`, and recover maintained candidate state/providers with runtime attachment reserved before recovery callbacks.
 - **Budgets:** at most 25 production files and 1,500 net non-generated lines.
+- **Structured state after:** work item `Unmerged`; issue `Open`; dependents unblocked `false`; bridge `Retained`.
+- **Required exact diff gate:** `python3 -B .github/scripts/check-v2-plan.py --root . --delivery-part M04-PR02:2 --diff-base <exact-base-commit> --diff-head <exact-head-commit>`
 - **Exact production paths:**
   - `crates/selene-graph/src/candidate_set.rs`
   - `crates/selene-graph/src/candidate_state.rs`
@@ -1440,6 +1444,8 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
 
 - **Outcome:** Migrate algorithms, GQL runtime/optimizer, testing, and the facade boundary to typed candidates or ID-safe resolvers; delete the final public raw-row/`RowIndex` surfaces, repeated row-to-ID loops, aliases/adapters, and named bridge; then supply final performance, API, lint, and closure evidence.
 - **Budgets:** at most 25 production files and 1,500 net non-generated lines.
+- **Structured state after:** work item `Merged`; issue `Closed`; dependents unblocked `true`; bridge `Deleted`.
+- **Required exact diff gate:** `python3 -B .github/scripts/check-v2-plan.py --root . --delivery-part M04-PR02:3 --diff-base <exact-base-commit> --diff-head <exact-head-commit>`
 - **Exact production paths:**
   - `crates/selene-graph/src/candidate_set.rs`
   - `crates/selene-graph/src/graph.rs`
