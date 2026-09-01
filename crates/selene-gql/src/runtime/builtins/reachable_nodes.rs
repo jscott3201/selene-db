@@ -4,7 +4,7 @@
 //! reachability candidate set from explicit root nodes.
 
 use selene_core::Value;
-use selene_graph::{ReachabilityDirection, ReachabilityError};
+use selene_graph::{GraphError, ReachabilityDirection, ReachabilityError};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use super::vector_common::{cardinality_arg, invalid_arg, node_list_arg, string_arg};
@@ -117,9 +117,48 @@ fn reachability_error(error: ReachabilityError) -> ProcedureError {
         ReachabilityError::NodeScanBudgetExceeded { limit, scanned } => {
             ProcedureError::NodeScanBudgetExceeded { limit, scanned }
         }
+        ReachabilityError::Graph(GraphError::Inconsistent { reason }) => ProcedureError::Internal {
+            detail: format!("graph inconsistency during reachability traversal: {reason}"),
+        },
+        ReachabilityError::Graph(other) => ProcedureError::Internal {
+            detail: format!("unexpected graph error during reachability traversal: {other}"),
+        },
     }
 }
 
 fn usize_to_u64_saturating(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_inconsistency_maps_to_stable_internal_context() {
+        let error = reachability_error(ReachabilityError::Graph(GraphError::Inconsistent {
+            reason: "node mapping drift".to_owned(),
+        }));
+
+        assert!(matches!(
+            error,
+            ProcedureError::Internal { detail }
+                if detail == "graph inconsistency during reachability traversal: node mapping drift"
+        ));
+    }
+
+    #[test]
+    fn unexpected_graph_error_maps_defensively_to_internal() {
+        let error = reachability_error(ReachabilityError::Graph(GraphError::RowSpaceExhausted {
+            kind: "node",
+            rows: u64::from(u32::MAX),
+            max_rows: u64::from(u32::MAX) - 1,
+        }));
+
+        assert!(matches!(
+            error,
+            ProcedureError::Internal { detail }
+                if detail.starts_with("unexpected graph error during reachability traversal:")
+        ));
+    }
 }

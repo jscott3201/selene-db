@@ -1,19 +1,17 @@
 use selene_core::{
-    CancellationChecker, CoreError, DbString, NodeId, Value, VectorMetric, VectorMetricQuery,
-    VectorTopK, VectorValue,
+    CancellationChecker, CoreError, DbString, NodeId, PropertyMap, Value, VectorMetric,
+    VectorMetricQuery, VectorTopK, VectorValue,
 };
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::parallel_scan::{should_parallelize_scan, try_reduce_chunks};
+use crate::store::NodeRow;
+use crate::{CandidateSet, Node};
 
 use super::{
     VECTOR_SEARCH_CANCEL_STRIDE, VectorCandidateSet, VectorNeighborDirection,
     VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError, merge_top_k,
-    score_candidate_batch::{
-        candidate_sets_all_match, should_parallelize_candidate_batch_scoring,
-        should_parallelize_repeated_candidate_batch,
-    },
     vector_node_hits,
 };
 
@@ -72,7 +70,7 @@ impl SeleneGraph {
             return Ok(Vec::new());
         }
 
-        let candidates = VectorCandidateSet::from_nodes(candidates.iter().copied());
+        let candidates = self.bind_node_candidates(candidates.iter().copied())?;
         self.score_vector_candidate_set_after_initial_check(
             property,
             query,
@@ -122,8 +120,14 @@ impl SeleneGraph {
         if k == 0 || candidates.is_empty() {
             return Ok(Vec::new());
         }
+        let candidates = self.bind_vector_candidate_set(candidates)?;
         self.score_vector_candidate_set_after_initial_check(
-            property, query, candidates, metric, k, checker,
+            property,
+            query,
+            &candidates,
+            metric,
+            k,
+            checker,
         )
     }
 
@@ -131,7 +135,7 @@ impl SeleneGraph {
         &self,
         property: &DbString,
         query: &VectorValue,
-        candidates: &VectorCandidateSet,
+        candidates: &CandidateSet<Node>,
         metric: VectorMetric,
         k: usize,
         checker: CancellationChecker<'_>,
@@ -139,33 +143,36 @@ impl SeleneGraph {
         checker.check()?;
 
         let scorer = metric.bind_query(query).map_err(GraphError::from)?;
-        if should_parallelize_candidate_scoring(candidates.len(), k) {
-            return self
-                .score_vector_candidate_set_parallel(property, scorer, candidates, k, checker);
+        let rows = candidates
+            .trusted_rows(self)
+            .map_err(|error| GraphError::Inconsistent {
+                reason: format!("bound vector candidates failed validation: {error}"),
+            })?
+            .collect::<Vec<_>>();
+        if should_parallelize_candidate_scoring(rows.len(), k) {
+            return self.score_vector_candidate_set_parallel(property, scorer, &rows, k, checker);
         }
 
-        self.score_vector_candidate_set_serial(property, scorer, candidates, k, checker)
+        self.score_vector_candidate_set_serial(property, scorer, &rows, k, checker)
     }
 
     pub(super) fn score_vector_candidate_set_serial(
         &self,
         property: &DbString,
         scorer: VectorMetricQuery<'_>,
-        candidates: &VectorCandidateSet,
+        candidates: &[(NodeId, NodeRow)],
         k: usize,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
         let mut top_k = VectorTopK::new(k);
         let mut candidates_since_check = 0usize;
-        for node_id in candidates.as_nodes().iter().copied() {
+        for &(node_id, row) in candidates {
             candidates_since_check += 1;
             if candidates_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(candidates_since_check)?;
                 candidates_since_check = 0;
             }
-            let Some(properties) = self.node_properties(node_id) else {
-                continue;
-            };
+            let properties = self.vector_candidate_properties(row)?;
             let Some(Value::Vector(vector)) = properties.get(property) else {
                 continue;
             };
@@ -183,12 +190,12 @@ impl SeleneGraph {
         &self,
         property: &DbString,
         scorer: VectorMetricQuery<'_>,
-        candidates: &VectorCandidateSet,
+        candidates: &[(NodeId, NodeRow)],
         k: usize,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
         let top_k = try_reduce_chunks(
-            candidates.as_nodes(),
+            candidates,
             VECTOR_CANDIDATE_SCORE_PARALLEL_CHUNK_NODES,
             checker,
             || VectorTopK::new(k),
@@ -203,14 +210,12 @@ impl SeleneGraph {
         &self,
         property: &DbString,
         scorer: VectorMetricQuery<'_>,
-        candidates: &[NodeId],
+        candidates: &[(NodeId, NodeRow)],
         k: usize,
     ) -> Result<VectorTopK<NodeId>, VectorSearchError> {
         let mut top_k = VectorTopK::new(k);
-        for node_id in candidates.iter().copied() {
-            let Some(properties) = self.node_properties(node_id) else {
-                continue;
-            };
+        for &(node_id, row) in candidates {
+            let properties = self.vector_candidate_properties(row)?;
             let Some(Value::Vector(vector)) = properties.get(property) else {
                 continue;
             };
@@ -218,6 +223,21 @@ impl SeleneGraph {
             top_k.push_distance(node_id, distance);
         }
         Ok(top_k)
+    }
+
+    pub(super) fn vector_candidate_properties(
+        &self,
+        row: NodeRow,
+    ) -> Result<&PropertyMap, VectorSearchError> {
+        self.node_store.properties.get(row.index()).ok_or_else(|| {
+            GraphError::Inconsistent {
+                reason: format!(
+                    "trusted vector candidate row {} has no property row",
+                    row.get()
+                ),
+            }
+            .into()
+        })
     }
 
     /// Score one explicit candidate set for each query vector.
@@ -266,26 +286,10 @@ impl SeleneGraph {
     where
         C: AsRef<[NodeId]>,
     {
-        checker.check()?;
-        validate_batch_inputs(queries, candidate_sets.len())?;
-        if queries.is_empty() {
-            return Ok(Vec::new());
-        }
-        if k == 0 {
-            return Ok(vec![Vec::new(); queries.len()]);
-        }
-
-        let mut canonical_sets = Vec::with_capacity(candidate_sets.len());
-        for candidates in candidate_sets {
-            checker.check()?;
-            canonical_sets.push(VectorCandidateSet::from_nodes(
-                candidates.as_ref().iter().copied(),
-            ));
-        }
-        self.score_vector_candidate_sets_batch_checked(
+        self.score_vector_node_id_sets_batch_bound_checked(
             property,
             queries,
-            &canonical_sets,
+            candidate_sets,
             metric,
             k,
             checker,
@@ -327,48 +331,7 @@ impl SeleneGraph {
         k: usize,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
-        checker.check()?;
-        validate_batch_inputs(queries, candidate_sets.len())?;
-        if queries.is_empty() {
-            return Ok(Vec::new());
-        }
-        if k == 0 {
-            return Ok(vec![Vec::new(); queries.len()]);
-        }
-
-        let should_parallelize_batch =
-            should_parallelize_candidate_batch_scoring(candidate_sets, k);
-        if let Some(candidates) = candidate_sets.first()
-            && should_parallelize_repeated_candidate_batch(queries.len(), candidates.len(), k)
-            && candidate_sets_all_match(candidate_sets)
-        {
-            return self.score_repeated_vector_candidate_set_batch_parallel(
-                property, queries, candidates, metric, k, checker,
-            );
-        }
-
-        if should_parallelize_batch {
-            return self.score_vector_candidate_sets_batch_parallel(
-                property,
-                queries,
-                candidate_sets,
-                metric,
-                k,
-                checker,
-            );
-        }
-        if candidate_sets_all_match(candidate_sets) {
-            return self.score_repeated_vector_candidate_set_batch_serial(
-                property,
-                queries,
-                &candidate_sets[0],
-                metric,
-                k,
-                checker,
-            );
-        }
-
-        self.score_vector_candidate_sets_batch_grouped_serial(
+        self.score_vector_candidate_sets_batch_bound_checked(
             property,
             queries,
             candidate_sets,
@@ -412,6 +375,9 @@ impl SeleneGraph {
     ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
         checker.check()?;
         if options.k == 0 {
+            return Ok(Vec::new());
+        }
+        if self.bind_node_candidates([anchor])?.is_empty() {
             return Ok(Vec::new());
         }
         let candidates =
@@ -623,10 +589,11 @@ impl SeleneGraph {
         if roots.is_empty() {
             return Ok(VectorCandidateSet::default());
         }
+        let roots = self.bind_vector_candidate_set(roots)?;
         let mut candidates = Vec::with_capacity(roots.len());
-        candidates.extend_from_slice(roots.as_nodes());
+        candidates.extend(roots.iter());
         let mut roots_since_check = 0usize;
-        for root in roots.as_nodes().iter().copied() {
+        for root in roots.iter() {
             roots_since_check += 1;
             if roots_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(roots_since_check)?;
@@ -662,7 +629,7 @@ fn should_parallelize_candidate_scoring(candidate_count: usize, k: usize) -> boo
     )
 }
 
-fn validate_batch_inputs(
+pub(super) fn validate_batch_inputs(
     queries: &[VectorValue],
     candidate_set_count: usize,
 ) -> Result<(), VectorSearchError> {

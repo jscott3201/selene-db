@@ -1,4 +1,3 @@
-use roaring::RoaringBitmap;
 use selene_core::{
     CancellationChecker, CoreError, DbString, NodeId, Value, VectorMetric, VectorMetricQuery,
     VectorTopK, VectorValue, vector_squared_norm,
@@ -10,8 +9,8 @@ use super::{
 };
 use crate::error::GraphError;
 use crate::graph::SeleneGraph;
-use crate::parallel_scan::try_reduce_bitmap_chunks;
-use crate::store::RowIndex;
+use crate::parallel_scan::try_reduce_chunks;
+use crate::store::NodeRow;
 
 impl SeleneGraph {
     /// Exhaustively rank vector-valued node properties for a batch of queries.
@@ -46,30 +45,43 @@ impl SeleneGraph {
         if k == 0 {
             return Ok(vec![Vec::new(); queries.len()]);
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        let label_candidates = self.node_candidates_with_label(label)?;
+        if label_candidates.is_empty() {
             return Ok(vec![Vec::new(); queries.len()]);
-        };
+        }
 
         let query_dimension = u32::try_from(first_dimension).ok();
         let vector_index = query_dimension.and_then(|dimension| {
             self.vector_index_for(label, property)
                 .filter(|index| index.dimension() == dimension)
         });
-        let rows = vector_index
-            .as_ref()
-            .map_or(label_rows, |index| index.rows());
+        let candidates = if let Some(index) = vector_index.as_ref() {
+            let indexed = self.node_candidates_from_rows(index.rows(), "vector index")?;
+            self.intersect_candidates(&label_candidates, &indexed)
+                .map_err(|error| GraphError::Inconsistent {
+                    reason: format!("fresh batch-vector candidates failed validation: {error}"),
+                })?
+        } else {
+            label_candidates
+        };
+        let rows = candidates
+            .trusted_rows(self)
+            .map_err(|error| GraphError::Inconsistent {
+                reason: format!("fresh batch-vector candidates failed validation: {error}"),
+            })?
+            .collect::<Vec<_>>();
         let scorers: Result<Vec<_>, GraphError> = queries
             .iter()
             .map(|query| metric.bind_query(query).map_err(GraphError::from))
             .collect();
         let scorers = scorers?;
-        if should_parallelize_exact_scan(rows, k) {
+        if should_parallelize_exact_scan(rows.len(), k) {
             return self
-                .exact_vector_search_batch_parallel(label, property, &scorers, k, rows, checker);
+                .exact_vector_search_batch_parallel(label, property, &scorers, k, &rows, checker);
         }
 
         let top_ks =
-            self.exact_vector_search_batch_serial(label, property, &scorers, k, rows, checker)?;
+            self.exact_vector_search_batch_serial(label, property, &scorers, k, &rows, checker)?;
         Ok(top_ks.into_iter().map(vector_node_hits).collect())
     }
 
@@ -79,10 +91,10 @@ impl SeleneGraph {
         property: &DbString,
         scorers: &[VectorMetricQuery<'_>],
         k: usize,
-        rows: &RoaringBitmap,
+        rows: &[(NodeId, NodeRow)],
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
-        let top_ks = try_reduce_bitmap_chunks(
+        let top_ks = try_reduce_chunks(
             rows,
             VECTOR_SEARCH_PARALLEL_CHUNK_ROWS,
             checker,
@@ -100,13 +112,13 @@ impl SeleneGraph {
         property: &DbString,
         scorers: &[VectorMetricQuery<'_>],
         k: usize,
-        rows: &RoaringBitmap,
+        rows: &[(NodeId, NodeRow)],
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorTopK<NodeId>>, VectorSearchError> {
         let mut top_ks = new_batch_top_ks(scorers.len(), k);
         let use_candidate_norms = uses_cosine_metric(scorers);
         let mut rows_since_check = 0usize;
-        for raw_row in rows.iter() {
+        for &entry in rows {
             rows_since_check += 1;
             if rows_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(rows_since_check)?;
@@ -117,7 +129,7 @@ impl SeleneGraph {
                 property,
                 scorers,
                 &mut top_ks,
-                raw_row,
+                entry,
                 use_candidate_norms,
             )?;
         }
@@ -133,17 +145,17 @@ impl SeleneGraph {
         property: &DbString,
         scorers: &[VectorMetricQuery<'_>],
         k: usize,
-        rows: &[u32],
+        rows: &[(NodeId, NodeRow)],
     ) -> Result<Vec<VectorTopK<NodeId>>, VectorSearchError> {
         let mut top_ks = new_batch_top_ks(scorers.len(), k);
         let use_candidate_norms = uses_cosine_metric(scorers);
-        for &raw_row in rows {
+        for &entry in rows {
             self.push_batch_row(
                 label,
                 property,
                 scorers,
                 &mut top_ks,
-                raw_row,
+                entry,
                 use_candidate_norms,
             )?;
         }
@@ -156,31 +168,18 @@ impl SeleneGraph {
         property: &DbString,
         scorers: &[VectorMetricQuery<'_>],
         top_ks: &mut [VectorTopK<NodeId>],
-        raw_row: u32,
+        (node_id, row): (NodeId, NodeRow),
         use_candidate_norms: bool,
     ) -> Result<(), VectorSearchError> {
-        if !self.node_store.is_alive(raw_row) {
-            return Ok(());
-        }
-        let row = RowIndex::new(raw_row);
-        let node_id = self
-            .node_id_for_row(row)
-            .ok_or_else(|| GraphError::Inconsistent {
+        let properties = self.node_store.properties.get(row.index()).ok_or_else(|| {
+            GraphError::Inconsistent {
                 reason: format!(
-                    "vector search row {raw_row} for {} has no node id",
+                    "vector search row {} for {} has no property row",
+                    row.get(),
                     label.as_str()
                 ),
-            })?;
-        let properties = self
-            .node_store
-            .properties
-            .get(raw_row as usize)
-            .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!(
-                    "vector search row {raw_row} for {} has no property row",
-                    label.as_str()
-                ),
-            })?;
+            }
+        })?;
         let Some(Value::Vector(vector)) = properties.get(property) else {
             return Ok(());
         };

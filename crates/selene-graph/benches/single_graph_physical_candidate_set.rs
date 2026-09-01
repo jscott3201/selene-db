@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
-use selene_core::{GraphId, LabelSet, PropertyMap};
-use selene_graph::{CandidateSet, Node, SeleneGraph, SharedGraph};
+use selene_core::{GraphId, LabelSet, NodeId, PropertyMap};
+use selene_graph::{CandidateSet, Node, SeleneGraph, SharedGraph, VectorCandidateSet};
 
 const PHYSICAL_CANDIDATE_WIDTH: usize = 1_024;
 
@@ -28,6 +28,43 @@ pub(super) fn bench_physical_candidate_set(c: &mut Criterion) {
             std::hint::black_box(checksum);
         });
     });
+    group.bench_function(BenchmarkId::new("bind_canonical_ids", fixture.width), |b| {
+        b.iter(|| {
+            let candidates = fixture
+                .graph
+                .bind_node_candidates(std::hint::black_box(&fixture.canonical_ids).iter().copied())
+                .expect("bench ids bind to the pinned snapshot");
+            std::hint::black_box(candidates.len());
+        });
+    });
+    group.bench_function(
+        BenchmarkId::new("bind_noncanonical_duplicate_ids", fixture.width),
+        |b| {
+            b.iter(|| {
+                let candidates = fixture
+                    .graph
+                    .bind_node_candidates(
+                        std::hint::black_box(&fixture.noncanonical_ids)
+                            .iter()
+                            .copied(),
+                    )
+                    .expect("bench ids bind to the pinned snapshot");
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
+    group.bench_function(
+        BenchmarkId::new("bind_vector_candidate_set", fixture.width),
+        |b| {
+            b.iter(|| {
+                let candidates = fixture
+                    .graph
+                    .bind_vector_candidate_set(std::hint::black_box(&fixture.vector_candidates))
+                    .expect("bench vector candidates bind to the pinned snapshot");
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
     group.bench_function(BenchmarkId::new("union_full_overlap", fixture.width), |b| {
         b.iter(|| {
             let candidates = fixture
@@ -70,6 +107,9 @@ pub(super) fn bench_physical_candidate_set(c: &mut Criterion) {
 struct PhysicalCandidateFixture {
     graph: Arc<SeleneGraph>,
     candidates: CandidateSet<Node>,
+    canonical_ids: Vec<NodeId>,
+    noncanonical_ids: Vec<NodeId>,
+    vector_candidates: VectorCandidateSet,
     width: usize,
 }
 
@@ -90,9 +130,16 @@ impl PhysicalCandidateFixture {
         let candidates = graph
             .live_node_candidates()
             .expect("bench graph has trusted typed inverse rows");
+        let canonical_ids = candidates.iter().collect::<Vec<_>>();
+        let mut noncanonical_ids = canonical_ids.iter().rev().copied().collect::<Vec<_>>();
+        noncanonical_ids.extend(canonical_ids.iter().step_by(4).copied());
+        let vector_candidates = VectorCandidateSet::from_nodes(canonical_ids.iter().copied());
         Self {
             graph,
             candidates,
+            canonical_ids,
+            noncanonical_ids,
+            vector_candidates,
             width,
         }
     }

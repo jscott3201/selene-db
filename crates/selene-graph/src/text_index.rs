@@ -19,7 +19,6 @@ use selene_core::{CancellationChecker, DbString, NodeId, Value};
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
-use crate::store::RowIndex;
 use crate::text_search::{
     DocumentStats, TextSearchError, TextSearchHit, TextTopK, bm25_score, tokenize_borrowed,
     unique_query_terms,
@@ -72,43 +71,38 @@ impl TextIndex {
     /// Returns [`GraphError::Inconsistent`] if the label index references a row
     /// without a resolvable node id or property row.
     pub fn build(graph: &SeleneGraph, label: DbString, property: DbString) -> GraphResult<Self> {
-        let Some(label_rows) = graph.nodes_with_label(&label) else {
+        let candidates = graph.node_candidates_with_label(&label)?;
+        let candidates = candidates
+            .trusted_rows(graph)
+            .map_err(|error| GraphError::Inconsistent {
+                reason: format!("fresh text-index candidates failed validation: {error}"),
+            })?
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
             return Ok(TextIndexBuilder::empty(label, property).finish());
-        };
-        let label_row_capacity = usize::try_from(label_rows.len()).unwrap_or(usize::MAX);
+        }
         let mut index = TextIndexBuilder::with_document_capacity(
             label.clone(),
             property.clone(),
-            label_row_capacity,
+            candidates.len(),
         );
 
-        for raw_row in label_rows.iter() {
-            if !graph.node_store.is_alive(raw_row) {
-                continue;
-            }
-            let row = RowIndex::new(raw_row);
-            let node_id = graph
-                .node_id_for_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "label index row {raw_row} for {} has no node id",
-                        label.as_str()
-                    ),
-                })?;
+        for (node_id, row) in candidates {
             let properties = graph
                 .node_store
                 .properties
-                .get(raw_row as usize)
+                .get(row.index())
                 .ok_or_else(|| GraphError::Inconsistent {
                     reason: format!(
-                        "text index row {raw_row} for {} has no property row",
+                        "text index row {} for {} has no property row",
+                        row.get(),
                         label.as_str()
                     ),
                 })?;
             let Some(Value::String(text)) = properties.get(&property) else {
                 continue;
             };
-            index.insert_document(raw_row, node_id, text.as_str());
+            index.insert_document(row.get(), node_id, text.as_str());
         }
         Ok(index.finish())
     }

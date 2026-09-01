@@ -232,19 +232,23 @@ impl SeleneGraph {
         index_rows: &RoaringBitmap,
         checker: &CancellationChecker<'_>,
     ) -> Result<RoaringBitmap, VectorSearchError> {
+        let candidates = self.bind_vector_candidate_set(candidates)?;
+        let candidates = candidates
+            .trusted_rows(self)
+            .map_err(|error| GraphError::Inconsistent {
+                reason: format!("bound TurboQuant candidates failed validation: {error}"),
+            })?
+            .collect::<Vec<_>>();
         let mut rows = RoaringBitmap::new();
         let mut candidates_since_check = 0usize;
-        for node_id in candidates.as_nodes().iter().copied() {
+        for (_, row) in candidates {
             candidates_since_check += 1;
             if candidates_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(candidates_since_check)?;
                 candidates_since_check = 0;
             }
-            let Some(row) = self.row_for_node_id(node_id) else {
-                continue;
-            };
             let raw_row = row.get();
-            if self.node_store.is_alive(raw_row) && index_rows.contains(raw_row) {
+            if index_rows.contains(raw_row) {
                 rows.insert(raw_row);
             }
         }

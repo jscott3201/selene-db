@@ -27,11 +27,16 @@ impl SeleneGraph {
         k: usize,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorCandidateSet>, VectorSearchError> {
+        let live_anchors = self.bind_node_candidates(anchors.iter().copied())?;
         if let Some(first_anchor) = anchors.first()
             && anchors.iter().all(|anchor| anchor == first_anchor)
         {
             checker.note_nodes_scanned(1)?;
-            let candidates = self.vector_neighbor_candidates(*first_anchor, edge_label, direction);
+            let candidates = if live_anchors.contains(*first_anchor) {
+                self.vector_neighbor_candidates(*first_anchor, edge_label, direction)
+            } else {
+                VectorCandidateSet::default()
+            };
             return Ok(vec![candidates; anchors.len()]);
         }
 
@@ -41,7 +46,11 @@ impl SeleneGraph {
                 .par_iter()
                 .map(|anchor| {
                     checker.check()?;
-                    Ok(self.vector_neighbor_candidates(*anchor, edge_label, direction))
+                    Ok(if live_anchors.contains(*anchor) {
+                        self.vector_neighbor_candidates(*anchor, edge_label, direction)
+                    } else {
+                        VectorCandidateSet::default()
+                    })
                 })
                 .collect();
         }
@@ -54,7 +63,11 @@ impl SeleneGraph {
                 checker.note_nodes_scanned(anchors_since_check)?;
                 anchors_since_check = 0;
             }
-            candidate_sets.push(self.vector_neighbor_candidates(*anchor, edge_label, direction));
+            candidate_sets.push(if live_anchors.contains(*anchor) {
+                self.vector_neighbor_candidates(*anchor, edge_label, direction)
+            } else {
+                VectorCandidateSet::default()
+            });
         }
         if anchors_since_check > 0 {
             checker.note_nodes_scanned(anchors_since_check)?;

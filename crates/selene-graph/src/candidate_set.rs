@@ -8,6 +8,7 @@ use selene_core::{EdgeId, GraphId, NodeId};
 use crate::error::{CandidateSetError, CandidateSetResult, GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::store::{EdgeRow, NodeRow};
+use crate::vector_search::VectorCandidateSet;
 
 mod sealed {
     pub trait Sealed {}
@@ -217,7 +218,7 @@ impl<K: CandidateKind> CandidateSet<K> {
         }
     }
 
-    fn validate_for(&self, graph: &SeleneGraph) -> CandidateSetResult<()> {
+    pub(crate) fn validate_identity_for(&self, graph: &SeleneGraph) -> CandidateSetResult<()> {
         if self.graph_id != graph.meta.graph_id {
             return Err(CandidateSetError::GraphMismatch {
                 expected: graph.meta.graph_id,
@@ -236,6 +237,11 @@ impl<K: CandidateKind> CandidateSet<K> {
         {
             return Err(CandidateSetError::LayoutMismatch);
         }
+        Ok(())
+    }
+
+    fn validate_for(&self, graph: &SeleneGraph) -> CandidateSetResult<()> {
+        self.validate_identity_for(graph)?;
         if !self
             .entries
             .iter()
@@ -312,8 +318,7 @@ impl CandidateSet<Node> {
             .into_iter()
             .map(|(id, row)| (id, CandidateRow::new(row.get())))
             .collect::<Vec<_>>();
-        entries.sort_unstable_by_key(|entry| entry.0);
-        entries.dedup_by_key(|entry| entry.0);
+        canonicalize_entries(&mut entries);
         Self::from_sorted_entries(
             graph.meta.graph_id,
             graph.meta.generation,
@@ -357,8 +362,7 @@ impl CandidateSet<Edge> {
             .into_iter()
             .map(|(id, row)| (id, CandidateRow::new(row.get())))
             .collect::<Vec<_>>();
-        entries.sort_unstable_by_key(|entry| entry.0);
-        entries.dedup_by_key(|entry| entry.0);
+        canonicalize_entries(&mut entries);
         Self::from_sorted_entries(
             graph.meta.graph_id,
             graph.meta.generation,
@@ -397,46 +401,85 @@ fn edge_entry_is_current(graph: &SeleneGraph, id: EdgeId, candidate: &CandidateR
 }
 
 impl SeleneGraph {
-    /// Build candidates for every node alive in this immutable snapshot.
+    /// Bind arbitrary stable node IDs to this immutable snapshot using liveness only.
+    ///
+    /// Inputs are sorted and deduplicated when needed. Tombstones, absent
+    /// mappings, and dead rows are filtered without error; labels, properties,
+    /// indexes, vector dimensions, and values are intentionally not inspected.
     ///
     /// # Errors
     ///
-    /// Returns [`GraphError::Inconsistent`] if a live typed row has no stable
-    /// node ID in the snapshot's inverse map.
-    pub fn live_node_candidates(&self) -> GraphResult<CandidateSet<Node>> {
-        let entries = self
-            .node_store
-            .alive_rows()
-            .map(|row| {
-                self.node_id_for_node_row(row)
-                    .map(|id| (id, row))
-                    .ok_or_else(|| GraphError::Inconsistent {
-                        reason: format!("alive node row {} has no stable id", row.get()),
-                    })
-            })
-            .collect::<GraphResult<Vec<_>>>()?;
+    /// Returns [`GraphError::Inconsistent`] when a mapped live row does not have
+    /// the matching reverse stable-ID pairing.
+    pub fn bind_node_candidates(
+        &self,
+        ids: impl IntoIterator<Item = NodeId>,
+    ) -> GraphResult<CandidateSet<Node>> {
+        let mut ids = ids.into_iter().collect::<Vec<_>>();
+        canonicalize_ids(&mut ids);
+        let mut entries = Vec::with_capacity(ids.len());
+        for id in ids {
+            if id == NodeId::TOMBSTONE {
+                continue;
+            }
+            let Some(row) = self.node_row_for_id(id) else {
+                continue;
+            };
+            if !self.node_store.is_alive_row(row) {
+                continue;
+            }
+            self.ensure_live_node_pair(id, row, "stable node candidate")?;
+            entries.push((id, row));
+        }
         Ok(CandidateSet::from_node_rows(self, entries))
     }
 
-    /// Build candidates for every edge alive in this immutable snapshot.
+    /// Bind arbitrary stable edge IDs to this immutable snapshot using liveness only.
+    ///
+    /// Inputs are sorted and deduplicated when needed. Tombstones, absent
+    /// mappings, and dead rows are filtered without error; labels, properties,
+    /// and indexes are intentionally not inspected.
     ///
     /// # Errors
     ///
-    /// Returns [`GraphError::Inconsistent`] if a live typed row has no stable
-    /// edge ID in the snapshot's inverse map.
-    pub fn live_edge_candidates(&self) -> GraphResult<CandidateSet<Edge>> {
-        let entries = self
-            .edge_store
-            .alive_rows()
-            .map(|row| {
-                self.edge_id_for_edge_row(row)
-                    .map(|id| (id, row))
-                    .ok_or_else(|| GraphError::Inconsistent {
-                        reason: format!("alive edge row {} has no stable id", row.get()),
-                    })
-            })
-            .collect::<GraphResult<Vec<_>>>()?;
+    /// Returns [`GraphError::Inconsistent`] when a mapped live row does not have
+    /// the matching reverse stable-ID pairing.
+    pub fn bind_edge_candidates(
+        &self,
+        ids: impl IntoIterator<Item = EdgeId>,
+    ) -> GraphResult<CandidateSet<Edge>> {
+        let mut ids = ids.into_iter().collect::<Vec<_>>();
+        canonicalize_ids(&mut ids);
+        let mut entries = Vec::with_capacity(ids.len());
+        for id in ids {
+            if id == EdgeId::TOMBSTONE {
+                continue;
+            }
+            let Some(row) = self.edge_row_for_id(id) else {
+                continue;
+            };
+            if !self.edge_store.is_alive_row(row) {
+                continue;
+            }
+            self.ensure_live_edge_pair(id, row, "stable edge candidate")?;
+            entries.push((id, row));
+        }
         Ok(CandidateSet::from_edge_rows(self, entries))
+    }
+
+    /// Bind an unbound stable-ID vector candidate set to this immutable snapshot.
+    ///
+    /// Canonical vector inputs avoid another sorting pass. Binding is
+    /// liveness-only and does not require a vector property or index membership.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::Inconsistent`] for an inconsistent mapped live row.
+    pub fn bind_vector_candidate_set(
+        &self,
+        candidates: &VectorCandidateSet,
+    ) -> GraphResult<CandidateSet<Node>> {
+        self.bind_node_candidates(candidates.as_nodes().iter().copied())
     }
 
     /// Return the union of two candidates bound to this exact snapshot identity.
@@ -480,9 +523,87 @@ impl SeleneGraph {
         self.layout.remint_candidate_binding();
     }
 
+    pub(crate) fn ensure_live_node_pair(
+        &self,
+        id: NodeId,
+        row: NodeRow,
+        source: &str,
+    ) -> GraphResult<()> {
+        if self.node_id_for_node_row(row) != Some(id) {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "{source} live node {id} row {} has a different reverse id",
+                    row.get()
+                ),
+            });
+        }
+        match self.node_row_for_id(id) {
+            Some(forward) if forward == row => Ok(()),
+            Some(forward) => Err(GraphError::Inconsistent {
+                reason: format!(
+                    "{source} live node {id} row {} disagrees with row {}",
+                    row.get(),
+                    forward.get()
+                ),
+            }),
+            None => Err(GraphError::Inconsistent {
+                reason: format!(
+                    "{source} live node {id} row {} has no forward mapping",
+                    row.get()
+                ),
+            }),
+        }
+    }
+
+    pub(crate) fn ensure_live_edge_pair(
+        &self,
+        id: EdgeId,
+        row: EdgeRow,
+        source: &str,
+    ) -> GraphResult<()> {
+        if self.edge_id_for_edge_row(row) != Some(id) {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "{source} live edge {id} row {} has a different reverse id",
+                    row.get()
+                ),
+            });
+        }
+        match self.edge_row_for_id(id) {
+            Some(forward) if forward == row => Ok(()),
+            Some(forward) => Err(GraphError::Inconsistent {
+                reason: format!(
+                    "{source} live edge {id} row {} disagrees with row {}",
+                    row.get(),
+                    forward.get()
+                ),
+            }),
+            None => Err(GraphError::Inconsistent {
+                reason: format!(
+                    "{source} live edge {id} row {} has no forward mapping",
+                    row.get()
+                ),
+            }),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn shares_layout_with(&self, other: &Self) -> bool {
         self.layout.ptr_eq(&other.layout)
+    }
+}
+
+fn canonicalize_ids<Id: Ord>(ids: &mut Vec<Id>) {
+    if ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+        ids.sort_unstable();
+        ids.dedup();
+    }
+}
+
+fn canonicalize_entries<Id: Ord, Row>(entries: &mut Vec<(Id, Row)>) {
+    if entries.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+        entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        entries.dedup_by(|left, right| left.0 == right.0);
     }
 }
 

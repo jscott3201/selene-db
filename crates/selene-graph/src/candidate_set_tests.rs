@@ -7,7 +7,9 @@ use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap, db_string};
 
 use crate::candidate_set::{CandidateSet, Edge, Node};
 use crate::store::{EdgeRow, NodeRow};
-use crate::{CandidateSetError, GraphError, SeleneGraph, SharedGraph, WalConfig};
+use crate::{
+    CandidateSetError, GraphError, SeleneGraph, SharedGraph, VectorCandidateSet, WalConfig,
+};
 
 fn identity_graph(width: u32) -> SeleneGraph {
     let mut graph = SeleneGraph::new(GraphId::new(41));
@@ -120,6 +122,123 @@ proptest! {
 }
 
 #[test]
+fn stable_id_binders_canonicalize_and_filter_non_live_ids_for_both_kinds() {
+    let mut graph = identity_graph(4);
+    graph.node_store.mark_dead(NodeRow::new(1));
+    graph.edge_store.mark_dead(EdgeRow::new(2));
+
+    let nodes = graph
+        .bind_node_candidates([
+            NodeId::new(104),
+            NodeId::TOMBSTONE,
+            NodeId::new(101),
+            NodeId::new(101),
+            NodeId::new(102),
+            NodeId::new(999_999),
+        ])
+        .unwrap();
+    let edges = graph
+        .bind_edge_candidates([
+            EdgeId::new(204),
+            EdgeId::TOMBSTONE,
+            EdgeId::new(201),
+            EdgeId::new(201),
+            EdgeId::new(203),
+            EdgeId::new(999_999),
+        ])
+        .unwrap();
+
+    assert_eq!(
+        nodes.iter().collect::<Vec<_>>(),
+        vec![NodeId::new(101), NodeId::new(104)]
+    );
+    assert_eq!(
+        edges.iter().collect::<Vec<_>>(),
+        vec![EdgeId::new(201), EdgeId::new(204)]
+    );
+}
+
+#[test]
+fn vector_candidate_binding_is_liveness_only() {
+    let graph = identity_graph(3);
+    let vectors =
+        VectorCandidateSet::from_nodes([NodeId::new(103), NodeId::new(101), NodeId::new(102)]);
+
+    let bound = graph.bind_vector_candidate_set(&vectors).unwrap();
+
+    assert_eq!(
+        bound.iter().collect::<Vec<_>>(),
+        vec![NodeId::new(101), NodeId::new(102), NodeId::new(103)]
+    );
+    assert!(graph.node_properties(NodeId::new(101)).unwrap().is_empty());
+}
+
+#[test]
+fn stable_id_binders_reject_live_reverse_mapping_disagreement() {
+    let mut graph = identity_graph(2);
+    graph.node_store.row_to_id.set(0, NodeId::new(102));
+    graph.edge_store.row_to_id.set(0, EdgeId::new(202));
+
+    assert!(matches!(
+        graph.bind_node_candidates([NodeId::new(101)]),
+        Err(GraphError::Inconsistent { .. })
+    ));
+    assert!(matches!(
+        graph.bind_edge_candidates([EdgeId::new(201)]),
+        Err(GraphError::Inconsistent { .. })
+    ));
+}
+
+#[test]
+fn typed_label_and_property_producers_match_raw_index_ids() {
+    use selene_core::Value;
+
+    let shared = SharedGraph::new(GraphId::new(40_001));
+    let label = db_string("candidate.person").unwrap();
+    let property = db_string("candidate.rank").unwrap();
+    let (first, second) = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let first = mutator
+            .create_node(
+                LabelSet::single(label.clone()),
+                PropertyMap::from_pairs([(property.clone(), Value::Int(1))]).unwrap(),
+            )
+            .unwrap();
+        let second = mutator
+            .create_node(
+                LabelSet::single(label.clone()),
+                PropertyMap::from_pairs([(property.clone(), Value::Int(2))]).unwrap(),
+            )
+            .unwrap();
+        mutator
+            .create_property_index(label.clone(), property.clone(), crate::TypedIndexKind::I64)
+            .unwrap();
+        txn.commit().unwrap();
+        (first, second)
+    };
+    let graph = shared.read();
+
+    assert_eq!(
+        graph
+            .node_candidates_with_label(&label)
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![first, second]
+    );
+    assert_eq!(
+        graph
+            .node_candidates_with_property_eq(&label, &property, &Value::Int(2))
+            .unwrap()
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![second]
+    );
+}
+
+#[test]
 fn candidate_identity_rejects_graph_generation_and_layout_mismatch() {
     let graph = identity_graph(4);
     let nodes = graph.live_node_candidates().unwrap();
@@ -163,6 +282,8 @@ fn candidate_validation_rejects_typed_mapping_drift() {
         .edge_rows
         .insert_cow(EdgeId::new(201), EdgeRow::new(1));
 
+    assert!(nodes.validate_identity_for(&graph).is_ok());
+    assert!(edges.validate_identity_for(&graph).is_ok());
     assert_eq!(
         graph.union_candidates(&nodes, &nodes).unwrap_err(),
         CandidateSetError::StaleEntry

@@ -1,12 +1,11 @@
 //! Threshold-gated Rayon helpers for global exact JSON scans.
 
-use roaring::RoaringBitmap;
 use selene_core::{CancellationChecker, DbString, JsonPathSelector, JsonValue, NodeId, Value};
 
 use crate::error::GraphError;
 use crate::graph::SeleneGraph;
-use crate::parallel_scan::{should_parallelize_scan, try_reduce_bitmap_chunks};
-use crate::store::RowIndex;
+use crate::parallel_scan::{should_parallelize_scan, try_reduce_chunks};
+use crate::store::NodeRow;
 
 use super::{
     JSON_SEARCH_PARALLEL_CHUNK_ROWS, JSON_SEARCH_PARALLEL_MIN_ROWS, JsonContainmentHit,
@@ -34,29 +33,17 @@ impl<'a> JsonScan<'a> {
 
     fn value_for_row(
         self,
-        raw_row: u32,
+        (node_id, row): (NodeId, NodeRow),
     ) -> Result<Option<(NodeId, &'a JsonValue)>, JsonSearchError> {
-        if !self.graph.node_store.is_alive(raw_row) {
-            return Ok(None);
-        }
-        let row = RowIndex::new(raw_row);
-        let node_id = self
-            .graph
-            .node_id_for_row(row)
-            .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!(
-                    "JSON search row {raw_row} for {} has no node id",
-                    self.label.as_str()
-                ),
-            })?;
         let properties = self
             .graph
             .node_store
             .properties
-            .get(raw_row as usize)
+            .get(row.index())
             .ok_or_else(|| GraphError::Inconsistent {
                 reason: format!(
-                    "JSON search row {raw_row} for {} has no property row",
+                    "JSON search row {} for {} has no property row",
+                    row.get(),
                     self.label.as_str()
                 ),
             })?;
@@ -68,8 +55,8 @@ impl<'a> JsonScan<'a> {
 }
 
 /// Return true when a global JSON scan should use Rayon.
-pub(super) fn should_parallelize_json_scan(rows: &RoaringBitmap, k: usize) -> bool {
-    should_parallelize_scan(rows.len(), k, JSON_SEARCH_PARALLEL_MIN_ROWS)
+pub(super) fn should_parallelize_json_scan(row_count: usize, k: usize) -> bool {
+    should_parallelize_scan(row_count as u64, k, JSON_SEARCH_PARALLEL_MIN_ROWS)
 }
 
 /// Parallel implementation of JSON containment scan.
@@ -77,10 +64,10 @@ pub(super) fn contains_nodes(
     scan: JsonScan<'_>,
     candidate: &JsonValue,
     k: usize,
-    rows: &RoaringBitmap,
+    rows: &[(NodeId, NodeRow)],
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<JsonContainmentHit>, JsonSearchError> {
-    let top_k = try_reduce_bitmap_chunks(
+    let top_k = try_reduce_chunks(
         rows,
         JSON_SEARCH_PARALLEL_CHUNK_ROWS,
         checker,
@@ -96,10 +83,10 @@ pub(super) fn path_exists_nodes(
     scan: JsonScan<'_>,
     path: &[JsonPathSelector],
     k: usize,
-    rows: &RoaringBitmap,
+    rows: &[(NodeId, NodeRow)],
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<JsonPathHit>, JsonSearchError> {
-    let top_k = try_reduce_bitmap_chunks(
+    let top_k = try_reduce_chunks(
         rows,
         JSON_SEARCH_PARALLEL_CHUNK_ROWS,
         checker,
@@ -116,10 +103,10 @@ pub(super) fn path_contains_nodes(
     path: &[JsonPathSelector],
     candidate: &JsonValue,
     k: usize,
-    rows: &RoaringBitmap,
+    rows: &[(NodeId, NodeRow)],
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<JsonPathContainmentHit>, JsonSearchError> {
-    let top_k = try_reduce_bitmap_chunks(
+    let top_k = try_reduce_chunks(
         rows,
         JSON_SEARCH_PARALLEL_CHUNK_ROWS,
         checker,
@@ -135,10 +122,10 @@ pub(super) fn path_value_nodes(
     scan: JsonScan<'_>,
     path: &[JsonPathSelector],
     k: usize,
-    rows: &RoaringBitmap,
+    rows: &[(NodeId, NodeRow)],
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<JsonPathValueHit>, JsonSearchError> {
-    let top_k = try_reduce_bitmap_chunks(
+    let top_k = try_reduce_chunks(
         rows,
         JSON_SEARCH_PARALLEL_CHUNK_ROWS,
         checker,
@@ -153,11 +140,11 @@ fn contains_chunk(
     scan: JsonScan<'_>,
     candidate: &JsonValue,
     k: usize,
-    rows: &[u32],
+    rows: &[(NodeId, NodeRow)],
 ) -> Result<JsonContainmentTopK, JsonSearchError> {
     let mut top_k = JsonContainmentTopK::new(k);
-    for &raw_row in rows {
-        let Some((node_id, value)) = scan.value_for_row(raw_row)? else {
+    for &entry in rows {
+        let Some((node_id, value)) = scan.value_for_row(entry)? else {
             continue;
         };
         if value.contains(candidate) {
@@ -171,11 +158,11 @@ fn path_exists_chunk(
     scan: JsonScan<'_>,
     path: &[JsonPathSelector],
     k: usize,
-    rows: &[u32],
+    rows: &[(NodeId, NodeRow)],
 ) -> Result<JsonContainmentTopK, JsonSearchError> {
     let mut top_k = JsonContainmentTopK::new(k);
-    for &raw_row in rows {
-        let Some((node_id, value)) = scan.value_for_row(raw_row)? else {
+    for &entry in rows {
+        let Some((node_id, value)) = scan.value_for_row(entry)? else {
             continue;
         };
         if value.path_exists(path) {
@@ -190,11 +177,11 @@ fn path_contains_chunk(
     path: &[JsonPathSelector],
     candidate: &JsonValue,
     k: usize,
-    rows: &[u32],
+    rows: &[(NodeId, NodeRow)],
 ) -> Result<JsonContainmentTopK, JsonSearchError> {
     let mut top_k = JsonContainmentTopK::new(k);
-    for &raw_row in rows {
-        let Some((node_id, value)) = scan.value_for_row(raw_row)? else {
+    for &entry in rows {
+        let Some((node_id, value)) = scan.value_for_row(entry)? else {
             continue;
         };
         if value.path_contains(path, candidate) {
@@ -208,11 +195,11 @@ fn path_value_chunk(
     scan: JsonScan<'_>,
     path: &[JsonPathSelector],
     k: usize,
-    rows: &[u32],
+    rows: &[(NodeId, NodeRow)],
 ) -> Result<JsonPathValueTopK, JsonSearchError> {
     let mut top_k = JsonPathValueTopK::new(k);
-    for &raw_row in rows {
-        let Some((node_id, value)) = scan.value_for_row(raw_row)? else {
+    for &entry in rows {
+        let Some((node_id, value)) = scan.value_for_row(entry)? else {
             continue;
         };
         let Some(selected) = value.path_value_ref(path) else {
