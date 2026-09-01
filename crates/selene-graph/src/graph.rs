@@ -708,6 +708,11 @@ impl SeleneGraph {
         self.runtime_lineage = RuntimeLineage::new();
         self.layout = LayoutToken::new();
     }
+
+    pub(crate) fn adopt_reserved_runtime(&mut self, runtime_lineage: RuntimeLineage) {
+        self.runtime_lineage = runtime_lineage;
+        self.layout = LayoutToken::new();
+    }
 }
 
 pub(crate) fn composite_property_key(properties: &[DbString]) -> SmallVec<[DbString; 4]> {

@@ -6,7 +6,7 @@ use selene_core::{CancellationChecker, DbString, JsonPathSelector, JsonValue, No
 use crate::error::GraphError;
 use crate::graph::SeleneGraph;
 use crate::parallel_scan::{should_parallelize_scan, try_reduce_bitmap_chunks};
-use crate::store::NodeRow;
+use crate::store::RowIndex;
 
 use super::{
     JSON_SEARCH_PARALLEL_CHUNK_ROWS, JSON_SEARCH_PARALLEL_MIN_ROWS, JsonContainmentHit,
@@ -39,16 +39,16 @@ impl<'a> JsonScan<'a> {
         if !self.graph.node_store.is_alive(raw_row) {
             return Ok(None);
         }
-        let row = NodeRow::new(raw_row);
-        let node_id =
-            self.graph
-                .node_id_for_node_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "JSON search row {raw_row} for {} has no node id",
-                        self.label.as_str()
-                    ),
-                })?;
+        let row = RowIndex::new(raw_row);
+        let node_id = self
+            .graph
+            .node_id_for_row(row)
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: format!(
+                    "JSON search row {raw_row} for {} has no node id",
+                    self.label.as_str()
+                ),
+            })?;
         let properties = self
             .graph
             .node_store

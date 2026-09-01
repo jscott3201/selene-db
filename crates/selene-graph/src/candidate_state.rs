@@ -288,6 +288,20 @@ impl MaintainedCandidateStateProvider {
             .is_some_and(|members| members.contains(node))
     }
 
+    fn claim_runtime(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
+        let mut lease = self.runtime_lease.lock();
+        if let Some(active) = lease.as_ref().and_then(RuntimeLineageLease::upgrade) {
+            if active.same_as(&graph.runtime_lineage) {
+                return Ok(());
+            }
+            return Err(inconsistent(
+                "candidate-state provider is already attached to a live runtime".to_owned(),
+            ));
+        }
+        *lease = Some(graph.runtime_lineage.downgrade());
+        Ok(())
+    }
+
     fn encode_section(
         &self,
         sub_tag: SubTag,
@@ -411,18 +425,12 @@ impl IndexProvider for MaintainedCandidateStateProvider {
         MaintainedCandidateStateProvider::rebuild_from_graph(self, graph)
     }
 
+    fn reserve_runtime_attachment(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
+        self.claim_runtime(graph)
+    }
+
     fn attach_runtime(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
-        let mut lease = self.runtime_lease.lock();
-        if let Some(active) = lease.as_ref().and_then(RuntimeLineageLease::upgrade) {
-            if active.same_as(&graph.runtime_lineage) {
-                return Ok(());
-            }
-            return Err(inconsistent(
-                "candidate-state provider is already attached to a live runtime".to_owned(),
-            ));
-        }
-        *lease = Some(graph.runtime_lineage.downgrade());
-        Ok(())
+        self.claim_runtime(graph)
     }
 
     fn on_commit_applied(&self, generation: u64) -> Result<(), ProviderError> {

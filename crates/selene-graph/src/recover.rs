@@ -13,7 +13,7 @@ use selene_persist::{
 use crate::core_provider::CoreProvider;
 use crate::graph_types::GraphTypeDef;
 use crate::index_provider::{IndexProvider, ProviderError, SubTag};
-use crate::shared::validate_unique_provider_tags;
+use crate::shared::{RuntimeAttachmentReservation, validate_unique_provider_tags};
 use crate::{GraphError, GraphResult, SharedGraph};
 
 impl SharedGraph {
@@ -123,6 +123,11 @@ impl SharedGraph {
         let dir = std::fs::canonicalize(dir).map_err(selene_persist::PersistError::from)?;
         let core = CoreProvider::new_for_recovery();
         validate_recovery_provider_tags(&core, &providers)?;
+        // Reserve caller-owned runtime-exclusive providers before persistence
+        // can drive snapshot or WAL callbacks. The strong private lineage held
+        // by this guard releases every weak reservation on any early return;
+        // successful construction transfers that exact lineage to SharedGraph.
+        let runtime_reservation = RuntimeAttachmentReservation::reserve(graph_id, &providers)?;
         let mut registry = ProviderRegistry::new();
         let provider: Arc<dyn RecoveryProvider> = core.clone();
         registry.register(provider)?;
@@ -205,7 +210,7 @@ impl SharedGraph {
         // is why it is read at all — `Ok` here otherwise looks identical to a
         // reopen that lost an unacknowledged commit (#1109).
         let recovery_tail_repair = writer.tail_repair();
-        let mut shared = Self::from_graph_with_core_and_durables(
+        let mut shared = Self::from_recovered_graph_with_core_and_durables(
             graph,
             providers,
             Vec::new(),
@@ -213,6 +218,7 @@ impl SharedGraph {
             audit_log,
             // Recovery uses the BRIEF-1-equivalent policy: one fsync per commit.
             crate::committer_batch::CommitBatching::Off,
+            runtime_reservation,
         )?;
         shared.recovery_tail_repair = recovery_tail_repair;
         Ok(shared)

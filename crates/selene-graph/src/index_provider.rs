@@ -176,6 +176,20 @@ pub trait IndexProvider: Send + Sync + 'static {
         })
     }
 
+    /// Reserve this provider for a not-yet-exposed runtime attachment.
+    ///
+    /// Recovery invokes this before any provider snapshot or WAL callback. The
+    /// supplied graph owns the private runtime ancestry that successful
+    /// recovery later transfers to the final graph. Providers without
+    /// runtime-exclusive state retain the default no-op behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when another live runtime owns this provider.
+    fn reserve_runtime_attachment(&self, _graph: &SeleneGraph) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
     /// Attach this provider to the final private runtime ancestry for `graph`.
     ///
     /// Construction calls this after reminting, rebuilding, and validating the

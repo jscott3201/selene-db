@@ -24,6 +24,30 @@ use crate::index_provider::{IndexProvider, ProviderTag};
 use crate::vector_index::{VectorIndexMaintenancePolicy, VectorIndexRebuildReport};
 use crate::write_txn::WriteTxn;
 
+/// Strong private runtime owner used while recovery is still fallible.
+pub(crate) struct RuntimeAttachmentReservation {
+    runtime_lineage: RuntimeLineage,
+}
+
+impl RuntimeAttachmentReservation {
+    pub(crate) fn reserve(
+        graph_id: GraphId,
+        providers: &[Arc<dyn IndexProvider>],
+    ) -> GraphResult<Self> {
+        let graph = SeleneGraph::new(graph_id);
+        for provider in providers {
+            provider.reserve_runtime_attachment(&graph)?;
+        }
+        Ok(Self {
+            runtime_lineage: graph.runtime_lineage.clone(),
+        })
+    }
+
+    fn into_lineage(self) -> RuntimeLineage {
+        self.runtime_lineage
+    }
+}
+
 /// Per-graph shared runtime state.
 ///
 /// Since v1.2 (BRIEF 1) every snapshot publish is funneled through a single
@@ -239,10 +263,50 @@ impl SharedGraph {
     pub(crate) fn from_graph_with_core_and_durables(
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
+        durable_providers: Vec<Arc<dyn DurableProvider>>,
+        wal_writer: Option<WalWriter>,
+        audit_log: Option<AuditLog>,
+        batching: CommitBatching,
+    ) -> GraphResult<Self> {
+        Self::from_graph_with_core_and_durables_inner(
+            graph,
+            providers,
+            durable_providers,
+            wal_writer,
+            audit_log,
+            batching,
+            None,
+        )
+    }
+
+    pub(crate) fn from_recovered_graph_with_core_and_durables(
+        graph: SeleneGraph,
+        providers: Vec<Arc<dyn IndexProvider>>,
+        durable_providers: Vec<Arc<dyn DurableProvider>>,
+        wal_writer: Option<WalWriter>,
+        audit_log: Option<AuditLog>,
+        batching: CommitBatching,
+        runtime_reservation: RuntimeAttachmentReservation,
+    ) -> GraphResult<Self> {
+        Self::from_graph_with_core_and_durables_inner(
+            graph,
+            providers,
+            durable_providers,
+            wal_writer,
+            audit_log,
+            batching,
+            Some(runtime_reservation),
+        )
+    }
+
+    fn from_graph_with_core_and_durables_inner(
+        graph: SeleneGraph,
+        providers: Vec<Arc<dyn IndexProvider>>,
         mut durable_providers: Vec<Arc<dyn DurableProvider>>,
         wal_writer: Option<WalWriter>,
         audit_log: Option<AuditLog>,
         batching: CommitBatching,
+        runtime_reservation: Option<RuntimeAttachmentReservation>,
     ) -> GraphResult<Self> {
         if audit_log.is_some() && wal_writer.is_none() {
             return Err(GraphError::Inconsistent {
@@ -274,26 +338,32 @@ impl SharedGraph {
             durable_providers,
             snapshot,
             batching,
+            runtime_reservation,
         )
     }
 
-    pub(crate) fn from_graph_parts_and_snapshot(
+    fn from_graph_parts_and_snapshot(
         graph: SeleneGraph,
         core: Arc<CoreProvider>,
         providers: Vec<Arc<dyn IndexProvider>>,
         durable_providers: Vec<Arc<dyn DurableProvider>>,
         snapshot: Arc<ArcSwap<SeleneGraph>>,
         batching: CommitBatching,
+        runtime_reservation: Option<RuntimeAttachmentReservation>,
     ) -> GraphResult<Self> {
         validate_unique_provider_tags(&providers)?;
         // Freeze the registry into one shared allocation: the committer and
         // every `begin_write` transaction clone the `Arc`, not the `Vec`.
         let providers: Arc<[Arc<dyn IndexProvider>]> = providers.into();
         let mut graph = graph;
-        // Runtime attachment is an ownership boundary: independent, recovered,
-        // detached, and facade-scratch graphs receive fresh runtime and layout
-        // identities before any provider can observe them.
-        graph.remint_runtime_attachment();
+        // Runtime attachment is an ownership boundary. Ordinary construction
+        // remints lineage and layout together; recovery transfers its reserved
+        // lineage and still mints a fresh final layout before provider attach.
+        if let Some(runtime_reservation) = runtime_reservation {
+            graph.adopt_reserved_runtime(runtime_reservation.into_lineage());
+        } else {
+            graph.remint_runtime_attachment();
+        }
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
         crate::property_index::rebuild_edge_property_indexes(&mut graph)?;
