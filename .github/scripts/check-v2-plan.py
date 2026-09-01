@@ -33,6 +33,11 @@ EXPECTED_ISSUES = {1088, 1092, 1093, 1094, 1097, 1128, 1137}
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 ANCHOR_RE = re.compile(r'<a\s+id=["\']([^"\']+)["\']\s*></a>', re.IGNORECASE)
 LOCAL_DIRECTORY_RE = re.compile(r"(?<![A-Za-z0-9/])(_[A-Za-z0-9][A-Za-z0-9_-]*)/")
+SAFE_PRODUCTION_PATH_RE = re.compile(
+    r"(?!/)(?!.*(?:^|/)\.\.?(?:/|$))(?!.*//)(?!.*\\)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"
+)
+MAX_PRODUCTION_FILES = 25
+MAX_NET_NON_GENERATED_LINES = 1_500
 
 
 class Check:
@@ -197,6 +202,34 @@ def check_dependency_cycles(check: Check, dependencies: dict[str, list[str]]) ->
             return
 
 
+def check_delivery_parts(check: Check, pr_id: str, parts: list[dict[str, Any]]) -> None:
+    numbers = [part["number"] for part in parts]
+    expected_numbers = list(range(1, len(parts) + 1))
+    if numbers != expected_numbers:
+        check.fail(f"{pr_id}: delivery part numbers must be sequential starting at 1; got {numbers}")
+    for part in parts:
+        location = f"{pr_id} delivery part {part['number']}"
+        paths = part["production_paths"]
+        if len(paths) > part["max_production_files"]:
+            check.fail(
+                f"{location}: production path count {len(paths)} exceeds "
+                f"max_production_files {part['max_production_files']}"
+            )
+        repeated = duplicates(paths)
+        if repeated:
+            check.fail(f"{location}: duplicate production paths: {sorted(repeated)}")
+        for path in paths:
+            if SAFE_PRODUCTION_PATH_RE.fullmatch(path) is None:
+                check.fail(f"{location}: unsafe production path {path!r}")
+        if part["max_production_files"] > MAX_PRODUCTION_FILES:
+            check.fail(f"{location}: max_production_files exceeds D-021 default {MAX_PRODUCTION_FILES}")
+        if part["max_net_non_generated_lines"] > MAX_NET_NON_GENERATED_LINES:
+            check.fail(
+                f"{location}: max_net_non_generated_lines exceeds D-021 default "
+                f"{MAX_NET_NON_GENERATED_LINES}"
+            )
+
+
 def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
     meta = plan["meta"]
     collections = {
@@ -265,6 +298,11 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
     for pr_id, pr in prs.items():
         if pr_id[:3] != pr["milestone"] or int(pr_id[-2:]) != pr["number"]:
             check.fail(f"{pr_id}: owner milestone or number does not match ID")
+        parts = pr.get("delivery_parts", [])
+        if parts:
+            check_delivery_parts(check, pr_id, parts)
+        if pr_id == "M04-PR02" and len(parts) != 3:
+            check.fail(f"M04-PR02: delivery_parts must contain exactly 3 parts; got {len(parts)}")
         for dependency in pr["dependencies"]:
             if dependency not in prs:
                 check.fail(f"{pr_id}: unknown dependency {dependency}")
@@ -414,6 +452,24 @@ def bullet(lines: list[str]) -> str:
     return "\n".join(f"- {line}" for line in lines)
 
 
+def render_delivery_parts(parts: list[dict[str, Any]]) -> list[str]:
+    lines = ["### Delivery parts", ""]
+    for part in parts:
+        lines += [
+            f'#### Part {part["number"]} — {part["title"]}', "",
+            f'- **Outcome:** {part["outcome"]}',
+            f'- **Budgets:** at most {part["max_production_files"]} production files and '
+            f'{part["max_net_non_generated_lines"]:,} net non-generated lines.',
+            "- **Exact production paths:**",
+            *(f'  - `{path}`' for path in part["production_paths"]),
+            "- **Acceptance:**",
+            *(f"  - {item}" for item in part["acceptance"]),
+            f'- **Bridge/deletion state:** {part["bridge_deletion_state"]}',
+            f'- **Completion effect:** {part["completion_effect"]}', "",
+        ]
+    return lines
+
+
 def render_work_items(plan: dict[str, Any], low: int, high: int) -> str:
     lines = [f"# Selene DB 2.0 work items M{low:02d}–M{high:02d}", "", "<!-- Generated from plan.json; do not edit by hand. -->", "",
              "The machine plan carries additional design, path, documentation, and benchmark metadata for each contract.", ""]
@@ -427,6 +483,7 @@ def render_work_items(plan: dict[str, Any], low: int, high: int) -> str:
                   f'- **Dependencies:** {", ".join(pr["dependencies"]) or "None"}',
                   f'- **Issues:** {", ".join("#" + str(issue) for issue in pr["issues"]) or "None"}',
                   f'- **Commit scope:** `{pr["commit_scope"]}`', "", pr["outcome"], "", "### Scope", "", bullet(pr["scope"]), "",
+                  *(render_delivery_parts(pr["delivery_parts"]) if pr.get("delivery_parts") else []),
                   "### Non-goals", "", bullet(pr["non_goals"]), "", "### Acceptance evidence", "", bullet(pr["acceptance"]), "",
                   "### Tests and gates", "", bullet(pr["tests"]), "", "### Review focus", "", bullet(pr["review_focus"]), "",
                   "### Stop conditions", "", bullet(pr["stop_conditions"]), "", "### Bridge and deletion", "", bullet(pr["bridge"]), ""]

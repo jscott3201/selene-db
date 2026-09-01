@@ -47,9 +47,17 @@ class PlanContractTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def run_validator(self, root: pathlib.Path | None = None) -> subprocess.CompletedProcess[str]:
+    def run_validator(
+        self,
+        root: pathlib.Path | None = None,
+        *,
+        write_projections: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        command = [sys.executable, "-B", str(CHECKER), "--root", str(root or self.root)]
+        if write_projections:
+            command.append("--write-projections")
         return subprocess.run(
-            [sys.executable, "-B", str(CHECKER), "--root", str(root or self.root)],
+            command,
             cwd=ROOT,
             check=False,
             capture_output=True,
@@ -125,6 +133,40 @@ class PlanContractTests(unittest.TestCase):
         projection = self.root / "docs" / "v2" / "roadmap" / "work-items-00-04.md"
         projection.write_text(projection.read_text(encoding="utf-8") + "\n", encoding="utf-8")
         self.assert_failure(self.run_validator(), "projection is stale")
+        regenerated = self.run_validator(write_projections=True)
+        self.assertEqual(regenerated.returncode, 0, regenerated.stderr)
+        current = self.run_validator()
+        self.assertEqual(current.returncode, 0, current.stderr)
+
+    def test_m04_pr02_missing_delivery_parts_fails(self) -> None:
+        def remove_parts(plan: dict[str, Any]) -> None:
+            next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02").pop("delivery_parts")
+
+        result = self.mutate_plan(remove_parts)
+        self.assert_failure(result, "M04-PR02: delivery_parts must contain exactly 3 parts; got 0")
+
+    def test_m04_pr02_fewer_delivery_parts_fails(self) -> None:
+        def remove_part(plan: dict[str, Any]) -> None:
+            next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"].pop()
+
+        result = self.mutate_plan(remove_part)
+        self.assert_failure(result, "M04-PR02: delivery_parts must contain exactly 3 parts; got 2")
+
+    def test_delivery_part_numbers_must_be_sequential(self) -> None:
+        def skip_number(plan: dict[str, Any]) -> None:
+            parts = next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"]
+            parts[1]["number"] = 4
+
+        result = self.mutate_plan(skip_number)
+        self.assert_failure(result, "delivery part numbers must be sequential starting at 1; got [1, 4, 3]")
+
+    def test_delivery_part_path_count_cannot_exceed_file_budget(self) -> None:
+        def lower_budget(plan: dict[str, Any]) -> None:
+            parts = next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"]
+            parts[0]["max_production_files"] = len(parts[0]["production_paths"]) - 1
+
+        result = self.mutate_plan(lower_budget)
+        self.assert_failure(result, "production path count 17 exceeds max_production_files 16")
 
     def test_corrupt_baseline_report_hash_fails(self) -> None:
         manifest_path = self.root / "docs" / "v2" / "baseline" / "manifest.json"
