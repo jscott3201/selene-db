@@ -1,5 +1,6 @@
 //! SharedGraph recovery helpers backed by selene-persist.
 
+use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -220,7 +221,8 @@ impl SharedGraph {
         shared.recovery_tail_repair = recovery_tail_repair;
         let final_snapshot = shared.read();
         attachments.prepare_all(&final_snapshot)?;
-        attachments.commit_all();
+        attachments.commit_all()?;
+        attachments.finalize_all();
         attachments.disarm();
         Ok(shared)
     }
@@ -251,9 +253,53 @@ impl RecoveryAttachmentGuard {
         Ok(())
     }
 
-    fn commit_all(&self) {
-        for provider in &self.reserved {
-            provider.commit_recovery_attachment();
+    fn commit_all(&self) -> GraphResult<()> {
+        for (ordinal, provider) in self.reserved.iter().enumerate() {
+            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                provider.commit_recovery_attachment()
+            }));
+            match outcome {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => return Err(GraphError::Provider(error)),
+                Err(payload) => {
+                    return Err(GraphError::Provider(ProviderError::Inconsistent {
+                        reason: format!(
+                            "recovery attachment commit panicked at provider ordinal {}: {}",
+                            ordinal + 1,
+                            bounded_provider_panic(&payload)
+                        ),
+                    }));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn finalize_all(&self) {
+        for (ordinal, provider) in self.reserved.iter().enumerate() {
+            if let Err(payload) = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                provider.finalize_recovery_attachment();
+            })) {
+                tracing::error!(
+                    provider_ordinal = ordinal + 1,
+                    panic = %bounded_provider_panic(&payload),
+                    "recovery attachment finalize callback panicked"
+                );
+            }
+        }
+    }
+
+    fn abort_all(&self) {
+        for (ordinal, provider) in self.reserved.iter().enumerate().rev() {
+            if let Err(payload) = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                provider.abort_recovery_attachment();
+            })) {
+                tracing::error!(
+                    provider_ordinal = ordinal + 1,
+                    panic = %bounded_provider_panic(&payload),
+                    "recovery attachment abort callback panicked"
+                );
+            }
         }
     }
 
@@ -267,10 +313,24 @@ impl Drop for RecoveryAttachmentGuard {
         if !self.armed {
             return;
         }
-        for provider in self.reserved.iter().rev() {
-            provider.abort_recovery_attachment();
-        }
+        self.abort_all();
     }
+}
+
+const MAX_PROVIDER_PANIC_BYTES: usize = 256;
+
+fn bounded_provider_panic(payload: &Box<dyn std::any::Any + Send>) -> String {
+    let mut detail = crate::panic_payload::describe(payload);
+    if detail.len() <= MAX_PROVIDER_PANIC_BYTES {
+        return detail;
+    }
+    let mut end = MAX_PROVIDER_PANIC_BYTES - 3;
+    while !detail.is_char_boundary(end) {
+        end -= 1;
+    }
+    detail.truncate(end);
+    detail.push_str("...");
+    detail
 }
 
 fn open_recovery_writer(path: &Path, snapshot_seq: u64) -> GraphResult<WalWriter> {

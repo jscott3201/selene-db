@@ -5,17 +5,29 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use selene_core::{Change, GraphId};
 
-use super::super::set_before_shared_construction_hook;
+use super::super::{bounded_provider_panic, set_before_shared_construction_hook};
 use super::{append_wal, node_created, temp_dir, write_snapshot};
 use crate::{GraphError, IndexProvider, ProviderError, ProviderTag, SharedGraph, SubTag};
 
 const LIFECYCLE_SUB_TAGS: &[SubTag] = &[SubTag(*b"LIFE")];
+
+#[test]
+fn recovery_commit_panic_payload_text_is_bounded() {
+    let payload: Box<dyn std::any::Any + Send> = Box::new("x".repeat(1_024));
+    let detail = bounded_provider_panic(&payload);
+    assert_eq!(detail.len(), 256);
+    assert!(detail.ends_with("..."));
+}
 
 #[derive(Default)]
 struct AttachmentState {
     reserved: bool,
     attached: bool,
     aborts: usize,
+    live_marker: u8,
+    rollback_marker: Option<u8>,
+    promotions: usize,
+    finalized: bool,
 }
 
 struct LifecycleProvider {
@@ -26,6 +38,10 @@ struct LifecycleProvider {
     fail_change: bool,
     fail_prepare: bool,
     fail_rebuild: bool,
+    fail_commit: bool,
+    panic_commit: bool,
+    panic_abort: bool,
+    panic_finalize: bool,
     declares_state: bool,
 }
 
@@ -39,6 +55,10 @@ impl LifecycleProvider {
             fail_change: false,
             fail_prepare: false,
             fail_rebuild: false,
+            fail_commit: false,
+            panic_commit: false,
+            panic_abort: false,
+            panic_finalize: false,
             declares_state: false,
         }
     }
@@ -110,18 +130,53 @@ impl IndexProvider for LifecycleProvider {
         Ok(())
     }
 
-    fn commit_recovery_attachment(&self) {
+    fn commit_recovery_attachment(&self) -> Result<(), ProviderError> {
         self.event("commit");
         let mut state = self.state.lock();
-        assert!(state.reserved);
-        state.reserved = false;
+        if !state.reserved || state.rollback_marker.is_some() {
+            return Err(ProviderError::Inconsistent {
+                reason: format!("{} commit without one prepared reservation", self.tag),
+            });
+        }
+        state.rollback_marker = Some(state.live_marker);
+        state.live_marker = 1;
         state.attached = true;
+        state.promotions += 1;
+        drop(state);
+        assert!(!self.panic_commit, "{} commit panic failpoint", self.tag);
+        if self.fail_commit {
+            return Err(ProviderError::Inconsistent {
+                reason: format!("{} commit failpoint", self.tag),
+            });
+        }
+        Ok(())
+    }
+
+    fn finalize_recovery_attachment(&self) {
+        self.event("finalize");
+        assert!(
+            !self.panic_finalize,
+            "{} finalize panic failpoint",
+            self.tag
+        );
+        let mut state = self.state.lock();
+        state.rollback_marker = None;
+        state.reserved = false;
+        state.finalized = true;
     }
 
     fn abort_recovery_attachment(&self) {
         self.event("abort");
+        assert!(!self.panic_abort, "{} abort panic failpoint", self.tag);
         let mut state = self.state.lock();
+        if !state.reserved && state.rollback_marker.is_none() {
+            return;
+        }
+        if let Some(prior) = state.rollback_marker.take() {
+            state.live_marker = prior;
+        }
         state.reserved = false;
+        state.attached = false;
         state.aborts += 1;
     }
 
@@ -164,6 +219,14 @@ fn recovery_reserves_before_callbacks_and_prepares_all_before_commit() {
         .iter()
         .position(|event| event.ends_with(":commit"))
         .unwrap();
+    let last_commit = events
+        .iter()
+        .rposition(|event| event.ends_with(":commit"))
+        .unwrap();
+    let first_finalize = events
+        .iter()
+        .position(|event| event.ends_with(":finalize"))
+        .unwrap();
     let last_prepare = events
         .iter()
         .rposition(|event| event.ends_with(":prepare"))
@@ -171,9 +234,184 @@ fn recovery_reserves_before_callbacks_and_prepares_all_before_commit() {
 
     assert!(last_reserve < first_callback);
     assert!(last_prepare < first_commit);
-    assert!(first.state.lock().attached);
-    assert!(second.state.lock().attached);
+    assert!(last_commit < first_finalize);
+    assert!(events.iter().all(|event| !event.ends_with(":abort")));
+    for provider in [&first, &second] {
+        let state = provider.state.lock();
+        assert!(state.attached);
+        assert!(state.finalized);
+        assert!(!state.reserved);
+        assert_eq!(state.live_marker, 1);
+        assert_eq!(state.promotions, 1);
+        assert!(state.rollback_marker.is_none());
+    }
     drop(events);
+    drop(recovered);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn assert_commit_failure_restores_all_live_markers(second_panics: bool) {
+    let dir = temp_dir(if second_panics {
+        "provider-attachment-commit-panic"
+    } else {
+        "provider-attachment-commit-error"
+    });
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let first = Arc::new(LifecycleProvider::new(*b"CF01", Arc::clone(&events)));
+    let mut second = LifecycleProvider::new(*b"CF02", Arc::clone(&events));
+    second.fail_commit = !second_panics;
+    second.panic_commit = second_panics;
+    let second = Arc::new(second);
+
+    let error = match SharedGraph::recover_with_providers(
+        &dir,
+        GraphId::new(7),
+        vec![
+            first.clone() as Arc<dyn IndexProvider>,
+            second.clone() as Arc<dyn IndexProvider>,
+        ],
+    ) {
+        Ok(_) => panic!("commit failure must not return a SharedGraph"),
+        Err(error) => error,
+    };
+    let GraphError::Provider(ProviderError::Inconsistent { reason }) = error else {
+        panic!("expected typed provider inconsistency");
+    };
+    if second_panics {
+        assert!(reason.contains("commit panicked at provider ordinal 2"));
+        assert!(reason.contains("CF02 commit panic failpoint"));
+    } else {
+        assert!(reason.contains("CF02 commit failpoint"));
+    }
+
+    let events = events.lock();
+    let last_prepare = events
+        .iter()
+        .rposition(|event| event.ends_with(":prepare"))
+        .unwrap();
+    let first_commit = events
+        .iter()
+        .position(|event| event.ends_with(":commit"))
+        .unwrap();
+    assert!(last_prepare < first_commit);
+    assert!(events.iter().all(|event| !event.ends_with(":finalize")));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.ends_with(":abort"))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec!["CF02:abort", "CF01:abort"]
+    );
+    drop(events);
+    for provider in [&first, &second] {
+        let state = provider.state.lock();
+        assert_eq!(state.live_marker, 0);
+        assert_eq!(state.promotions, 1);
+        assert_eq!(state.aborts, 1);
+        assert!(!state.attached);
+        assert!(!state.reserved);
+        assert!(state.rollback_marker.is_none());
+        assert!(!state.finalized);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recovery_commit_error_reverse_aborts_and_restores_every_provider() {
+    assert_commit_failure_restores_all_live_markers(false);
+}
+
+#[test]
+fn recovery_commit_panic_becomes_typed_error_and_restores_every_provider() {
+    assert_commit_failure_restores_all_live_markers(true);
+}
+
+#[test]
+fn recovery_abort_panic_does_not_skip_earlier_provider_restoration() {
+    let dir = temp_dir("provider-attachment-abort-panic");
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let first = Arc::new(LifecycleProvider::new(*b"AP01", Arc::clone(&events)));
+    let mut second = LifecycleProvider::new(*b"AP02", Arc::clone(&events));
+    second.fail_commit = true;
+    second.panic_abort = true;
+    let second = Arc::new(second);
+
+    let error = match SharedGraph::recover_with_providers(
+        &dir,
+        GraphId::new(7),
+        vec![
+            first.clone() as Arc<dyn IndexProvider>,
+            second.clone() as Arc<dyn IndexProvider>,
+        ],
+    ) {
+        Ok(_) => panic!("commit error must fail recovery"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        GraphError::Provider(ProviderError::Inconsistent { reason })
+            if reason.contains("AP02 commit failpoint")
+    ));
+    assert_eq!(
+        events
+            .lock()
+            .iter()
+            .filter(|event| event.ends_with(":abort"))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec!["AP02:abort", "AP01:abort"]
+    );
+    let first_state = first.state.lock();
+    assert_eq!(first_state.live_marker, 0);
+    assert_eq!(first_state.aborts, 1);
+    assert!(first_state.rollback_marker.is_none());
+    drop(first_state);
+    let second_state = second.state.lock();
+    assert_eq!(second_state.live_marker, 1);
+    assert_eq!(second_state.aborts, 0);
+    assert_eq!(second_state.rollback_marker, Some(0));
+    drop(second_state);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recovery_finalize_panic_does_not_skip_later_cleanup() {
+    let dir = temp_dir("provider-attachment-finalize-panic");
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut first = LifecycleProvider::new(*b"FP01", Arc::clone(&events));
+    first.panic_finalize = true;
+    let first = Arc::new(first);
+    let second = Arc::new(LifecycleProvider::new(*b"FP02", Arc::clone(&events)));
+
+    let recovered = SharedGraph::recover_with_providers(
+        &dir,
+        GraphId::new(7),
+        vec![
+            first.clone() as Arc<dyn IndexProvider>,
+            second.clone() as Arc<dyn IndexProvider>,
+        ],
+    )
+    .expect("finalize cleanup panic must not discard recovered graph");
+    let events = events.lock();
+    let last_commit = events
+        .iter()
+        .rposition(|event| event.ends_with(":commit"))
+        .unwrap();
+    let first_finalize = events
+        .iter()
+        .position(|event| event.ends_with(":finalize"))
+        .unwrap();
+    assert!(last_commit < first_finalize);
+    assert_eq!(events.last().unwrap(), "FP02:finalize");
+    assert!(events.iter().all(|event| !event.ends_with(":abort")));
+    drop(events);
+    assert_eq!(first.state.lock().live_marker, 1);
+    let second_state = second.state.lock();
+    assert_eq!(second_state.live_marker, 1);
+    assert!(second_state.finalized);
+    assert!(second_state.rollback_marker.is_none());
+    drop(second_state);
     drop(recovered);
     let _ = std::fs::remove_dir_all(dir);
 }

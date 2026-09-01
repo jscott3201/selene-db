@@ -113,13 +113,32 @@ pub struct MaintainedCandidateStateProvider {
 struct CandidateStateRuntime {
     live: CandidateState,
     live_typed: BTreeMap<DbString, CandidateSet<Node>>,
-    recovery: Option<StagedCandidateState>,
+    recovery: Option<RecoveryCandidateState>,
 }
 
 struct StagedCandidateState {
     state: CandidateState,
     typed: BTreeMap<DbString, CandidateSet<Node>>,
     prepared: bool,
+}
+
+enum RecoveryCandidateState {
+    Staged(StagedCandidateState),
+    Promoted {
+        prior_state: CandidateState,
+        prior_typed: BTreeMap<DbString, CandidateSet<Node>>,
+    },
+}
+
+impl RecoveryCandidateState {
+    fn staged_mut(&mut self) -> Result<&mut StagedCandidateState, ProviderError> {
+        match self {
+            Self::Staged(staged) => Ok(staged),
+            Self::Promoted { .. } => Err(inconsistent(
+                "candidate-state recovery attachment is already promoted".to_owned(),
+            )),
+        }
+    }
 }
 
 impl MaintainedCandidateStateProvider {
@@ -174,9 +193,10 @@ impl MaintainedCandidateStateProvider {
         let rebuilt = self.build_state_from_graph(graph)?;
         let mut runtime = self.runtime.lock();
         if let Some(recovery) = runtime.recovery.as_mut() {
-            recovery.state = rebuilt;
-            recovery.typed.clear();
-            recovery.prepared = false;
+            let staged = recovery.staged_mut()?;
+            staged.state = rebuilt;
+            staged.typed.clear();
+            staged.prepared = false;
         } else {
             runtime.live = rebuilt;
             runtime.live_typed.clear();
@@ -404,9 +424,10 @@ impl IndexProvider for MaintainedCandidateStateProvider {
         state.rebuild_derived(&self.specs);
         let mut runtime = self.runtime.lock();
         if let Some(recovery) = runtime.recovery.as_mut() {
-            recovery.state = state;
-            recovery.typed.clear();
-            recovery.prepared = false;
+            let staged = recovery.staged_mut()?;
+            staged.state = state;
+            staged.typed.clear();
+            staged.prepared = false;
         } else {
             runtime.live = state;
             runtime.live_typed.clear();
@@ -429,9 +450,10 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
         let mut runtime = self.runtime.lock();
         if let Some(recovery) = runtime.recovery.as_mut() {
-            recovery.typed.clear();
-            recovery.prepared = false;
-            recovery.state.apply_change(&self.specs, change)
+            let staged = recovery.staged_mut()?;
+            staged.typed.clear();
+            staged.prepared = false;
+            staged.state.apply_change(&self.specs, change)
         } else {
             runtime.live_typed.clear();
             runtime.live.apply_change(&self.specs, change)
@@ -445,10 +467,11 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     fn on_changes(&self, changes: &[Change]) -> Result<(), ProviderError> {
         let mut runtime = self.runtime.lock();
         if let Some(recovery) = runtime.recovery.as_mut() {
-            recovery.typed.clear();
-            recovery.prepared = false;
+            let staged = recovery.staged_mut()?;
+            staged.typed.clear();
+            staged.prepared = false;
             for change in changes {
-                recovery.state.apply_change(&self.specs, change)?;
+                staged.state.apply_change(&self.specs, change)?;
             }
         } else {
             runtime.live_typed.clear();
@@ -466,9 +489,10 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     fn on_commit_applied(&self, generation: u64) -> Result<(), ProviderError> {
         let mut runtime = self.runtime.lock();
         if let Some(recovery) = runtime.recovery.as_mut() {
-            recovery.typed.clear();
-            recovery.prepared = false;
-            recovery.state.generation = generation;
+            let staged = recovery.staged_mut()?;
+            staged.typed.clear();
+            staged.prepared = false;
+            staged.state.generation = generation;
         } else {
             runtime.live_typed.clear();
             runtime.live.generation = generation;
@@ -483,11 +507,11 @@ impl IndexProvider for MaintainedCandidateStateProvider {
                 "candidate-state recovery attachment is already reserved".to_owned(),
             ));
         }
-        runtime.recovery = Some(StagedCandidateState {
+        runtime.recovery = Some(RecoveryCandidateState::Staged(StagedCandidateState {
             state: CandidateState::new(&self.specs),
             typed: BTreeMap::new(),
             prepared: false,
-        });
+        }));
         Ok(())
     }
 
@@ -496,6 +520,7 @@ impl IndexProvider for MaintainedCandidateStateProvider {
         let recovery = runtime.recovery.as_mut().ok_or_else(|| {
             inconsistent("candidate-state recovery attachment was not reserved".to_owned())
         })?;
+        let recovery = recovery.staged_mut()?;
         recovery.typed.clear();
         recovery.prepared = false;
         if recovery.state.generation != graph.meta.generation {
@@ -509,7 +534,12 @@ impl IndexProvider for MaintainedCandidateStateProvider {
                 .state
                 .members
                 .get_mut(&spec.name)
-                .expect("candidate state has members for every validated spec")
+                .ok_or_else(|| {
+                    inconsistent(format!(
+                        "staged candidate state has no members for configured set {}",
+                        spec.name
+                    ))
+                })?
                 .candidate_nodes();
             let candidates = graph
                 .bind_node_candidates(nodes.iter().copied())
@@ -526,22 +556,55 @@ impl IndexProvider for MaintainedCandidateStateProvider {
         Ok(())
     }
 
-    fn commit_recovery_attachment(&self) {
+    fn commit_recovery_attachment(&self) -> Result<(), ProviderError> {
         let mut runtime = self.runtime.lock();
-        let recovery = runtime
-            .recovery
-            .take()
-            .expect("candidate-state recovery attachment must be reserved before commit");
-        assert!(
-            recovery.prepared,
-            "candidate-state recovery attachment must be prepared before commit"
-        );
-        runtime.live = recovery.state;
-        runtime.live_typed = recovery.typed;
+        let recovery = runtime.recovery.take().ok_or_else(|| {
+            inconsistent("candidate-state recovery attachment was not reserved".to_owned())
+        })?;
+        let staged = match recovery {
+            RecoveryCandidateState::Staged(staged) => staged,
+            promoted @ RecoveryCandidateState::Promoted { .. } => {
+                runtime.recovery = Some(promoted);
+                return Err(inconsistent(
+                    "candidate-state recovery attachment is already promoted".to_owned(),
+                ));
+            }
+        };
+        if !staged.prepared {
+            runtime.recovery = Some(RecoveryCandidateState::Staged(staged));
+            return Err(inconsistent(
+                "candidate-state recovery attachment was not prepared".to_owned(),
+            ));
+        }
+        let prior_state = std::mem::replace(&mut runtime.live, staged.state);
+        let prior_typed = std::mem::replace(&mut runtime.live_typed, staged.typed);
+        runtime.recovery = Some(RecoveryCandidateState::Promoted {
+            prior_state,
+            prior_typed,
+        });
+        Ok(())
+    }
+
+    fn finalize_recovery_attachment(&self) {
+        let mut runtime = self.runtime.lock();
+        if matches!(
+            runtime.recovery,
+            Some(RecoveryCandidateState::Promoted { .. })
+        ) {
+            runtime.recovery = None;
+        }
     }
 
     fn abort_recovery_attachment(&self) {
-        self.runtime.lock().recovery = None;
+        let mut runtime = self.runtime.lock();
+        if let Some(RecoveryCandidateState::Promoted {
+            prior_state,
+            prior_typed,
+        }) = runtime.recovery.take()
+        {
+            runtime.live = prior_state;
+            runtime.live_typed = prior_typed;
+        }
     }
 
     fn node_candidate_set(

@@ -13,6 +13,9 @@ use crate::SharedGraph;
 #[path = "required_edges_tests.rs"]
 mod required_edges_tests;
 
+#[path = "recovery_attachment_tests.rs"]
+mod recovery_attachment_tests;
+
 fn label(name: &str) -> DbString {
     db_string(name).unwrap()
 }
@@ -259,87 +262,6 @@ fn shared_graph_resolves_typed_state_and_rebinds_after_layout_remint() {
     assert_eq!(rebound.iter().collect::<Vec<_>>(), vec![kept]);
     assert!(rebound.shares_physical_layout_with(&after));
     drop(before);
-}
-
-#[test]
-fn recovery_callbacks_stage_invisibly_until_prepare_and_commit() {
-    let (spec, name, doc, _, _) = current_spec();
-    let shared = SharedGraph::new(GraphId::new(81_019));
-    let first = {
-        let mut txn = shared.begin_write();
-        let first = txn
-            .mutator()
-            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
-            .unwrap();
-        txn.commit().unwrap();
-        first
-    };
-    let provider = MaintainedCandidateStateProvider::from_graph([spec], &shared.read()).unwrap();
-    let second = {
-        let mut txn = shared.begin_write();
-        let second = txn
-            .mutator()
-            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
-            .unwrap();
-        txn.commit().unwrap();
-        second
-    };
-
-    provider.reserve_recovery_attachment().unwrap();
-    provider
-        .on_change(&Change::NodeCreated {
-            id: second,
-            labels: LabelSet::single(doc),
-            properties: PropertyMap::new(),
-        })
-        .unwrap();
-    provider
-        .on_commit_applied(shared.read().meta.generation)
-        .unwrap();
-    assert_eq!(candidate_nodes(&provider, &name), vec![first]);
-
-    provider
-        .prepare_recovery_attachment(&shared.read())
-        .unwrap();
-    assert_eq!(candidate_nodes(&provider, &name), vec![first]);
-    provider.commit_recovery_attachment();
-    assert_eq!(candidate_nodes(&provider, &name), vec![second]);
-    assert_eq!(
-        IndexProvider::node_candidate_set(&provider, &name, &shared.read())
-            .unwrap()
-            .unwrap()
-            .iter()
-            .collect::<Vec<_>>(),
-        vec![second]
-    );
-}
-
-#[test]
-fn recovery_abort_retains_prior_live_candidate_state() {
-    let (spec, name, doc, _, _) = current_spec();
-    let shared = SharedGraph::new(GraphId::new(81_020));
-    let first = {
-        let mut txn = shared.begin_write();
-        let first = txn
-            .mutator()
-            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
-            .unwrap();
-        txn.commit().unwrap();
-        first
-    };
-    let provider = MaintainedCandidateStateProvider::from_graph([spec], &shared.read()).unwrap();
-    provider.reserve_recovery_attachment().unwrap();
-    provider
-        .on_change(&Change::NodeCreated {
-            id: NodeId::new(first.get() + 1),
-            labels: LabelSet::single(doc),
-            properties: PropertyMap::new(),
-        })
-        .unwrap();
-
-    provider.abort_recovery_attachment();
-
-    assert_eq!(candidate_nodes(&provider, &name), vec![first]);
 }
 
 #[test]

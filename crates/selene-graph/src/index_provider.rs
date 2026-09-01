@@ -80,6 +80,23 @@ impl fmt::Display for SubTag {
 /// `recv`) creates a cycle the engine cannot detect: the nested operation waits
 /// in the committer queue behind the callback, while the callback waits for the
 /// nested operation. Provider callbacks must not block on spawned graph work.
+///
+/// ## Recovery attachment lifecycle
+///
+/// Recovery reserves every provider before callbacks, keeping live state
+/// unchanged while callback state is staged privately. After final graph
+/// construction, every provider prepares its staged state against that pinned
+/// snapshot before any provider commits. Commit may fail and promotes prepared
+/// state only while retaining the exact prior live state as rollback data. Once
+/// every commit succeeds, finalization discards rollback data without changing
+/// the newly live semantics. Abort discards staged/prepared state, or restores
+/// prior live state after promotion, and must be idempotent.
+///
+/// Recovery catches provider panics at commit, abort, and finalize boundaries.
+/// Correct providers must keep promotion reversible until finalization.
+/// Irreversible external effects or providers that panic while rolling back
+/// cannot be made transactional by this in-memory protocol; such behavior is a
+/// provider contract violation and does not weaken rollback for other providers.
 pub trait IndexProvider: Send + Sync + 'static {
     /// Stable 4-byte ASCII tag uniquely identifying this provider.
     fn provider_tag(&self) -> ProviderTag;
@@ -219,16 +236,32 @@ pub trait IndexProvider: Send + Sync + 'static {
         Ok(())
     }
 
-    /// Infallibly promote previously prepared recovery state to live state.
+    /// Promote previously prepared recovery state while retaining rollback data.
     ///
     /// Recovery calls every provider's prepare hook before it invokes the first
-    /// commit hook, so implementations must leave no fallible work here.
-    fn commit_recovery_attachment(&self) {}
+    /// commit hook. A provider that changes live state and then returns an error
+    /// must still be able to restore the exact prior state from
+    /// [`Self::abort_recovery_attachment`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when prepared state cannot be promoted safely.
+    fn commit_recovery_attachment(&self) -> Result<(), ProviderError> {
+        Ok(())
+    }
 
-    /// Infallibly discard any reserved or prepared recovery state.
+    /// Discard rollback data after every provider committed successfully.
+    ///
+    /// This cleanup-only hook must not alter newly live semantics. Recovery
+    /// catches and logs panics, then continues finalizing remaining providers.
+    fn finalize_recovery_attachment(&self) {}
+
+    /// Discard staged state or restore exact prior state after promotion.
     ///
     /// This hook is called on every failed or unwound recovery path until the
-    /// attachment guard is explicitly disarmed after all commits.
+    /// attachment guard is explicitly disarmed after all commits and finalize
+    /// callbacks. It must be idempotent. Recovery catches and logs panics, then
+    /// continues aborting earlier reservations in reverse order.
     fn abort_recovery_attachment(&self) {}
 
     /// Return a typed maintained node candidate set bound to `graph`.
