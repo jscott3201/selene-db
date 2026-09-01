@@ -493,13 +493,13 @@ mod recursion_crash {
         let statement = parse(&source).expect("a wide flat RETURN parses without a budget cap");
         let elapsed = start.elapsed();
 
-        // Loose tripwire: generous against CI jitter, but a super-linear
-        // regression on a 2000-item flat list would blow well past it. Ubuntu
-        // release runners have measured above 1s for this unoptimized test.
-        let budget = Duration::from_secs(2);
+        // Coarse wall-clock tripwire: hosted Ubuntu jitter has crossed 2 seconds
+        // (2.018s observed), so the 5-second budget guards only against a
+        // catastrophic or super-linear regression. It is not a benchmark claim.
+        let budget = Duration::from_secs(5);
         assert!(
             elapsed < budget,
-            "flat RETURN of {n} items took {elapsed:?} (budget {budget:?}); parse cost should be ~linear in N"
+            "flat RETURN of {n} items took {elapsed:?} (budget {budget:?}); coarse catastrophic/super-linear regression tripwire exceeded"
         );
 
         // Cardinality: all N projection items survive into the AST (linearity is
