@@ -23,6 +23,7 @@ use crate::graph::{
     VectorIndexEntry,
 };
 use crate::graph_types::{EdgeEndpointDef, GraphTypeDef, PropertyTypeDef};
+use crate::store::{EdgeRow as PhysicalEdgeRow, NodeRow as PhysicalNodeRow};
 use crate::typed_index::TypedIndex;
 
 mod change_replay;
@@ -402,7 +403,7 @@ impl RecoveryState {
             };
             next_node_id = next_node_id.max(id.get().saturating_add(1));
             let row_index = match recovered.snapshot_position {
-                Some(position) => position as usize,
+                Some(position) => PhysicalNodeRow::new(position),
                 None => {
                     let len = graph.node_store.len();
                     // u32::MAX is reserved as RowIndex::TOMBSTONE; the last real
@@ -412,11 +413,11 @@ impl RecoveryState {
                             "WAL-created node id {id} exceeds the u32 row space"
                         ))));
                     }
-                    len
+                    PhysicalNodeRow::new(len as u32)
                 }
             };
             if recovered.row.alive {
-                node_alive.insert(row_index as u32);
+                node_alive.insert(row_index.get());
             }
             insert_node_row(&mut graph, id, recovered.row, row_index)?;
         }
@@ -447,7 +448,12 @@ impl RecoveryState {
             if recovered.row.alive {
                 node_alive.insert(len as u32);
             }
-            insert_node_row(&mut graph, id, recovered.row, len)?;
+            insert_node_row(
+                &mut graph,
+                id,
+                recovered.row,
+                PhysicalNodeRow::new(len as u32),
+            )?;
         }
         if !nodes.is_empty() {
             return Err(crate::GraphError::Provider(inconsistent(format!(
@@ -471,7 +477,7 @@ impl RecoveryState {
             // BRIEF-Item-4c: WAL-created edge ids APPEND at the dense end (see the
             // node arm above).
             let row_index = match recovered.snapshot_position {
-                Some(position) => position as usize,
+                Some(position) => PhysicalEdgeRow::new(position),
                 None => {
                     let len = graph.edge_store.len();
                     // u32::MAX is reserved as RowIndex::TOMBSTONE (see the node arm).
@@ -480,11 +486,11 @@ impl RecoveryState {
                             "WAL-created edge id {id} exceeds the u32 row space"
                         ))));
                     }
-                    len
+                    PhysicalEdgeRow::new(len as u32)
                 }
             };
             if recovered.row.alive {
-                edge_alive.insert(row_index as u32);
+                edge_alive.insert(row_index.get());
             }
             insert_edge_row(&mut graph, id, recovered.row, row_index)?;
         }
@@ -509,7 +515,12 @@ impl RecoveryState {
             if recovered.row.alive {
                 edge_alive.insert(len as u32);
             }
-            insert_edge_row(&mut graph, id, recovered.row, len)?;
+            insert_edge_row(
+                &mut graph,
+                id,
+                recovered.row,
+                PhysicalEdgeRow::new(len as u32),
+            )?;
         }
         if !edges.is_empty() {
             return Err(crate::GraphError::Provider(inconsistent(format!(

@@ -4729,6 +4729,21 @@ cycle on writes:
 | `graph_vector_active_set_maintenance_pressure/materialized_set_r60w40/...covbp10000_curbp10000_precbp10000` | 6.904 ms (`c31`) | 26.41 ms (`c32`) | Maintained active set keeps full quality and remains faster even after 40 balanced set updates per cycle. |
 | `graph_vector_active_set_maintenance_pressure/materialized_set_maintenance_w40/...` | 454.1 ns (`active248`) | 396.8 ns (`active512`) | Isolated 40-update HashSet maintenance is negligible next to exact vector rerank cost on this fixture. |
 
+## Typed physical candidate-set lifecycle
+
+Focused M04-PR02 Part 1 representation/algebra rows, measured 2026-09-01:
+
+Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_physical_candidate_set`
+
+| Bench | 1,024-element quick estimate | Notes |
+|---|---:|---|
+| `graph_physical_candidate_set/build_live_nodes/1024` | 9.8546 µs | Builds the generation/layout-bound node set from typed live rows and sorts stable IDs. The 10-sample quick run reported two high severe outliers, so this is directional local evidence rather than a regression threshold. |
+| `graph_physical_candidate_set/iterate_stable_ids/1024` | 108.02 ns | Iterates deterministic stable `NodeId` values without exposing physical rows. |
+| `graph_physical_candidate_set/union_full_overlap/1024` | 1.5611 µs | Validates graph/generation/layout identity and unions two fully overlapping typed sets. |
+| `graph_physical_candidate_set/intersection_full_overlap/1024` | 1.3155 µs | Validates identity and intersects two fully overlapping typed sets. |
+| `graph_physical_candidate_set/difference_full_overlap/1024` | 2.0389 µs | Validates identity and removes a fully overlapping typed set, producing empty output. |
+| `graph_physical_candidate_set/clone_snapshot/1024` | 50.950 ns | Clones the immutable graph snapshot while retaining the same Arc-style layout token. |
+
 ## Retrieval scoping guards
 
 Focused local P0 row, measured 2026-06-15:

@@ -50,6 +50,9 @@ fn node_labels_returns_some_for_alive_node() {
     graph
         .node_id_to_row
         .insert_cow(NodeId::new(1), RowIndex::new(0));
+    graph
+        .node_rows
+        .insert_cow(NodeId::new(1), crate::store::NodeRow::new(0));
     graph.node_store.alive_mut().insert(0);
     assert_eq!(
         graph

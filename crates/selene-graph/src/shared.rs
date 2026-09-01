@@ -287,6 +287,9 @@ impl SharedGraph {
         // every `begin_write` transaction clone the `Arc`, not the `Vec`.
         let providers: Arc<[Arc<dyn IndexProvider>]> = providers.into();
         let mut graph = graph;
+        // Attaching detached/scratch ownership establishes an independent
+        // runtime even when GraphId and generation happen to match its source.
+        graph.remint_layout();
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
         crate::property_index::rebuild_edge_property_indexes(&mut graph)?;

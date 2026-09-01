@@ -12,6 +12,7 @@ mod edge;
 mod json;
 mod single_graph_ann_recall;
 mod single_graph_candidate_set;
+mod single_graph_physical_candidate_set;
 mod single_graph_vector_batch;
 #[path = "single_graph/vector.rs"]
 mod vector;
@@ -199,6 +200,7 @@ criterion_group! {
         bench_exact_json_contains_scan, bench_exact_json_path_exists_scan,
         bench_exact_json_path_contains_scan, bench_exact_json_path_value_scan,
         single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall,
-        bench_ann_property_filter
+        bench_ann_property_filter,
+        single_graph_physical_candidate_set::bench_physical_candidate_set
 }
 criterion_main!(graph_reads);

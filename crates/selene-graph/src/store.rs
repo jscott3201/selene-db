@@ -1,4 +1,14 @@
 //! Structure-of-arrays node and edge stores per spec 03 section 3.1.
+//!
+//! Physical kind rows are not repository-public APIs:
+//!
+//! ```compile_fail
+//! use selene_graph::store::{EdgeRow, NodeRow};
+//!
+//! fn cannot_cross_or_mix(edge: EdgeRow) {
+//!     let _: NodeRow = edge;
+//! }
+//! ```
 
 use std::sync::Arc;
 
@@ -8,8 +18,8 @@ use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
 
 use crate::chunked_vec::ChunkedVec;
 
-/// Internal storage row index — the position of a node or edge in its store's
-/// structure-of-arrays columns.
+/// Temporary Part 3 lower-row bridge — the position of a node or edge in its
+/// store's structure-of-arrays columns.
 ///
 /// Distinct from the external [`NodeId`]/[`EdgeId`]: a `RowIndex` is dense,
 /// remappable by compaction (D22 / BRIEF-Item-4b/4c), and **never persisted** —
@@ -20,8 +30,9 @@ use crate::chunked_vec::ChunkedVec;
 /// stable ids. The mapping is resolved *only* through the
 /// [`SeleneGraph`](crate::SeleneGraph) `node_id_to_row`/`edge_id_to_row` maps and
 /// the per-store `row_to_id` reverse columns — never by index arithmetic.
-/// Keeping it a newtype lets the compiler flag any site that still conflates a
-/// row with an external id.
+/// New graph internals use distinct private node/edge row types instead. This
+/// repository-public raw type remains only for deferred downstream consumers;
+/// M04-PR02 Part 3 owns its deletion and it is not a compatibility promise.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RowIndex(u32);
 
@@ -39,6 +50,50 @@ impl RowIndex {
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0
+    }
+}
+
+/// Physical node-store position. Deliberately private to the graph crate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) struct NodeRow(u32);
+
+impl NodeRow {
+    pub(crate) const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    pub(crate) const fn lower_row_bridge(self) -> RowIndex {
+        RowIndex::new(self.0)
+    }
+}
+
+/// Physical edge-store position. Deliberately private to the graph crate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) struct EdgeRow(u32);
+
+impl EdgeRow {
+    pub(crate) const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    pub(crate) const fn lower_row_bridge(self) -> RowIndex {
+        RowIndex::new(self.0)
     }
 }
 
@@ -96,6 +151,22 @@ impl NodeStore {
     #[must_use]
     pub fn is_alive(&self, index: u32) -> bool {
         self.alive.contains(index)
+    }
+
+    pub(crate) fn is_alive_row(&self, row: NodeRow) -> bool {
+        self.alive.contains(row.get())
+    }
+
+    pub(crate) fn alive_rows(&self) -> impl Iterator<Item = NodeRow> + '_ {
+        self.alive.iter().map(NodeRow::new)
+    }
+
+    pub(crate) fn mark_alive(&mut self, row: NodeRow) {
+        self.alive_mut().insert(row.get());
+    }
+
+    pub(crate) fn mark_dead(&mut self, row: NodeRow) {
+        self.alive_mut().remove(row.get());
     }
 }
 
@@ -168,6 +239,22 @@ impl EdgeStore {
     #[must_use]
     pub fn is_alive(&self, index: u32) -> bool {
         self.alive.contains(index)
+    }
+
+    pub(crate) fn is_alive_row(&self, row: EdgeRow) -> bool {
+        self.alive.contains(row.get())
+    }
+
+    pub(crate) fn alive_rows(&self) -> impl Iterator<Item = EdgeRow> + '_ {
+        self.alive.iter().map(EdgeRow::new)
+    }
+
+    pub(crate) fn mark_alive(&mut self, row: EdgeRow) {
+        self.alive_mut().insert(row.get());
+    }
+
+    pub(crate) fn mark_dead(&mut self, row: EdgeRow) {
+        self.alive_mut().remove(row.get());
     }
 }
 

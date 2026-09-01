@@ -11,6 +11,7 @@
 #![deny(missing_docs)]
 
 pub mod adjacency;
+mod candidate_set;
 pub mod candidate_state;
 mod candidate_state_shared;
 mod checkpoint;
@@ -53,6 +54,7 @@ pub mod vector_search;
 pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
+pub use candidate_set::{CandidateKind, CandidateSet, Edge, Node};
 pub use candidate_state::{
     CANDIDATE_STATE_PROVIDER_TAG, CANDIDATE_STATE_SUB, CandidateStateSpec,
     MaintainedCandidateStateProvider,
@@ -69,7 +71,9 @@ pub use core_provider::{
     CORE_TIDX_SUB, CORE_VIDX_SUB, CoreProvider, DurableState,
 };
 pub use durable_provider::DurableProvider;
-pub use error::{ExistingStoreEvidence, GraphError, GraphResult};
+pub use error::{
+    CandidateSetError, CandidateSetResult, ExistingStoreEvidence, GraphError, GraphResult,
+};
 pub use graph::{
     CompositePropertyIndexEntry, GraphMeta, IndexedEntity, PropertyIndexEntry,
     PropertyIndexStatsRow, SeleneGraph, TextIndexEntry, VectorIndexEntry,
@@ -116,3 +120,6 @@ pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 
 #[cfg(test)]
 mod closed_graph_tests;
+
+#[cfg(test)]
+mod candidate_set_tests;

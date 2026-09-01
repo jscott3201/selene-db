@@ -10,20 +10,20 @@
 
 use std::sync::OnceLock;
 
-use crate::core_provider::sections::{EdgeRow, NodeRow};
+use crate::core_provider::sections::{EdgeRow as EdgePayload, NodeRow as NodePayload};
 use crate::graph::SeleneGraph;
-use crate::store::RowIndex;
+use crate::store::{EdgeRow, NodeRow};
 use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
 
 pub(super) fn insert_node_row(
     graph: &mut SeleneGraph,
     id: NodeId,
-    row: NodeRow,
-    row_index: usize,
+    row: NodePayload,
+    row_index: NodeRow,
 ) -> crate::GraphResult<()> {
     // The pad-then-set shape materializes the `NodeId::TOMBSTONE` hole slots
     // that sit between the real rows the snapshot recorded.
-    while graph.node_store.len() < row_index {
+    while graph.node_store.len() < row_index.index() {
         graph.node_store.labels.push(LabelSet::new());
         graph.node_store.properties.push(PropertyMap::new());
         // BRIEF-Item-4a: hole rows carry the tombstone id; row_to_id stays
@@ -31,14 +31,17 @@ pub(super) fn insert_node_row(
         // builds the id->row maps from the alive rows after recovery.
         graph.node_store.row_to_id.push(NodeId::TOMBSTONE);
     }
-    if graph.node_store.len() == row_index {
+    if graph.node_store.len() == row_index.index() {
         graph.node_store.labels.push(row.labels);
         graph.node_store.properties.push(row.properties);
         graph.node_store.row_to_id.push(id);
     } else {
-        graph.node_store.labels.set(row_index, row.labels);
-        graph.node_store.properties.set(row_index, row.properties);
-        graph.node_store.row_to_id.set(row_index, id);
+        graph.node_store.labels.set(row_index.index(), row.labels);
+        graph
+            .node_store
+            .properties
+            .set(row_index.index(), row.properties);
+        graph.node_store.row_to_id.set(row_index.index(), id);
     }
     // BRIEF-Item-4a: bind id -> row in the map for every materialized row (alive
     // AND dead — a deleted recovered id stays mapped -> NotAlive, Option B). The
@@ -46,19 +49,20 @@ pub(super) fn insert_node_row(
     // it must be populated here, before that check (and before shared.rs's
     // rebuild_id_maps re-seeds it). Holes carry the tombstone and never reach
     // this real-row branch.
+    graph.node_rows.insert_cow(id, row_index);
     graph
         .node_id_to_row
-        .insert_cow(id, RowIndex::new(row_index as u32));
+        .insert_cow(id, row_index.lower_row_bridge());
     Ok(())
 }
 
 pub(super) fn insert_edge_row(
     graph: &mut SeleneGraph,
     id: EdgeId,
-    row: EdgeRow,
-    row_index: usize,
+    row: EdgePayload,
+    row_index: EdgeRow,
 ) -> crate::GraphResult<()> {
-    while graph.edge_store.len() < row_index {
+    while graph.edge_store.len() < row_index.index() {
         graph.edge_store.label.push(edge_hole_label()?);
         graph.edge_store.source.push(NodeId::TOMBSTONE);
         graph.edge_store.target.push(NodeId::TOMBSTONE);
@@ -66,24 +70,28 @@ pub(super) fn insert_edge_row(
         // BRIEF-Item-4a: hole rows carry the tombstone id (see insert_node_row).
         graph.edge_store.row_to_id.push(EdgeId::TOMBSTONE);
     }
-    if graph.edge_store.len() == row_index {
+    if graph.edge_store.len() == row_index.index() {
         graph.edge_store.label.push(row.label);
         graph.edge_store.source.push(row.source);
         graph.edge_store.target.push(row.target);
         graph.edge_store.properties.push(row.properties);
         graph.edge_store.row_to_id.push(id);
     } else {
-        graph.edge_store.label.set(row_index, row.label);
-        graph.edge_store.source.set(row_index, row.source);
-        graph.edge_store.target.set(row_index, row.target);
-        graph.edge_store.properties.set(row_index, row.properties);
-        graph.edge_store.row_to_id.set(row_index, id);
+        graph.edge_store.label.set(row_index.index(), row.label);
+        graph.edge_store.source.set(row_index.index(), row.source);
+        graph.edge_store.target.set(row_index.index(), row.target);
+        graph
+            .edge_store
+            .properties
+            .set(row_index.index(), row.properties);
+        graph.edge_store.row_to_id.set(row_index.index(), id);
     }
     // BRIEF-Item-4a: bind id -> row in the map for every materialized row (see
     // insert_node_row).
+    graph.edge_rows.insert_cow(id, row_index);
     graph
         .edge_id_to_row
-        .insert_cow(id, RowIndex::new(row_index as u32));
+        .insert_cow(id, row_index.lower_row_bridge());
     Ok(())
 }
 
