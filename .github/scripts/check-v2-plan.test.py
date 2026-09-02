@@ -22,6 +22,48 @@ PROVENANCE_STEP = (
     '      - name: verify checkout provenance\n'
     '        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"\n'
 )
+M04_PART_3A_PRODUCTION_PATHS = [
+    "crates/selene-graph/src/candidate_set.rs",
+    "crates/selene-graph/src/graph.rs",
+    "crates/selene-graph/src/lib.rs",
+    "crates/selene-graph/src/store.rs",
+    "crates/selene-graph/src/text_index.rs",
+    "crates/selene-graph/src/vector_search.rs",
+    "crates/selene-graph/src/json_search.rs",
+    "crates/selene-graph/src/json_search_candidates.rs",
+    "crates/selene-graph/src/text_search.rs",
+    "crates/selene-graph/src/vector_search/approx_turbo_quant.rs",
+    "crates/selene-graph/src/vector_search/score.rs",
+    "crates/selene-graph/src/vector_search/exact_batch.rs",
+    "crates/selene-graph/src/vector_search/score_candidate_batch.rs",
+]
+M04_PART_3B_PRODUCTION_PATHS = [
+    "crates/selene-graph/src/graph.rs",
+    "crates/selene-graph/src/lib.rs",
+    "crates/selene-graph/src/store.rs",
+    "crates/selene-algorithms/src/projection.rs",
+    "crates/selene-algorithms/src/projection/csr.rs",
+    "crates/selene-algorithms/src/projection/row_index.rs",
+    "crates/selene-algorithms/src/snapshot_summary.rs",
+    "crates/selene-gql/src/plan/optimize/index_catalog.rs",
+    "crates/selene-gql/src/plan/optimize/live_index_catalog.rs",
+    "crates/selene-gql/src/runtime/edge_access.rs",
+    "crates/selene-gql/src/runtime/expand.rs",
+    "crates/selene-gql/src/runtime/property_filter_rows.rs",
+    "crates/selene-gql/src/runtime/questioned.rs",
+    "crates/selene-gql/src/runtime/scan.rs",
+    "crates/selene-gql/src/runtime/scan_seed.rs",
+    "crates/selene-gql/src/runtime/builtins/retrieval_filter.rs",
+    "crates/selene-gql/src/runtime/builtins/text_search.rs",
+    "crates/selene-gql/src/runtime/builtins/vector_search_ann.rs",
+    "crates/selene-gql/src/runtime/builtins/verify/checks.rs",
+    "crates/selene-gql/src/runtime/native_algorithms/centrality/pagerank_filter.rs",
+    "crates/selene-testing/src/algo_corpus/fixtures.rs",
+    "crates/selene-testing/src/bench_fixtures.rs",
+    "crates/selene-testing/src/local_omlx/corpus.rs",
+    "crates/selene-testing/src/local_omlx/corpus/code_alias.rs",
+    "crates/selene-db/src/lib.rs",
+]
 
 
 class PlanContractTests(unittest.TestCase):
@@ -182,14 +224,14 @@ class PlanContractTests(unittest.TestCase):
             next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02").pop("delivery_parts")
 
         result = self.mutate_plan(remove_parts)
-        self.assert_failure(result, "M04-PR02: delivery_parts must contain exactly 3 parts; got 0")
+        self.assert_failure(result, "M04-PR02: delivery_parts must contain exactly 4 parts; got 0")
 
     def test_m04_pr02_fewer_delivery_parts_fails(self) -> None:
         def remove_part(plan: dict[str, Any]) -> None:
             next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"].pop()
 
         result = self.mutate_plan(remove_part)
-        self.assert_failure(result, "M04-PR02: delivery_parts must contain exactly 3 parts; got 2")
+        self.assert_failure(result, "M04-PR02: delivery_parts must contain exactly 4 parts; got 3")
 
     def test_delivery_part_numbers_must_be_sequential(self) -> None:
         def skip_number(plan: dict[str, Any]) -> None:
@@ -197,7 +239,7 @@ class PlanContractTests(unittest.TestCase):
             parts[1]["number"] = 4
 
         result = self.mutate_plan(skip_number)
-        self.assert_failure(result, "delivery part numbers must be sequential starting at 1; got [1, 4, 3]")
+        self.assert_failure(result, "delivery part numbers must be sequential starting at 1; got [1, 4, 3, 4]")
 
     def test_delivery_part_path_count_cannot_exceed_file_budget(self) -> None:
         def lower_budget(plan: dict[str, Any]) -> None:
@@ -209,18 +251,23 @@ class PlanContractTests(unittest.TestCase):
 
     def test_m04_pr02_structured_transitions_are_pinned(self) -> None:
         original = self.read_plan()
-        early_changes = (
-            ("work_item_status_after", "Merged", "work_item_status_after must be 'Unmerged'"),
-            ("issue_state_after", "Closed", "issue_state_after must be 'Open'"),
-            ("dependents_unblocked_after", True, "dependents_unblocked_after must be False"),
-            ("bridge_state_after", "Deleted", "bridge_state_after must be 'Retained'"),
+        cases: tuple[tuple[int, str, Any, str], ...] = (
+            (0, "work_item_status_after", "Merged", "work_item_status_after must be 'Unmerged'"),
+            (0, "issue_state_after", "Closed", "issue_state_after must be 'Open'"),
+            (0, "dependents_unblocked_after", True, "dependents_unblocked_after must be False"),
+            (0, "bridge_state_after", "Deleted", "bridge_state_after must be 'Retained'"),
+            (1, "work_item_status_after", "Merged", "work_item_status_after must be 'Unmerged'"),
+            (1, "issue_state_after", "Closed", "issue_state_after must be 'Open'"),
+            (1, "dependents_unblocked_after", True, "dependents_unblocked_after must be False"),
+            (1, "bridge_state_after", "Deleted", "bridge_state_after must be 'Retained'"),
+            (2, "work_item_status_after", "Merged", "work_item_status_after must be 'Unmerged'"),
+            (2, "issue_state_after", "Closed", "issue_state_after must be 'Open'"),
+            (2, "dependents_unblocked_after", True, "dependents_unblocked_after must be False"),
+            (2, "bridge_state_after", "Retained", "bridge_state_after must be 'Deleted'"),
+            (3, "work_item_status_after", "Unmerged", "work_item_status_after must be 'Merged'"),
+            (3, "issue_state_after", "Open", "issue_state_after must be 'Closed'"),
+            (3, "dependents_unblocked_after", False, "dependents_unblocked_after must be True"),
         )
-        cases: list[tuple[int, str, Any, str]] = [
-            (part_index, field, value, message)
-            for part_index in (0, 1)
-            for field, value, message in early_changes
-        ]
-        cases.append((2, "work_item_status_after", "Unmerged", "work_item_status_after must be 'Merged'"))
         for part_index, field, value, message in cases:
             with self.subTest(part=part_index + 1, field=field):
                 plan = json.loads(json.dumps(original))
@@ -228,6 +275,34 @@ class PlanContractTests(unittest.TestCase):
                 work_item["delivery_parts"][part_index][field] = value
                 self.write_plan(plan)
                 self.assert_failure(self.run_validator(), message)
+        self.write_plan(original)
+
+    def test_m04_pr02_bridge_deletion_cannot_regress(self) -> None:
+        def restore_bridge(plan: dict[str, Any]) -> None:
+            parts = next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"]
+            parts[3]["bridge_state_after"] = "Retained"
+
+        result = self.mutate_plan(restore_bridge)
+        self.assert_failure(result, "bridge_state_after regresses at delivery part 4")
+
+    def test_m04_pr02_part_3a_and_3b_production_inventories_are_pinned(self) -> None:
+        original = self.read_plan()
+        parts = next(item for item in original["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"]
+        self.assertEqual(parts[2]["title"], "Part 3A: Graph-internal bridge deletion")
+        self.assertEqual(parts[3]["title"], "Part 3B: Downstream migration and final public-row deletion")
+        self.assertEqual(len(parts[2]["production_paths"]), 13)
+        self.assertEqual(len(parts[3]["production_paths"]), 25)
+        self.assertEqual(parts[2]["production_paths"], M04_PART_3A_PRODUCTION_PATHS)
+        self.assertEqual(parts[3]["production_paths"], M04_PART_3B_PRODUCTION_PATHS)
+        for part_index, label in ((2, "Part 3A"), (3, "Part 3B")):
+            with self.subTest(part=label):
+                plan = json.loads(json.dumps(original))
+                work_item = next(item for item in plan["pull_requests"] if item["id"] == "M04-PR02")
+                work_item["delivery_parts"][part_index]["production_paths"][-1] = (
+                    "crates/selene-graph/src/unlisted.rs"
+                )
+                self.write_plan(plan)
+                self.assert_failure(self.run_validator(), f"must match the exact {label} inventory")
         self.write_plan(original)
 
     def test_delivery_diff_allows_listed_production_path(self) -> None:
@@ -247,6 +322,21 @@ class PlanContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("delivery part diff passed: M04-PR02:1", result.stdout)
         self.assertIn("production_files=1 net_lines=1", result.stdout)
+
+    def test_delivery_diff_allows_part_3b_graph_api_owner_paths(self) -> None:
+        base = self.commit_all("base")
+        for path in (
+            "crates/selene-graph/src/graph.rs",
+            "crates/selene-graph/src/lib.rs",
+            "crates/selene-graph/src/store.rs",
+        ):
+            self.write_production_file(path, "pub struct RemovedRowApi;\n")
+        head = self.commit_all("part 3b graph API owners")
+
+        result = self.run_validator(delivery_part="M04-PR02:4", diff_base=base, diff_head=head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("delivery part diff passed: M04-PR02:4", result.stdout)
+        self.assertIn("production_files=3 net_lines=3", result.stdout)
 
     def test_delivery_diff_rejects_unlisted_production_path(self) -> None:
         base = self.commit_all("base")
@@ -272,8 +362,8 @@ class PlanContractTests(unittest.TestCase):
         self.assert_failure(malformed, "malformed selector 'M04-PR02'; expected WORK-ITEM:PART")
         unknown_item = self.run_validator(delivery_part="M10-PR99:1", diff_base="HEAD", diff_head="HEAD")
         self.assert_failure(unknown_item, "unknown work item M10-PR99")
-        unknown = self.run_validator(delivery_part="M04-PR02:4", diff_base="HEAD", diff_head="HEAD")
-        self.assert_failure(unknown, "unknown delivery part M04-PR02:4")
+        unknown = self.run_validator(delivery_part="M04-PR02:5", diff_base="HEAD", diff_head="HEAD")
+        self.assert_failure(unknown, "unknown delivery part M04-PR02:5")
 
     def test_corrupt_baseline_report_hash_fails(self) -> None:
         manifest_path = self.root / "docs" / "v2" / "baseline" / "manifest.json"

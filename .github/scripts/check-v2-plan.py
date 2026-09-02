@@ -40,6 +40,48 @@ DELIVERY_SELECTOR_RE = re.compile(r"(M(?:0[0-9]|10)-PR[0-9]{2}):([1-9][0-9]*)")
 MAX_PRODUCTION_FILES = 25
 MAX_NET_NON_GENERATED_LINES = 1_500
 NON_PRODUCTION_SOURCE_DIRS = {"tests", "benches", "examples", "docs", "generated"}
+M04_PART_3A_PRODUCTION_PATHS = (
+    "crates/selene-graph/src/candidate_set.rs",
+    "crates/selene-graph/src/graph.rs",
+    "crates/selene-graph/src/lib.rs",
+    "crates/selene-graph/src/store.rs",
+    "crates/selene-graph/src/text_index.rs",
+    "crates/selene-graph/src/vector_search.rs",
+    "crates/selene-graph/src/json_search.rs",
+    "crates/selene-graph/src/json_search_candidates.rs",
+    "crates/selene-graph/src/text_search.rs",
+    "crates/selene-graph/src/vector_search/approx_turbo_quant.rs",
+    "crates/selene-graph/src/vector_search/score.rs",
+    "crates/selene-graph/src/vector_search/exact_batch.rs",
+    "crates/selene-graph/src/vector_search/score_candidate_batch.rs",
+)
+M04_PART_3B_PRODUCTION_PATHS = (
+    "crates/selene-graph/src/graph.rs",
+    "crates/selene-graph/src/lib.rs",
+    "crates/selene-graph/src/store.rs",
+    "crates/selene-algorithms/src/projection.rs",
+    "crates/selene-algorithms/src/projection/csr.rs",
+    "crates/selene-algorithms/src/projection/row_index.rs",
+    "crates/selene-algorithms/src/snapshot_summary.rs",
+    "crates/selene-gql/src/plan/optimize/index_catalog.rs",
+    "crates/selene-gql/src/plan/optimize/live_index_catalog.rs",
+    "crates/selene-gql/src/runtime/edge_access.rs",
+    "crates/selene-gql/src/runtime/expand.rs",
+    "crates/selene-gql/src/runtime/property_filter_rows.rs",
+    "crates/selene-gql/src/runtime/questioned.rs",
+    "crates/selene-gql/src/runtime/scan.rs",
+    "crates/selene-gql/src/runtime/scan_seed.rs",
+    "crates/selene-gql/src/runtime/builtins/retrieval_filter.rs",
+    "crates/selene-gql/src/runtime/builtins/text_search.rs",
+    "crates/selene-gql/src/runtime/builtins/vector_search_ann.rs",
+    "crates/selene-gql/src/runtime/builtins/verify/checks.rs",
+    "crates/selene-gql/src/runtime/native_algorithms/centrality/pagerank_filter.rs",
+    "crates/selene-testing/src/algo_corpus/fixtures.rs",
+    "crates/selene-testing/src/bench_fixtures.rs",
+    "crates/selene-testing/src/local_omlx/corpus.rs",
+    "crates/selene-testing/src/local_omlx/corpus/code_alias.rs",
+    "crates/selene-db/src/lib.rs",
+)
 
 
 class Check:
@@ -253,9 +295,17 @@ def check_delivery_parts(check: Check, pr_id: str, parts: list[dict[str, Any]]) 
 
 
 def check_m04_delivery_transitions(check: Check, parts: list[dict[str, Any]]) -> None:
+    expected_titles = {
+        3: "Part 3A: Graph-internal bridge deletion",
+        4: "Part 3B: Downstream migration and final public-row deletion",
+    }
+    for number, title in expected_titles.items():
+        if parts[number - 1]["title"] != title:
+            check.fail(f"M04-PR02 delivery part {number}: title must identify {title.split(':', 1)[0]}")
     expected = (
         ("Unmerged", "Open", False, "Retained"),
         ("Unmerged", "Open", False, "Retained"),
+        ("Unmerged", "Open", False, "Deleted"),
         ("Merged", "Closed", True, "Deleted"),
     )
     fields = (
@@ -271,6 +321,16 @@ def check_m04_delivery_transitions(check: Check, parts: list[dict[str, Any]]) ->
                     f"M04-PR02 delivery part {part['number']}: {field} must be "
                     f"{value!r}, got {part[field]!r}"
                 )
+    for number, label, expected_paths in (
+        (3, "Part 3A", M04_PART_3A_PRODUCTION_PATHS),
+        (4, "Part 3B", M04_PART_3B_PRODUCTION_PATHS),
+    ):
+        actual_paths = tuple(parts[number - 1]["production_paths"])
+        if actual_paths != expected_paths:
+            check.fail(
+                f"M04-PR02 delivery part {number}: production_paths must match "
+                f"the exact {label} inventory"
+            )
 
 
 def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
@@ -344,8 +404,8 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
         parts = pr.get("delivery_parts", [])
         if parts:
             check_delivery_parts(check, pr_id, parts)
-        if pr_id == "M04-PR02" and len(parts) != 3:
-            check.fail(f"M04-PR02: delivery_parts must contain exactly 3 parts; got {len(parts)}")
+        if pr_id == "M04-PR02" and len(parts) != 4:
+            check.fail(f"M04-PR02: delivery_parts must contain exactly 4 parts; got {len(parts)}")
         elif pr_id == "M04-PR02":
             check_m04_delivery_transitions(check, parts)
         for dependency in pr["dependencies"]:
