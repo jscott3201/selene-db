@@ -56,6 +56,9 @@ M04_PART_3A_PRODUCTION_PATHS = (
     "crates/selene-graph/src/vector_search/score_candidate_batch.rs",
 )
 M04_PART_3B_PRODUCTION_PATHS = (
+    "crates/selene-graph/src/graph.rs",
+    "crates/selene-graph/src/lib.rs",
+    "crates/selene-graph/src/store.rs",
     "crates/selene-algorithms/src/projection.rs",
     "crates/selene-algorithms/src/projection/csr.rs",
     "crates/selene-algorithms/src/projection/row_index.rs",

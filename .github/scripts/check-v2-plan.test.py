@@ -38,6 +38,9 @@ M04_PART_3A_PRODUCTION_PATHS = [
     "crates/selene-graph/src/vector_search/score_candidate_batch.rs",
 ]
 M04_PART_3B_PRODUCTION_PATHS = [
+    "crates/selene-graph/src/graph.rs",
+    "crates/selene-graph/src/lib.rs",
+    "crates/selene-graph/src/store.rs",
     "crates/selene-algorithms/src/projection.rs",
     "crates/selene-algorithms/src/projection/csr.rs",
     "crates/selene-algorithms/src/projection/row_index.rs",
@@ -287,6 +290,8 @@ class PlanContractTests(unittest.TestCase):
         parts = next(item for item in original["pull_requests"] if item["id"] == "M04-PR02")["delivery_parts"]
         self.assertEqual(parts[2]["title"], "Part 3A: Graph-internal bridge deletion")
         self.assertEqual(parts[3]["title"], "Part 3B: Downstream migration and final public-row deletion")
+        self.assertEqual(len(parts[2]["production_paths"]), 13)
+        self.assertEqual(len(parts[3]["production_paths"]), 25)
         self.assertEqual(parts[2]["production_paths"], M04_PART_3A_PRODUCTION_PATHS)
         self.assertEqual(parts[3]["production_paths"], M04_PART_3B_PRODUCTION_PATHS)
         for part_index, label in ((2, "Part 3A"), (3, "Part 3B")):
@@ -317,6 +322,21 @@ class PlanContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("delivery part diff passed: M04-PR02:1", result.stdout)
         self.assertIn("production_files=1 net_lines=1", result.stdout)
+
+    def test_delivery_diff_allows_part_3b_graph_api_owner_paths(self) -> None:
+        base = self.commit_all("base")
+        for path in (
+            "crates/selene-graph/src/graph.rs",
+            "crates/selene-graph/src/lib.rs",
+            "crates/selene-graph/src/store.rs",
+        ):
+            self.write_production_file(path, "pub struct RemovedRowApi;\n")
+        head = self.commit_all("part 3b graph API owners")
+
+        result = self.run_validator(delivery_part="M04-PR02:4", diff_base=base, diff_head=head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("delivery part diff passed: M04-PR02:4", result.stdout)
+        self.assertIn("production_files=3 net_lines=3", result.stdout)
 
     def test_delivery_diff_rejects_unlisted_production_path(self) -> None:
         base = self.commit_all("base")

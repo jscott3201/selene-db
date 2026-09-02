@@ -1377,7 +1377,7 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
 - Part 3A (numeric delivery part 3) — graph-internal bridge deletion: migrate all graph-internal `trusted_rows` consumers to typed-candidate or stable-ID-safe internal flows and delete both named bridge methods without a renamed/equivalent raw-row bridge or facade crossing, while preserving liveness/generation/layout checks, deterministic results, vector skipping semantics, and the existing unbound stable-ID `VectorCandidateSet`.
 - Part 3A retains only the current public downstream raw-row APIs strictly required by exact Part 3B consumers; its bridge state becomes `Deleted` and cannot regress, while M04-PR02 stays `Unmerged`, #1093 stays open, and dependents stay blocked.
 - Part 3B (numeric delivery part 4) — downstream migration and final deletion: move algorithms/private dense projections, GQL runtime/optimizer/builtins, testing adapters, and the facade boundary to typed candidates or ID-safe resolvers, preserving an internal-only dense projection abstraction for unlisted algorithm modules and validating facade `DatabaseId` ingress without dependency inversion.
-- Part 3B deletes every remaining repository-public graph `RowIndex`, raw-row conversion/signature, row-indexed bitmap producer, repeated row→ID loop, legacy raw-row adapter, and public downstream row surface; it provides final product-shaped/API/lint/docs/full-gate evidence and only then closes #1093, marks M04-PR02 `Merged`, and unblocks dependents.
+- Part 3B changes graph API owners `crates/selene-graph/src/graph.rs`, `crates/selene-graph/src/lib.rs`, and `crates/selene-graph/src/store.rs` after downstream migration to remove public `RowIndex` exports, raw-row producers, and row↔ID APIs; it deletes every remaining legacy raw-row adapter and public downstream row surface, provides final product-shaped/API/lint/docs/full-gate evidence, and only then closes #1093, marks M04-PR02 `Merged`, and unblocks dependents.
 - Typed set algebra rejects graph, generation, or snapshot-layout mismatches with typed errors rather than silently translating; node/edge kind mismatch is prevented at compile time by sealed kind markers, without requiring an erased runtime kind API merely to return an error.
 
 ### Delivery parts
@@ -1484,11 +1484,14 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
 
 #### Part 4 — Part 3B: Downstream migration and final public-row deletion
 
-- **Outcome:** Migrate algorithms and private dense projections, GQL optimizer/runtime/builtins, testing adapters, and the facade boundary to typed candidates or ID-safe resolvers; delete every remaining repository-public graph row surface and legacy raw-row adapter; then supply final product-shaped, API, lint, docs, and closure evidence.
+- **Outcome:** Migrate algorithms and private dense projections, GQL optimizer/runtime/builtins, testing adapters, and the facade boundary to typed candidates or ID-safe resolvers; after downstream migration, change the graph API owners `graph.rs`, `lib.rs`, and `store.rs` to remove public `RowIndex` exports, raw-row producers, and row↔ID APIs; then supply final product-shaped, API, lint, docs, and closure evidence.
 - **Budgets:** at most 25 production files and 1,500 net non-generated lines.
 - **Structured state after:** work item `Merged`; issue `Closed`; dependents unblocked `true`; bridge `Deleted`.
 - **Required exact diff gate:** `python3 -B .github/scripts/check-v2-plan.py --root . --delivery-part M04-PR02:4 --diff-base <exact-base-commit> --diff-head <exact-head-commit>`
 - **Exact production paths:**
+  - `crates/selene-graph/src/graph.rs`
+  - `crates/selene-graph/src/lib.rs`
+  - `crates/selene-graph/src/store.rs`
   - `crates/selene-algorithms/src/projection.rs`
   - `crates/selene-algorithms/src/projection/csr.rs`
   - `crates/selene-algorithms/src/projection/row_index.rs`
@@ -1513,7 +1516,7 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
   - `crates/selene-db/src/lib.rs`
 - **Acceptance:**
   - Algorithms/private dense projections, GQL optimizer/runtime/builtins, testing adapters, and facade-boundary consumers use typed candidates or ID-safe resolvers; unlisted algorithm modules compile unchanged through a strictly internal dense projection abstraction that is neither a public graph storage-row API nor a compatibility alias.
-  - Public API and repository lint evidence finds no remaining repository-public graph `RowIndex`, raw-row conversion/signature, row-indexed bitmap producer, repeated row-to-ID loop, legacy raw-row adapter, public downstream surface, or graph-internal bridge.
+  - After downstream migration, `crates/selene-graph/src/graph.rs`, `crates/selene-graph/src/lib.rs`, and `crates/selene-graph/src/store.rs` remove public `RowIndex` exports, raw-row producers, and row↔ID APIs; public API and repository lint evidence finds no remaining raw-row conversion/signature, row-indexed bitmap producer, repeated row-to-ID loop, legacy raw-row adapter, public downstream surface, or graph-internal bridge.
   - Facade/session `DatabaseId` ingress remains validated without lower-to-upper dependency inversion, and product-shaped algorithm/projection, optimizer/resolver, common-query, facade, and testing evidence stays within reviewed bounds.
   - Final focused/API/lint/docs/workspace gates, issue mapping, and production-file/net-line accounting pass outside this exact production-path inventory.
 - **Bridge/deletion state:** The Part 3A graph-internal bridge remains `Deleted` without regression; delete every remaining legacy row alias/adapter, repository-public graph row surface, raw-row signature/conversion, row-indexed bitmap producer, and repeated row-to-ID loop, while the existing unbound stable-`NodeId` `VectorCandidateSet` remains outside bridge debt.
@@ -1559,7 +1562,7 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
 - Part 3A: focused graph read/search/index regressions prove every `trusted_rows` consumer migrated, bridge deletion did not weaken liveness/generation/layout checks or deterministic/vector-skip semantics, and no equivalent raw-row bridge or facade crossing remains.
 - Part 3A: API and row-arithmetic lint evidence proves both bridge methods are deleted while only exact Part 3B downstream public-row debt remains, and the exact D-021 diff gate passes.
 - Part 3B: product-shaped algorithm/projection, GQL optimizer/resolver/runtime/builtin, common-query, testing, facade `DatabaseId` ingress, and dependency-direction suites pass on the typed graph substrate; unlisted algorithm modules compile unchanged through the internal-only dense projection abstraction.
-- Part 3B final: public API snapshot and row-arithmetic lint prove deletion of public row signatures/conversions/bitmap producers, repeated row→ID loops, legacy raw-row adapters, and all public downstream row surfaces without bridge-state regression.
+- Part 3B final: graph API-owner regressions plus public API snapshot and row-arithmetic lint prove `graph.rs`, `lib.rs`, and `store.rs` delete public `RowIndex` exports, raw-row producers, row↔ID APIs, repeated row→ID loops, legacy raw-row adapters, and all public downstream row surfaces without bridge-state regression.
 - Each part: focused and affected workspace gates plus changed-production-file and net non-generated-line accounting prove independent D-021 default-cap compliance; an unlisted required production path fails planning review.
 
 ### Review focus
@@ -1587,7 +1590,7 @@ After the already-completed parser CI prerequisite, deliver M04-PR02 as exactly 
 - Parts 1 and 2 only: the named Part 3A graph-internal lower-row bridge is the minimum crate-private trusted row iterator/resolver needed solely by the exact Part 3A inventory; it must not cross the stable `selene-db` facade or be advertised/documented as compatibility.
 - Existing `VectorCandidateSet` is outside the row-bridge contract and remains an unbound stable-`NodeId` helper after Parts 3A and 3B; pinned-snapshot liveness-only binding does not delete or reclassify it.
 - Part 3A deletes both named graph-internal bridge methods without a renamed/equivalent bridge, sets structured bridge state to `Deleted`, and retains only current public downstream raw-row APIs strictly needed by exact Part 3B consumers; this does not complete M04-PR02, close #1093, change status, or unblock dependents.
-- Part 3B must not regress the `Deleted` bridge state; it deletes every remaining legacy raw-row adapter, repository-public graph row surface, raw-row signature/conversion, row-indexed bitmap producer, and repeated row→ID loop, so final acceptance has no compatibility bridge or public downstream row debt.
+- Part 3B must not regress the `Deleted` bridge state; after downstream migration, its `graph.rs`, `lib.rs`, and `store.rs` owners delete public `RowIndex` exports, raw-row producers, row↔ID APIs, every remaining legacy raw-row adapter, and repository-public graph row surface, so final acceptance has no compatibility bridge or public downstream row debt.
 
 <a id="m04-pr03"></a>
 ## M04-PR03 — Add Explicit Directed and Undirected Edge Storage
