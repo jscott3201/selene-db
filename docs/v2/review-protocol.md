@@ -18,11 +18,13 @@
 - May merge only after every eligibility condition below is satisfied and the
   user has explicitly authorized merge.
 
-**Independent read-only reviewer pair**
+**Independent read-only review**
 
-- Each reviewer inspects the exact diff, handoff, source context, tests,
+- One independent read-only review is the default; add a focused second lens
+  where a distinct durability, concurrency, or complex semantic risk warrants it.
+- Reviewers inspect the exact diff, handoff, source context, tests,
   generated evidence, and CI at the same named head SHA.
-- Each independently checks scope, architecture, semantics, diagnostics,
+- Each reviewer independently checks scope, architecture, semantics, diagnostics,
   performance evidence, failure behavior, and bridge deletion.
 - Reviewers return PASS, FIX, or REPLAN without editing, approving, reacting,
   merging, or adopting the implementer or orchestrator's conclusions.
@@ -81,7 +83,7 @@ The orchestrator may merge only when all of these conditions hold:
 
 - the final reviewed head is unchanged;
 - required checks report green for that exact head;
-- the final review pair is Blocker/Major-clean;
+- the final review is Blocker/Major-clean;
 - repository policy and branch protection permit merge;
 - the PR scope and implementation worktree state are clean; and
 - the user has explicitly authorized merge. Authorization may be a standing
@@ -102,8 +104,8 @@ After M00-PR03 merges, the desired required contexts on `development` are:
 
 Before M00-PR03, authenticated settings show only the first four contexts and
 no required-review rule. Adding the two contexts is a post-merge owner/settings
-action; this PR does not mutate branch protection. The independent reviewer
-pair is the configured 2.0 review control, so the policy does not require a
+action; this PR does not mutate branch protection. Independent read-only review
+is the configured 2.0 review control, so the policy does not require a
 GitHub self-approval that the acting account cannot provide.
 
 ## Finding severity
@@ -119,8 +121,8 @@ GitHub self-approval that the acting account cannot provide.
 
 ## Bounded review loop
 
-Each cycle reviews one immutable head SHA. Both independent reviewers examine
-that same head. Cycle 1 may produce one batched repair for confirmed Blocker and
+Each cycle reviews one immutable head SHA. Reviewers examine that same head.
+Cycle 1 may produce one batched repair for confirmed Blocker and
 Major findings. Cycle 2 reviews the repaired head and must be
 Blocker/Major-clean or return REPLAN. There is no third cycle. Minor and
 Follow-up observations are tracked without changing the PR and do not trigger

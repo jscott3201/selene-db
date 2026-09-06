@@ -54,9 +54,10 @@ items merge.
 The implementer edits repository files and runs tests only. It does not stage,
 commit, push, create or update a PR, submit review output, or merge. The
 orchestrator owns commits, pushes, non-draft PR creation and updates,
-consolidated independent-review comments, and eligible authorized merges. An
-independent read-only reviewer pair reviews the exact head without adopting the
-implementer or orchestrator's conclusions.
+consolidated independent-review comments, and eligible authorized merges. One
+independent read-only review is the default (with a focused second lens when
+useful for durability, concurrency, or complex semantic risk) without adopting
+the implementer or orchestrator's conclusions.
 
 The orchestrator may merge only when the final reviewed head is unchanged,
 required exact-head checks are green, final review is Blocker/Major-clean,

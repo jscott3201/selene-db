@@ -6,7 +6,10 @@
    issue state, and applicable instructions.
 2. Read the [program entry point](README.md) and
    [finalized decisions](decisions/finalized.md).
-3. Read the owning [milestone](roadmap/milestones.md) and exact work item.
+3. Read the active 2.0 finish plan ([start here](roadmap/00-START-HERE.md) and
+   [master roadmap](roadmap/02-MASTER-ROADMAP.md)) and the assigned milestone/PR
+   in `docs/v2/roadmap/`. Historical registers (such as
+   [milestones.md](roadmap/milestones.md)) are archival only.
 4. Inspect current source, tests, benchmarks, issue evidence, and prior merged
    handoffs at named revisions.
 
@@ -40,14 +43,17 @@ agents do not edit the same seam concurrently.
 
 ## Worktree handoff and review
 
-Use the work item's conventional scope and keep one invariant within D-021.
-The implementer edits and tests, then returns the worktree and handoff. It does
-not stage, commit, push, create or update a PR, submit a review, or merge. The
-orchestrator owns those Git and GitHub mutations, including the non-draft PR and
-one consolidated comment containing the independent reviewers' conclusions.
+Shape the PR around one coherent, reviewable behavior and its acceptance
+evidence within D-021. Necessary callers, downstream migrations, and tests
+move with the change. The implementer edits and tests, then returns the
+worktree and handoff. It does not stage, commit, push, create or update a PR,
+submit a review, or merge. The orchestrator owns those Git and GitHub mutations,
+including the non-draft PR and one consolidated comment containing the
+independent review conclusions.
 
-Two read-only reviewers independently inspect the same immutable head. The
-orchestrator may merge only after that head remains unchanged, required
+Independent read-only review evaluates the exact head (with a focused second lens
+where a distinct durability, concurrency, or complex semantic risk warrants it).
+The orchestrator may merge only after that head remains unchanged, required
 exact-head checks are green, final review is Blocker/Major-clean, repository
 policy permits the merge, scope and worktree state are clean, and the user has
 explicitly authorized it. A changed head voids PASS. Self-approval, auto-merge,

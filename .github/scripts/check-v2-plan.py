@@ -16,9 +16,6 @@ from urllib.parse import unquote, urlsplit
 
 PLAN = pathlib.Path("docs/v2/roadmap/plan.json")
 SCHEMA = pathlib.Path("docs/v2/roadmap/plan.schema.json")
-MILESTONES = pathlib.Path("docs/v2/roadmap/milestones.md")
-WORK_ITEMS_LOW = pathlib.Path("docs/v2/roadmap/work-items-00-04.md")
-WORK_ITEMS_HIGH = pathlib.Path("docs/v2/roadmap/work-items-05-10.md")
 DECISIONS = pathlib.Path("docs/v2/decisions/finalized.md")
 ISSUES = pathlib.Path("docs/v2/issue-ownership.md")
 PULL_REQUEST_TEMPLATE = pathlib.Path(".github/pull_request_template.md")
@@ -33,54 +30,31 @@ EXPECTED_ISSUES = {1088, 1092, 1093, 1094, 1097, 1128, 1137}
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 ANCHOR_RE = re.compile(r'<a\s+id=["\']([^"\']+)["\']\s*></a>', re.IGNORECASE)
 LOCAL_DIRECTORY_RE = re.compile(r"(?<![A-Za-z0-9/])(_[A-Za-z0-9][A-Za-z0-9_-]*)/")
-SAFE_PRODUCTION_PATH_RE = re.compile(
-    r"(?!/)(?!.*(?:^|/)\.\.?(?:/|$))(?!.*//)(?!.*\\)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"
+
+EXPECTED_LEGACY_WORK_ITEMS = frozenset(
+    [
+        *(f"M00-PR0{i}" for i in range(1, 5)),
+        *(f"M01-PR0{i}" for i in range(1, 7)),
+        *(f"M02-PR0{i}" for i in range(1, 6)),
+        *(f"M03-PR0{i}" for i in range(1, 6)),
+        *(f"M04-PR0{i}" for i in range(1, 6)),
+        *(f"M05-PR0{i}" for i in range(1, 7)),
+        *(f"M06-PR0{i}" for i in range(1, 8)),
+        *(f"M07-PR0{i}" for i in range(1, 7)),
+        *(f"M08-PR0{i}" for i in range(1, 7)),
+        *(f"M09-PR0{i}" for i in range(1, 9)),
+        *(f"M10-PR0{i}" for i in range(1, 8)),
+    ]
 )
-DELIVERY_SELECTOR_RE = re.compile(r"(M(?:0[0-9]|10)-PR[0-9]{2}):([1-9][0-9]*)")
-MAX_PRODUCTION_FILES = 25
-MAX_NET_NON_GENERATED_LINES = 1_500
-NON_PRODUCTION_SOURCE_DIRS = {"tests", "benches", "examples", "docs", "generated"}
-M04_PART_3A_PRODUCTION_PATHS = (
-    "crates/selene-graph/src/candidate_set.rs",
-    "crates/selene-graph/src/graph.rs",
-    "crates/selene-graph/src/lib.rs",
-    "crates/selene-graph/src/store.rs",
-    "crates/selene-graph/src/text_index.rs",
-    "crates/selene-graph/src/vector_search.rs",
-    "crates/selene-graph/src/json_search.rs",
-    "crates/selene-graph/src/json_search_candidates.rs",
-    "crates/selene-graph/src/text_search.rs",
-    "crates/selene-graph/src/vector_search/approx_turbo_quant.rs",
-    "crates/selene-graph/src/vector_search/score.rs",
-    "crates/selene-graph/src/vector_search/exact_batch.rs",
-    "crates/selene-graph/src/vector_search/score_candidate_batch.rs",
-)
-M04_PART_3B_PRODUCTION_PATHS = (
-    "crates/selene-graph/src/graph.rs",
-    "crates/selene-graph/src/lib.rs",
-    "crates/selene-graph/src/store.rs",
-    "crates/selene-algorithms/src/projection.rs",
-    "crates/selene-algorithms/src/projection/csr.rs",
-    "crates/selene-algorithms/src/projection/row_index.rs",
-    "crates/selene-algorithms/src/snapshot_summary.rs",
-    "crates/selene-gql/src/plan/optimize/index_catalog.rs",
-    "crates/selene-gql/src/plan/optimize/live_index_catalog.rs",
-    "crates/selene-gql/src/runtime/edge_access.rs",
-    "crates/selene-gql/src/runtime/expand.rs",
-    "crates/selene-gql/src/runtime/property_filter_rows.rs",
-    "crates/selene-gql/src/runtime/questioned.rs",
-    "crates/selene-gql/src/runtime/scan.rs",
-    "crates/selene-gql/src/runtime/scan_seed.rs",
-    "crates/selene-gql/src/runtime/builtins/retrieval_filter.rs",
-    "crates/selene-gql/src/runtime/builtins/text_search.rs",
-    "crates/selene-gql/src/runtime/builtins/vector_search_ann.rs",
-    "crates/selene-gql/src/runtime/builtins/verify/checks.rs",
-    "crates/selene-gql/src/runtime/native_algorithms/centrality/pagerank_filter.rs",
-    "crates/selene-testing/src/algo_corpus/fixtures.rs",
-    "crates/selene-testing/src/bench_fixtures.rs",
-    "crates/selene-testing/src/local_omlx/corpus.rs",
-    "crates/selene-testing/src/local_omlx/corpus/code_alias.rs",
-    "crates/selene-db/src/lib.rs",
+
+RETAINED_COMPLETED_ITEMS = frozenset(
+    [
+        *(f"M00-PR0{i}" for i in range(1, 5)),
+        *(f"M01-PR0{i}" for i in range(1, 7)),
+        *(f"M02-PR0{i}" for i in range(1, 6)),
+        *(f"M03-PR0{i}" for i in range(1, 6)),
+        "M04-PR01",
+    ]
 )
 
 
@@ -108,7 +82,9 @@ class Check:
             return None
 
 
-def json_type_matches(value: Any, expected: str) -> bool:
+def json_type_matches(value: Any, expected: str | list[str]) -> bool:
+    if isinstance(expected, list):
+        return any(json_type_matches(value, item) for item in expected)
     return {
         "object": isinstance(value, dict),
         "array": isinstance(value, list),
@@ -227,7 +203,7 @@ def check_dependency_cycles(check: Check, dependencies: dict[str, list[str]]) ->
     def visit(identity: str) -> bool:
         state[identity] = 1
         stack.append(identity)
-        for dependency in sorted(dependencies[identity]):
+        for dependency in sorted(dependencies.get(identity, [])):
             if dependency not in dependencies:
                 continue
             if state[dependency] == 1:
@@ -246,393 +222,6 @@ def check_dependency_cycles(check: Check, dependencies: dict[str, list[str]]) ->
             return
 
 
-def check_delivery_parts(check: Check, pr_id: str, parts: list[dict[str, Any]]) -> None:
-    numbers = [part["number"] for part in parts]
-    expected_numbers = list(range(1, len(parts) + 1))
-    if numbers != expected_numbers:
-        check.fail(f"{pr_id}: delivery part numbers must be sequential starting at 1; got {numbers}")
-    for part in parts:
-        location = f"{pr_id} delivery part {part['number']}"
-        paths = part["production_paths"]
-        if len(paths) > part["max_production_files"]:
-            check.fail(
-                f"{location}: production path count {len(paths)} exceeds "
-                f"max_production_files {part['max_production_files']}"
-            )
-        repeated = duplicates(paths)
-        if repeated:
-            check.fail(f"{location}: duplicate production paths: {sorted(repeated)}")
-        for path in paths:
-            if SAFE_PRODUCTION_PATH_RE.fullmatch(path) is None:
-                check.fail(f"{location}: unsafe production path {path!r}")
-        if part["max_production_files"] > MAX_PRODUCTION_FILES:
-            check.fail(f"{location}: max_production_files exceeds D-021 default {MAX_PRODUCTION_FILES}")
-        if part["max_net_non_generated_lines"] > MAX_NET_NON_GENERATED_LINES:
-            check.fail(
-                f"{location}: max_net_non_generated_lines exceeds D-021 default "
-                f"{MAX_NET_NON_GENERATED_LINES}"
-            )
-
-    transition_orders = {
-        "work_item_status_after": {"Unmerged": 0, "Merged": 1},
-        "issue_state_after": {"Open": 0, "Closed": 1},
-        "dependents_unblocked_after": {False: 0, True: 1},
-        "bridge_state_after": {"Retained": 0, "Deleted": 1},
-    }
-    for field, order in transition_orders.items():
-        previous = -1
-        for part in parts:
-            current = order[part[field]]
-            if current < previous:
-                check.fail(f"{pr_id}: {field} regresses at delivery part {part['number']}")
-            previous = current
-    for part in parts:
-        if part["dependents_unblocked_after"] and part["work_item_status_after"] != "Merged":
-            check.fail(
-                f"{pr_id} delivery part {part['number']}: dependents cannot be unblocked "
-                "before the work item is Merged"
-            )
-
-
-def check_m04_delivery_transitions(check: Check, parts: list[dict[str, Any]]) -> None:
-    expected_titles = {
-        3: "Part 3A: Graph-internal bridge deletion",
-        4: "Part 3B: Downstream migration and final public-row deletion",
-    }
-    for number, title in expected_titles.items():
-        if parts[number - 1]["title"] != title:
-            check.fail(f"M04-PR02 delivery part {number}: title must identify {title.split(':', 1)[0]}")
-    expected = (
-        ("Unmerged", "Open", False, "Retained"),
-        ("Unmerged", "Open", False, "Retained"),
-        ("Unmerged", "Open", False, "Deleted"),
-        ("Merged", "Closed", True, "Deleted"),
-    )
-    fields = (
-        "work_item_status_after",
-        "issue_state_after",
-        "dependents_unblocked_after",
-        "bridge_state_after",
-    )
-    for part, values in zip(parts, expected, strict=True):
-        for field, value in zip(fields, values, strict=True):
-            if part[field] != value:
-                check.fail(
-                    f"M04-PR02 delivery part {part['number']}: {field} must be "
-                    f"{value!r}, got {part[field]!r}"
-                )
-    for number, label, expected_paths in (
-        (3, "Part 3A", M04_PART_3A_PRODUCTION_PATHS),
-        (4, "Part 3B", M04_PART_3B_PRODUCTION_PATHS),
-    ):
-        actual_paths = tuple(parts[number - 1]["production_paths"])
-        if actual_paths != expected_paths:
-            check.fail(
-                f"M04-PR02 delivery part {number}: production_paths must match "
-                f"the exact {label} inventory"
-            )
-
-
-def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
-    meta = plan["meta"]
-    collections = {
-        "milestone": plan["milestones"],
-        "work item": plan["pull_requests"],
-        "issue": plan["issues"],
-        "decision": plan["decisions"],
-    }
-    actual = {name: len(items) for name, items in collections.items()}
-    declared = {
-        "milestone": meta["milestone_count"],
-        "work item": meta["pr_count"],
-        "issue": meta["issue_count"],
-        "decision": meta["decision_count"],
-    }
-    expected = {"milestone": 11, "work item": 65, "issue": 7, "decision": 22}
-    for name in expected:
-        if actual[name] != expected[name] or declared[name] != expected[name]:
-            check.fail(f"plan counts: {name} declared={declared[name]} actual={actual[name]} expected={expected[name]}")
-
-    milestones = {item["id"]: item for item in plan["milestones"]}
-    prs = {item["id"]: item for item in plan["pull_requests"]}
-    issues = {item["number"]: item for item in plan["issues"]}
-    decisions = {item["id"]: item for item in plan["decisions"]}
-    for label, source, mapped in (
-        ("milestone", plan["milestones"], milestones),
-        ("work item", plan["pull_requests"], prs),
-        ("issue", plan["issues"], issues),
-        ("decision", plan["decisions"], decisions),
-    ):
-        key = "number" if label == "issue" else "id"
-        repeated = duplicates(item[key] for item in source)
-        if repeated:
-            check.fail(f"duplicate {label} IDs: {sorted(repeated)}")
-        if len(mapped) != len(source):
-            check.fail(f"{label} IDs are not unique")
-
-    expected_milestones = {f"M{number:02d}" for number in range(11)}
-    if set(milestones) != expected_milestones:
-        check.fail(f"milestone set differs: {sorted(set(milestones) ^ expected_milestones)}")
-    if set(issues) != EXPECTED_ISSUES:
-        check.fail(f"issue set differs: {sorted(set(issues) ^ EXPECTED_ISSUES)}")
-    expected_decisions = {f"D-{number:03d}" for number in range(1, 23)}
-    if set(decisions) != expected_decisions:
-        check.fail(f"decision set differs: {sorted(set(decisions) ^ expected_decisions)}")
-
-    memberships: list[str] = []
-    for milestone_id, milestone in milestones.items():
-        if milestone["number"] != int(milestone_id[1:]):
-            check.fail(f"{milestone_id}: number does not match ID")
-        for dependency in milestone["dependencies"]:
-            if dependency not in milestones and dependency not in prs:
-                check.fail(f"{milestone_id}: unknown dependency {dependency}")
-        memberships.extend(milestone["pr_ids"])
-        for pr_id in milestone["pr_ids"]:
-            if pr_id not in prs:
-                check.fail(f"{milestone_id}: unknown member {pr_id}")
-            elif prs[pr_id]["milestone"] != milestone_id:
-                check.fail(f"{pr_id}: milestone membership disagrees with {milestone_id}")
-    repeated_members = duplicates(memberships)
-    if repeated_members:
-        check.fail(f"work items appear in multiple milestones: {sorted(repeated_members)}")
-    if set(memberships) != set(prs):
-        check.fail(f"milestone membership differs: {sorted(set(memberships) ^ set(prs))}")
-
-    for pr_id, pr in prs.items():
-        if pr_id[:3] != pr["milestone"] or int(pr_id[-2:]) != pr["number"]:
-            check.fail(f"{pr_id}: owner milestone or number does not match ID")
-        parts = pr.get("delivery_parts", [])
-        if parts:
-            check_delivery_parts(check, pr_id, parts)
-        if pr_id == "M04-PR02" and len(parts) != 4:
-            check.fail(f"M04-PR02: delivery_parts must contain exactly 4 parts; got {len(parts)}")
-        elif pr_id == "M04-PR02":
-            check_m04_delivery_transitions(check, parts)
-        for dependency in pr["dependencies"]:
-            if dependency not in prs:
-                check.fail(f"{pr_id}: unknown dependency {dependency}")
-        for issue in pr["issues"]:
-            if issue not in issues:
-                check.fail(f"{pr_id}: references unknown issue #{issue}")
-
-    dependency_graph = {identity: record["dependencies"] for identity, record in milestones.items()}
-    dependency_graph.update(
-        {
-            identity: [*record["dependencies"], record["milestone"]]
-            for identity, record in prs.items()
-        }
-    )
-    check_dependency_cycles(check, dependency_graph)
-
-    issue_references: dict[int, list[str]] = {number: [] for number in issues}
-    for pr_id, pr in prs.items():
-        for number in pr["issues"]:
-            issue_references.setdefault(number, []).append(pr_id)
-    for number, issue in issues.items():
-        owners = issue_references.get(number, [])
-        if owners != [issue["owner"]]:
-            check.fail(f"issue #{number}: owner={issue['owner']} work-item references={owners}")
-
-    for pr_id, pr in prs.items():
-        if pr["status"] == "Merged":
-            unmerged = [
-                dependency
-                for dependency in pr["dependencies"]
-                if dependency in prs and prs[dependency]["status"] != "Merged"
-            ]
-            if unmerged:
-                check.fail(f"{pr_id}: merged work item has unmerged dependencies: {unmerged}")
-        for field in ("scope", "non_goals", "acceptance", "tests", "review_focus", "stop_conditions", "bridge"):
-            if not pr[field]:
-                check.fail(f"{pr_id}: {field} contract is empty")
-    for prerequisite in ("M00-PR03", "M00-PR04"):
-        if prs[prerequisite]["status"] != "Merged":
-            check.fail(
-                f"{prerequisite}: prerequisite status must be Merged, "
-                f"got {prs[prerequisite]['status']}"
-            )
-
-
-def is_production_rust_path(raw_path: str) -> bool:
-    """Classify D-021 production files from an exact committed diff.
-
-    Production is tracked Rust below crates/<crate>/src. Test-only files and
-    nested tests/benches/examples/docs/generated trees are excluded, as are
-    conventionally named generated Rust artifacts. Standard top-level crate
-    benches, examples, tests, and docs are outside src and therefore excluded.
-    """
-    path = pathlib.PurePosixPath(raw_path)
-    parts = path.parts
-    if path.is_absolute() or len(parts) < 4 or parts[0] != "crates" or parts[2] != "src":
-        return False
-    if path.suffix != ".rs" or any(part in NON_PRODUCTION_SOURCE_DIRS for part in parts[3:-1]):
-        return False
-    name = parts[-1]
-    return not (
-        name == "tests.rs"
-        or name.endswith("_tests.rs")
-        or name == "generated.rs"
-        or name.endswith("_generated.rs")
-    )
-
-
-def run_git(check: Check, arguments: list[str], purpose: str) -> subprocess.CompletedProcess[bytes] | None:
-    try:
-        result = subprocess.run(
-            ["git", *arguments],
-            cwd=check.root,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except OSError as error:
-        check.fail(f"delivery diff: cannot run git for {purpose}: {error}")
-        return None
-    if result.returncode != 0:
-        detail = result.stderr.decode("utf-8", errors="replace").strip() or f"exit {result.returncode}"
-        check.fail(f"delivery diff: git {purpose} failed: {detail}")
-        return None
-    return result
-
-
-def resolve_commit(check: Check, revision: str, label: str) -> str | None:
-    result = run_git(
-        check,
-        ["rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}"],
-        f"resolve {label} commit {revision!r}",
-    )
-    if result is None:
-        return None
-    commit = result.stdout.decode("ascii", errors="replace").strip()
-    if re.fullmatch(r"[0-9a-fA-F]{40,64}", commit) is None:
-        check.fail(f"delivery diff: git resolved {label} to an invalid commit ID {commit!r}")
-        return None
-    return commit.lower()
-
-
-def production_diff_rows(
-    check: Check,
-    base: str,
-    head: str,
-) -> dict[str, tuple[int, int] | None] | None:
-    result = run_git(
-        check,
-        [
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-renames",
-            "--numstat",
-            "-z",
-            f"{base}...{head}",
-            "--",
-        ],
-        f"numstat {base}...{head}",
-    )
-    if result is None:
-        return None
-    rows: dict[str, tuple[int, int] | None] = {}
-    for record in result.stdout.split(b"\0"):
-        if not record:
-            continue
-        fields = record.split(b"\t", 2)
-        if len(fields) != 3:
-            check.fail("delivery diff: git numstat produced an unparseable row")
-            return None
-        try:
-            path = fields[2].decode("utf-8")
-        except UnicodeDecodeError:
-            check.fail("delivery diff: git numstat produced a non-UTF-8 path")
-            return None
-        if not is_production_rust_path(path):
-            continue
-        if fields[0] == b"-" or fields[1] == b"-":
-            rows[path] = None
-            continue
-        try:
-            rows[path] = (int(fields[0]), int(fields[1]))
-        except ValueError:
-            check.fail(f"delivery diff: git numstat counts are invalid for {path!r}")
-            return None
-    return dict(sorted(rows.items()))
-
-
-def delivery_diff_requested(check: Check, args: argparse.Namespace) -> bool:
-    values = (args.delivery_part, args.diff_base, args.diff_head)
-    if not any(value is not None for value in values):
-        return False
-    if any(value is None for value in values):
-        check.fail("delivery diff: --delivery-part, --diff-base, and --diff-head are required together")
-        return False
-    return True
-
-
-def check_delivery_part_diff(
-    check: Check,
-    plan: dict[str, Any],
-    selector: str,
-    base_revision: str,
-    head_revision: str,
-) -> str | None:
-    matched = DELIVERY_SELECTOR_RE.fullmatch(selector)
-    if matched is None:
-        check.fail(f"delivery diff: malformed selector {selector!r}; expected WORK-ITEM:PART")
-        return None
-    pr_id, number_text = matched.groups()
-    work_item = next((item for item in plan["pull_requests"] if item["id"] == pr_id), None)
-    if work_item is None:
-        check.fail(f"delivery diff: unknown work item {pr_id}")
-        return None
-    part_number = int(number_text)
-    part = next((item for item in work_item.get("delivery_parts", []) if item["number"] == part_number), None)
-    if part is None:
-        check.fail(f"delivery diff: unknown delivery part {pr_id}:{part_number}")
-        return None
-
-    base = resolve_commit(check, base_revision, "base")
-    head = resolve_commit(check, head_revision, "head")
-    if base is None or head is None:
-        return None
-    rows = production_diff_rows(check, base, head)
-    if rows is None:
-        return None
-
-    location = f"delivery diff {pr_id}:{part_number}"
-    inventory = set(part["production_paths"])
-    unlisted = sorted(set(rows) - inventory)
-    if unlisted:
-        check.fail(f"{location}: unlisted production paths: {unlisted}")
-    binary = sorted(path for path, counts in rows.items() if counts is None)
-    if binary:
-        check.fail(f"{location}: unaccountable binary production rows: {binary}")
-    changed_files = len(rows)
-    if changed_files > part["max_production_files"]:
-        check.fail(
-            f"{location}: changed production file count {changed_files} exceeds declared limit "
-            f"{part['max_production_files']}"
-        )
-    if changed_files > MAX_PRODUCTION_FILES:
-        check.fail(
-            f"{location}: changed production file count {changed_files} exceeds D-021 default "
-            f"{MAX_PRODUCTION_FILES}"
-        )
-    net_lines = sum(counts[0] - counts[1] for counts in rows.values() if counts is not None)
-    if net_lines > part["max_net_non_generated_lines"]:
-        check.fail(
-            f"{location}: net production line change {net_lines} exceeds declared limit "
-            f"{part['max_net_non_generated_lines']}"
-        )
-    if net_lines > MAX_NET_NON_GENERATED_LINES:
-        check.fail(
-            f"{location}: net production line change {net_lines} exceeds D-021 default "
-            f"{MAX_NET_NON_GENERATED_LINES}"
-        )
-    return (
-        f"delivery part diff passed: {pr_id}:{part_number} base={base} head={head} "
-        f"production_files={changed_files} net_lines={net_lines}"
-    )
-
-
 def anchors(text: str) -> set[str]:
     return set(ANCHOR_RE.findall(text))
 
@@ -648,28 +237,204 @@ def anchor_section(text: str, identity: str) -> str | None:
     return text[start:end]
 
 
+def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
+    milestones = plan.get("milestones", [])
+    prs = plan.get("pull_requests", [])
+    issues = plan.get("issues", [])
+    legacy_items = plan.get("legacy_work_items", [])
+
+    # Unique milestone IDs and unique PR IDs
+    milestone_ids = [item["id"] for item in milestones]
+    repeated_milestones = duplicates(milestone_ids)
+    if repeated_milestones:
+        check.fail(f"duplicate milestone IDs: {sorted(repeated_milestones)}")
+
+    pr_ids = [item["id"] for item in prs]
+    repeated_prs = duplicates(pr_ids)
+    if repeated_prs:
+        check.fail(f"duplicate work item IDs: {sorted(repeated_prs)}")
+
+    milestones_by_id = {item["id"]: item for item in milestones}
+    prs_by_id = {item["id"]: item for item in prs}
+
+    for pr_id, pr in prs_by_id.items():
+        m_id = pr.get("milestone")
+        if m_id is not None and m_id not in milestones_by_id:
+            check.fail(f"{pr_id}: references unknown milestone {m_id}")
+
+    # Check depends_on: all referenced dependencies must exist in pull_requests
+    for pr_id, pr in prs_by_id.items():
+        for dependency in pr.get("depends_on", []):
+            if dependency not in prs_by_id:
+                check.fail(f"{pr_id}: unknown dependency {dependency}")
+
+    # Topological cycle detection
+    pr_dependencies = {pr_id: pr.get("depends_on", []) for pr_id, pr in prs_by_id.items()}
+    check_dependency_cycles(check, pr_dependencies)
+
+    # Check dependency status: if a PR has state "merged", all its dependencies must also be "merged"
+    for pr_id, pr in prs_by_id.items():
+        if pr.get("state") == "merged":
+            unmerged = [
+                dep
+                for dep in pr.get("depends_on", [])
+                if dep in prs_by_id and prs_by_id[dep].get("state") != "merged"
+            ]
+            if unmerged:
+                check.fail(f"{pr_id}: merged work item has unmerged dependencies: {unmerged}")
+
+    # Check integration_gates: unique IDs, non-empty requires, valid PR references
+    gates = plan.get("integration_gates", [])
+    gate_ids = [gate["id"] for gate in gates]
+    repeated_gates = duplicates(gate_ids)
+    if repeated_gates:
+        check.fail(f"duplicate integration gate IDs: {sorted(repeated_gates)}")
+
+    for gate in gates:
+        g_id = gate.get("id", "unknown")
+        requires = gate.get("requires", [])
+        if not requires:
+            check.fail(f"integration gate {g_id}: requires array must be non-empty")
+        for req_pr in requires:
+            if req_pr not in prs_by_id:
+                check.fail(f"integration gate {g_id}: unknown required work item {req_pr}")
+
+    # Check issues: all 7 issues in plan["issues"] must map to valid closure_owner PRs
+    issue_numbers = [item["number"] for item in issues]
+    repeated_issues = duplicates(issue_numbers)
+    if repeated_issues:
+        check.fail(f"duplicate issue numbers: {sorted(repeated_issues)}")
+    if set(issue_numbers) != EXPECTED_ISSUES:
+        check.fail(f"issue set differs: {sorted(set(issue_numbers) ^ EXPECTED_ISSUES)}")
+
+    for issue in issues:
+        number = issue["number"]
+        owner = issue.get("closure_owner")
+        if not owner:
+            check.fail(f"issue #{number}: missing closure_owner")
+        elif owner not in prs_by_id:
+            check.fail(f"issue #{number}: unknown closure_owner {owner}")
+
+    # Cross-check issues with docs/v2/issue-ownership.md
+    issue_text = check.read_text(ISSUES)
+    for issue in issues:
+        identity = f"issue-{issue['number']}"
+        section = anchor_section(issue_text, identity)
+        if section is not None:
+            expected = (f"#{issue['number']}", issue.get("closure_owner", ""))
+            missing = [value for value in expected if value not in section]
+            if missing:
+                check.fail(f"{ISSUES}: {identity!r} section is missing {', '.join(repr(value) for value in missing)}")
+        else:
+            check.fail(f"{ISSUES}: missing anchor section for {identity!r}")
+
+    for pr_id, pr in prs_by_id.items():
+        for issue_num in pr.get("issues", []):
+            if issue_num not in EXPECTED_ISSUES:
+                check.fail(f"{pr_id}: references unknown issue #{issue_num}")
+
+    # Check legacy mapping: all 65 legacy items mapped to completed or valid finish PR owners
+    legacy_by_id = {item["id"]: item for item in legacy_items}
+    repeated_legacy = duplicates(item["id"] for item in legacy_items)
+    if repeated_legacy:
+        check.fail(f"duplicate legacy work item IDs: {sorted(repeated_legacy)}")
+
+    if set(legacy_by_id) != EXPECTED_LEGACY_WORK_ITEMS:
+        check.fail(
+            f"legacy work items differ from expected 65 items: "
+            f"{sorted(set(legacy_by_id) ^ EXPECTED_LEGACY_WORK_ITEMS)}"
+        )
+
+    valid_legacy_states = {"merged", "unmerged", "partial"}
+    for item in legacy_items:
+        state = item.get("state")
+        if state not in valid_legacy_states:
+            check.fail(
+                f"{item['id']}: legacy item state {state!r} must be one of {sorted(valid_legacy_states)}"
+            )
+
+    for item_id, item in legacy_by_id.items():
+        if item_id in RETAINED_COMPLETED_ITEMS:
+            if item.get("state") != "merged":
+                check.fail(f"{item_id}: completed legacy item must have state 'merged', got {item.get('state')!r}")
+        else:
+            if item.get("state") == "merged":
+                check.fail(
+                    f"{item_id}: incomplete legacy item cannot have state 'merged' before finish PRs complete"
+                )
+            new_owners = item.get("new_owners", [])
+            if not new_owners:
+                check.fail(f"{item_id}: incomplete legacy item must have at least one new_owner")
+            for owner in new_owners:
+                if owner not in prs_by_id:
+                    check.fail(f"{item_id}: new_owner {owner!r} not found in pull_requests")
+
+    # Bidirectional reconciliation between legacy_work_items new_owners and PR replaces
+    expected_replaces: dict[str, set[str]] = {pr_id: set() for pr_id in prs_by_id}
+    for item in legacy_items:
+        if item.get("state") != "merged":
+            for owner in item.get("new_owners", []):
+                if owner in expected_replaces:
+                    expected_replaces[owner].add(item["id"])
+                else:
+                    check.fail(f"{item['id']}: new_owner {owner!r} not found in pull_requests")
+
+    for pr_id, pr in prs_by_id.items():
+        actual = set(pr.get("replaces", []))
+        expected = expected_replaces[pr_id]
+        if actual != expected:
+            check.fail(
+                f"{pr_id}: replaces {sorted(actual)} does not match legacy work item mapping {sorted(expected)}"
+            )
+
+    # Check decision anchors in finalized decisions
+    decision_text = check.read_text(DECISIONS)
+    decision_anchors = anchors(decision_text)
+    for number in range(1, 23):
+        anchor_id = f"d-{number:03d}"
+        if anchor_id not in decision_anchors:
+            check.fail(f"{DECISIONS}: missing decision anchor {anchor_id!r}")
+
+
 def check_plan_targets(check: Check, plan: dict[str, Any]) -> None:
-    records = plan["milestones"] + plan["pull_requests"] + plan["issues"] + plan["decisions"]
-    for record in records:
-        reference = record["file"]
+    records: list[tuple[str, str | None]] = []
+    for milestone in plan.get("milestones", []):
+        records.append((milestone["id"], milestone.get("file")))
+    for pr in plan.get("pull_requests", []):
+        records.append((pr["id"], pr.get("file")))
+
+    for identity, reference in records:
+        if not reference:
+            check.fail(f"{identity}: missing file target reference")
+            continue
         path_text, separator, fragment = reference.partition("#")
-        identity = record.get("id", f"issue-{record.get('number')}")
-        if not separator or not fragment:
-            check.fail(f"{identity}: file reference needs an explicit fragment: {reference}")
-            continue
         path = pathlib.PurePosixPath(path_text)
-        if path.is_absolute() or tuple(path.parts[:2]) != ("docs", "v2"):
-            check.fail(f"{identity}: file target must be beneath docs/v2: {reference}")
+        if path.is_absolute():
+            check.fail(f"{identity}: file target must not be absolute: {reference}")
             continue
-        target = (check.root / pathlib.Path(*path.parts)).resolve()
-        if not target.is_relative_to(check.root) or any(part.startswith("_") for part in path.parts):
-            check.fail(f"{identity}: unsafe file target: {reference}")
+
+        if tuple(path.parts[:2]) == ("docs", "v2"):
+            target = (check.root / pathlib.Path(*path.parts)).resolve()
+            rel_path = path_text
+        else:
+            target = (check.root / "docs" / "v2" / "roadmap" / pathlib.Path(*path.parts)).resolve()
+            rel_path = str(target.relative_to(check.root))
+
+        if not target.is_relative_to(check.root):
+            check.fail(f"{identity}: file target escapes repository: {reference}")
+            continue
+        if any(part.startswith("_") for part in target.relative_to(check.root).parts):
+            check.fail(f"{identity}: unsafe file target in underscore directory: {reference}")
             continue
         if not target.is_file():
             check.fail(f"{identity}: missing file target: {reference}")
             continue
+        if target.stat().st_size == 0:
+            check.fail(f"{identity}: file target is empty: {reference}")
+            continue
+
         ignored = subprocess.run(
-            ["git", "check-ignore", "--quiet", "--", path_text],
+            ["git", "check-ignore", "--quiet", "--", rel_path],
             cwd=check.root,
             check=False,
             stdout=subprocess.DEVNULL,
@@ -677,8 +442,53 @@ def check_plan_targets(check: Check, plan: dict[str, Any]) -> None:
         ).returncode
         if ignored == 0:
             check.fail(f"{identity}: file target is ignored rather than trackable: {reference}")
-        if fragment not in anchors(target.read_text(encoding="utf-8")):
+        if fragment and fragment not in anchors(target.read_text(encoding="utf-8")):
             check.fail(f"{identity}: missing target fragment: {reference}")
+
+    for key in ("sources_file", "entrypoint"):
+        fname = plan.get(key)
+        if fname:
+            target = check.root / "docs" / "v2" / "roadmap" / fname
+            if not target.is_file():
+                check.fail(f"plan {key} missing: {fname}")
+
+
+def check_finish_documents(check: Check, plan: dict[str, Any]) -> None:
+    roadmap_dir = check.root / "docs" / "v2" / "roadmap"
+    for pr in plan.get("pull_requests", []):
+        pr_id = pr["id"]
+        fname = pr.get("file")
+        if not fname:
+            continue
+        target = roadmap_dir / fname
+        if target.is_file():
+            text = target.read_text(encoding="utf-8")
+            if pr_id not in text:
+                check.fail(f"{fname}: missing PR ID {pr_id!r} in document body")
+
+    for milestone in plan.get("milestones", []):
+        m_id = milestone["id"]
+        fname = milestone.get("file")
+        if not fname:
+            continue
+        target = roadmap_dir / fname
+        if target.is_file():
+            text = target.read_text(encoding="utf-8")
+            if m_id not in text:
+                check.fail(f"{fname}: missing milestone ID {m_id!r} in document body")
+
+    historical_files = (
+        "milestones.md",
+        "work-items-00-04.md",
+        "work-items-05-10.md",
+        "work-item-contract.md",
+    )
+    for fname in historical_files:
+        fpath = roadmap_dir / fname
+        if fpath.is_file():
+            text = fpath.read_text(encoding="utf-8")
+            if not text.startswith("> **Historical reference notice:"):
+                check.fail(f"{fname}: missing historical reference notice banner")
 
 
 def link_target(check: Check, source: pathlib.Path, raw: str) -> tuple[pathlib.Path, str] | None:
@@ -723,123 +533,13 @@ def check_markdown_links(check: Check) -> None:
                 target_anchors = anchors(target_path.read_text(encoding="utf-8"))
                 if fragment not in target_anchors:
                     check.fail(f"{source}: missing explicit fragment {raw!r}")
-    pdfs = sorted(path.relative_to(check.root) for path in docs.rglob("*") if path.is_file() and path.suffix.lower() == ".pdf")
+    pdfs = sorted(
+        path.relative_to(check.root)
+        for path in docs.rglob("*")
+        if path.is_file() and path.suffix.lower() == ".pdf"
+    )
     if pdfs:
         check.fail(f"docs/v2: PDF files are forbidden: {pdfs}")
-
-
-def projection_path(pr_id: str) -> str:
-    group = "00-04" if int(pr_id[1:3]) <= 4 else "05-10"
-    return f"work-items-{group}.md#{pr_id.lower()}"
-
-
-def bullet(lines: list[str]) -> str:
-    return "\n".join(f"- {line}" for line in lines)
-
-
-def render_delivery_parts(pr_id: str, parts: list[dict[str, Any]]) -> list[str]:
-    lines = ["### Delivery parts", ""]
-    for part in parts:
-        lines += [
-            f'#### Part {part["number"]} — {part["title"]}', "",
-            f'- **Outcome:** {part["outcome"]}',
-            f'- **Budgets:** at most {part["max_production_files"]} production files and '
-            f'{part["max_net_non_generated_lines"]:,} net non-generated lines.',
-            f'- **Structured state after:** work item `{part["work_item_status_after"]}`; '
-            f'issue `{part["issue_state_after"]}`; dependents unblocked '
-            f'`{str(part["dependents_unblocked_after"]).lower()}`; bridge `{part["bridge_state_after"]}`.',
-            "- **Required exact diff gate:** `python3 -B .github/scripts/check-v2-plan.py --root . "
-            f'--delivery-part {pr_id}:{part["number"]} --diff-base <exact-base-commit> '
-            "--diff-head <exact-head-commit>`",
-            "- **Exact production paths:**",
-            *(f'  - `{path}`' for path in part["production_paths"]),
-            "- **Acceptance:**",
-            *(f"  - {item}" for item in part["acceptance"]),
-            f'- **Bridge/deletion state:** {part["bridge_deletion_state"]}',
-            f'- **Completion effect:** {part["completion_effect"]}', "",
-        ]
-    return lines
-
-
-def render_work_items(plan: dict[str, Any], low: int, high: int) -> str:
-    lines = [f"# Selene DB 2.0 work items M{low:02d}–M{high:02d}", "", "<!-- Generated from plan.json; do not edit by hand. -->", "",
-             "The machine plan carries additional design, path, documentation, and benchmark metadata for each contract.", ""]
-    for pr in plan["pull_requests"]:
-        number = int(pr["milestone"][1:])
-        if not low <= number <= high:
-            continue
-        lines += [f'<a id="{pr["id"].lower()}"></a>', f'## {pr["id"]} — {pr["title"]}', "",
-                  f'- **Owner:** {pr["milestone"]}', f'- **State:** {pr["status"]}',
-                  f'- **Risk / size:** {pr["risk"]} / {pr["size"]}',
-                  f'- **Dependencies:** {", ".join(pr["dependencies"]) or "None"}',
-                  f'- **Issues:** {", ".join("#" + str(issue) for issue in pr["issues"]) or "None"}',
-                  f'- **Commit scope:** `{pr["commit_scope"]}`', "", pr["outcome"], "", "### Scope", "", bullet(pr["scope"]), "",
-                  *(render_delivery_parts(pr["id"], pr["delivery_parts"]) if pr.get("delivery_parts") else []),
-                  "### Non-goals", "", bullet(pr["non_goals"]), "", "### Acceptance evidence", "", bullet(pr["acceptance"]), "",
-                  "### Tests and gates", "", bullet(pr["tests"]), "", "### Review focus", "", bullet(pr["review_focus"]), "",
-                  "### Stop conditions", "", bullet(pr["stop_conditions"]), "", "### Bridge and deletion", "", bullet(pr["bridge"]), ""]
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def render_milestones(plan: dict[str, Any]) -> str:
-    lines = ["# Selene DB 2.0 milestones", "", "<!-- Generated from plan.json; do not edit by hand. -->", "",
-             "The dependency fields in the machine plan are authoritative. Work may overlap only after every listed dependency is satisfied.", "",
-             "| ID | Milestone | Depends on | Work items |", "|---|---|---|---|"]
-    for milestone in plan["milestones"]:
-        deps = ", ".join(milestone["dependencies"]) or "None"
-        prs = ", ".join(f"[{pr_id}]({projection_path(pr_id)})" for pr_id in milestone["pr_ids"])
-        lines.append(f'| {milestone["id"]} | {milestone["title"]} | {deps} | {prs} |')
-    lines += ["", "## Critical path", "", "`M00 → M01/M02 → M03 → M04 → M05 → M06 → M07 → M08 → M09 → M10`", ""]
-    for milestone in plan["milestones"]:
-        lines += [f'<a id="{milestone["id"].lower()}"></a>', f'## {milestone["id"]} — {milestone["title"]}', "", milestone["objective"], "",
-                  f'**Dependencies:** {", ".join(milestone["dependencies"]) or "None"}', "", "**Entry:**", "", bullet(milestone["entry"]), "",
-                  "**Exit:**", "", bullet(milestone["exit"]), ""]
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def check_projections(check: Check, plan: dict[str, Any], write: bool) -> None:
-    expected = {
-        MILESTONES: render_milestones(plan),
-        WORK_ITEMS_LOW: render_work_items(plan, 0, 4),
-        WORK_ITEMS_HIGH: render_work_items(plan, 5, 10),
-    }
-    for path, content in expected.items():
-        target = check.root / path
-        if write:
-            target.write_text(content, encoding="utf-8")
-        elif check.read_text(path) != content:
-            check.fail(f"{path}: projection is stale; run checker with --write-projections")
-
-    designated = [
-        (MILESTONES, [item["id"] for item in plan["milestones"]]),
-        (WORK_ITEMS_LOW, [item["id"] for item in plan["pull_requests"] if int(item["milestone"][1:]) <= 4]),
-        (WORK_ITEMS_HIGH, [item["id"] for item in plan["pull_requests"] if int(item["milestone"][1:]) >= 5]),
-        (DECISIONS, [item["id"] for item in plan["decisions"]]),
-        (ISSUES, [f'issue-{item["number"]}' for item in plan["issues"]]),
-    ]
-    for path, identities in designated:
-        text = check.read_text(path)
-        found = ANCHOR_RE.findall(text)
-        for identity in identities:
-            expected_anchor = identity.lower()
-            if found.count(expected_anchor) != 1:
-                check.fail(f"{path}: expected exactly one {expected_anchor!r} anchor")
-
-    decision_text = check.read_text(DECISIONS)
-    for decision in plan["decisions"]:
-        identity = decision["id"].lower()
-        section = anchor_section(decision_text, identity)
-        if section is not None and decision["decision"] not in section:
-            check.fail(f"{DECISIONS}: {identity!r} section does not contain its decision body")
-    issue_text = check.read_text(ISSUES)
-    for issue in plan["issues"]:
-        identity = f"issue-{issue['number']}"
-        section = anchor_section(issue_text, identity)
-        if section is not None:
-            expected = (f"#{issue['number']}", issue["owner"])
-            missing = [value for value in expected if value not in section]
-            if missing:
-                check.fail(f"{ISSUES}: {identity!r} section is missing {', '.join(repr(value) for value in missing)}")
 
 
 def check_repository_policy(check: Check) -> None:
@@ -853,7 +553,7 @@ def check_repository_policy(check: Check) -> None:
     role_requirements = {
         "implementer edits repository files and runs tests only": "implementer edit/test-only boundary",
         "orchestrator owns commits, pushes, non-draft pr creation and updates": "orchestrator Git/GitHub ownership",
-        "independent read-only reviewer pair": "independent reviewer pair",
+        "one independent read-only review is the default": "independent review default",
         "required exact-head checks are green": "exact-head required checks",
         "final review is blocker/major-clean": "Blocker/Major-clean review",
         "repository policy and branch protection permit the merge": "repository merge permission",
@@ -875,20 +575,37 @@ def check_repository_policy(check: Check) -> None:
         if obsolete in agents_lower:
             check.fail(f"AGENTS.md: superseded role policy remains: {obsolete!r}")
     handoff_fields = [
-        "Plan ID:", "PR URL:", "Base SHA / Head SHA / commits:", "Outcome delivered:",
-        "Files/subsystems changed:", "Public API and persisted/profile changes:",
-        "Commands and results:", "Benchmarks/fuzz/crash evidence:", "Decisions and deviations:",
-        "Temporary bridges and deletion owner:", "Known risks/follow-ups:", "Reviewer questions:",
+        "Plan ID:",
+        "PR URL:",
+        "Base SHA / Head SHA / commits:",
+        "Outcome delivered:",
+        "Files/subsystems changed:",
+        "Public API and persisted/profile changes:",
+        "Commands and results:",
+        "Benchmarks/fuzz/crash evidence:",
+        "Decisions and deviations:",
+        "Temporary bridges and deletion owner:",
+        "Known risks/follow-ups:",
+        "Reviewer questions:",
     ]
     for field in handoff_fields:
         if field not in agents:
             check.fail(f"AGENTS.md: missing required handoff field {field!r}")
     template = check.read_text(PULL_REQUEST_TEMPLATE)
     template_fields = [
-        "Plan ID", "Base / head / commits", "Objective", "Scope", "Non-goals",
-        "Deviations / replan", "Public API / persisted / profile changes",
-        "Commands and results", "Skipped validation", "Benchmark / fuzz / crash disposition",
-        "Temporary bridges / deletion owner", "Risks / follow-ups", "Reviewer questions",
+        "Plan ID",
+        "Base / head / commits",
+        "Objective",
+        "Scope",
+        "Non-goals",
+        "Deviations / replan",
+        "Public API / persisted / profile changes",
+        "Commands and results",
+        "Skipped validation",
+        "Benchmark / fuzz / crash disposition",
+        "Temporary bridges / deletion owner",
+        "Risks / follow-ups",
+        "Reviewer questions",
         "Role and merge-eligibility confirmations",
     ]
     for field in template_fields:
@@ -981,18 +698,17 @@ def check_executable_baseline(check: Check) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=pathlib.Path, required=True, help="repository root")
-    parser.add_argument("--write-projections", action="store_true", help="rewrite deterministic Markdown projections")
-    parser.add_argument("--delivery-part", help="delivery selector such as M04-PR02:1")
-    parser.add_argument("--diff-base", help="exact base commit or ref for delivery-part accounting")
-    parser.add_argument("--diff-head", help="exact head commit or ref for delivery-part accounting")
+    parser.add_argument(
+        "--write-projections",
+        action="store_true",
+        help="retained for CLI compatibility; finish plan uses individual PR documents",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     check = Check(args.root)
-    diff_requested = delivery_diff_requested(check, args)
-    diff_summary = None
     plan = check.read_json(PLAN)
     schema = check.read_json(SCHEMA)
     check_closed_schema(check, schema)
@@ -1000,28 +716,21 @@ def main() -> int:
         validate_schema_value(check, plan, schema, schema, "plan")
         if not check.errors:
             check_plan_semantics(check, plan)
-            check_projections(check, plan, args.write_projections)
             check_plan_targets(check, plan)
+            check_finish_documents(check, plan)
     check_markdown_links(check)
     check_repository_policy(check)
     check_validation_workflows(check)
     check_executable_baseline(check)
-    if not check.errors and diff_requested and isinstance(plan, dict):
-        diff_summary = check_delivery_part_diff(
-            check,
-            plan,
-            args.delivery_part,
-            args.diff_base,
-            args.diff_head,
-        )
     if check.errors:
         print("v2 plan validation failed:", file=sys.stderr)
         for error in check.errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("v2 plan validation passed: 11 milestones, 65 work items, 7 issues, 22 decisions")
-    if diff_summary is not None:
-        print(diff_summary)
+    milestone_count = len(plan.get("milestones", [])) if isinstance(plan, dict) else 0
+    pr_count = len(plan.get("pull_requests", [])) if isinstance(plan, dict) else 0
+    issue_count = len(plan.get("issues", [])) if isinstance(plan, dict) else 0
+    print(f"v2 plan validation passed: {milestone_count} milestones, {pr_count} work items, {issue_count} issues")
     return 0
 
 

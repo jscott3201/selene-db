@@ -1,3 +1,5 @@
+> **Historical reference notice:** This document is retained for historical reference and is superseded by the 2.0 Finish Plan in [00-START-HERE.md](00-START-HERE.md).
+
 # Work-item contract
 
 The [machine plan](plan.json) is the complete structured contract. The two
