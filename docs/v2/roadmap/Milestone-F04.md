@@ -1,7 +1,7 @@
 # F04 — Deliver batch execution and native retrieval
 
-**Work lane:** Execution and native adapters  
-**State:** Proposed remaining work; completed legacy foundations are not reopened.  
+**Work lane:** Execution and native adapters
+**State:** Proposed remaining work; completed legacy foundations are not reopened.
 **Start:** [F04-PR01](Milestone-F04-PR-01.md) when its actual dependencies are complete.
 
 ## Outcome

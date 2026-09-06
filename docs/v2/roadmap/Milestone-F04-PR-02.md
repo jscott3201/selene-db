@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F04-PR02 — Execute primitive query operators in batches
 
-**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)  
-**Dependencies:** [F04-PR01](Milestone-F04-PR-01.md), [F01-PR04](Milestone-F01-PR-04.md)  
-**Carries forward:** M06-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)
+**Dependencies:** [F04-PR01](Milestone-F04-PR-01.md), [F01-PR04](Milestone-F01-PR-04.md)
+**Carries forward:** M06-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-performance`; `rust-test-design`; `rust-api-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

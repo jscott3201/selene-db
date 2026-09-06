@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F03-PR04 — Complete logical lowering and remove mixed syntax/execution planning
 
-**Milestone:** [F03: Complete the semantic compiler](Milestone-F03.md)  
-**Dependencies:** [F03-PR03](Milestone-F03-PR-03.md), [F05-PR01](Milestone-F05-PR-01.md)  
-**Carries forward:** M05-PR05, M05-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F03: Complete the semantic compiler](Milestone-F03.md)
+**Dependencies:** [F03-PR03](Milestone-F03-PR-03.md), [F05-PR01](Milestone-F05-PR-01.md)
+**Carries forward:** M05-PR05, M05-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-api-design`; `rust-test-design`; `rust-review` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F03-PR02 — Unify structural types, values and reference boundaries
 
-**Milestone:** [F03: Complete the semantic compiler](Milestone-F03.md)  
-**Dependencies:** [F03-PR01](Milestone-F03-PR-01.md), [F01-PR02](Milestone-F01-PR-02.md)  
-**Carries forward:** M05-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F03: Complete the semantic compiler](Milestone-F03.md)
+**Dependencies:** [F03-PR01](Milestone-F03-PR-01.md), [F01-PR02](Milestone-F01-PR-02.md)
+**Carries forward:** M05-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-api-design`; `rust-test-design`; `rust-storage-durability` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

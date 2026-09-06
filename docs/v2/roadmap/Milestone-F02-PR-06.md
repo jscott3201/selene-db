@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F02-PR06 — Make checkpoint publication, rotation and retention one safe lifecycle
 
-**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)  
-**Dependencies:** [F02-PR05](Milestone-F02-PR-05.md)  
-**Carries forward:** M09-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)
+**Dependencies:** [F02-PR05](Milestone-F02-PR-05.md)
+**Carries forward:** M09-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-storage-durability`; `rust-async-concurrency`; `rust-test-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

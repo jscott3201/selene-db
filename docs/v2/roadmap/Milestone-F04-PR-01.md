@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F04-PR01 — Build the physical batch substrate with one working scan
 
-**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)  
-**Dependencies:** [F03-PR03](Milestone-F03-PR-03.md), [F01-PR02](Milestone-F01-PR-02.md)  
-**Carries forward:** M06-PR01, M06-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)
+**Dependencies:** [F03-PR03](Milestone-F03-PR-03.md), [F01-PR02](Milestone-F01-PR-02.md)
+**Carries forward:** M06-PR01, M06-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-api-design`; `rust-memory-layout`; `rust-test-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

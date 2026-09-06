@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F03-PR01 — Introduce immutable semantic analysis through a working query slice
 
-**Milestone:** [F03: Complete the semantic compiler](Milestone-F03.md)  
-**Dependencies:** [PLAN-01](PLAN-01.md)  
-**Carries forward:** M05-PR01, M05-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F03: Complete the semantic compiler](Milestone-F03.md)
+**Dependencies:** [PLAN-01](PLAN-01.md)
+**Carries forward:** M05-PR01, M05-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-api-design`; `module-design`; `rust-test-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F01-PR04 — Make traversal and GQL predicates obey mixed-edge semantics
 
-**Milestone:** [F01: Finish graph identity and mixed topology](Milestone-F01.md)  
-**Dependencies:** [F01-PR03](Milestone-F01-PR-03.md)  
-**Carries forward:** M04-PR04; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F01: Finish graph identity and mixed topology](Milestone-F01.md)
+**Dependencies:** [F01-PR03](Milestone-F01-PR-03.md)
+**Carries forward:** M04-PR04; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-test-design`; `rust-api-design`; `rust-review` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

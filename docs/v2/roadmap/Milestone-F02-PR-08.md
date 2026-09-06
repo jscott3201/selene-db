@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F02-PR08 — Cut over exclusively to format 2 and expose a durable integration preview
 
-**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)  
-**Dependencies:** [F02-PR07](Milestone-F02-PR-07.md)  
-**Carries forward:** M09-PR08; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)
+**Dependencies:** [F02-PR07](Milestone-F02-PR-07.md)
+**Carries forward:** M09-PR08; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-storage-durability`; `rust-api-design`; `rust-ci-release` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

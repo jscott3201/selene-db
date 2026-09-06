@@ -283,6 +283,22 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
             if unmerged:
                 check.fail(f"{pr_id}: merged work item has unmerged dependencies: {unmerged}")
 
+    # Check integration_gates: unique IDs, non-empty requires, valid PR references
+    gates = plan.get("integration_gates", [])
+    gate_ids = [gate["id"] for gate in gates]
+    repeated_gates = duplicates(gate_ids)
+    if repeated_gates:
+        check.fail(f"duplicate integration gate IDs: {sorted(repeated_gates)}")
+
+    for gate in gates:
+        g_id = gate.get("id", "unknown")
+        requires = gate.get("requires", [])
+        if not requires:
+            check.fail(f"integration gate {g_id}: requires array must be non-empty")
+        for req_pr in requires:
+            if req_pr not in prs_by_id:
+                check.fail(f"integration gate {g_id}: unknown required work item {req_pr}")
+
     # Check issues: all 7 issues in plan["issues"] must map to valid closure_owner PRs
     issue_numbers = [item["number"] for item in issues]
     repeated_issues = duplicates(issue_numbers)
@@ -329,17 +345,47 @@ def check_plan_semantics(check: Check, plan: dict[str, Any]) -> None:
             f"{sorted(set(legacy_by_id) ^ EXPECTED_LEGACY_WORK_ITEMS)}"
         )
 
+    valid_legacy_states = {"merged", "unmerged", "partial"}
+    for item in legacy_items:
+        state = item.get("state")
+        if state not in valid_legacy_states:
+            check.fail(
+                f"{item['id']}: legacy item state {state!r} must be one of {sorted(valid_legacy_states)}"
+            )
+
     for item_id, item in legacy_by_id.items():
         if item_id in RETAINED_COMPLETED_ITEMS:
             if item.get("state") != "merged":
                 check.fail(f"{item_id}: completed legacy item must have state 'merged', got {item.get('state')!r}")
         else:
+            if item.get("state") == "merged":
+                check.fail(
+                    f"{item_id}: incomplete legacy item cannot have state 'merged' before finish PRs complete"
+                )
             new_owners = item.get("new_owners", [])
             if not new_owners:
                 check.fail(f"{item_id}: incomplete legacy item must have at least one new_owner")
             for owner in new_owners:
                 if owner not in prs_by_id:
                     check.fail(f"{item_id}: new_owner {owner!r} not found in pull_requests")
+
+    # Bidirectional reconciliation between legacy_work_items new_owners and PR replaces
+    expected_replaces: dict[str, set[str]] = {pr_id: set() for pr_id in prs_by_id}
+    for item in legacy_items:
+        if item.get("state") != "merged":
+            for owner in item.get("new_owners", []):
+                if owner in expected_replaces:
+                    expected_replaces[owner].add(item["id"])
+                else:
+                    check.fail(f"{item['id']}: new_owner {owner!r} not found in pull_requests")
+
+    for pr_id, pr in prs_by_id.items():
+        actual = set(pr.get("replaces", []))
+        expected = expected_replaces[pr_id]
+        if actual != expected:
+            check.fail(
+                f"{pr_id}: replaces {sorted(actual)} does not match legacy work item mapping {sorted(expected)}"
+            )
 
     # Check decision anchors in finalized decisions
     decision_text = check.read_text(DECISIONS)

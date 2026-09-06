@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F04-PR09 — Make batch execution the only production executor
 
-**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)  
-**Dependencies:** [F04-PR03](Milestone-F04-PR-03.md), [F04-PR04](Milestone-F04-PR-04.md), [F04-PR05](Milestone-F04-PR-05.md), [F04-PR07](Milestone-F04-PR-07.md), [F04-PR08](Milestone-F04-PR-08.md), [F05-PR04](Milestone-F05-PR-04.md), [F03-PR04](Milestone-F03-PR-04.md)  
-**Carries forward:** M06-PR07; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)
+**Dependencies:** [F04-PR03](Milestone-F04-PR-03.md), [F04-PR04](Milestone-F04-PR-04.md), [F04-PR05](Milestone-F04-PR-05.md), [F04-PR07](Milestone-F04-PR-07.md), [F04-PR08](Milestone-F04-PR-08.md), [F05-PR04](Milestone-F05-PR-04.md), [F03-PR04](Milestone-F03-PR-04.md)
+**Carries forward:** M06-PR07; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-review`; `rust-test-design`; `rust-performance` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

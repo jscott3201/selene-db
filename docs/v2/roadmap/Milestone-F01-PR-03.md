@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F01-PR03 — Store mixed edges and complete their logical change records
 
-**Milestone:** [F01: Finish graph identity and mixed topology](Milestone-F01.md)  
-**Dependencies:** [F01-PR02](Milestone-F01-PR-02.md)  
-**Carries forward:** M04-PR03, M04-PR05; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F01: Finish graph identity and mixed topology](Milestone-F01.md)
+**Dependencies:** [F01-PR02](Milestone-F01-PR-02.md)
+**Carries forward:** M04-PR03, M04-PR05; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-api-design`; `rust-storage-durability`; `rust-test-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

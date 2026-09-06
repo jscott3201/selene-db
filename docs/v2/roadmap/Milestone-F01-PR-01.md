@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F01-PR01 — Finish the graph-internal candidate migration
 
-**Milestone:** [F01: Finish graph identity and mixed topology](Milestone-F01.md)  
-**Dependencies:** [PLAN-01](PLAN-01.md)  
-**Carries forward:** M04-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F01: Finish graph identity and mixed topology](Milestone-F01.md)
+**Dependencies:** [PLAN-01](PLAN-01.md)
+**Carries forward:** M04-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-api-design`; `rust-test-design`; `rust-performance` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

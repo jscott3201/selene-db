@@ -1,7 +1,7 @@
 # F03 — Complete the semantic compiler
 
-**Work lane:** Compiler  
-**State:** Proposed remaining work; completed legacy foundations are not reopened.  
+**Work lane:** Compiler
+**State:** Proposed remaining work; completed legacy foundations are not reopened.
 **Start:** [F03-PR01](Milestone-F03-PR-01.md) when its actual dependencies are complete.
 
 ## Outcome

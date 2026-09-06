@@ -98,6 +98,15 @@ class PlanContractTests(unittest.TestCase):
         )
         self.assert_failure(result, "F01-PR01: unknown dependency F99-PR99")
 
+    def test_unknown_gate_requirement_fails(self) -> None:
+        result = self.mutate_plan(
+            lambda plan: plan["integration_gates"][0]["requires"].append("F99-PR99")
+        )
+        self.assert_failure(
+            result,
+            "integration gate facade-smoke: unknown required work item F99-PR99",
+        )
+
     def test_pr_dependency_cycle_fails(self) -> None:
         result = self.mutate_plan(
             lambda plan: plan["pull_requests"][0]["depends_on"].append("F01-PR01")
@@ -153,6 +162,45 @@ class PlanContractTests(unittest.TestCase):
                 lambda plan: plan["legacy_work_items"][0].update(state="unmerged", new_owners=["PLAN-01"])
             )
             self.assert_failure(result, "M00-PR01: completed legacy item must have state 'merged'")
+
+        self.tearDown()
+        self.setUp()
+
+        with self.subTest("incomplete legacy item marked merged"):
+            result = self.mutate_plan(
+                lambda plan: plan["legacy_work_items"][21].update(state="merged")
+            )
+            self.assert_failure(
+                result,
+                "M04-PR02: incomplete legacy item cannot have state 'merged' before finish PRs complete",
+            )
+
+        self.tearDown()
+        self.setUp()
+
+        with self.subTest("PR replaces unowned legacy item"):
+            result = self.mutate_plan(
+                lambda plan: plan["pull_requests"][0]["replaces"].append("M00-PR01")
+            )
+            self.assert_failure(result, "replaces ['M00-PR01'] does not match legacy work item mapping []")
+
+        self.tearDown()
+        self.setUp()
+
+        with self.subTest("legacy item new_owner not matching PR replaces"):
+            result = self.mutate_plan(
+                lambda plan: plan["legacy_work_items"][21].update(new_owners=["PLAN-01"])
+            )
+            self.assert_failure(result, "does not match legacy work item mapping")
+
+        self.tearDown()
+        self.setUp()
+
+        with self.subTest("invalid legacy item state outside closed enum"):
+            result = self.mutate_plan(
+                lambda plan: plan["legacy_work_items"][21].update(state="pending")
+            )
+            self.assert_failure(result, "value 'pending' is outside the closed enum")
 
     def test_target_in_forbidden_underscore_directory_fails(self) -> None:
         with self.subTest("plan target in underscore directory"):

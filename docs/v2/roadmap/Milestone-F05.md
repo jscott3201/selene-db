@@ -1,7 +1,7 @@
 # F05 — Finish paths, indexes and measured performance
 
-**Work lane:** Semantics and accelerators  
-**State:** Proposed remaining work; completed legacy foundations are not reopened.  
+**Work lane:** Semantics and accelerators
+**State:** Proposed remaining work; completed legacy foundations are not reopened.
 **Start:** [F05-PR01](Milestone-F05-PR-01.md) when its actual dependencies are complete.
 
 ## Outcome

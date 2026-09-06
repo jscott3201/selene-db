@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F05-PR06 — Reuse scalar indexes for deterministic expressions and JSON paths
 
-**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)  
-**Dependencies:** [F05-PR05](Milestone-F05-PR-05.md), [F04-PR02](Milestone-F04-PR-02.md)  
-**Carries forward:** M08-PR04, M08-PR05; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** #1097  
+**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)
+**Dependencies:** [F05-PR05](Milestone-F05-PR-05.md), [F04-PR02](Milestone-F04-PR-02.md)
+**Carries forward:** M08-PR04, M08-PR05; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** #1097
 **Focused skills:** `rust-test-design`; `rust-storage-durability`; `rust-performance` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

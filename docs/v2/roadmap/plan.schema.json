@@ -193,7 +193,8 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "minItems": 1
           },
           "meaning": {
             "type": "string"
@@ -244,7 +245,12 @@
             "type": "string"
           },
           "state": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "merged",
+              "unmerged",
+              "partial"
+            ]
           },
           "new_owners": {
             "type": "array",

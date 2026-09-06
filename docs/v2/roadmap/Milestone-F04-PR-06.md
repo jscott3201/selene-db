@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F04-PR06 — Integrate procedure registration, batch calls and graph algorithms
 
-**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)  
-**Dependencies:** [F04-PR02](Milestone-F04-PR-02.md), [F03-PR03](Milestone-F03-PR-03.md), [F02-PR02](Milestone-F02-PR-02.md)  
-**Carries forward:** M06-PR06, M10-PR01, M10-PR04; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)
+**Dependencies:** [F04-PR02](Milestone-F04-PR-02.md), [F03-PR03](Milestone-F03-PR-03.md), [F02-PR02](Milestone-F02-PR-02.md)
+**Carries forward:** M06-PR06, M10-PR01, M10-PR04; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-api-design`; `rust-test-design`; `rust-performance` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

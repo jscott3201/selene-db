@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F06-PR01 — Close release behavior, public API and truthful GQL claims
 
-**Milestone:** [F06: Qualify and release 2.0](Milestone-F06.md)  
-**Dependencies:** [F02-PR08](Milestone-F02-PR-08.md), [F04-PR09](Milestone-F04-PR-09.md), [F05-PR06](Milestone-F05-PR-06.md), [F05-PR07](Milestone-F05-PR-07.md)  
-**Carries forward:** M10-PR05, M10-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F06: Qualify and release 2.0](Milestone-F06.md)
+**Dependencies:** [F02-PR08](Milestone-F02-PR-08.md), [F04-PR09](Milestone-F04-PR-09.md), [F05-PR06](Milestone-F05-PR-06.md), [F05-PR07](Milestone-F05-PR-07.md)
+**Carries forward:** M10-PR05, M10-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-review`; `rust-api-design`; `source-verification` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

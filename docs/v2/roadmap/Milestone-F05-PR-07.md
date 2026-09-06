@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F05-PR07 — Resolve measured read-path regressions with balanced evidence
 
-**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)  
-**Dependencies:** [F01-PR02](Milestone-F01-PR-02.md)  
-**Carries forward:** M08-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** #1137  
+**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)
+**Dependencies:** [F01-PR02](Milestone-F01-PR-02.md)
+**Carries forward:** M08-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** #1137
 **Focused skills:** `rust-performance`; `rust-memory-layout`; `diagnosis-loop` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

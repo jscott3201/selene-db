@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F02-PR01 — Anchor store operations and establish format-2 store control
 
-**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)  
-**Dependencies:** [PLAN-01](PLAN-01.md)  
-**Carries forward:** M09-PR01, M09-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** #1088  
+**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)
+**Dependencies:** [PLAN-01](PLAN-01.md)
+**Carries forward:** M09-PR01, M09-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** #1088
 **Focused skills:** `rust-storage-durability`; `rust-api-design`; `rust-test-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F04-PR08 — Restore text, JSON and maintained providers through the same boundary
 
-**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)  
-**Dependencies:** [F04-PR06](Milestone-F04-PR-06.md)  
-**Carries forward:** M10-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)
+**Dependencies:** [F04-PR06](Milestone-F04-PR-06.md)
+**Carries forward:** M10-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-storage-durability`; `rust-test-design`; `rust-performance` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

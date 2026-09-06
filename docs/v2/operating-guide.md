@@ -6,7 +6,10 @@
    issue state, and applicable instructions.
 2. Read the [program entry point](README.md) and
    [finalized decisions](decisions/finalized.md).
-3. Read the owning [milestone](roadmap/milestones.md) and exact work item.
+3. Read the active 2.0 finish plan ([start here](roadmap/00-START-HERE.md) and
+   [master roadmap](roadmap/02-MASTER-ROADMAP.md)) and the assigned milestone/PR
+   in `docs/v2/roadmap/`. Historical registers (such as
+   [milestones.md](roadmap/milestones.md)) are archival only.
 4. Inspect current source, tests, benchmarks, issue evidence, and prior merged
    handoffs at named revisions.
 

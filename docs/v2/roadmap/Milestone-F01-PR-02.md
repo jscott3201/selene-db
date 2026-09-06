@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F01-PR02 — Remove downstream public-row APIs and close candidate safety
 
-**Milestone:** [F01: Finish graph identity and mixed topology](Milestone-F01.md)  
-**Dependencies:** [F01-PR01](Milestone-F01-PR-01.md)  
-**Carries forward:** M04-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** #1093  
+**Milestone:** [F01: Finish graph identity and mixed topology](Milestone-F01.md)
+**Dependencies:** [F01-PR01](Milestone-F01-PR-01.md)
+**Carries forward:** M04-PR02; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** #1093
 **Focused skills:** `rust-api-design`; `rust-test-design`; `rust-review` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

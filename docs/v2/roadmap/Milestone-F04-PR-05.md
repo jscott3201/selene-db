@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F04-PR05 — Route batch mutations and control operations through one transaction
 
-**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)  
-**Dependencies:** [F04-PR02](Milestone-F04-PR-02.md), [F03-PR04](Milestone-F03-PR-04.md)  
-**Carries forward:** M06-PR05; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)
+**Dependencies:** [F04-PR02](Milestone-F04-PR-02.md), [F03-PR04](Milestone-F03-PR-04.md)
+**Carries forward:** M06-PR05; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-storage-durability`; `rust-test-design`; `rust-api-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

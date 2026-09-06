@@ -1,7 +1,7 @@
 # F01 — Finish graph identity and mixed topology
 
-**Work lane:** Graph frontier  
-**State:** Proposed remaining work; completed legacy foundations are not reopened.  
+**Work lane:** Graph frontier
+**State:** Proposed remaining work; completed legacy foundations are not reopened.
 **Start:** [F01-PR01](Milestone-F01-PR-01.md) when its actual dependencies are complete.
 
 ## Outcome

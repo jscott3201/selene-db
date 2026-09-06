@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F02-PR04 — Connect durable commit to the existing publication authority
 
-**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)  
-**Dependencies:** [F02-PR03](Milestone-F02-PR-03.md)  
-**Carries forward:** M09-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** #1128  
+**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)
+**Dependencies:** [F02-PR03](Milestone-F02-PR-03.md)
+**Carries forward:** M09-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** #1128
 **Focused skills:** `rust-storage-durability`; `rust-async-concurrency`; `rust-test-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

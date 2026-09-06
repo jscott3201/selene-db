@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F05-PR05 — Enforce composite uniqueness and keys incrementally
 
-**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)  
-**Dependencies:** [F02-PR02](Milestone-F02-PR-02.md), [F03-PR03](Milestone-F03-PR-03.md), [F01-PR02](Milestone-F01-PR-02.md)  
-**Carries forward:** M08-PR02, M08-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** #1092, #1094  
+**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)
+**Dependencies:** [F02-PR02](Milestone-F02-PR-02.md), [F03-PR03](Milestone-F03-PR-03.md), [F01-PR02](Milestone-F01-PR-02.md)
+**Carries forward:** M08-PR02, M08-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** #1092, #1094
 **Focused skills:** `rust-storage-durability`; `rust-test-design`; `rust-performance` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

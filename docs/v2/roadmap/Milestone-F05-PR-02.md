@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F05-PR02 — Execute bounded product-graph paths and exact mode restrictions
 
-**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)  
-**Dependencies:** [F05-PR01](Milestone-F05-PR-01.md)  
-**Carries forward:** M07-PR02, M07-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)
+**Dependencies:** [F05-PR01](Milestone-F05-PR-01.md)
+**Carries forward:** M07-PR02, M07-PR03; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-test-design`; `rust-memory-layout`; `rust-performance` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

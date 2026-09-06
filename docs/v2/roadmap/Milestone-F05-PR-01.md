@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F05-PR01 — Lower path semantics into one automata contract
 
-**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)  
-**Dependencies:** [F03-PR03](Milestone-F03-PR-03.md), [F01-PR04](Milestone-F01-PR-04.md)  
-**Carries forward:** M07-PR01; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)
+**Dependencies:** [F03-PR03](Milestone-F03-PR-03.md), [F01-PR04](Milestone-F01-PR-04.md)
+**Carries forward:** M07-PR01; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-api-design`; `rust-test-design`; `module-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

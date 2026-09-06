@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F02-PR02 — Unify catalog metadata for constraints, indexes and native registrations
 
-**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)  
-**Dependencies:** [PLAN-01](PLAN-01.md)  
-**Carries forward:** M08-PR01; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)
+**Dependencies:** [PLAN-01](PLAN-01.md)
+**Carries forward:** M08-PR01; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-api-design`; `rust-storage-durability`; `rust-test-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

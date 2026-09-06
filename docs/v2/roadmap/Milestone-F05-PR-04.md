@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F05-PR04 — Integrate paths with logical planning and batches, then delete legacy paths
 
-**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)  
-**Dependencies:** [F05-PR03](Milestone-F05-PR-03.md), [F04-PR02](Milestone-F04-PR-02.md), [F03-PR04](Milestone-F03-PR-04.md)  
-**Carries forward:** M07-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F05: Finish paths, indexes and measured performance](Milestone-F05.md)
+**Dependencies:** [F05-PR03](Milestone-F05-PR-03.md), [F04-PR02](Milestone-F04-PR-02.md), [F03-PR04](Milestone-F03-PR-04.md)
+**Carries forward:** M07-PR06; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-test-design`; `rust-review`; `rust-performance` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

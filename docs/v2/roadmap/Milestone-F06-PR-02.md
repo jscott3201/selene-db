@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F06-PR02 — Qualify release artifacts and complete the authorized 2.0 release
 
-**Milestone:** [F06: Qualify and release 2.0](Milestone-F06.md)  
-**Dependencies:** [F06-PR01](Milestone-F06-PR-01.md)  
-**Carries forward:** M10-PR07; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F06: Qualify and release 2.0](Milestone-F06.md)
+**Dependencies:** [F06-PR01](Milestone-F06-PR-01.md)
+**Carries forward:** M10-PR07; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-ci-release`; `rust-storage-durability`; `rust-test-design` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

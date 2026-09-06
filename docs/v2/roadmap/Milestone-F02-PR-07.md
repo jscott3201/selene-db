@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F02-PR07 — Close recovery classification and failure evidence
 
-**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)  
-**Dependencies:** [F02-PR06](Milestone-F02-PR-06.md)  
-**Carries forward:** M09-PR07; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F02: Bring durable embedding forward](Milestone-F02.md)
+**Dependencies:** [F02-PR06](Milestone-F02-PR-06.md)
+**Carries forward:** M09-PR07; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-storage-durability`; `rust-test-design`; `rust-review` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome

@@ -1,7 +1,7 @@
 # F06 — Qualify and release 2.0
 
-**Work lane:** Integrated release  
-**State:** Proposed remaining work; completed legacy foundations are not reopened.  
+**Work lane:** Integrated release
+**State:** Proposed remaining work; completed legacy foundations are not reopened.
 **Start:** [F06-PR01](Milestone-F06-PR-01.md) when its actual dependencies are complete.
 
 ## Outcome

@@ -1,7 +1,7 @@
 # F02 — Bring durable embedding forward
 
-**Work lane:** Persistence and facade  
-**State:** Proposed remaining work; completed legacy foundations are not reopened.  
+**Work lane:** Persistence and facade
+**State:** Proposed remaining work; completed legacy foundations are not reopened.
 **Start:** [F02-PR01](Milestone-F02-PR-01.md) when its actual dependencies are complete.
 
 ## Outcome

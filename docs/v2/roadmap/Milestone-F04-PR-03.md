@@ -6,10 +6,10 @@ initial_status: proposed
 
 # F04-PR03 — Implement joins and set operations without losing multiplicity
 
-**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)  
-**Dependencies:** [F04-PR02](Milestone-F04-PR-02.md)  
-**Carries forward:** M06-PR04; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).  
-**Issue closure:** None; do not close another PR’s issue.  
+**Milestone:** [F04: Deliver batch execution and native retrieval](Milestone-F04.md)
+**Dependencies:** [F04-PR02](Milestone-F04-PR-02.md)
+**Carries forward:** M06-PR04; see the [complete crosswalk](06-OLD-TO-NEW-MAP.md).
+**Issue closure:** None; do not close another PR’s issue.
 **Focused skills:** `rust-test-design`; `rust-memory-layout`; `rust-performance` from `yet-more-skills/skills/<name>/SKILL.md`.
 
 ## Outcome
