@@ -45,9 +45,9 @@ alternatives, consequences, and the smallest affected plan delta.
 <a id="d-020"></a>
 - **D-020 · Native features:** Algorithms, vectors, BM25/text, JSON, and native procedures return through the facade/catalog/batch system and remain namespaced extensions where not ISO features.
 <a id="d-021"></a>
-- **D-021 · PR sizing:** Default PR cap is one invariant, at most 25 production files and roughly 1,500 net non-generated lines. Exceeding the cap requires stop/replan or an explicit reviewed exception.
+- **D-021 · PR sizing:** One coherent, reviewable behavior and its acceptance evidence define the PR. Touched-file and line counts are review signals, not binding allowlists or automatic stop triggers. Necessary callers, downstream migrations, and tests move with the change. Replan material contract changes, not routine mechanical spread. Per-source-file size, style, and security gates remain in force.
 <a id="d-022"></a>
-- **D-022 · Review control:** Implementers edit and test only. Orchestrators own Git history, non-draft PR mutations, consolidated comments from an independent read-only reviewer pair, and eligible authorized merges. Merge requires an unchanged reviewed head, green required exact-head checks, Blocker/Major-clean final review, repository-policy permission, clean scope/worktree state, and explicit user authorization; a changed head voids PASS.
+- **D-022 · Review control:** Implementers edit and test only. Orchestrators own Git history, non-draft PR mutations, consolidated independent-review comments, and eligible authorized merges. One independent read-only review is the default; add a focused second lens where a distinct durability, concurrency, or complex semantic risk warrants it. Merge requires an unchanged reviewed head, green required exact-head checks, Blocker/Major-clean final review, repository-policy permission, clean scope/worktree state, and explicit user authorization; a changed head voids PASS. Self-approval, auto-merge, release, publication, tagging, reactions, and branch-protection changes remain separate and are not authorized by PASS.
 
 ## Consequence order
 

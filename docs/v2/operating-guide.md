@@ -40,14 +40,17 @@ agents do not edit the same seam concurrently.
 
 ## Worktree handoff and review
 
-Use the work item's conventional scope and keep one invariant within D-021.
-The implementer edits and tests, then returns the worktree and handoff. It does
-not stage, commit, push, create or update a PR, submit a review, or merge. The
-orchestrator owns those Git and GitHub mutations, including the non-draft PR and
-one consolidated comment containing the independent reviewers' conclusions.
+Shape the PR around one coherent, reviewable behavior and its acceptance
+evidence within D-021. Necessary callers, downstream migrations, and tests
+move with the change. The implementer edits and tests, then returns the
+worktree and handoff. It does not stage, commit, push, create or update a PR,
+submit a review, or merge. The orchestrator owns those Git and GitHub mutations,
+including the non-draft PR and one consolidated comment containing the
+independent review conclusions.
 
-Two read-only reviewers independently inspect the same immutable head. The
-orchestrator may merge only after that head remains unchanged, required
+Independent read-only review evaluates the exact head (with a focused second lens
+where a distinct durability, concurrency, or complex semantic risk warrants it).
+The orchestrator may merge only after that head remains unchanged, required
 exact-head checks are green, final review is Blocker/Major-clean, repository
 policy permits the merge, scope and worktree state are clean, and the user has
 explicitly authorized it. A changed head voids PASS. Self-approval, auto-merge,

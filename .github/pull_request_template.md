@@ -48,7 +48,8 @@ an unrun gate green.
       mutate a PR, submit review output, or merge.
 - [ ] The orchestrator owns Git history, the non-draft PR, consolidated
       independent-review comments, and any eligible authorized merge.
-- [ ] Two independent read-only reviewers evaluated the same exact head.
+- [ ] Independent read-only review evaluated the exact head (with a focused
+      second lens where warranted).
 - [ ] The final reviewed head is unchanged, required exact-head checks are
       green, and final review is Blocker/Major-clean.
 - [ ] Repository policy permits merge, scope and worktree state are clean, and

@@ -1,3 +1,5 @@
+> **Historical reference notice:** This document is retained for historical reference and is superseded by the 2.0 Finish Plan in [00-START-HERE.md](00-START-HERE.md).
+
 # Selene DB 2.0 work items M00–M04
 
 <!-- Generated from plan.json; do not edit by hand. -->
