@@ -190,6 +190,60 @@ mod dos {
     }
 
     #[test]
+    fn in_list_predicate_timeout_rejects_before_pest() {
+        // F06-QUAL-04 follow-up: minimized from timeout-d359fea7 (245 bytes).
+        // Seventeen active `IN [` wrappers still hit -timeout=20 after removing
+        // every unrelated binding and all optional whitespace (74 bytes).
+        let source = "LET x=0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[";
+        let start = Instant::now();
+        let error = parse(source).expect_err("malformed IN-list nesting must reject");
+        assert!(start.elapsed() < PARSE_BUDGET);
+        assert!(matches!(
+            error,
+            ParserError::ComplexityLimitExceeded { limit: 8, .. }
+        ));
+        assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+    }
+
+    #[test]
+    fn in_list_predicate_budget_counts_active_wrappers() {
+        let commented = format!("LET x={}0", "0 IN /* guard */ [".repeat(9));
+        let error = parse(&commented).expect_err("comments cannot hide active IN-list wrappers");
+        assert!(matches!(
+            error,
+            ParserError::ComplexityLimitExceeded { limit: 8, .. }
+        ));
+        assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+
+        let nested = format!("LET x={}0{} RETURN x", "0 IN [".repeat(8), "]".repeat(8));
+        parse(&nested).expect("eight active IN-list wrappers remain admitted");
+
+        let siblings = vec!["0 IN [0]"; 20].join(", ");
+        parse(&format!("RETURN {siblings}")).expect("closed sibling IN lists do not accumulate");
+        parse("RETURN 'in[in[in[in[in[in[in[in[in['").expect("quoted IN-list text is not syntax");
+    }
+
+    #[test]
+    fn in_list_predicate_budget_follows_numeric_tokens() {
+        for numeric in ["0.", "0m", "0e0", "0x0"] {
+            let source = format!(
+                "LET x={}0{} RETURN x",
+                format!("{numeric}IN[").repeat(9),
+                "]".repeat(9)
+            );
+            let error = parse(&source).expect_err("numeric adjacency cannot hide IN-list wrappers");
+            assert!(matches!(
+                error,
+                ParserError::ComplexityLimitExceeded { limit: 8, .. }
+            ));
+            assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+        }
+
+        parse("RETURN n.IN, $IN")
+            .expect("property and parameter identifiers named IN remain admitted");
+    }
+
+    #[test]
     fn bracket_complexity_limit_enforced_on_artifacts() {
         for (label, bytes) in ARTIFACTS {
             // The fuzz target feeds raw bytes through `str::from_utf8` first;

@@ -3,6 +3,8 @@
 use crate::{SourceSpan, error::ParserError};
 
 mod braces;
+mod in_lists;
+mod numeric;
 mod quoted;
 use quoted::{skip_backtick_quoted, skip_double_quoted, skip_no_escape_quoted, skip_single_quoted};
 
@@ -159,6 +161,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let mut depth = 0_u32;
     let mut list_depth = 0_u32;
     let mut braces = braces::BareQueryDepth::default();
+    let mut in_lists = in_lists::InListDepth::default();
     // Recursion-pressure counters (see `MAX_RECURSION_DEPTH`). Their SUM with
     // `depth` is the bounded quantity: it tracks the native stack depth at the
     // current position. pest treats comments as whitespace, so a comment between
@@ -180,11 +183,12 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     // is not in an identifier position — see the word arm.
     let mut case_depth = 0_u32;
     // Lookbehind for the word classifier. `prev_sig_byte` is the last
-    // *significant* (non-whitespace, non-comment) byte; only `.`/`$` matter (a
-    // word right after them is a `prop_ident`/`param_ref` identifier, never the
-    // keyword). `prev_word` is the last significant *keyword word* that admits an
-    // identifier after it (`AS <alias>`, `YIELD <item>`); a word right after one
-    // of those is an identifier. Both are left UNCHANGED by whitespace/comment.
+    // *significant* (non-whitespace, non-comment) byte. `.`/`$` identify a
+    // following `prop_ident`/`param_ref`; `i` is the internal marker for a real
+    // `IN` keyword so an immediately following `[` can open an `in_lists`
+    // wrapper. `prev_word` is the last significant *keyword word* that admits
+    // an identifier after it (`AS <alias>`, `YIELD <item>`); a word right after
+    // one of those is an identifier. Both are unchanged by whitespace/comments.
     let mut prev_sig_byte: Option<u8> = None;
     let mut prev_word = PrevWord::Other;
 
@@ -275,6 +279,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 }
             }
             b'[' => {
+                in_lists.open(prev_sig_byte == Some(b'i'), index)?;
                 // `[` is the demonstrated super-linear backtracking vector, so
                 // it carries the tighter dedicated depth cap on top of the
                 // shared nesting cap. Check the tighter cap first so a deeply
@@ -318,6 +323,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 prev_sig_byte = Some(bytes[index]);
             }
             b']' => {
+                in_lists.close();
                 depth = depth.saturating_sub(1);
                 list_depth = list_depth.saturating_sub(1);
                 sign_run = 0;
@@ -343,6 +349,18 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             // Whitespace is transparent to all counters and lookbehind (pest
             // skips it), so it leaves every counter and `prev_*` UNCHANGED.
             b' ' | b'\t' | b'\r' | b'\n' => {}
+            // Consume numeric literals as one token. Numeric grammar permits an
+            // immediately adjacent keyword (`0.IN[`, `0min[`, `0e0in[`,
+            // `0x0in[`), so scanning digits byte-by-byte can either mistake the
+            // decimal point for property access or absorb a suffix into `IN`.
+            byte if byte.is_ascii_digit() => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(b'n');
+                index = numeric::scan(bytes, index);
+                continue;
+            }
             // An identifier-start byte begins a whole word. UTF-8 lead/continuation
             // bytes (>= 0x80) route here too so a Unicode identifier (`éCASE`) is
             // consumed whole and never mis-segments its ASCII tail as a keyword.
@@ -367,6 +385,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                     || matches!(prev_word, PrevWord::As | PrevWord::Yield)
                     || next_sig_is_colon(bytes, word_end);
                 let class = classify_word(&source[index..word_end]);
+                let in_keyword = !in_ident_pos && matches!(&class, WordClass::In);
                 match class {
                     WordClass::Not if !in_ident_pos => {
                         not_run += 1;
@@ -423,8 +442,10 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         _ => PrevWord::Other,
                     }
                 };
-                // The word itself is now the predecessor — a non-`.`/`$` byte.
-                prev_sig_byte = Some(b'w');
+                // The word itself is now the predecessor. Preserve a real `IN`
+                // keyword as the marker consumed by the `[` arm; every other
+                // word is a generic non-`.`/`$` predecessor.
+                prev_sig_byte = Some(if in_keyword { b'i' } else { b'w' });
                 index = word_end;
                 continue;
             }
@@ -471,6 +492,8 @@ fn next_is(bytes: &[u8], index: usize, expected: u8) -> bool {
 /// Only the keywords the guard reacts to are distinguished; everything else
 /// (including all non-keyword identifiers) is [`WordClass::Other`].
 enum WordClass {
+    /// `IN` — may introduce a list-literal predicate wrapper.
+    In,
     /// `NOT` — a unary-run opener.
     Not,
     /// `CASE` — opens a (monotone) nested-`CASE` frame.
@@ -539,7 +562,9 @@ fn scan_word_chars(source: &str, start: usize) -> usize {
 /// Classify a complete identifier word (ASCII-case-insensitively, matching the
 /// `^"…"` case-insensitive keyword rules).
 fn classify_word(word: &str) -> WordClass {
-    if word.eq_ignore_ascii_case("NOT") {
+    if word.eq_ignore_ascii_case("IN") {
+        WordClass::In
+    } else if word.eq_ignore_ascii_case("NOT") {
         WordClass::Not
     } else if word.eq_ignore_ascii_case("CASE") {
         WordClass::Case
