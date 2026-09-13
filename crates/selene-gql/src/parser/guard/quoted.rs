@@ -2,6 +2,21 @@
 
 use super::next_is;
 
+/// Skip an ident/prop_ident: only doubled delimiters escape a delimiter.
+/// Unlike expression strings, an identifier's backslash is always literal.
+pub(super) fn skip_identifier_quoted(bytes: &[u8], mut index: usize, delimiter: u8) -> usize {
+    while index < bytes.len() {
+        if bytes[index] == delimiter {
+            if !next_is(bytes, index, delimiter) {
+                return index;
+            }
+            index += 1;
+        }
+        index += 1;
+    }
+    bytes.len()
+}
+
 pub(super) fn skip_single_quoted(
     bytes: &[u8],
     mut index: usize,

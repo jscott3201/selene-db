@@ -45,7 +45,7 @@ pub(crate) const MAX_NESTING_DEPTH: u32 = guard::MAX_NESTING_DEPTH;
 /// capabilities rejected by the generated profile's Flagger disposition.
 #[tracing::instrument(name = "selene.gql.parse", skip(source), fields(source_len = source.len()))]
 pub fn parse(source: &str) -> Result<Statement, ParserError> {
-    guard::validate(source)?;
+    let retry_check = guard::validate(source)?;
     // Why: pest's generated recursive descent and the AST builder both recurse
     // one native stack frame per expression-nesting level. `guard::validate`
     // deterministically bounds the *known* zero-delimiter recursion drivers
@@ -64,7 +64,8 @@ pub fn parse(source: &str) -> Result<Statement, ParserError> {
     // `runtime/evaluator/cast.rs`.
     stacker::maybe_grow(PARSE_STACK_RED_ZONE, PARSE_STACK_SEGMENT, || {
         let mut pairs = GqlParser::parse(Rule::gql_program, source)
-            .map_err(|error| pest_error(source, error))?;
+            .map_err(|error| pest_error(source, error, retry_check))?;
+        guard::validate_parsed(source, pairs.clone())?;
         let program_pair = pairs.next().ok_or_else(ParserError::empty_program)?;
         let statement = builders::build_statement(program_pair)?;
         // Bound expression nesting depth before the recursive Flagger walk (and
@@ -131,7 +132,14 @@ pub fn parse_with_source(
 
 pub use many::parse_many;
 
-fn pest_error(source: &str, error: pest::error::Error<Rule>) -> ParserError {
+fn pest_error(
+    source: &str,
+    error: pest::error::Error<Rule>,
+    retry_check: guard::RetryCheck,
+) -> ParserError {
+    if let Some(error) = retry_check.0 {
+        return error;
+    }
     let span = match error.location {
         InputLocation::Pos(offset) => point_span(offset),
         InputLocation::Span((start, end)) => SourceSpan::new(to_u32(start), to_u32(end - start)),

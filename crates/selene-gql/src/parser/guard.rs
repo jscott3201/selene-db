@@ -2,11 +2,20 @@
 
 use crate::{SourceSpan, error::ParserError};
 
+mod backtracking;
 mod braces;
-mod in_lists;
+mod name_slots;
 mod numeric;
+mod parsed;
+mod query_frames;
 mod quoted;
-use quoted::{skip_backtick_quoted, skip_double_quoted, skip_no_escape_quoted, skip_single_quoted};
+mod type_names;
+mod value_queries;
+pub(super) use parsed::{RetryCheck, validate, validate_parsed};
+use quoted::{
+    skip_backtick_quoted, skip_double_quoted, skip_identifier_quoted, skip_no_escape_quoted,
+    skip_single_quoted,
+};
 
 /// Maximum syntactic nesting depth admitted by the parser.
 ///
@@ -145,7 +154,10 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 /// of any kind anywhere in the workspace is 3.
 pub(crate) const MAX_RECURSION_DEPTH: u32 = 256;
 
-pub(super) fn validate(source: &str) -> Result<(), ParserError> {
+fn validate_with_quotes(
+    source: &str,
+    mut quote_end: impl FnMut(usize) -> Option<usize>,
+) -> Result<RetryCheck, ParserError> {
     let bytes = source.as_bytes();
     // Index of the final `'` in the input. A single-quoted string treats `\'`
     // as an escaped quote ONLY when a later `'` exists (pest `escaped_quote`);
@@ -161,7 +173,8 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let mut depth = 0_u32;
     let mut list_depth = 0_u32;
     let mut braces = braces::BareQueryDepth::default();
-    let mut in_lists = in_lists::InListDepth::default();
+    let mut backtracking = backtracking::BacktrackingDepth::default();
+    let mut queries = query_frames::QueryFrames::default();
     // Recursion-pressure counters (see `MAX_RECURSION_DEPTH`). Their SUM with
     // `depth` is the bounded quantity: it tracks the native stack depth at the
     // current position. pest treats comments as whitespace, so a comment between
@@ -185,14 +198,27 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     // Lookbehind for the word classifier. `prev_sig_byte` is the last
     // *significant* (non-whitespace, non-comment) byte. `.`/`$` identify a
     // following `prop_ident`/`param_ref`; `i` is the internal marker for a real
-    // `IN` keyword so an immediately following `[` can open an `in_lists`
-    // wrapper. `prev_word` is the last significant *keyword word* that admits
+    // `IN` keyword so a following `[` can open a retry frame. Query entry and
+    // field-name positions are tracked by `queries`. `prev_word` is the last
+    // significant *keyword word* that admits
     // an identifier after it (`AS <alias>`, `YIELD <item>`); a word right after
     // one of those is an identifier. Both are unchanged by whitespace/comments.
     let mut prev_sig_byte: Option<u8> = None;
     let mut prev_word = PrevWord::Other;
 
     while index < bytes.len() {
+        let parsed_quote_end = quote_end(index);
+        let observed = queries
+            .observe(
+                source,
+                index,
+                prev_sig_byte,
+                matches!(prev_word, PrevWord::As | PrevWord::Yield),
+            )
+            .map_err(|error| ParserError::ComplexityLimitExceeded {
+                limit: error.limit,
+                span: point_span(index),
+            })?;
         match bytes[index] {
             // Quoted string/identifier spans are primaries for guard purposes:
             // they reset the unary and `NOT` runs (a primary terminates a
@@ -225,6 +251,14 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 prev_word = PrevWord::Other;
                 prev_sig_byte = Some(b'\'');
                 index = skip_single_quoted(bytes, index + 1, last_single_quote);
+            }
+            b'"' | b'`' if parsed_quote_end.is_some() || observed.quoted_identifier => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(bytes[index]);
+                index = parsed_quote_end
+                    .unwrap_or_else(|| skip_identifier_quoted(bytes, index + 1, bytes[index]));
             }
             b'"' => {
                 sign_run = 0;
@@ -261,6 +295,8 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             b'(' | b'{' => {
                 if bytes[index] == b'{' {
                     braces.open(prev_sig_byte == Some(b'{'), index)?;
+                    let retries = prev_sig_byte == Some(b'{') || observed.query_brace;
+                    backtracking.open(b'{', retries, index);
                 }
                 depth += 1;
                 prev_word = PrevWord::Other;
@@ -279,7 +315,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 }
             }
             b'[' => {
-                in_lists.open(prev_sig_byte == Some(b'i'), index)?;
+                backtracking.open(b'[', prev_sig_byte == Some(b'i'), index);
                 // `[` is the demonstrated super-linear backtracking vector, so
                 // it carries the tighter dedicated depth cap on top of the
                 // shared nesting cap. Check the tighter cap first so a deeply
@@ -315,6 +351,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             b')' | b'}' => {
                 if bytes[index] == b'}' {
                     braces.close();
+                    backtracking.close(b'{');
                 }
                 depth = depth.saturating_sub(1);
                 sign_run = 0;
@@ -323,7 +360,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 prev_sig_byte = Some(bytes[index]);
             }
             b']' => {
-                in_lists.close();
+                backtracking.close(b'[');
                 depth = depth.saturating_sub(1);
                 list_depth = list_depth.saturating_sub(1);
                 sign_run = 0;
@@ -385,7 +422,10 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                     || matches!(prev_word, PrevWord::As | PrevWord::Yield)
                     || next_sig_is_colon(bytes, word_end);
                 let class = classify_word(&source[index..word_end]);
-                let in_keyword = !in_ident_pos && matches!(&class, WordClass::In);
+                let retry_keyword = match &class {
+                    WordClass::In if !in_ident_pos => b'i',
+                    _ => b'w',
+                };
                 match class {
                     WordClass::Not if !in_ident_pos => {
                         not_run += 1;
@@ -442,10 +482,9 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         _ => PrevWord::Other,
                     }
                 };
-                // The word itself is now the predecessor. Preserve a real `IN`
-                // keyword as the marker consumed by the `[` arm; every other
-                // word is a generic non-`.`/`$` predecessor.
-                prev_sig_byte = Some(if in_keyword { b'i' } else { b'w' });
+                // Preserve IN candidates for the delimiter arms; every
+                // other word is a generic non-`.`/`$` predecessor.
+                prev_sig_byte = Some(retry_keyword);
                 index = word_end;
                 continue;
             }
@@ -463,7 +502,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
         index += 1;
     }
 
-    Ok(())
+    Ok(RetryCheck(backtracking.error))
 }
 
 /// Whether the combined recursion pressure exceeds [`MAX_RECURSION_DEPTH`].

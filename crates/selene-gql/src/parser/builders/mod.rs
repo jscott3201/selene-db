@@ -37,8 +37,7 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
         Rule::call_query_pipeline => {
             query::build_call_query_pipeline(program_pair).map(Statement::Query)
         }
-        Rule::composite_query => build_composite(program_pair),
-        Rule::chained_query => build_chained(program_pair),
+        Rule::query_expression => build_query_expression(program_pair),
         Rule::pipeline_statement => {
             let span = span(&program_pair);
             let statement = query::build_pipeline_statement(program_pair)?;
@@ -74,13 +73,31 @@ pub(super) fn unsupported_feature(pair: &Pair<'_, Rule>, feature_id: FeatureId) 
     }
 }
 
-fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
+fn build_query_expression(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let first = children
         .next()
         .ok_or_else(ParserError::empty_program)
         .and_then(|pair| query::build_query_pipeline(pair))?;
+    match children.next() {
+        None => Ok(Statement::Query(first)),
+        Some(tail) if tail.as_rule() == Rule::composite_query => {
+            build_composite(first, tail, source_span)
+        }
+        Some(tail) if tail.as_rule() == Rule::chained_query => {
+            build_chained(first, tail, source_span)
+        }
+        Some(tail) => Err(unexpected_pair(tail, "expected query composition tail")),
+    }
+}
+
+fn build_composite(
+    first: QueryPipeline,
+    tail: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Statement, ParserError> {
+    let mut children = tail.into_inner();
     let mut rest = Vec::new();
 
     while let Some(op_pair) = children.next() {
@@ -107,15 +124,16 @@ fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     })
 }
 
-fn build_chained(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
-    let source_span = span(&pair);
-    let blocks = pair
-        .into_inner()
-        .filter(|child| child.as_rule() == Rule::query_pipeline)
-        .map(query::build_query_pipeline)
-        .collect::<Result<Vec<_>, _>>()?;
-    if blocks.is_empty() {
-        return Err(ParserError::empty_program());
+fn build_chained(
+    first: QueryPipeline,
+    tail: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Statement, ParserError> {
+    let mut blocks = vec![first];
+    for child in tail.into_inner() {
+        if child.as_rule() == Rule::query_pipeline {
+            blocks.push(query::build_query_pipeline(child)?);
+        }
     }
     if blocks
         .iter()
