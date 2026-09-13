@@ -1,4 +1,4 @@
-//! Row-at-a-time binding table representation.
+//! Materialized binding tables at result and transaction-barrier boundaries.
 
 use smallvec::SmallVec;
 
@@ -103,6 +103,7 @@ impl PartialEq for Binding {
 pub struct BindingTable {
     schema: BindingTableSchema,
     rows: Vec<Binding>,
+    ordering: Vec<selene_core::ResultOrderKey>,
 }
 
 impl BindingTable {
@@ -112,19 +113,46 @@ impl BindingTable {
         Self {
             schema,
             rows: Vec::new(),
+            ordering: Vec::new(),
+        }
+    }
+
+    /// Construct the relational unit table: one empty row and no fields.
+    #[must_use]
+    pub fn unit() -> Self {
+        Self {
+            schema: BindingTableSchema {
+                columns: Vec::new(),
+            },
+            rows: vec![Binding::empty()],
+            ordering: Vec::new(),
         }
     }
 
     /// Construct a table from a schema and row vector.
     #[must_use]
     pub fn new(schema: BindingTableSchema, rows: Vec<Binding>) -> Self {
-        Self { schema, rows }
+        Self {
+            schema,
+            rows,
+            ordering: Vec::new(),
+        }
     }
 
     /// Borrow the table schema.
     #[must_use]
     pub const fn schema(&self) -> &BindingTableSchema {
         &self.schema
+    }
+
+    /// Declared global result ordering, retained independently of row count.
+    #[must_use]
+    pub fn ordering(&self) -> &[selene_core::ResultOrderKey] {
+        &self.ordering
+    }
+
+    pub(crate) fn declare_result_order(&mut self, plan: &crate::ExecutionPlan) {
+        self.ordering = super::result_order::for_plan(plan, &self.schema);
     }
 
     /// Borrow all rows.
@@ -152,11 +180,6 @@ impl BindingTable {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
-    }
-
-    /// Append one row.
-    pub fn push_row(&mut self, row: Binding) {
-        self.rows.push(row);
     }
 
     /// Return the index of the first named column matching `name`.

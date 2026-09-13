@@ -4,6 +4,7 @@ use selene_core::DbString;
 
 use crate::ast::{
     call::{InlineProcedureCall, ProcedureCall},
+    catalog_ref::CatalogObjectReference,
     ddl::DdlStatement,
     expr::{CharacterStringLiteralKind, ValueExpr},
     mutation::MutationPipeline,
@@ -119,12 +120,16 @@ pub enum Statement {
 }
 
 /// Current graph expression selected by `SESSION SET [PROPERTY] GRAPH`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum SessionSetGraphTarget {
     /// `CURRENT_GRAPH`.
     CurrentGraph,
     /// `CURRENT_PROPERTY_GRAPH`.
     CurrentPropertyGraph,
+    /// Absolute schema reference used by `SESSION SET SCHEMA`.
+    SchemaReference(CatalogObjectReference),
+    /// Absolute or current-schema-relative catalog graph reference.
+    CatalogReference(CatalogObjectReference),
 }
 
 /// Target selected by `<session reset arguments>` (ISO/IEC 39075:2024 section 7.2).
@@ -134,6 +139,10 @@ pub enum SessionResetTarget {
     /// `SESSION RESET` (bare) or `RESET [ALL] CHARACTERISTICS`: reset every
     /// session characteristic (parameters and time zone). ISO feature GS04.
     AllCharacteristics,
+    /// `SESSION RESET SCHEMA`: restore the home/generated schema authority.
+    Schema,
+    /// `SESSION RESET [PROPERTY] GRAPH`: restore the home/generated graph authority.
+    Graph,
     /// `SESSION RESET [ALL] PARAMETERS`: clear all session parameters only.
     /// ISO feature GS08.
     Parameters,
@@ -188,8 +197,14 @@ pub enum SetOp {
 }
 
 /// Read query pipeline.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct QueryPipeline {
+    /// Lexical prefixes and brace origins surrounding this linear query body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub working_scopes: Vec<super::working_scope::WorkingScopeClause>,
+    /// Original SELECT origin when this pipeline was desugared by the parser.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub select_origin: Option<SourceSpan>,
     /// Ordered pipeline statements.
     pub statements: Vec<PipelineStatement>,
     /// Source span.

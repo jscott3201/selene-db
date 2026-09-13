@@ -1,6 +1,6 @@
 [package]
 name = "selene-db-persist-fuzz"
-version = "1.4.0"
+version = "2.0.0-alpha.1"
 publish = false
 edition = "2024"
 
@@ -10,8 +10,40 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
-selene-persist = { package = "selene-db-persist", path = "..", version = "1.4.0" }
+libfuzzer-sys = "0.4.13"
+selene-persist = { package = "selene-db-persist", path = "..", version = "2.0.0-alpha.1", features = ["test-harness"] }
+selene-core = { package = "selene-db-core", path = "../../selene-core", version = "2.0.0-alpha.1" }
+selene-graph = { package = "selene-db-graph", path = "../../selene-graph", version = "2.0.0-alpha.1" }
+selene-catalog = { package = "selene-db-catalog", path = "../../selene-catalog", version = "2.0.0-alpha.1" }
+blake3 = "1.8.6"
+
+[[bin]]
+name = "decode_logical_snapshot"
+path = "fuzz_targets/decode_logical_snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_control"
+path = "fuzz_targets/decode_control.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_logical"
+path = "fuzz_targets/decode_logical.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_logical_value"
+path = "fuzz_targets/decode_logical_value.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "decode_manifest"
@@ -23,13 +55,6 @@ bench = false
 [[bin]]
 name = "decode_wal"
 path = "fuzz_targets/decode_wal.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "decode_audit"
-path = "fuzz_targets/decode_audit.rs"
 test = false
 doc = false
 bench = false

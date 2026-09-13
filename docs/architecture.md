@@ -1,13 +1,17 @@
 # selene-db architecture
 
-This document describes how selene-db is built. It assumes you have read
+This document describes the current `c5c0a985` baseline. It assumes you have read
 [`README.md`](../README.md) and want to understand the layering, concurrency
-model, persistence design, the native procedure surface, and the numbered
-architecture decisions that shape the workspace.
+model, persistence design, and native procedure surface. The
+[tracked 2.0 program](v2/README.md) owns the target architecture and finalized
+decisions; future facade, catalog, profile, batch, and format-2 components are
+not present in this baseline.
 
-selene-db is an embeddable property graph engine for Rust that targets
-ISO/IEC 39075:2024 GQL minimum conformance plus a curated subset of optional
-features. The engine is library-only: no transport, no auth, no server.
+selene-db is an embeddable property graph engine for Rust that implements
+selected ISO/IEC 39075:2024 GQL syntax and semantics. The current feature
+register is implementation inventory, not a formal 2.0 conformance claim; see
+the [evidence-gated policy](v2/conformance-policy.md). The engine is
+library-only: no transport, no auth, no server.
 Embedders depend on the published workspace crates or a local checkout and run
 the engine in-process.
 
@@ -20,33 +24,35 @@ surfaces see [`graph-algorithms.md`](graph-algorithms.md).
 
 ## 1. Crate dependency graph
 
-The workspace is a flat tree of six mandatory crates with no umbrella facade
-(decision D8). There are no opt-in extension crates. `selene-core` is the
-leaf; every other crate transitively depends on it. The runtime dependency
-direction is linear — `core → graph → algorithms → gql` — and
-`selene-algorithms` never imports `selene-gql`. `selene-testing` is dev-only
-and is consumed via `[dev-dependencies]`.
+The workspace has six mandatory runtime/profile crates and the non-publishable
+`selene-testing` support crate. There is no umbrella facade or opt-in extension
+crate. `selene-profile` and `selene-core` are independent dependency roots. The
+graph semantics chain is `core → graph → algorithms → gql`, while `selene-gql`
+also consumes the generated profile API. `selene-algorithms` never imports
+`selene-gql`.
 
 ```text
+   selene-profile ─────────────────────────────────────▶ selene-gql
    selene-core ──▶ selene-graph ──▶ selene-algorithms ──▶ selene-gql
 
-   selene-persist ──▶ selene-core   (graph-blind durability; never sees Graph)
+   selene-core ──▶ selene-persist   (graph-blind durability; never sees Graph)
 
-   (dev-only)  selene-testing  depends on selene-core, selene-graph
-                                (+ selene-algorithms for fixtures)
+   (dev-only)  selene-testing  depends on selene-profile, selene-core,
+                                selene-graph, and selene-gql
 ```
 
 | Crate | Depends on | Owns |
 |---|---|---|
-| `selene-core` | none | Foundation types: `Value` (mandatory ISO scalar values plus numeric, temporal, reference, byte-string, vector, JSON, list, record, path, and extension variants), `DbString`, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Changeset`, GQLSTATUS table, ISO feature register. |
-| `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + imbl storage primitives, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
-| `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`, D17). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
-| `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the D20 snapshot harness. Independent of `selene-gql`. |
-| `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait (D15), and its sole frozen production impl `BuiltinProcedureRegistry` — 49 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
-| `selene-testing` | core, graph (+ algorithms for fixtures) | Shared fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / algorithm corpora. Consumed via `[dev-dependencies]`. |
+| `selene-profile` | none | Typed source validation, canonical profile identity and hashing, generated capability records, and generated Annex B records and documentation. |
+| `selene-core` | none | Foundation types: `Value` (mandatory ISO scalar values plus numeric, temporal, reference, byte-string, vector, JSON, list, record, path, and extension variants), `DbString`, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Changeset`, and the GQLSTATUS table. |
+| `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + immutable chunked persistent maps, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
+| `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
+| `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the snapshot harness. Independent of `selene-gql`. |
+| `selene-gql` | profile, core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, generated-profile Flagger, the `ProcedureRegistry` trait, and its sole frozen production impl `BuiltinProcedureRegistry` — 50 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
+| `selene-testing` | profile, core, graph, gql | Shared fixtures, synthetic graph generators, and planner/executor corpus helpers. Consumed through development and benchmark surfaces. |
 
-The dependency graph is intentionally acyclic with a single sink
-(`selene-core`) and a single broad runtime consumer (`selene-gql`).
+The dependency graph is acyclic, with `selene-profile` and `selene-core` as
+roots and `selene-gql` as the broad runtime consumer.
 `selene-algorithms` is a mandatory first-class crate that sits between
 `selene-graph` and `selene-gql`: it owns the native algorithm API and never
 imports the GQL layer, so the graph storage core stays free of the
@@ -87,7 +93,7 @@ necessary, a borrowed registry or context.
 
 `parse(source: &str) -> Result<Statement, ParserError>` and
 `parse_with_source` (which preserves source spans for richer diagnostics)
-are the only entry points from raw GQL. The parser is a pest 2.8 PEG defined
+are the only entry points from raw GQL. The parser is a pest 2.9 PEG defined
 in `crates/selene-gql/src/parser/grammar.pest`. Rule names mirror the
 ISO 39075 grammar names, aligned with opengql/grammar v1.9.0 where the donor
 diverged. Strings are single-quoted (Spec 02); double-quoted lexemes are
@@ -102,8 +108,8 @@ AnalysisError>` runs semantic checks: scope resolution, binding decls
 (`ExprTypeTable`), statement-category classification (`ReadOnly`,
 `DataModifying`, `CatalogModifying`, `TransactionControl`), and the mutation
 write set (`MutationWriteSet`, `WriteSetEntry`). The Flagger runs in this
-phase: any construct outside the D1 claimed feature register is rejected with
-a `GqlStatus` flag.
+phase: a construct outside the current implementation register is rejected with
+a `GqlStatus` flag. That register does not establish a formal claim.
 
 ### Plan
 
@@ -147,8 +153,8 @@ a `Vec<Change>` (label diffs, property diffs, node/edge create/delete,
 schema mutations). On `WriteTxn::commit` the mutator atomically swaps a new
 graph snapshot into the `ArcSwap` and hands the `&[Change]` slice to
 `selene-persist` for WAL append. Engine-owned audit events route through the
-same funnel into a dedicated append-only `audit.log` substrate (`SLAU`,
-D17), WAL-first then audit-after, so there is no parallel ledger and no
+same funnel into a dedicated append-only `audit.log` substrate (`SLAU`),
+WAL-first then audit-after, so there is no parallel ledger and no
 audit-vs-graph split-brain.
 
 ### Persistence
@@ -165,13 +171,13 @@ operational detail.
 ## 3. Concurrency model
 
 selene-db uses a one-writer-many-readers shape with no allocation on the
-read path. The primitives are codified by decision D7.
+read path.
 
 | Primitive | Where it is used | Why |
 |---|---|---|
 | `arc_swap::ArcSwap` | `SharedGraph` publishes each committed snapshot as `Arc<SeleneGraph>`. | Readers grab a pointer in a single relaxed load. No lock acquisition, no allocation, no poisoning. |
 | `parking_lot::RwLock` | Per-graph write lock; also wraps mutable index state inside providers. | parking_lot is non-reentrant, never poisons, and is materially faster than `std::sync::RwLock`. Lock poisoning is a non-feature for an in-process embedded engine: a panic during commit must abort the process, not leave readers staring at a `PoisonError`. |
-| `imbl` persistent collections | Copy-on-write maps and vectors inside `SeleneGraph` (label sets, property maps, adjacency). | Structural sharing means a new snapshot retains O(log n) overlap with its predecessor; a writer can publish without copying the entire graph. |
+| `immutable_chunkmap::MapM` | Copy-on-write ID, label, and adjacency maps inside `SeleneGraph`. | The Arc-backed chunked tree keeps clone O(1) and path-copies mutations, so a writer can publish without copying the entire map. |
 | `roaring::RoaringBitmap` | Label indexes, deleted-id sets, candidate selections. | Compact, cache-friendly representation for sparse `NodeId` sets. |
 | `triomphe::Arc` | Property-value reference counting in selected hot paths. | `triomphe::Arc` is non-`Weak`, single-word, and avoids the `std::sync::Arc` weak-count overhead where weak refs are not used. |
 
@@ -181,19 +187,31 @@ read path. The primitives are codified by decision D7.
    `RwLock`. Only one writer can hold this lock per graph.
 2. The returned `WriteTxn<'g>` exposes a `Mutator` whose methods append
    `Change`s into a transaction-local buffer.
-3. On `WriteTxn::commit` (or `commit_with_principal`), the mutator clones
-   the current snapshot's persistent data structures, applies the
-   `Change` list, and constructs a new `Arc<SeleneGraph>`.
-4. The new snapshot is published via `ArcSwap::store`. Readers in flight
-   continue against the old snapshot until they drop their `Arc`. New
+3. On `WriteTxn::commit` (or `commit_with_principal`), the **seal** half runs
+   on the calling thread under the held lock: the mutator clones the current
+   snapshot's persistent data structures, applies the `Change` list, and
+   constructs a new `Arc<SeleneGraph>`. `seal` then **releases the write
+   lock** and hands an owned, `Send` bundle to the committer.
+4. The **publish tail** runs on the single per-graph committer thread, which is
+   the sole writer of the `ArcSwap` cell. It stamps the HLC and **appends** the
+   entry to the WAL.
+5. One **group flush** (`fsync`) covers the whole contiguous run. This is the
+   durability barrier.
+6. Only then is the new snapshot **published** via `ArcSwap::store`. Readers in
+   flight continue against the old snapshot until they drop their `Arc`; new
    readers see the new snapshot on their next `read()`.
-5. The mutator hands `&[Change]` plus principal bytes to the WAL writer
-   (`selene-persist::WalWriter`) which appends a framed entry under the
-   configured `SyncPolicy`.
-6. Registered `IndexProvider`s are notified via `on_change(&Change)`. The
+7. Registered `IndexProvider`s are notified via `on_change(&Change)`. The
    re-entry contract (see `IndexProvider` rustdoc) forbids same-graph
    `begin_write` calls from inside `on_change`.
-7. The write lock drops at the end of the commit boundary.
+8. The commit is **acknowledged** — `commit()` returns `Ok(CommitOutcome)`.
+
+The ordering in steps 4-6 is load-bearing: the fsync precedes publication, so
+no reader can observe a commit that is not already durable, and no caller is
+told "committed" before the barrier. That barrier is the R1 fsync-before-publish
+guarantee introduced in v1.2 (BRIEF 2); this document described the earlier
+publish-then-append order until it was corrected. See
+`docs/persistence-and-recovery.md` for the outcome contract, including why a
+failure past step 4 reports an *indeterminate* outcome rather than a rollback.
 
 ### How a reader holds a snapshot
 
@@ -204,11 +222,18 @@ the writer cannot mutate the structures the reader sees.
 
 ### Why locks don't poison
 
-selene-db never propagates a `LockResult` to user code. parking_lot locks
-do not poison on panic; on a panic during commit, the process aborts (the
-panic itself surfaces). Readers cannot observe an in-progress write because
-they never look at the writer's transaction buffer; they only observe the
-last fully-published `ArcSwap` cell.
+selene-db never propagates a `LockResult` to user code, and parking_lot locks
+do not poison on panic. Readers cannot observe an in-progress write because
+they never look at the writer's transaction buffer; they only observe the last
+fully-published `ArcSwap` cell.
+
+A panic on the committer thread does not abort the process. It is caught at the
+committer's `catch_unwind` boundary, which **poisons the engine**: the panicking
+commit and every later one fail with `GraphError::IndeterminateOutcome`, and the
+graph must be reopened through recovery. That is a different mechanism from lock
+poisoning — the locks are fine; the *engine* is the thing declared unusable,
+because a panic between seal and publish can leave the live graph and the
+published snapshot divergent with no in-process way to reconcile them.
 
 ---
 
@@ -219,7 +244,7 @@ with a stable 4-byte magic prefix.
 
 | Format | Magic | Producer | Consumer | Purpose |
 |---|---|---|---|---|
-| WAL entry | `SLDB` | `selene_persist::WalWriter` | `WalReader`, `recover` | Per-commit framed entry: header (length, principal, flags, checksum) followed by postcard-serialized `Vec<Change>`. |
+| WAL entry | `SLDB` | `selene_persist::WalWriter` | `WalReader`, `recover` | Framed entry: header (length, principal, flags, checksum) followed by postcard-serialized `Vec<Change>`. Ordinary frames are logical commits; typed empty checkpoint-watermark frames reserve physical snapshot epochs without advancing graph generation. |
 | Snapshot | `SLSN` | `SnapshotBuilder` | `SnapshotReader` | rkyv-archived snapshot with TLV-tagged sections: CORE (engine-owned: metadata, nodes, edges, schemas) plus zero-or-more provider-owned sections keyed by `ProviderTag` + `SubTag`. |
 
 ### Graph-blind WAL
@@ -240,21 +265,21 @@ This separation has three consequences:
 
 ### Two-step recovery
 
-`selene_persist::recover(snapshot_dir, wal_dir, &ProviderRegistry) ->
-RecoveryOutcome` does two things in order:
+`selene_persist::recover(data_dir, &ProviderRegistry) -> RecoveryOutcome`
+acquires a shared `PersistenceReadGuard`, then does two things in order:
 
-1. Locate the most recent valid `SLSN` snapshot (via `find_latest_snapshot`
-   on a sorted directory listing), read its CORE sections to rebuild
-   `SeleneGraph` state, and dispatch each provider-owned section to its
-   `IndexProvider::read_section` callback.
-2. Stream the WAL from the offset recorded in the snapshot footer,
-   apply each `Change` to the rebuilt graph through the mutator, and
-   notify providers via `on_change` for each replayed change.
+1. Select the MANIFEST-authoritative `SLSN` snapshot (or the highest legacy
+   snapshot when no MANIFEST exists), verify it, and dispatch its sections to
+   `RecoveryProvider::read_section`.
+2. Stream post-snapshot logical commit frames from the active WAL and notify
+   providers through `on_changes`; physical checkpoint-watermark frames are
+   skipped.
 
-The end state is byte-equivalent to the original graph plus the
-provider-owned derived state. Snapshot frequency, sync policy
-(`SyncPolicy::Always` | `SyncPolicy::Batched` | `SyncPolicy::Off`),
-and compression thresholds are embedder-tunable knobs.
+The shared guard pins one snapshot/WAL epoch against rotation and prune for the
+entire replay. `SharedGraph::recover` acquires an existing WAL writer first and
+retains it through guarded replay. For a snapshot-only directory, it verifies
+recovery under the guard before creating a seeded WAL with a non-blocking open.
+In both paths the retained writer tip must exactly match the replay high-water.
 
 ### Why graph-blind
 
@@ -302,13 +327,13 @@ The provider plumbing (first-party only):
 
 ### `ProcedureRegistry` trait
 
-`CALL` dispatch is mediated by the `ProcedureRegistry` trait (D15), defined
+`CALL` dispatch is mediated by the `ProcedureRegistry` trait, defined
 in `selene-gql`. It is the plan/execute seam: the planner resolves procedure
 signatures and the executor dispatches calls through a `&dyn
 ProcedureRegistry`. The trait has exactly one frozen production
 implementation — the concrete native `BuiltinProcedureRegistry`
-(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 68
-procedures at construction (the 49 `selene.*` platform built-ins plus the 19
+(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 69
+procedures at construction (the 50 `selene.*` platform built-ins plus the 19
 `algo.*` procedures) and reports a constant `registry_version()` of `0` so
 the CALL plan cache never invalidates. The injectable `&dyn` seam exists for
 the test harness, not for third-party packs: there is no loadable-pack
@@ -328,12 +353,13 @@ IW010). The algorithm crate never imports `selene-gql`, which keeps the
 
 ---
 
-## 6. Architecture decisions D1-D20
+## 6. Current implementation choices
 
-The workspace shape is codified by twenty numbered decisions. They are
-referenced from spec files and brief logs throughout the codebase.
+Earlier documents used local numbered labels for the c5 implementation
+inventory. Those labels are not 2.0 decision authority. The canonical program
+uses [D-001 through D-022](v2/decisions/finalized.md).
 
-### D1 — Library only
+### Library only
 
 selene-db is an embeddable Rust library. No server process, no transport, no
 auth layer. Embedders own the network and policy surfaces. This decision is
@@ -341,55 +367,55 @@ what lets selene-db ship without a wire format claim (ISO 39075 clause 4.2.3)
 and what makes `IW001` / `IW002` (principals and authorization) the caller's
 responsibility.
 
-### D2 — Strict ISO GQL parser
+### Strict ISO GQL parser
 
 The query language is ISO/IEC 39075:2024 GQL. No Cypher, no SQL, no SPARQL
-grammar in the parser. Constructs outside the D1 claimed feature register are
+grammar in the parser. Constructs outside the current implementation register are
 rejected by the Flagger at parse time. This eliminates a class of
 "works on Neo4j but not on us" surprises and pins the language surface to
 a stable external standard.
 
-### D3 — Multi-graph workspace per process
+### Multi-graph workspace per process
 
 A single process can host multiple `SharedGraph` instances side by side,
 each with its own snapshot, write lock, WAL directory, and provider set.
-Cross-graph transactions are outside the current D1 scope (feature `GT03` is
-not claimed). This decision lets embedders run shard-per-graph or
+Cross-graph transactions are outside the current runtime inventory (feature
+`GT03` is not runtime-supported). This decision lets embedders run shard-per-graph or
 tenant-per-graph patterns without process-level coordination.
 
-### D4 — Snapshot isolation by ArcSwap publication
+### Snapshot isolation by ArcSwap publication
 
 Readers see exactly the snapshot they captured via `SharedGraph::read()`.
 Writers never mutate a snapshot in place; they construct a new
 `Arc<SeleneGraph>` and atomically swap it. This is the durability of
-`ArcSwap::store` plus the immutability of `imbl` collections.
+`ArcSwap::store` plus structurally shared persistent maps and Arc-backed row
+storage.
 
-### D5 — Non-graph capabilities are externalized
+### Native capability ownership
 
 selene-db is one cohesive native graph engine. Graph algorithms ship in the
-mandatory `selene-algorithms` crate outside `selene-graph` (storage and
-algorithms stay in separate crates), while non-graph capabilities — vectors,
-time-series, RDF, GraphRAG — are externalized to separate dedicated
-projects, never in-tree extensions. Refusing to widen the graph core is what
-keeps the cold dependency closure for a graph-only embedder bounded.
+mandatory `selene-algorithms` crate outside `selene-graph`; vectors, text, JSON,
+indexes, and native procedures are in-tree engine features owned by their
+current crates. Time-series, RDF, and GraphRAG-specific policy are not current
+engine surfaces.
 
-### D6 — `Value` is a closed substitution union
+### `Value` is a closed substitution union
 
 `selene_core::Value` is a non-exhaustive enum with a canonical, append-only
 variant order. Reordering variants is a major-version and durability-format
 change. Extension types are surfaced via the `Value::Extended { type_id,
 payload }` variant indexed by `ExtensionTypeId`, not by adding variants.
 
-### D7 — Concurrency primitives
+### Concurrency primitives
 
 The concurrency stack is `ArcSwap` for snapshot publication, `parking_lot`
-locks for writer mutual exclusion and provider state, `imbl` for
-copy-on-write data structures, `RoaringBitmap` for label/id sets, and
+locks for writer mutual exclusion and provider state, `immutable-chunkmap` for
+copy-on-write maps, `RoaringBitmap` for label/id sets, and
 `triomphe::Arc` for selected single-word reference counts. `std::sync`
 locks are not used on the hot path because they poison on panic; an
 in-process engine treats poison as a non-feature.
 
-### D8 — Multi-crate workspace, no umbrella
+### Multi-crate workspace, no umbrella
 
 `selene-core` is the leaf; `selene-persist` depends only on `selene-core`;
 `selene-graph` builds on `selene-core`; `selene-algorithms` builds on
@@ -399,56 +425,56 @@ runtime direction is the linear chain `core → graph → algorithms → gql`, a
 `selene-algorithms` never imports `selene-gql`. There is no `selene` umbrella
 crate that re-exports the others.
 
-### D9 — Forbid unsafe
+### Forbid unsafe
 
-`#![forbid(unsafe_code)]` is set on every workspace crate. Performance
-work happens through safe primitives (`SmallVec`, `roaring`, `imbl`,
-`rkyv` zero-copy decode) or through battle-tested upstream crates. The
-selene-db codebase contains no `unsafe` blocks of its own.
+`#![forbid(unsafe_code)]` is set on every workspace crate. Performance work
+happens through safe upstream APIs (`SmallVec`, `roaring`,
+`immutable-chunkmap`, `rkyv` zero-copy decode). The selene-db codebase contains
+no `unsafe` blocks of its own.
 
-### D10 — `missing_docs = "deny"`
+### `missing_docs = "deny"`
 
 Every public item ships rustdoc. The lint is workspace-wide and CI-gated.
 This is what makes the engine usable from the Rust docs without ever
 touching the source.
 
-### D11 — 700 LOC per-file cap
+### 700 LOC per-file cap
 
 A static CI check enforces a 700-line cap on each tracked source file.
 Files that bloat past 700 lines must be split. The cap is per-file only;
 no per-crate or per-module budget gates merges.
 
-### D12 — Conventional commits
+### Conventional commits
 
 Commits follow `type(scope): subject`. Scopes name the touched crate or
 component (`feat(BRIEF-NN)`, `chore`, `docs`, etc.). Conventional
 commits drive the changelog and the brief workflow audit trail.
 
-### D13 — Postcard for WAL payloads
+### Postcard for WAL payloads
 
 The WAL serializes `Vec<Change>` with postcard 1.x. Postcard is a tight
 no-alloc-friendly format; selene-db does not hand-roll a binary format.
 The WAL header and section table are framed by `selene-persist`.
 
-### D14 — rkyv snapshots over sorted-vec intermediates
+### rkyv snapshots over sorted-vec intermediates
 
-Snapshots are written by lowering `imbl` collections into sorted `Vec`
+Snapshots are written by lowering persistent engine maps into sorted `Vec`
 intermediates and archiving with rkyv 0.8 (`pointer_width_64`,
 `unaligned`). Decoded archives are read zero-copy from a `Vec<u8>` buffer.
 The `unaligned` feature lets rkyv decode out of 1-byte-aligned byte
 buffers, which is what the snapshot reader produces.
 
-### D15 — Frozen native procedure registry
+### Frozen native procedure registry
 
 `CALL` is dispatched through the `ProcedureRegistry` trait, whose sole
 production implementation, `BuiltinProcedureRegistry`, registers its full
-procedure set (68 procedures: 49 `selene.*` platform built-ins plus 19 `algo.*`
+procedure set (69 procedures: 50 `selene.*` platform built-ins plus 19 `algo.*`
 procedures) once at construction. The registry is frozen — nothing is added
 or removed after construction, and `registry_version()` is a constant `0` —
 which lets the analyzer and planner trust the registry and keep the CALL plan
 cache stable without locking on every lookup.
 
-### D16 — Tiered procedure contexts
+### Tiered procedure contexts
 
 Procedures are partitioned by tier: read-tier (`GraphContext`),
 write-tier (`MutationContext`), and procedure-tier (`ProcedureContext`).
@@ -457,7 +483,7 @@ trait. The planner enforces tier compatibility against the surrounding
 statement category at plan time, and the registry re-checks the tier on
 dispatch so a read-only built-in can never re-enter the write funnel.
 
-### D17 — Engine-owned audit through the mutation funnel
+### Engine-owned audit through the mutation funnel
 
 Engine-owned audit events route through the same `Mutator` that graph writes
 use, into a dedicated append-only `audit.log` substrate (`SLAU`) with
@@ -465,19 +491,19 @@ retention independent of the WAL/snapshot lineage. Writes are WAL-first then
 audit-after through the one funnel, so there is no parallel ledger and no
 audit-vs-graph split-brain scenario.
 
-### D18 — Blake3 for content hashing
+### Blake3 for content hashing
 
 Snapshot section digests and any other "is this byte stream identical"
 checks use blake3. The hash function is the same in every crate that needs
 one.
 
-### D19 — Rustls-only TLS posture
+### Rustls-only TLS posture
 
 Transitive dependencies must use rustls, never native-tls. CI enforces
-this via `cargo-deny`. The engine itself ships no TLS code (per D1), but
+this via `cargo-deny`. The engine itself ships no TLS code, but
 its dependency closure cannot pull in OpenSSL bindings.
 
-### D20 — Snapshot harness pattern
+### Snapshot harness pattern
 
 Every runtime surface that can drift (planner output, executor output,
 procedure signatures, algorithm output) is pinned by golden
@@ -487,7 +513,7 @@ snapshot management. See section 7 for the full pattern description.
 
 ---
 
-## 7. Snapshot harness pattern (D20)
+## 7. Snapshot harness pattern
 
 The snapshot harness exists because selene-db has many independent
 producers of structured output that must not drift silently: planner

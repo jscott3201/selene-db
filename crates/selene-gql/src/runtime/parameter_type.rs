@@ -25,6 +25,23 @@ pub(crate) fn validate_declared_type(
     })
 }
 
+/// Validate one value against its explicit request-parameter declaration.
+///
+/// This is the public adapter over the runtime matcher used again for inline
+/// source declarations during request preflight.
+pub fn validate_parameter_value(
+    value: &Value,
+    declared_type: &GqlType,
+) -> Result<(), ExecutorError> {
+    validate_declared_type(
+        selene_core::db_string("request_parameter")
+            .expect("static parameter diagnostic name is valid"),
+        value,
+        declared_type,
+        SourceSpan::default(),
+    )
+}
+
 fn value_gql_type_name(value: &Value) -> &'static str {
     match value {
         Value::Bool(_) => "BOOLEAN",

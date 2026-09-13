@@ -1,30 +1,15 @@
 use crate::{
     LimitAmount, SourceSpan,
-    runtime::{BindingTable, DataExceptionSubclass, ExecutorError, TxContext, parameter_type},
+    runtime::{DataExceptionSubclass, ExecutorError, TxContext, parameter_type},
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use selene_core::Value;
 
-pub(super) fn execute(
-    offset: &LimitAmount,
-    count: &LimitAmount,
-    table: BindingTable,
-    ctx: &TxContext<'_, '_>,
-) -> Result<BindingTable, ExecutorError> {
-    let offset = resolve_amount(offset, ctx)?;
-    let count = resolve_amount(count, ctx)?;
-    let (schema, mut rows) = table.into_parts();
-    ctx.check_cancellation()?;
-    let start = u64_to_bounded_usize(offset, rows.len());
-    let end = start.saturating_add(u64_to_bounded_usize(count, rows.len() - start));
-    rows.truncate(end);
-    if start == 0 {
-        return Ok(BindingTable::new(schema, rows));
-    }
-    Ok(BindingTable::new(schema, rows.split_off(start)))
-}
-
-pub(super) fn resolve_amount(
+/// Resolve a pipeline limit/offset amount against bound parameters.
+///
+/// Shared with the batch page operator so both paths report identical
+/// diagnostics for null, negative, mistyped, and out-of-range parameters.
+pub(crate) fn resolve_amount(
     amount: &LimitAmount,
     ctx: &TxContext<'_, '_>,
 ) -> Result<u64, ExecutorError> {
@@ -115,7 +100,11 @@ fn numeric_out_of_range(span: SourceSpan) -> ExecutorError {
     )
 }
 
-pub(super) fn u64_to_bounded_usize(value: u64, upper_bound: usize) -> usize {
+/// Bound a `u64` amount to a live row count for skip/take slicing.
+///
+/// Shared with the batch sort operator so bounded top-K windows agree with
+/// the row path exactly.
+pub(crate) fn u64_to_bounded_usize(value: u64, upper_bound: usize) -> usize {
     usize::try_from(value)
         .unwrap_or(usize::MAX)
         .min(upper_bound)

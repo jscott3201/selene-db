@@ -2,28 +2,90 @@
 
 use selene_core::DbString;
 
-use crate::ast::{expr::ValueExpr, span::SourceSpan, types::GqlType};
+use crate::ast::{
+    catalog_ref::{CatalogObjectReference, CatalogPathSegment},
+    expr::ValueExpr,
+    span::SourceSpan,
+    types::GqlType,
+};
 
 /// Data-definition statement.
+///
+/// The first six variants are database-catalog statements (ISO/IEC
+/// 39075:2024 §12.2–§12.7). They carry unresolved references and are executed
+/// by the database facade, not by the graph-local executor.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
 pub enum DdlStatement {
-    /// `CREATE GRAPH`.
-    CreateGraph {
-        /// Graph name.
-        name: DbString,
-        /// `OR REPLACE`.
-        or_replace: bool,
-        /// `IF NOT EXISTS`.
+    /// `CREATE SCHEMA [IF NOT EXISTS] <catalog schema parent and name>` (§12.2).
+    CreateSchema {
+        /// Absolute schema reference; the grammar requires the leading `/`.
+        reference: CatalogObjectReference,
+        /// `IF NOT EXISTS` (Feature GC02).
         if_not_exists: bool,
         /// Source span.
         span: SourceSpan,
     },
-    /// `DROP GRAPH`.
+    /// `DROP SCHEMA [IF EXISTS] <catalog schema parent and name>` (§12.3).
+    DropSchema {
+        /// Absolute schema reference; the grammar requires the leading `/`.
+        reference: CatalogObjectReference,
+        /// `IF EXISTS` (Feature GC02).
+        if_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `CREATE [PROPERTY] GRAPH [IF NOT EXISTS] <reference> <graph type>`
+    /// (§12.4).
+    ///
+    /// The representable forms are an open graph type (`[TYPED | ::] ANY
+    /// [[PROPERTY] GRAPH]`, GG01) or a named graph-type reference (GG02).
+    /// Inline/LIKE types and graph sources are rejected before an AST exists.
+    CreateGraph {
+        /// Absolute or current-schema-relative graph reference.
+        reference: CatalogObjectReference,
+        /// `OR REPLACE` (ISO/IEC 39075:2024 section 12.4): the facade drops an
+        /// existing graph and creates the new one in a single publication.
+        or_replace: bool,
+        /// `IF NOT EXISTS` (Feature GC05).
+        if_not_exists: bool,
+        /// Named closed graph type, or `None` for the open graph type.
+        graph_type: Option<CatalogObjectReference>,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `DROP [PROPERTY] GRAPH [IF EXISTS] <reference>` (§12.5).
     DropGraph {
-        /// Graph name.
-        name: DbString,
-        /// `IF EXISTS`.
+        /// Absolute or current-schema-relative graph reference.
+        reference: CatalogObjectReference,
+        /// `IF EXISTS` (Feature GC05).
+        if_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `CREATE [PROPERTY] GRAPH TYPE` (§12.6).
+    ///
+    /// The admitted nested source contains property-free named node types with
+    /// implied singleton key labels. Other valid source forms are rejected
+    /// before they can be represented here.
+    CreateGraphType {
+        /// Absolute or current-schema-relative graph-type reference.
+        reference: CatalogObjectReference,
+        /// Property-free node definition carried without facade types or IDs.
+        definition: CatalogGraphTypeDefinition,
+        /// `OR REPLACE`: effective `DROP GRAPH TYPE` plus create in one
+        /// publication.
+        or_replace: bool,
+        /// `IF NOT EXISTS` (Feature GC03).
+        if_not_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `DROP [PROPERTY] GRAPH TYPE [IF EXISTS] <reference>` (§12.7).
+    DropGraphType {
+        /// Absolute or current-schema-relative graph-type reference.
+        reference: CatalogObjectReference,
+        /// `IF EXISTS` (Feature GC03).
         if_exists: bool,
         /// Source span.
         span: SourceSpan,
@@ -73,6 +135,15 @@ pub enum DdlStatement {
         ///
         /// Defaults to strict validation when omitted.
         validation_mode: Option<ValidationMode>,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `ALTER NODE TYPE`.
+    AlterNodeType {
+        /// Node type label.
+        label: DbString,
+        /// Property definitions to add.
+        properties: Vec<TypePropertyDef>,
         /// Source span.
         span: SourceSpan,
     },
@@ -171,10 +242,15 @@ impl DdlStatement {
     #[must_use]
     pub const fn span(&self) -> SourceSpan {
         match self {
-            Self::CreateGraph { span, .. }
+            Self::CreateSchema { span, .. }
+            | Self::DropSchema { span, .. }
+            | Self::CreateGraph { span, .. }
             | Self::DropGraph { span, .. }
+            | Self::CreateGraphType { span, .. }
+            | Self::DropGraphType { span, .. }
             | Self::CreateNodeType { span, .. }
             | Self::CreateEdgeType { span, .. }
+            | Self::AlterNodeType { span, .. }
             | Self::AlterEdgeType { span, .. }
             | Self::DropNodeType { span, .. }
             | Self::DropEdgeType { span, .. }
@@ -188,6 +264,24 @@ impl DdlStatement {
             | Self::ShowProcedures(span) => *span,
         }
     }
+}
+
+/// Storage-neutral graph-type definition admitted by catalog DDL.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct CatalogGraphTypeDefinition {
+    /// Property-free named node types in source order.
+    pub node_types: Vec<CatalogNodeTypeDefinition>,
+    /// Span of the nested graph-type specification.
+    pub span: SourceSpan,
+}
+
+/// One property-free named node type with an implied singleton key label.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct CatalogNodeTypeDefinition {
+    /// Unresolved name with its regular or delimited source form.
+    pub name: CatalogPathSegment,
+    /// Span of the complete node-type specification.
+    pub span: SourceSpan,
 }
 
 /// `DROP NODE TYPE` / `DROP EDGE TYPE` drop behavior.

@@ -1,13 +1,16 @@
 # GQL reference
 
-This document is the query-author's reference for the GQL surface that
-selene-db exposes. It assumes you have read the README quickstart and can
-build a `SharedGraph` plus an `EmptyProcedureRegistry`.
+This document is the query-author's reference for the GQL surface exposed by
+the `selene-db` facade. It assumes you have read the README quickstart and have
+a selected facade session.
 
-selene-db targets **ISO/IEC 39075:2024 minimum conformance** plus a curated
-subset of optional features. The parser is **strict ISO GQL**: no Cypher,
-no SQL, no SPARQL grammar. Constructs outside the D1 claimed feature register
-are rejected at parse time by the GQL Flagger (ISO GQL Clause 24.6).
+The current engine implements selected ISO/IEC 39075:2024 GQL syntax and
+semantics plus namespaced extensions. It does not make a blanket minimum- or
+selected-profile conformance claim. The parser keeps a strict GQL boundary: no
+Cypher, SQL, or SPARQL grammar. The generated profile independently records
+Flagger admission, runtime status, formal claim state, and evidence; none of
+those fields alone is formal 2.0 claim evidence. See the [2.0 conformance
+policy](v2/conformance-policy.md).
 
 For the engine architecture see [`architecture.md`](architecture.md). For
 durability and recovery see
@@ -15,54 +18,67 @@ durability and recovery see
 graph algorithms exposed via `CALL algo.*` see
 [`graph-algorithms.md`](graph-algorithms.md).
 
-The Rust API used in every example below is:
+The ordinary Rust entry point is:
 
 ```rust
-use selene_gql::{
-    EmptyProcedureRegistry, StatementOutput, analyze, execute_statement, parse, plan,
-};
-use selene_graph::SharedGraph;
+use selene_db::{CreatePolicy, Database, ObjectPath, SchemaPath};
 
-let registry = EmptyProcedureRegistry;
-let statement = parse(source)?;
-let analyzed = analyze(statement, &registry, None)?;
-let planned = plan(&analyzed, &registry)?;
-let mut session = selene_gql::Session::new(&graph);
-let output = execute_statement(&planned, &mut session, &registry)?;
+let database = Database::builder().build();
+let schema = SchemaPath::regular("selene", "memory")?;
+database
+    .catalog()
+    .create_schema(&schema, CreatePolicy::Strict)?;
+let graph = ObjectPath::regular("selene", "memory", "main")?;
+database
+    .catalog()
+    .create_graph(&graph, None, CreatePolicy::Strict)?;
+let session = database.session(&graph)?;
+let output = session.execute(source)?;
 ```
 
-The `optimize` pass is included internally by `plan`'s lowering pipeline;
-callers who want manual control can call `optimize(plan, &OptimizeContext)`
-between `plan` and `execute_statement`.
+Each call parses, analyzes, and plans the source once against the selected live
+or detached transaction graph. Implicit reads execute on a pinned live graph;
+explicit reads use the transaction snapshot. Selected data/engine-catalog and
+database-catalog mutations stage in one detached draft and become visible
+through one facade `DatabaseState` publication.
+The reservation capability cannot escape its writer-lock closure, and staged
+drafts contain detached graph content rather than live graph runtimes. A
+pre-publication cancellation returns `MutationCanceled` / `5GQL2` with no
+visibility. A post-publication acknowledgement failure returns
+`MutationIndeterminate` / `40003`; the complete mutation is visible, so callers
+must inspect state rather than blindly retrying the statement.
 
 ---
 
-## 1. What's supported
+## 1. Current implementation inventory
 
-The supported feature set is declared in
-`selene-core::feature_register::SUPPORTED_FEATURES` and rendered for the
-spec docs by the build. The table below summarizes the major clause groups.
+`selene_profile::capabilities()` is the typed, allocation-free view of the
+generated profile's runtime-support inventory. The table below summarizes
+current behavior; “Full” and “Partial” describe implementation coverage in that
+row, not formal conformance status.
 
 | Group | Coverage | Notes |
 |---|---|---|
 | Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `FOR`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
 | Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
-| Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
-| Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
-| DDL (`DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` is the implementation-defined factory-reset surface. `CREATE GRAPH` remains unclaimed (`GC04`). Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
-| Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries claim `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
-| Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not claimed. |
-| Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are claimed (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
+| Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is runtime-supported as feature `GQ15`. |
+| Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). Selected-facade writes stage without graph-local publication and cross one outer in-memory cut-line. `MERGE` remains deferred. |
+| DDL (`CREATE/DROP SCHEMA`, `CREATE/DROP GRAPH`, `CREATE/DROP GRAPH TYPE`, `CREATE/DROP/ALTER NODE TYPE`, `CREATE/DROP/ALTER EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | Schema/graph management and a bounded named closed-graph path execute through the `selene-db` catalog service. The graph-type source accepts property-free named node types with implied singleton labels. Complete GC03/GG02/GG20/GG21 support remains unsupported: properties, edges/endpoints, explicit key labels, COPY OF/LIKE/external sources, and inline graph types are absent. Both additive `ALTER` forms are implementation-defined surfaces. |
+| Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries are runtime-supported as `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
+| Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full, single selected graph | The facade owns detached serializable demarcation over the Part 1 authority. Rust can additionally request read-only access. Multi-graph transactions (`GT03`) remain unsupported. |
+| Session control (`SESSION SET`, `RESET`, `CLOSE`) | Selected facade forms | Schema/graph, time-zone, and value-parameter characteristics persist across requests; RESET uses creation/home/generated defaults; CLOSE releases active/failed transaction state and rejects future requests with `2DN01`. |
+| Maintenance procedures | Lower engine only | Selected facade sessions reject maintenance with `42N01` before live maintenance execution at the explicit detached-maintenance boundary; direct lower-engine maintenance remains supported. |
+| Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are runtime-supported (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
 
-Statements outside the claimed feature set fail with a Flagger error during
-parsing or analysis, never at runtime.
+Parser-observed capabilities whose generated Flagger disposition is `rejected`
+fail during parsing. Flagger admission is not inferred from runtime status.
 
 ---
 
 ## 2. Data types
 
-### Mandatory types (ISO minimum conformance)
+### Core scalar types implemented
 
 | GQL type | Literal syntax | `Value` variant | Notes |
 |:---|:---|:---|:---|
@@ -71,7 +87,7 @@ parsing or analysis, never at runtime.
 | `FLOAT` | `3.14`, `-0.5`, `1.0e6`, `2.5e-3` | `Value::Float` (f64) | IEEE 754 binary64 (feature `GA01`). |
 | `STRING` | `'single quotes'`, `"double quotes"`, `` `accent quotes` ``, `'\n'` escapes | `Value::String(DbString)` | ISO single-, double-, and accent-quoted character strings. Doubled delimiters and backslash escapes are honored unless the literal uses `@` no-escape form. |
 
-### Optional types claimed under D1
+### Additional types in the current register
 
 | GQL type | Literal syntax | `Value` variant | Feature |
 |:---|:---|:---|:---|
@@ -93,7 +109,7 @@ parsing or analysis, never at runtime.
 
 String-source numeric casts follow the ISO signed/unsigned numeric literal image
 rules. Digit separators and radix integer images are accepted where the target
-feature is claimed, for example `CAST('0x10' AS INTEGER)`,
+feature is runtime-supported, for example `CAST('0x10' AS INTEGER)`,
 `CAST('0o777' AS UINT64)`, and `CAST('0b1010' AS DECIMAL)`.
 
 `NULL` and `UNKNOWN` are first-class. `NULL` represents missing data;
@@ -101,16 +117,16 @@ feature is claimed, for example `CAST('0x10' AS INTEGER)`,
 through every Boolean operator (`AND`, `OR`, `XOR`, `NOT`) and through
 the comparison family.
 
-### Optional type surfaces deliberately not claimed
+### Optional type surfaces outside current runtime support
 
 Graph and binding-table reference type spellings (`GV60`-`GV61`), `FLOAT16` /
-`FLOAT128` / `FLOAT256`, and 256-bit integers carry rationale entries in
-`feature_register::NOT_SUPPORTED_RATIONALE`. Query that mentions one of these
-deferred types is rejected at parse or analyze time.
+`FLOAT128` / `FLOAT256`, and 256-bit integers have generated non-support
+rationales. A query that mentions one of these deferred types is rejected while
+parsing.
 
 Explicit value-type nullability (`GV90`), length-qualified byte-string types
-(`GV36`-`GV38`), and `REAL` / `DOUBLE` synonyms (`GV23` / `GV24`) are claimed
-and covered by conformance corpus rows.
+(`GV36`-`GV38`), and `REAL` / `DOUBLE` synonyms (`GV23` / `GV24`) are
+runtime-supported and covered by conformance corpus rows.
 
 ### Numeric literal forms
 
@@ -464,7 +480,7 @@ GROUP BY p.country
 ORDER BY people DESC
 ```
 
-`GROUP BY` is feature `GQ15` and is claimed. Implicit grouping (any
+`GROUP BY` is runtime-supported as feature `GQ15`. Implicit grouping (any
 non-aggregate projection in a `RETURN` that also contains an aggregate)
 also works.
 
@@ -505,9 +521,9 @@ execute_statement(&planned, &mut session, &registry)?;
 ### `MERGE` (deferred)
 
 `MERGE` is grammar-reserved, but the AST builder deliberately rejects it
-with feature-not-supported status `42N01`. selene-db does not claim this
-mutation surface yet. Use explicit `MATCH` plus `INSERT` application logic
-until a dedicated `MERGE` implementation lands.
+with feature-not-supported status `42N01`. Current runtime support does not
+include this mutation surface. Use explicit `MATCH` plus `INSERT` application
+logic until a dedicated `MERGE` implementation lands.
 
 ### `SET`
 
@@ -562,25 +578,97 @@ explicitly.
 
 ## 7. Schema (DDL)
 
-selene-db supports two graph types: GG01 (open, schema-on-read) and GG02
-(closed, schema-validated). The default is open; closed graphs are
-opt-in.
+The engine has open (schema-on-read) and closed (schema-validated) graph modes.
+GQL can create open graphs and closed graphs bound to the bounded named
+graph-type source documented below.
 
-### `DROP GRAPH`
+### `CREATE SCHEMA` / `DROP SCHEMA`
 
 ```gql
-DROP GRAPH analytics IF EXISTS
+CREATE SCHEMA /memory
+CREATE SCHEMA IF NOT EXISTS /`my schema`
+DROP SCHEMA IF EXISTS /memory
 ```
 
-`DROP GRAPH` is supported as the implementation-defined
-`IM_DROP_GRAPH` factory-reset surface. Under D1, selene-db embeds exactly
-one current graph; the parsed graph name is informational and the command
-resets the current session graph. `DROP GRAPH IF EXISTS` parses too; the
-modifier is informational under the same single-graph model.
+Schema references are absolute (ISO/IEC 39075:2024 §17.1): the leading `/` is
+mandatory and a bare name is a syntax error (`42001`). The facade catalog has
+one root directory with no child directories, so `/a/b` is an invalid reference
+(`42002`). Both statements complete with the omitted-result condition `00001`;
+the `IF [NOT] EXISTS` no-ops are silent and publish nothing. Dropping a schema
+that still contains objects is a dependent-object error (`G1000`).
 
-`CREATE GRAPH` remains outside the current claim. It rejects before planning
-with feature-not-supported status `42N01` for `GC04`, because the embedded
-engine does not create a second graph from GQL.
+### `CREATE GRAPH` / `DROP GRAPH`
+
+```gql
+CREATE GRAPH /memory/episodes ANY
+CREATE PROPERTY GRAPH IF NOT EXISTS scratch TYPED ANY PROPERTY GRAPH
+CREATE OR REPLACE GRAPH /memory/episodes ANY
+CREATE GRAPH /memory/closed TYPED /memory/shape
+DROP GRAPH /memory/episodes
+DROP PROPERTY GRAPH IF EXISTS scratch
+```
+
+A graph reference is either absolute (`/schema/graph`) or a single name
+resolved against the selected session graph's schema (§17.2 SR2a). The graph
+type clause is mandatory in
+ISO §12.4. The executable forms are the `<open graph type>` (`[TYPED | ::] ANY
+[[PROPERTY] GRAPH]`, feature GG01) and `[TYPED | ::] <graph type reference>`
+for a named closed graph. The graph and type must belong to the same schema.
+`LIKE g` (GG04), `AS COPY OF g` (GG05), and an inline graph type (GG03) are
+rejected before planning with `42N01`; a `NEXT`-composed catalog statement is
+rejected the same way.
+
+`CREATE GRAPH` and `DROP GRAPH` complete with `00001`. `DROP GRAPH IF EXISTS`
+on an absent graph completes with the warning `01G03` (§12.5 GR1). A strict
+duplicate is `42N10`; a missing graph, missing schema, or wrong-kind object is
+`42002`; a nonempty graph is `G1000` (all drops are RESTRICT).
+
+`CREATE OR REPLACE GRAPH` (§12.4 GR2) drops an existing graph at the reference
+and creates the new one in a single catalog publication; the statement
+completes with `00001` whether the graph was created or replaced, and the
+replacement always has a new graph identity, so sessions opened on the old graph
+fail as stale. The effective drop is RESTRICT: a nonempty graph is `G1000`. An
+object of another kind at the reference is `42002`. `OR REPLACE` and
+`IF NOT EXISTS` are alternatives in the ISO format, so writing both is a syntax
+error. Dropping the selected graph is allowed when it is empty and makes the
+session stale. A nonempty selected graph still fails under RESTRICT. Bare lower
+executor sessions reject all database-catalog statements with the
+implementation-defined status `5GQL0`; use a facade session or the Rust
+`Catalog` API.
+
+### `CREATE GRAPH TYPE` / `DROP GRAPH TYPE`
+
+```gql
+CREATE SCHEMA /memory
+CREATE GRAPH TYPE /memory/shape AS {
+    NODE TYPE Person (),
+    NODE TYPE Memory ()
+}
+CREATE GRAPH TYPE IF NOT EXISTS /memory/shape { NODE TYPE Event () }
+CREATE OR REPLACE PROPERTY GRAPH TYPE /memory/shape {
+    NODE TYPE Event ()
+}
+DROP PROPERTY GRAPH TYPE IF EXISTS /memory/shape
+DROP SCHEMA /memory
+```
+
+The accepted nested source contains one or more property-free named node types.
+`NODE` and `VERTEX` are equivalent node synonyms, `TYPE` is optional, and the
+empty parenthesized pattern may be replaced by the phrase form (`NODE TYPE
+Person`). Each type name supplies its one key label; regular/delimited spelling
+is preserved through facade `PathSegment` validation. Rust and GQL definitions
+reach the same `Catalog::create_graph_type` conversion and runtime definition.
+
+`IF NOT EXISTS` and `IF EXISTS` are no-ops only for the same-kind leaf. A
+missing parent or wrong-kind object is `42002`. `OR REPLACE` applies full
+`DROP GRAPH TYPE` RESTRICT, allocates a fresh identity, and publishes once. A
+referenced type cannot be dropped or replaced (`G1000`). Successful and no-op
+statements return the omitted-result condition `00001`.
+
+Properties, node labels other than the implied singleton, local aliases, edge
+types/endpoints, explicit key-label sets, COPY OF/LIKE/external sources, and
+inline graph types remain `42N01`. This keeps complete GC03, GG02, GG20, and
+GG21 runtime/conformance state unsupported.
 
 ### `CREATE NODE TYPE` / `CREATE EDGE TYPE`
 
@@ -611,8 +699,9 @@ as `ValidationMode`. `STRICT` is the default closed-graph validation mode:
 writes against a closed graph hard-fail with `G2000` when they violate the
 bound graph type. `WARN` permits relaxed writes and emits warning `01N01`
 (`VALIDATION_MODE_RELAXED_WRITE`) through the session warning sink after
-commit. Element type names (`GG20`) and explicit key label sets (`GG21`) are
-claimed.
+commit. The parser observes element type names (`GG20`) and explicit key label
+sets (`GG21`); neither is reported as runtime-supported while its GG02
+dependency is withdrawn.
 
 `DEFAULT <expr>` is represented in the AST and is independent from `NOT NULL`:
 a property with `DEFAULT` but no `NOT NULL` remains nullable. Catalog defaults
@@ -620,8 +709,35 @@ are validated against the declared property type, stored in the graph type,
 round-tripped by `SHOW NODE TYPES` / `SHOW EDGE TYPES`, recovered from durable
 state, and materialized when an inserted node or edge omits the property.
 
-`OR REPLACE` and `IF NOT EXISTS` modifiers are accepted on `CREATE NODE
-TYPE` and `CREATE EDGE TYPE` (feature `GC03`).
+`OR REPLACE` and `IF NOT EXISTS` modifiers are accepted by the grammar on
+`CREATE NODE TYPE` and `CREATE EDGE TYPE`. The parser observes feature `GC03`
+for `IF NOT EXISTS`, but the generated runtime inventory withdraws it with its
+GG02 dependency. `OR REPLACE` on these element-type statements is rejected as
+not implemented (`42N01`): ISO defines the modifier for graph and graph-type
+statements (§12.4, §12.6), and element-type DDL is not an ISO statement.
+
+### `ALTER NODE TYPE`
+
+```gql
+ALTER NODE TYPE :Person (
+    nickname :: STRING,
+    metadata :: JSON DEFAULT '{}'
+)
+```
+
+`ALTER NODE TYPE` is the implementation-defined `IM_ALTER_NODE_TYPE`
+extension; ISO/IEC 39075:2024 defines node-type specifications but no catalog
+`ALTER` statement. The operation is property-additive only. It can add nullable
+properties to an existing node type in a closed graph type, while existing
+nodes remain intact. A default applies to later inserts that omit the new
+property; the alteration does not backfill existing rows.
+
+New `NOT NULL` properties reject even when they declare a default. Existing
+property descriptors cannot be changed, and inline `INDEXED` is unsupported on
+this form; create an index separately after the alteration. Catalog commit
+revalidates the live closed graph, so this rare DDL operation is not a
+constant-time migration. WAL replay extends the named node type's properties in
+place so the positional node-type indexes used by edge endpoints remain stable.
 
 ### `ALTER EDGE TYPE`
 
@@ -636,7 +752,9 @@ ALTER EDGE TYPE :CONCERNS (
 endpoint set and may add nullable properties. Existing endpoint members must
 remain present; endpoint narrowing, property redefinition, and new `NOT NULL`
 properties reject during catalog execution. The migration is durable catalog
-state and replays through WAL recovery as the updated edge type definition.
+state. WAL recovery applies only the changed endpoints and newly added
+properties to the named edge type in place, preserving catalog declaration
+order and leaving unchanged property descriptors untouched.
 
 ### `DROP NODE TYPE` / `DROP EDGE TYPE`
 
@@ -704,7 +822,7 @@ procedure output.
 | Procedure | Tier | Purpose |
 |---|---|---|
 | `selene.health` | Graph | Basic graph health counters. |
-| `selene.feature_status` | Graph | Surfaces the claimed ISO feature register at runtime. |
+| `selene.feature_status` | Graph | Surfaces generated capability status, profile relation, claim/evidence summary, and profile hash. |
 | `selene.verify` | Graph | Integrity check over graph invariants. |
 | `selene.compaction_stats` | Graph | Graph row compaction pressure counters. |
 | `selene.create_index`, `selene.drop_index` | Mutation | Create or drop scalar property indexes through the mutation funnel. |
@@ -716,13 +834,14 @@ procedure output.
 | `selene.rebuild_vector_indexes`, `selene.rebuild_recommended_vector_indexes` | Maintenance | Rebuild derived in-memory vector index state from primary graph values. |
 | `selene.create_text_index`, `selene.drop_text_index` | Mutation | Register or drop maintained BM25 text indexes. |
 | `selene.text_index_stats` | Graph | Text index memory and cardinality statistics. |
+| `selene.property_index_stats` | Graph | Property index drift and cardinality statistics; `answers_probes` is false while an index is demoted to a scan. |
 | `selene.text_search_nodes`, `selene.text_score_nodes`, `selene.text_score_nodes_batch`, `selene.text_score_candidate_state_expanded_batch` | Graph | Exact BM25 search plus node/edge-filtered and candidate-scoped text scoring. |
 | `selene.reciprocal_rank_fusion` | Graph | Fuse ranked node lists with Reciprocal Rank Fusion. |
 | `selene.json_contains_nodes`, `selene.json_path_*_nodes` | Graph | Exact JSON containment, path-existence, path-containment, and path-value search over node properties. |
 | `selene.json_contains_candidate_nodes`, `selene.json_path_*_candidate_nodes` | Graph | Candidate-scoped JSON filters over explicit `LIST<NODE>` inputs. |
 | `selene.compact` | Maintenance | Compact dead graph rows out of the live store. |
 
-The 49 platform built-ins are registered by the native
+The 50 platform built-ins are registered by the native
 `selene-gql` `BuiltinProcedureRegistry` (the sole frozen production
 `ProcedureRegistry` impl) and documented in its rustdoc.
 
@@ -756,7 +875,7 @@ same indexed edge-property filter group used by global retrieval procedures:
 
 `EmptyProcedureRegistry` is the no-op registry used by the README example.
 A real embedder constructs the native `BuiltinProcedureRegistry`, which is
-frozen at construction (D16): it allocates a fixed set of handles for the 49
+frozen at construction: it allocates a fixed set of handles for the 50
 platform built-ins plus 19 `algo.*` procedures and never changes thereafter
 (`registry_version()` is a constant `0`). It can be shared across threads
 via `Arc`. There are no loadable third-party packs to register.
@@ -765,13 +884,20 @@ via `Arc`. There are no loadable third-party packs to register.
 
 ## 9. Transaction control
 
-selene-db's default isolation is **serializable** (clause 4.6); the engine
-uses strict-serializable under a single write lock per graph with
-lock-free reads. Implementation-defined choices `IE002` and `IE004` settle
-this in `feature_register::ANNEX_B_REGISTER`.
+The facade and lower executor both implement these controls. A facade session
+uses facade-owned, lifetime-free detached state and never delegates its controls
+to a lower session transaction. Direct lower sessions keep their existing
+graph-local behavior.
 
-Statements outside an explicit transaction auto-commit at statement end
-(implementation-defined choice `IE001`).
+The lower engine's default isolation is **serializable** (clause 4.6); it
+uses strict-serializable under a single write lock per graph with
+lock-free reads. Generated Annex B records `IE002` and `IE004` settle this;
+`selene_profile::annex_b_by_id` provides direct lookup.
+
+Modifying statements outside an explicit transaction auto-start and commit one
+facade transaction at statement end (implementation-defined choice `IE001`).
+Implicit read-only requests use a coherent live read snapshot without starting
+a transaction.
 
 ```gql
 START TRANSACTION
@@ -785,10 +911,17 @@ COMMIT
 ROLLBACK
 ```
 
-Inside an explicit transaction, multiple statements share one snapshot
-and one write boundary. A failed statement marks the transaction aborted;
-subsequent statements (other than `ROLLBACK`) return
-`ExecutorError::InFailedTransaction`.
+Inside an explicit facade transaction, multiple requests share detached catalog
+and selected-graph successors. The session sees predecessor changes; other
+sessions see the old outer state until `COMMIT`. Read-write commit validates the
+exact pinned base, so a concurrent winner causes rollback with `40000` rather
+than lost update. A read-only transaction pins immutable snapshots, never
+stores, and can serialize before a concurrent writer.
+
+The public Rust equivalents are
+`Session::start_transaction(TransactionAccessMode)`, `commit_transaction`, and
+`rollback_transaction`. Bare GQL start is read-write; there is no access-mode
+grammar extension.
 
 ```rust
 let mut session = selene_gql::Session::new(&graph);
@@ -799,21 +932,73 @@ execute_statement(&plan_for("INSERT (:Person {name: 'Lin'}) FINISH"), &mut sessi
 execute_statement(&plan_for("COMMIT"), &mut session, &registry)?;
 ```
 
-Mixed catalog-and-data transactions are forbidden (implementation-defined
-choices `IE006`, `IE007`): a transaction may either modify schema or
-modify data, but not both. Feature `GP18` (mixed catalog/data) is not
-claimed under D1.
+Failed parse, analysis, runtime, procedure, or staging discards all detached
+work and leaves an explicit transaction failed. Later non-controls return
+`25N02`; `ROLLBACK` succeeds; `COMMIT` performs rollback and returns `25N02`.
+Duplicate start is `25G01`, termination without active work is `2D000`, and a
+read-only write is `25G03`. Cancellation before store is rolled back with
+`5GQL2`; uncertainty after the complete store is indeterminate with `40003`.
 
-Multi-graph transactions (`GT03`) are not claimed; one transaction touches
+Mixed catalog-and-data transactions are forbidden: reads do not establish a
+mode, but the first modification fixes data or catalog mode and the opposite
+class returns `25G02` with no publication. Feature `GP18` remains absent from
+the current register; no conformance claim state or profile hash changes.
+
+Multi-graph transactions (`GT03`) are not runtime-supported; one transaction touches
 exactly one graph.
 
 ---
 
-## 10. GQL Flagger
+## 10. Session control
 
-The Flagger (ISO GQL Clause 24.6) rejects constructs outside the D1 claimed
-feature register at parse or analysis time. Rejection happens
-**before** execution; there is no runtime "unsupported feature" surprise.
+Selected facade sessions persist these control forms:
+
+```gql
+SESSION SET SCHEMA /memory
+SESSION SET PROPERTY GRAPH episodes
+SESSION SET VALUE $limit INTEGER = 20
+SESSION SET TIME ZONE 'America/New_York'
+SESSION RESET PARAMETER $limit
+SESSION RESET SCHEMA
+SESSION RESET GRAPH
+SESSION RESET TIME ZONE
+SESSION RESET ALL CHARACTERISTICS
+SESSION CLOSE
+```
+
+Absolute schema references omit the fixed facade catalog (`/memory` means
+`/selene/memory`). Graph references may be current-schema-relative or absolute.
+`SET` evaluates and resolves completely before replacing state; an error leaves
+all prior characteristics intact. Request parameters shadow the snapshotted
+session dictionary for that request without changing it. RESET restores
+principal home descriptors where supplied, otherwise the session's creation
+schema/graph, plus generated time-zone and parameter defaults.
+
+The facade cache reuses request-independent compiled plans only while its full
+catalog/schema/graph/graph-type/runtime/procedure/profile/session dependency
+stamp matches. Fresh request parameter values are bound after a hit. A drop and
+same-name recreation never rebinds an old session or plan to the new object ID.
+
+`SESSION CLOSE` returns successful completion with omitted result. It rolls
+back and releases active or failed detached transaction state, clears private
+session state, and causes repeated close and every future request to fail with
+`2DN01`. The independent lower-engine `selene_gql::Session` remains available
+for engine use and tests.
+
+Graph/binding-table parameters and subquery or full-simple-expression SET
+initializers remain unsupported (`GS01`, `GS02`, `GS10`–`GS14`). `AT SCHEMA`,
+focused `USE GRAPH`, cross-graph statement execution, GP16, and GQ01 are not
+implemented by this session-control slice.
+
+## 11. GQL Flagger
+
+The Flagger looks up each parser-observed feature's generated admission
+disposition. A record is accepted if and only if it is a direct ISO selection
+or is runtime-supported. In the current inventory, rejected records are
+implied-only or unselected and are unsupported or referenced. Rejections carry
+the canonical ID, name, source span, and non-support rationale. Parser
+admission, runtime status, formal claim state, and evidence are independent
+generated fields. Rejection happens **before** execution.
 
 Examples of rejected constructs:
 
@@ -822,24 +1007,27 @@ Examples of rejected constructs:
 | `CREATE PROCEDURE pkg.fn() { LET x = 1 RETURN x }` | Procedure-local definitions (`GP05`-`GP13`) are deferred. | Parser error. |
 | `CALL pkg.fn(TABLE rows)` | Binding tables as procedure arguments (`GP14`) are deferred. | Parser error. |
 | `CALL pkg.fn(GRAPH g)` | Graphs as procedure arguments (`GP15`) are deferred. | Parser error. |
-| `CREATE GRAPH demo` | Graph management (`GC04`) is unclaimed under the D1 single-graph embedder model. | Flagger error. |
+| `CREATE GRAPH demo` | ISO §12.4 requires an `<open graph type>` or `<of graph type>` clause. | Parser error (`42001`). |
+| `CREATE GRAPH demo LIKE other` | Graph type like a graph (`GG04`) is not implemented. | Feature error for `GG04`. |
 | `MERGE (n:Person {id: 1})` | `MERGE` mutation lowering is deferred. | Parser error. |
 | `RETURN NULL IS TYPED GRAPH AS ok` | Graph reference value types (`GV60`) are deferred. | Flagger error. |
-| `CAST(x AS FLOAT16)` | Feature `GV20` not claimed. | Flagger error. |
-| `CAST(x AS FLOAT128)` | Feature `GV25` not claimed. | Flagger error. |
+| `CAST(x AS FLOAT16)` | Feature `GV20` is unsupported. | Flagger error. |
+| `CAST(x AS FLOAT128)` | Feature `GV25` is unsupported. | Flagger error. |
 | Cypher-only `CREATE (n:Foo)-[:R]->(m:Bar)` (without the `INSERT` keyword) | Not ISO GQL surface. | Parser error. |
 | Cypher-only `WHERE n.x =~ '.*foo.*'` (regex match) | Not ISO GQL surface. | Parser error. |
 
 ### Runtime feature introspection
 
-`CALL selene.feature_status()` surfaces the claimed feature register at
-runtime with `feature_id`, `status`, and `rationale` columns. It is backed by
-the `feature_register` module in `selene-core`: `SUPPORTED_FEATURES`,
-`NOT_SUPPORTED_RATIONALE`, and `is_supported`.
+`CALL selene.feature_status()` preserves `feature_id`, `status`, and `rationale`
+as its first three columns, followed by `feature_name`, `surface`,
+`profile_relation`, `claim_state`, `evidence_status`, `evidence_count`, and
+`profile_hash`. Rows come directly from `selene_profile::capabilities()` in
+generated runtime order. Evidence counts summarize registered references and do
+not expose internal paths. This inventory is not a release conformance claim.
 
 ---
 
-## 11. Error categories
+## 12. Error categories
 
 selene-db separates errors by phase. Each phase has its own error enum
 with `miette::Diagnostic` derives and `GQLSTATUS`-aligned codes.
@@ -847,7 +1035,7 @@ with `miette::Diagnostic` derives and `GQLSTATUS`-aligned codes.
 | Phase | Error type | What it means |
 |---|---|---|
 | Parser | `selene_gql::ParserError` | Syntactic error or Flagger rejection during parse. Carries source spans suitable for `miette` rendering. |
-| Analyzer | `selene_gql::AnalysisError` | Scope / type / write-set / Flagger rejection during analysis. Reports unresolved variables, type mismatches, mutation write-set conflicts, and unclaimed features. |
+| Analyzer | `selene_gql::AnalysisError` | Scope, type, and write-set rejection during analysis. Reports unresolved variables, type mismatches, and mutation write-set conflicts. |
 | Planner | `selene_gql::PlannerError` | Lowering failure. Reports missing procedure signatures, undeclared indexes, or unrepresentable plan shapes. |
 | Executor | `selene_gql::ExecutorError` | Runtime failure. Reports graph-mutation rejection (`GraphMutation`), failed-transaction reentry (`InFailedTransaction`), procedure errors (`ProcedureError`), implementation-defined surfaces (`ImplementationDefined`), and Boolean / value-type runtime errors. |
 
@@ -857,28 +1045,29 @@ diagnostic codes follow the GQLSTATUS table in
 
 ---
 
-## 12. What's NOT supported
+## 13. What's NOT supported
 
-The current D1 surface is deliberately narrow. The list below names what is
-explicitly absent. The canonical rationale is
-`feature_register::NOT_SUPPORTED_RATIONALE`.
+The current c5 surface is deliberately narrow. The list below names what is
+explicitly absent. `selene_profile::capability` returns the canonical status and
+non-support rationale for each feature ID.
 
 | Surface | Status |
 |---|---|
 | Cypher grammar | Not supported. Use ISO GQL syntax. |
 | SQL grammar | Not supported. |
 | SPARQL grammar | Not supported. |
-| Procedure-local definitions (`CREATE PROCEDURE { ... }`) | Not claimed (features `GP05`-`GP13`). Inline query subqueries (`GP01`-`GP03`) and named procedure calls (`GP04`) are supported. |
-| Binding tables or graphs as procedure arguments | Not claimed (features `GP14`, `GP15`). |
-| Procedure-local variables | Not claimed (features `GP05`-`GP15`). |
-| Mixed catalog/data transactions | Not claimed (feature `GP18`). |
-| Multi-graph transactions | Not claimed (feature `GT03`). |
-| Graph / table reference type spellings (`GRAPH`, `TABLE` as types) | Not claimed (features `GV60`-`GV61`). |
-| `FLOAT16`, `FLOAT128`, `FLOAT256` | Not claimed (`GV20`, `GV25`, `GV26`). `REAL` / `DOUBLE` synonyms are supported. |
-| 256-bit integers (`INT256`, `UINT256`) | Not claimed. |
+| Procedure-local definitions (`CREATE PROCEDURE { ... }`) | Unsupported/deferred (features `GP05`-`GP13`). Inline query subqueries (`GP01`-`GP03`) and named procedure calls (`GP04`) are runtime-supported. |
+| Binding tables or graphs as procedure arguments | Unsupported/deferred (features `GP14`, `GP15`). |
+| Procedure-local variables | Unsupported/deferred (features `GP05`-`GP15`). |
+| Mixed catalog/data transactions | Unsupported (feature `GP18`). |
+| Multi-graph transactions | Unsupported (feature `GT03`). |
+| Graph / table reference type spellings (`GRAPH`, `TABLE` as types) | Outside current runtime support (features `GV60`-`GV61`). |
+| `FLOAT16`, `FLOAT128`, `FLOAT256` | Unsupported (`GV20`, `GV25`, `GV26`). `REAL` / `DOUBLE` synonyms are runtime-supported. |
+| 256-bit integers (`INT256`, `UINT256`) | Unsupported. |
 | Time-series query syntax | Out of scope. Future first-party extension allocation `TIMS`. |
 | RDF / SPARQL bridge syntax | Out of scope. Future first-party extension allocation `GRPR`. |
 | Recursive CTEs (`WITH RECURSIVE`) | Not in ISO GQL; not supported. |
+| Broader `ALTER NODE TYPE` migrations | Property rename/removal/retyping, validation-mode changes, key-label changes, and inline indexes are not supported. Add nullable properties only, then create indexes separately. |
 | Wire format | Out of scope (ISO GQL Clause 4.2.3). Embedders pick their own transport. |
 
 Where the AST has a node for a construct but the analyzer rejects it, the

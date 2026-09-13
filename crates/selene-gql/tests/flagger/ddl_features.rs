@@ -1,57 +1,92 @@
-use selene_core::feature_register::FeatureId;
-use selene_gql::{GqlStatus, ParserError, feature_walk, parse};
+use selene_gql::{GqlStatus, ParserError, SourceSpan, feature_walk, parse};
+use selene_profile::{FeatureId, capability};
 
 use super::assert_read_plan;
 
 #[test]
 fn mutation_feature_is_supported() {
-    parse("MATCH (n) SET n.active = true RETURN n").expect("GD01 mutation is claimed");
+    parse("MATCH (n) SET n.active = true RETURN n").expect("GD01 mutation syntax parses");
 }
 
 #[test]
-fn create_graph_is_rejected_before_planning() {
-    // CREATE GRAPH stays GC04-rejected under D1 single-graph: the engine cannot
-    // create a second graph. DROP GRAPH is split out (now IM_DROP_GRAPH).
-    for source in [
-        "CREATE GRAPH demo",
-        "CREATE GRAPH IF NOT EXISTS demo",
-        "CREATE GRAPH demo ANY",
-        "CREATE GRAPH demo TYPED socialNetworkGraphType",
-        "CREATE GRAPH demo ::socialNetworkGraphType",
-        "CREATE GRAPH demo ::{(City :City {name STRING})}",
-        "CREATE GRAPH /demo LIKE /source",
-        "CREATE GRAPH demo ANY AS COPY OF source",
-        "CREATE GRAPH demo {(Person :Person {lastname STRING, joined DATE})} AS COPY OF source",
-    ] {
-        let error = parse(source).expect_err(source);
-        assert_eq!(error.gqlstatus().as_str(), "42N01");
-        assert_feature(error, FeatureId::GC04);
-    }
-}
-
-#[test]
-fn drop_graph_stamps_im_drop_graph_and_parses() {
-    // BRIEF-152 / audit Item 10: DROP GRAPH ships as the IM_DROP_GRAPH
-    // factory-reset extension (a supported vendor flag), so it parses through to
-    // the executor instead of dying in the flagger like CREATE GRAPH. IF EXISTS
-    // is informational under D1 and adds no extra flag.
+fn graph_management_records_open_and_named_closed_type_forms() {
+    // GC04/GC05/GG01 are runtime-supported. The bounded named closed-type form
+    // parses and stamps GG02 without claiming complete runtime support.
     let ids = |source: &str| {
         feature_walk(&parse(source).expect(source))
             .into_iter()
             .map(|feature| feature.feature_id)
             .collect::<Vec<_>>()
     };
-    for source in ["DROP GRAPH demo", "DROP GRAPH IF EXISTS demo"] {
-        let observed = ids(source);
-        assert!(
-            observed.contains(&FeatureId::IM_DROP_GRAPH),
-            "{source} must flag IM_DROP_GRAPH"
-        );
-        assert!(
-            !observed.contains(&FeatureId::GC04),
-            "{source} must NOT flag GC04 (that stays CREATE GRAPH only)"
-        );
+    assert_eq!(
+        ids("CREATE GRAPH demo ANY"),
+        [FeatureId::GC04, FeatureId::GG01]
+    );
+    assert_eq!(
+        ids("CREATE GRAPH IF NOT EXISTS demo ANY"),
+        [FeatureId::GC04, FeatureId::GG01, FeatureId::GC05]
+    );
+    // OR REPLACE is part of the section 12.4 format and gated by no feature
+    // of its own (CR1-CR7), so it stamps nothing beyond GC04 and GG01.
+    assert_eq!(
+        ids("CREATE OR REPLACE GRAPH demo ANY"),
+        [FeatureId::GC04, FeatureId::GG01]
+    );
+
+    let source = "CREATE GRAPH /demo LIKE /source";
+    let error = parse(source).expect_err(source);
+    let ParserError::UnsupportedFeature {
+        feature_id,
+        display_name,
+        span,
+        hint,
+    } = error
+    else {
+        panic!("expected UnsupportedFeature for {source:?}");
+    };
+    let record = capability(FeatureId::GG04).expect("GG04 capability");
+    assert_eq!(feature_id, FeatureId::GG04);
+    assert_eq!(display_name, record.name);
+    assert_eq!(display_name, "Graph type like a graph");
+    assert_eq!(span, SourceSpan::new(19, 12));
+    assert_eq!(hint, record.non_support_rationale);
+
+    for (source, expected) in [
+        (
+            "CREATE GRAPH demo ::{(City :City {name STRING})}",
+            FeatureId::GG03,
+        ),
+        ("CREATE GRAPH demo ANY AS COPY OF source", FeatureId::GG05),
+        (
+            "CREATE GRAPH demo {(Person :Person {lastname STRING, joined DATE})} AS COPY OF source",
+            FeatureId::GG05,
+        ),
+    ] {
+        let error = selene_gql::parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus().as_str(), "42N01");
+        assert_feature(error, expected);
     }
+    for source in [
+        "CREATE GRAPH demo TYPED socialNetworkGraphType",
+        "CREATE GRAPH demo ::socialNetworkGraphType",
+    ] {
+        assert_eq!(ids(source), [FeatureId::GC04, FeatureId::GG02], "{source}");
+    }
+}
+
+#[test]
+fn drop_graph_stamps_only_gc04_and_the_conditional_feature() {
+    let ids = |source: &str| {
+        feature_walk(&parse(source).expect(source))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids("DROP GRAPH demo"), [FeatureId::GC04]);
+    assert_eq!(
+        ids("DROP GRAPH IF EXISTS demo"),
+        [FeatureId::GC04, FeatureId::GC05]
+    );
 }
 
 #[test]
@@ -67,13 +102,12 @@ fn intersect_and_except_composite_set_ops_are_supported() {
 }
 
 #[test]
-fn or_replace_catalog_ddl_is_not_implemented() {
+fn or_replace_element_type_ddl_is_not_implemented() {
     for source in [
-        "CREATE OR REPLACE GRAPH demo",
         "CREATE OR REPLACE NODE TYPE :Person (name :: STRING)",
         "CREATE OR REPLACE EDGE TYPE :KNOWS (FROM :Person TO :Person)",
     ] {
-        let error = parse(source).expect_err(source);
+        let error = selene_gql::parse(source).expect_err(source);
         assert!(
             matches!(error, ParserError::NotImplemented { .. }),
             "expected NotImplemented for {source:?}, got {error:?}"
@@ -125,15 +159,13 @@ fn non_iso_list_iteration_expressions_are_syntax_errors() {
 }
 
 #[test]
-fn closed_type_ddl_features_are_supported() {
-    // GG02 (closed graph type) + GG20 (explicit element type names) are claimed,
-    // as is GG21 (explicit element type key label sets, 813) — but the bare
-    // `:Name` forms below DON'T flag GG21 (only the explicit `=>` form does;
-    // see `explicit_key_label_set_flags_gg21`). This test only asserts parse
-    // acceptance of the implicit forms.
+fn closed_type_ddl_syntax_is_observed() {
+    // The parser still observes GG02/GG20/GG21 syntax after runtime-support
+    // withdrawal. Bare `:Name` forms do not flag GG21; only the explicit `=>`
+    // form does. This test asserts parse acceptance, not support or claim state.
     parse("CREATE NODE TYPE IF NOT EXISTS :Person (name :: STRING)")
-        .expect("GG02/GG20 are claimed");
-    parse("DROP EDGE TYPE IF EXISTS :KNOWS").expect("type DROP is claimed");
+        .expect("closed type syntax parses");
+    parse("DROP EDGE TYPE IF EXISTS :KNOWS").expect("type DROP syntax parses");
 }
 
 #[test]
@@ -153,6 +185,29 @@ fn alter_edge_type_stamps_implementation_defined_feature() {
     assert!(
         observed.contains(&FeatureId::GG02) && observed.contains(&FeatureId::GG20),
         "ALTER EDGE TYPE remains closed-type DDL; observed {observed:?}"
+    );
+}
+
+#[test]
+fn alter_node_type_stamps_only_its_implementation_defined_type_features() {
+    let statement = parse("ALTER NODE TYPE :Person (active :: BOOLEAN DEFAULT true)")
+        .expect("ALTER NODE TYPE parses");
+    let observed = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    assert!(
+        observed.contains(&FeatureId::IM_ALTER_NODE_TYPE),
+        "ALTER NODE TYPE must flag its implementation-defined extension; observed {observed:?}"
+    );
+    assert!(
+        observed.contains(&FeatureId::GG02) && observed.contains(&FeatureId::GG20),
+        "ALTER NODE TYPE remains closed-type DDL; observed {observed:?}"
+    );
+    assert!(
+        !observed.contains(&FeatureId::GG21),
+        "the bare ALTER type name does not write an explicit key label set; observed {observed:?}"
     );
 }
 
@@ -262,8 +317,8 @@ fn drop_cascade_stamps_im_drop_cascade_but_restrict_and_default_do_not() {
 
 #[test]
 fn named_procedure_call_feature_is_supported() {
-    parse("CALL pkg.fn(1)").expect("GP04 named CALL is claimed");
-    parse("MATCH (n) CALL pkg.fn(n) RETURN n").expect("in-pipeline GP04 CALL is claimed");
+    parse("CALL pkg.fn(1)").expect("GP04 named CALL parses");
+    parse("MATCH (n) CALL pkg.fn(n) RETURN n").expect("in-pipeline GP04 CALL parses");
 }
 
 fn assert_feature(error: ParserError, expected: FeatureId) {

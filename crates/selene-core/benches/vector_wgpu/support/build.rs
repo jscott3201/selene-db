@@ -158,6 +158,7 @@ async fn request_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter, Str
             power_preference,
             force_fallback_adapter: false,
             compatible_surface: None,
+            apply_limit_buckets: false,
         };
         match instance.request_adapter(&options).await {
             Ok(adapter) => return Ok(adapter),

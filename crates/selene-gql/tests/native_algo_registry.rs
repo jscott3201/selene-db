@@ -230,11 +230,11 @@ fn show_procedures_lists_all_nineteen_algo_procedures() {
     let names = string_column(&table, "name");
 
     // The registry also carries the 49 `selene.*` platform built-ins, so SHOW
-    // PROCEDURES lists 68; all 19 algo names must still be present.
+    // PROCEDURES lists 69; all 19 algo names must still be present.
     assert_eq!(
         table.row_count(),
-        68,
-        "expected 19 algo procedures + 49 platform built-ins"
+        69,
+        "expected 19 algo procedures + 50 platform built-ins"
     );
     for expected in [
         "algo.projection_build",
@@ -514,14 +514,17 @@ fn pagerank_personalization_rejects_seed_outside_projection() {
     let mut session = Session::new(&graph);
 
     session
+        .execute_source("INSERT (:Outside)", &registry)
+        .unwrap();
+    session
         .execute_source(
-            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            "CALL algo.projection_build('p', ['N'], NULL, NULL)",
             &registry,
         )
         .expect("projection_build executes");
     session.bind_parameter(
         db_string("seeds"),
-        Value::List(vec![personalization_seed(NodeId::new(999), 1.0)]),
+        Value::List(vec![personalization_seed(NodeId::new(3), 1.0)]),
     );
 
     let err = session
@@ -532,7 +535,7 @@ fn pagerank_personalization_rejects_seed_outside_projection() {
         .expect_err("out-of-projection seed rejected");
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("not in projection") && rendered.contains("999"),
+        rendered.contains("not in projection") && rendered.contains("3"),
         "error should mention out-of-projection seed, got: {rendered}"
     );
 }

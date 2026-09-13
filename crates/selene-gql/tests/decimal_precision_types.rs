@@ -1,15 +1,14 @@
 //! Conformance coverage for user-specified DECIMAL precision/scale type names.
 
 use rust_decimal::Decimal;
-use selene_core::{
-    DbString, DecimalType, GraphId, PropertyValueType, Value, feature_register::FeatureId,
-};
+use selene_core::{DbString, DecimalType, GraphId, PropertyValueType, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, ParserError, Session, StatementOutput,
     ast::{format_read_statement, structurally_eq},
     feature_walk, parse,
 };
 use selene_graph::{GraphTypeDef, PropertyElementType, RecordFieldType, SharedGraph};
+use selene_profile::FeatureId;
 
 fn db_string(value: &str) -> DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")

@@ -8,7 +8,9 @@
 node_modules/
 .env
 .env.*
+claude-id.json
 codex-id.json
+*-id.json
 
 # Local working directories — design artifacts, briefs, reviews, plans.
 # Canonical state lives in the MCP graph (selenedb instance); these folders

@@ -341,6 +341,10 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
             kind: "Distinct",
             payload: String::new(),
         },
+        PipelineOp::TrimOrderCarriers { projected_width } => PipelineOpSummary {
+            kind: "TrimOrderCarriers",
+            payload: format!("projected_width={projected_width}"),
+        },
         PipelineOp::Union { op, rhs } => PipelineOpSummary {
             kind: "Union",
             payload: format!(

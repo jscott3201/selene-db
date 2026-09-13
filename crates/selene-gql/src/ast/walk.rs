@@ -24,7 +24,12 @@
 //! is handled in exactly one place) while preserving each adopter's existing
 //! recursion order and side-effect timing byte-for-byte.
 
-use crate::ast::{ValueExpr, expr::IsCheckKind, span::SourceSpan};
+use crate::ast::{
+    ValueExpr,
+    expr::IsCheckKind,
+    pattern::{MatchClause, PatternElement},
+    span::SourceSpan,
+};
 
 impl ValueExpr {
     /// Visit each direct child [`ValueExpr`] of this node, in source order.
@@ -229,6 +234,52 @@ impl ValueExpr {
             | Self::Normalize { span, .. }
             | Self::Trim { span, .. }
             | Self::Cast { span, .. } => f(span),
+        }
+    }
+}
+
+impl MatchClause {
+    /// Visit each root [`ValueExpr`] this clause owns, in source order.
+    ///
+    /// Shallow in the same sense as [`ValueExpr::for_each_child`]: the callback
+    /// receives the *root* of each expression the clause holds, and the caller
+    /// drives descent into that expression's own children. This is the bridge
+    /// [`ValueExpr::for_each_child`] deliberately does not provide — a subquery
+    /// node yields no `ValueExpr` children because its body is a `MatchClause`,
+    /// so any caller that must see through a subquery calls this on the body.
+    ///
+    /// There are exactly five such sites and this method is the enumeration of
+    /// record for them:
+    ///
+    /// 1. each node pattern's property values,
+    /// 2. each node pattern's inline `WHERE`,
+    /// 3. each edge pattern's property values,
+    /// 4. each edge pattern's inline `WHERE`,
+    /// 5. the clause-level `WHERE`.
+    ///
+    /// Nothing else in the clause reaches an expression: selectors and counted
+    /// quantifiers carry `u32`, match/path modes are unit variants, and label
+    /// expressions bottom out in `DbString`.
+    ///
+    /// `plan::optimize::walk::walk_match_clause` is the mutable, rewrite-driving
+    /// mirror of this walk and must gain any site added here.
+    pub fn for_each_expr<'a>(&'a self, f: &mut impl FnMut(&'a ValueExpr)) {
+        for pattern in &self.patterns {
+            for element in &pattern.elements {
+                let (properties, inline_where) = match element {
+                    PatternElement::Node(node) => (&node.properties, &node.inline_where),
+                    PatternElement::Edge(edge) => (&edge.properties, &edge.inline_where),
+                };
+                for (_, value) in properties {
+                    f(value);
+                }
+                if let Some(inline_where) = inline_where {
+                    f(inline_where);
+                }
+            }
+        }
+        if let Some(where_clause) = &self.where_clause {
+            f(where_clause);
         }
     }
 }

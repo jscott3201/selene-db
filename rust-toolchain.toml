@@ -2,6 +2,6 @@
 # Per the engineering discipline floor (see CLAUDE.md hard rules), every
 # selene-db build pins this file at the workspace root.
 [toolchain]
-channel = "1.95.0"
+channel = "1.97.1"
 components = ["rustfmt", "clippy"]
 profile = "default"

@@ -1,6 +1,6 @@
 //! Graph-layer error types and GQLSTATUS mappings.
 
-use selene_core::{CoreError, DbString, EdgeId, NodeId};
+use selene_core::{CoreError, DbString, EdgeId, GraphId, NodeId};
 use selene_persist::PersistError;
 use smallvec::SmallVec;
 
@@ -10,6 +10,37 @@ use crate::typed_index::TypedIndexKind;
 
 /// Result alias for graph operations.
 pub type GraphResult<T> = Result<T, GraphError>;
+
+/// Result alias for snapshot-bound candidate-set validation and algebra.
+pub type CandidateSetResult<T> = Result<T, CandidateSetError>;
+
+/// Validation error raised by graph-owned candidate-set algebra.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CandidateSetError {
+    /// A candidate set belongs to a different lower graph identity.
+    #[error("candidate set belongs to graph {actual}, expected graph {expected}")]
+    GraphMismatch {
+        /// Graph identity required by the graph performing the algebra.
+        expected: GraphId,
+        /// Graph identity carried by the candidate set.
+        actual: GraphId,
+    },
+    /// A candidate set was produced from a different immutable generation.
+    #[error("candidate set belongs to generation {actual}, expected generation {expected}")]
+    GenerationMismatch {
+        /// Generation required by the graph performing the algebra.
+        expected: u64,
+        /// Generation carried by the candidate set.
+        actual: u64,
+    },
+    /// A candidate set has a different physical layout or workspace binding.
+    #[error("candidate set belongs to a different snapshot layout")]
+    LayoutMismatch,
+    /// A candidate's stable ID, typed row, or liveness no longer matches.
+    #[error("candidate set contains an entry that is stale for this snapshot")]
+    StaleEntry,
+}
 
 /// Store-assignment data-exception family.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +74,46 @@ pub struct StoreAssignmentError {
     pub exception: StoreAssignmentException,
     /// Human-readable reason.
     pub reason: String,
+}
+
+/// What proved that a persistence directory already holds a committed store.
+///
+/// No one of these is sufficient, because a store moves between them. A WAL that
+/// has never been checkpointed carries its whole dataset as entries; once
+/// rotation runs, that data moves into a snapshot and the active WAL is reset
+/// to a bare header, so the file looks empty while the directory is full; and a
+/// standalone export is a snapshot with no MANIFEST and no WAL at all. Each
+/// variant names the evidence that actually fired, so a refusal says which
+/// shape was found.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExistingStoreEvidence {
+    /// The WAL itself carries committed entries past its header.
+    WalEntries,
+    /// A `MANIFEST` beside the WAL names a published snapshot epoch. This is
+    /// the state a directory is left in by every checkpoint.
+    PublishedManifest,
+    /// A WAL file owns the directory. Presence is the test, not content: a
+    /// bare-header WAL still declares an epoch that a standalone snapshot
+    /// would preclaim.
+    ActiveWal,
+    /// A `snapshot.N.snap` with no `MANIFEST` names the directory's whole
+    /// dataset. Recovery treats such a directory as a store — it applies the
+    /// highest on-disk snapshot and seeds a fresh WAL header from it — so
+    /// attaching an unrelated WAL beside one produces a header that disagrees
+    /// with the snapshot it will be replayed against.
+    StandaloneSnapshot,
+}
+
+impl std::fmt::Display for ExistingStoreEvidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Self::WalEntries => "the WAL carries committed entries",
+            Self::PublishedManifest => "a MANIFEST names a published snapshot",
+            Self::ActiveWal => "a WAL file owns this directory",
+            Self::StandaloneSnapshot => "a snapshot names this directory's dataset",
+        };
+        f.write_str(text)
+    }
 }
 
 /// Error type for graph storage and mutation operations.
@@ -95,6 +166,14 @@ pub enum GraphError {
         rows: u64,
         /// The maximum addressable row count.
         max_rows: u64,
+    },
+
+    /// A monotonic identity or generation counter cannot advance without reuse.
+    #[error("{kind} counter exhausted")]
+    #[diagnostic(code(SLENE_G_030))]
+    CounterExhausted {
+        /// Counter whose next value cannot be represented.
+        kind: &'static str,
     },
 
     /// The graph snapshot violates a structural invariant (e.g., row count
@@ -245,6 +324,68 @@ pub enum GraphError {
         reason: String,
     },
 
+    /// A commit or checkpoint reached the durable path and then failed,
+    /// leaving its outcome undetermined: the work may or may not be present
+    /// after the mandated reopen.
+    ///
+    /// Both operations poison the committer, and the caller's obligation is the
+    /// same for either, which is why one variant covers both. It is also
+    /// already true of the API: once the committer is poisoned every later
+    /// submit — commit, compact, vector-index rebuild, or a second checkpoint —
+    /// short-circuits into this variant. Before it covered checkpoints, the
+    /// *only* caller that did not see it was the one whose checkpoint caused
+    /// the poison.
+    ///
+    /// # Why this is not [`GraphError::Durable`]
+    ///
+    /// ISO/IEC 39075:2024 §8.4 `<commit command>` GR 1)b) says that when an
+    /// error prevents commitment, the transaction's changes "are canceled" and
+    /// *transaction rollback (40000)* is raised. A plain durable failure means
+    /// exactly that. This variant is the case where the engine cannot honour
+    /// the "are canceled" half, so reporting an unqualified rollback would be a
+    /// lie in the dangerous direction — a caller that reads `Err` as "this
+    /// transition did not happen" re-drives the write after the reopen and
+    /// double-applies it.
+    ///
+    /// §23.1 Table 8 supplies the honest spelling: class 40 subclass 003,
+    /// *statement completion unknown*, which is what
+    /// [`GraphError::gqlstatus`] returns here.
+    ///
+    /// # When it is raised
+    ///
+    /// Every commit error-acked on a committer poison exit. The graph
+    /// committer is an in-memory snapshot publisher: a poison exit means a
+    /// sealed publication panicked or failed while the committer held it, so
+    /// the engine cannot prove which side of the publication point the new
+    /// snapshot reached. A later seal may already contain the same mutation,
+    /// so the committer never attempts a selective rollback or publishes a
+    /// later divergent snapshot.
+    ///
+    /// # This over-approximates, deliberately
+    ///
+    /// Some commits error-acked this way genuinely left nothing behind. They
+    /// are reported as unknown anyway, because the committer cannot tell them
+    /// apart from the ones that did publish: there is no published-offset
+    /// watermark to compare against.
+    ///
+    /// Over-reporting costs a caller one needless read-back after the reopen.
+    /// Under-reporting causes a double-apply.
+    ///
+    /// # What a caller must do
+    ///
+    /// Treat the work as unknown. Quiesce, drop the handle, reopen through the
+    /// owning database handle (the `selene-db` facade owns durable open and
+    /// recovery; there is no in-graph recover entry point), read back to
+    /// determine whether it landed, and only then decide whether to retry.
+    /// Retrying blind double-applies. [`GraphError::requires_reopen`] is the
+    /// supported test.
+    #[error("outcome is indeterminate; reopen and reconcile: {reason}")]
+    #[diagnostic(code(SLENE_G_029))]
+    IndeterminateOutcome {
+        /// Where the commit stopped, for operator diagnosis.
+        reason: String,
+    },
+
     /// The commit was cancelled at the pre-WAL cut-line (BRIEF-117): the
     /// committer observed the cancellation token set before it appended the
     /// commit to the WAL, so nothing was persisted or published. Past the WAL
@@ -252,6 +393,27 @@ pub enum GraphError {
     #[error("commit cancelled before durable append")]
     #[diagnostic(code(SLENE_G_019))]
     Cancelled,
+
+    /// A graph was attached to a persistence directory that already holds a
+    /// committed store.
+    ///
+    /// Attaching does not replay: the caller's graph is used as-is and its
+    /// commits append to whatever is already there. When that graph does not
+    /// already reflect the store, ids restart at 1 and collide with ids the
+    /// store allocated, and the directory stops recovering at all. Recovering
+    /// is the operation that reads an existing store.
+    #[error(
+        "{path} already holds a committed store ({evidence}); \
+         reopen it through its owning database handle"
+    )]
+    #[diagnostic(code(SLENE_G_028))]
+    ExistingStore {
+        /// Path of the WAL the caller asked to attach.
+        path: std::path::PathBuf,
+        /// What was found on disk. A rotated WAL is header-only while its data
+        /// lives in a snapshot, so the WAL alone cannot answer this.
+        evidence: ExistingStoreEvidence,
+    },
 
     /// Error propagated from selene-core.
     #[error(transparent)]
@@ -270,6 +432,32 @@ pub enum GraphError {
 }
 
 impl GraphError {
+    /// Whether this error means the graph handle is unusable and the caller
+    /// must reopen through the owning database handle before trusting or
+    /// retrying anything.
+    ///
+    /// The supported test for the condition, in preference to matching a
+    /// variant. Which failures poison the committer is an engine-internal
+    /// judgement that has already changed once — a checkpoint's
+    /// watermark/rotation phase started reporting it in the same release that
+    /// commits did — and a caller branching on this predicate does not have to
+    /// track that. It is also the honest shape for the question: "must I
+    /// reopen?" is what an embedder acts on, and a variant match is only a
+    /// proxy for it.
+    ///
+    /// Exactly one variant returns `true` today. That is deliberate rather than
+    /// incidental: the whole point of [`GraphError::IndeterminateOutcome`] is
+    /// that a single condition covers every operation whose durable outcome the
+    /// engine cannot determine, so a caller has one thing to handle.
+    ///
+    /// `false` does not mean "succeeded" — it means the failure was definite
+    /// and left the handle usable, so an ordinary retry or a typed recovery is
+    /// safe.
+    #[must_use]
+    pub const fn requires_reopen(&self) -> bool {
+        matches!(self, Self::IndeterminateOutcome { .. })
+    }
+
     /// Map this error to its 5-character ISO GQLSTATUS code.
     #[must_use]
     pub const fn gqlstatus(&self) -> &'static str {
@@ -278,7 +466,7 @@ impl GraphError {
             | Self::EdgeNotFound { .. }
             | Self::NodeNotAlive { .. }
             | Self::EdgeNotAlive { .. } => "22G03",
-            Self::RowSpaceExhausted { .. } => "53000",
+            Self::RowSpaceExhausted { .. } | Self::CounterExhausted { .. } => "53000",
             Self::Inconsistent { .. } => "5GQL0",
             Self::PropertyIndexAlreadyExists { .. }
             | Self::PropertyIndexNotFound { .. }
@@ -290,10 +478,22 @@ impl GraphError {
             | Self::VectorIndexInvalidIvfConfig { .. }
             | Self::VectorIndexValueRejected { .. }
             | Self::TextIndexAlreadyExists { .. } => "22G03",
+            Self::TypeViolation(crate::TypeViolation::UniquePropertyComparison {
+                source, ..
+            }) => match source {
+                selene_core::ValueComparisonError::NotComparable => "22G04",
+                selene_core::ValueComparisonError::TooDeep => "53000",
+            },
             Self::TypeViolation(_) => "G2000",
             Self::StoreAssignment(source) => source.exception.gqlstatus(),
             Self::Core(source) => source.gqlstatus(),
-            Self::Durable { .. } => "5GQL0",
+            Self::Durable { .. } | Self::ExistingStore { .. } => "5GQL0",
+            // ISO §23.1 Table 8: transaction rollback (40) subclass 003,
+            // "statement completion unknown". §8.4 GR 1)b) delegates the
+            // subclass to the implementation (IE008); this one is
+            // standard-defined rather than invented, and it is the only code in
+            // the table that says what actually happened.
+            Self::IndeterminateOutcome { .. } => "40003",
             Self::Cancelled => "5GQL2",
             Self::Provider(_) | Self::Persist(_) => "5GQL0",
         }
@@ -313,6 +513,7 @@ mod tests {
     #[case(GraphError::EdgeNotFound { id: EdgeId::new(1) }, "22G03")]
     #[case(GraphError::NodeNotAlive { id: NodeId::new(1) }, "22G03")]
     #[case(GraphError::EdgeNotAlive { id: EdgeId::new(1) }, "22G03")]
+    #[case(GraphError::CounterExhausted { kind: "edge identity" }, "53000")]
     #[case(
         GraphError::RowSpaceExhausted { kind: "node", rows: 4_294_967_295, max_rows: 4_294_967_295 },
         "53000"
@@ -400,12 +601,19 @@ mod tests {
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "0G003")]
     #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "5GQL0")]
+    #[case(
+        GraphError::IndeterminateOutcome { reason: "group flush failed".to_owned() },
+        "40003"
+    )]
     #[case(GraphError::Cancelled, "5GQL2")]
     #[case(
         GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag DEMO".to_owned() }),
         "5GQL0"
     )]
-    #[case(GraphError::Persist(PersistError::MalformedSnapshotFilename), "5GQL0")]
+    #[case(
+        GraphError::Persist(PersistError::Control(selene_persist::ControlError::Checksum)),
+        "5GQL0"
+    )]
     fn gqlstatus_for_each_variant(#[case] error: GraphError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
         assert!(
@@ -558,9 +766,6 @@ mod tests {
 
         let provider_errors: Vec<ProviderError> = vec![
             ProviderError::InvalidPayload {
-                reason: "x".to_owned(),
-            },
-            ProviderError::SerializationFailed {
                 reason: "x".to_owned(),
             },
             ProviderError::Inconsistent {

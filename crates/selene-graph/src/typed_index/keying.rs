@@ -8,6 +8,17 @@ use selene_core::{DbString, DurationOrderKey, Value, duration_order_key};
 
 use super::{NotNanError, NotNanF32, NotNanF64, TypedIndexKind};
 
+/// Diagnostic spelling of a rejected NaN in `observed` positions.
+///
+/// One constant rather than a literal per site: the composite path used to
+/// recover "this was a NaN, not a kind mismatch" by comparing `observed`
+/// against this text, so the two spellings had to agree for a correctness
+/// classifier to work. That classifier is now a discriminant test
+/// (`CompositeIndexValueError::ComponentNaN`) and this text is purely
+/// diagnostic, but keeping one definition keeps the two paths' messages
+/// identical.
+pub(crate) const NAN_OBSERVED: &str = "NaN";
+
 /// Internal value-admission error for index mutation.
 #[derive(Debug)]
 pub(crate) enum TypedIndexValueError {
@@ -39,7 +50,7 @@ impl TypedIndexValueError {
     pub(crate) fn observed(&self) -> &'static str {
         match self {
             Self::KindMismatch { observed, .. } => observed,
-            Self::NaN { .. } => "NaN",
+            Self::NaN { .. } => NAN_OBSERVED,
         }
     }
 }
@@ -128,6 +139,17 @@ pub(crate) fn observed_value_kind(value: &Value) -> &'static str {
     value.variant_name()
 }
 
+/// Compare two raw values bit-exactly for floats, by value otherwise.
+///
+/// Reached only when at least one side cannot be coerced to the index's kind,
+/// so neither side is keyable and the comparison decides whether maintenance
+/// may be skipped. It stays bit-exact — and so reports the two signed zeros as
+/// different — deliberately: the only cost is a redundant remove+insert, and
+/// both halves re-coerce through [`typed_key`], which agrees on the outcome.
+///
+/// Canonicalising here instead of in the key constructors would invert that
+/// safety. It would report `-0.0` and `0.0` as the same raw value and skip
+/// maintenance while the key underneath still moved.
 pub(super) fn raw_value_same(lhs: &Value, rhs: &Value) -> bool {
     match (lhs, rhs) {
         (Value::Float(lhs), Value::Float(rhs)) => lhs.to_bits() == rhs.to_bits(),

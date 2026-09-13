@@ -32,6 +32,59 @@ single native engine:
 Read the current `Cargo.toml` / `rust-toolchain.toml` for versions. The workspace
 uses Rust edition 2024 and a pinned stable toolchain.
 
+The [2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md) is
+the version-policy source of truth. The 1.x line receives no maintenance or
+migration support. Treat `2.0.0-alpha.1` as a source coordinate unless its
+crates.io publication has been verified.
+
+## 2.0 Program Contract
+
+[`docs/v2/README.md`](docs/v2/README.md) is the tracked 2.0 program entry
+point. Its finalized decisions, machine plan, milestone/work-item projections,
+review protocol, issue ownership, risk register, and conformance policy are the
+portable execution contract. Untracked local notes are supplementary and must
+not be required to execute a work item.
+
+The no-facade, row-executor workspace at `c5c0a985` is the historical 2.0
+baseline. The current workspace includes the generated profile authority plus
+the `selene-db` facade and `selene-catalog` boundary. M06 replaces row execution,
+and M09 adds format 2. Do not claim those targets exist before their owning work
+items merge.
+
+The implementer edits repository files and runs tests only. It does not stage,
+commit, push, create or update a PR, submit review output, or merge. The
+orchestrator owns commits, pushes, non-draft PR creation and updates,
+consolidated independent-review comments, and eligible authorized merges. One
+independent read-only review is the default (with a focused second lens when
+useful for durability, concurrency, or complex semantic risk) without adopting
+the implementer or orchestrator's conclusions.
+
+The orchestrator may merge only when the final reviewed head is unchanged,
+required exact-head checks are green, final review is Blocker/Major-clean,
+repository policy and branch protection permit the merge, scope and worktree
+state are clean, and the user has given explicit authorization. A changed
+head voids PASS. This role split does not authorize self-approval, auto-merge,
+release, publication, tagging, reactions, or branch-protection changes.
+
+Every 2.0 handoff includes:
+
+```text
+Plan ID:
+PR URL:
+Base SHA / Head SHA / commits:
+Outcome delivered:
+Files/subsystems changed:
+Public API and persisted/profile changes:
+Commands and results:
+Benchmarks/fuzz/crash evidence:
+Decisions and deviations:
+Temporary bridges and deletion owner:
+Known risks/follow-ups:
+Reviewer questions:
+```
+
+Skipped commands are reported as unrun with the reason; they are never green.
+
 ## Hard Rules
 
 1. Preserve strict ISO GQL at the language boundary. Do not add SQL, Cypher,
@@ -76,27 +129,78 @@ preserve the same value invariants as runtime writes:
 
 ## Workspace Map
 
-There is no umbrella crate. Keep dependency direction intentional:
+`selene-db` is the stability-promised facade. Keep lower dependency direction
+intentional:
 
 `selene-core -> selene-graph -> selene-algorithms -> selene-gql`
 
+`selene-profile` feeds GQL and catalog consumers. `selene-catalog` depends only
+on `selene-core` and `selene-profile`; the facade composes the lower layers.
 `selene-persist` depends on `selene-core` and stays below graph semantics.
 `selene-testing` provides fixtures, corpus helpers, OpenRouter/local embedding
 support, and benchmark profiles for dev-dependencies.
 
+Managed persistence I/O uses retained `StoreDirectory` handles, never diagnostic
+locators. Initial path wrappers anchor once; callers may also supply an already
+open directory file. Native filesystem mode supports Linux/macOS only and
+returns typed unsupported-platform errors elsewhere. See
+[`docs/store-directory-control.md`](docs/store-directory-control.md) for file,
+lock, platform, and empty-control guarantees. The infallible builder remains
+memory-only; fallible facade create/open/checkpoint use one format-2 authority.
+See [durable commit](docs/v2/durable-commit.md) for separate typed outcomes and
+[checkpoint/reopen](docs/v2/checkpoint-reopen.md) for serialized checkpoint writes,
+eager all-index reconstruction, Rust schema construction and non-destructive open.
+`Database::verify`/`verify_in` share full open readiness through a read-only,
+existing-only selection epoch and artifact lease; they never acquire writer LOCK,
+synchronize or publish a Database. Reports cover only the captured on-disk view,
+not acknowledgment, physical durability, write permission or subsequent freshness.
+See [recovery verification](docs/v2/recovery-verification.md).
+Unrotated PR05 selections verify the full WAL prefix. Explicit checkpoint adopts
+the [rotating lifecycle](docs/v2/rotation-retention.md); rotating reopen verifies
+only the independently selected new segment. Prune is explicit, never automatic,
+and retains the latest two completed checkpoints plus active artifact leases.
+The richer
+Rust schema builder does not enable unsupported GQL catalog GG02 grammar.
+
+Persistence-directory readers participate in the same epoch lock domain as
+rotation and prune. Legacy recovery and backup-style reads hold
+`PersistenceReadGuard` from authoritative MANIFEST selection through snapshot
+and WAL use. Format-2 `LogicalReader` instead pins an independently opened
+immutable manifest with a shared file lock before releasing the selection epoch.
+That lock retains its named snapshot/WAL dependencies through consumption without
+blocking publication. Prune probes those locks nonblockingly under writer proof
+and the exclusive epoch, retaining and accounting for leased names until release
+or process death. It revalidates and synchronizes CURRENT and selected dependencies
+before unlink, including after uncertain publication/reopen.
+`CheckpointOutcome` paths are not retention leases.
+Writer ownership is one permanent `LOCK` domain; WAL/audit composites share its
+owned lease. Every managed publication/prune requires that StoreWriter proof;
+standalone conveniences acquire it, while online callers pass the existing
+lease. Exclusive epoch guards retain the proof; read guards remain independent.
+Empty-control reopen validates CURRENT plus its self-contained selected manifest,
+not unselected ancestor files. Parent links are provenance, not retention leases
+or authenticated rollback protection. `SharedGraph::recover` locks an existing `wal.log` before the shared epoch
+guard; a missing-WAL bootstrap verifies recovery under the guard before a
+non-blocking writer open. Recovery callbacks must not re-enter same-directory
+epoch mutation.
+
 | Crate | Owns |
 |---|---|
-| `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, `JsonValue`, vector metrics/top-k helpers, `DbString`, schema/value types, feature register, property maps, codecs, and changesets. |
+| `selene-profile` | Typed GQL profile source, validation, canonical hashing, and checked-in runtime/documentation generation. It has no engine-crate dependencies. |
+| `selene-catalog` | Storage-neutral catalog descriptors, typed stable IDs, immutable snapshots, and mutation drafts. It has no engine-crate dependencies. |
+| `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, `JsonValue`, vector metrics/top-k helpers, `DbString`, schema/value types, the profile compatibility adapter, property maps, codecs, and changesets. |
 | `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, exact BM25 text search, exact JSON search, reusable BM25 postings indexes, recovery provider, compaction, and graph type enforcement. |
 | `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |
 | `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It never depends on GQL. |
 | `selene-gql` | Parser, AST, analyzer, planner, optimizer, executor, procedure tiers, and the concrete native `BuiltinProcedureRegistry`. |
+| `selene-db` | Stable database builder, ownership root, lifetime-free facade sessions, facade diagnostics, and summary outcomes. Lower engine types are not re-exported by default. |
 | `selene-testing` | Shared fixtures, graph generators, OpenRouter/local embedding corpus and client support, benchmark profiles, and snapshot-harness support. |
 
 ## Query And Procedure Surface
 
-- `crates/selene-core/src/feature_register.rs` is the parser-visible optional
-  feature surface.
+- `spec/gql-profile/profile.json` is the feature and implementation-choice
+  source. `selene-profile` exposes the generated typed capability, identity,
+  and Annex B lookup APIs used by runtime consumers.
 - `ProcedureRegistry` is the planner/executor/test seam. It is not a third-party
   extension point.
 - `BuiltinProcedureRegistry` is the production registry. Procedure names,
@@ -104,7 +208,8 @@ support, and benchmark profiles for dev-dependencies.
   those tests and docs together when the surface changes.
 - Procedure tiers are load-bearing:
   - graph tier: read-only health, feature status, verify, vector search/score,
-    vector candidate-state discovery/composition, vector index stats, BM25 text
+    vector candidate-state discovery/composition, vector index stats, property
+    index drift/cardinality stats, BM25 text
     search/candidate scoring, and JSON candidate search;
   - mutation tier: property, vector, and text index create/drop;
   - maintenance tier: vector index rebuild and rebuild recommendation.
@@ -330,7 +435,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked --all-features --profile default
 cargo test --workspace --locked --all-features --doc
 cargo doc --workspace --no-deps --locked
-cargo deny check --exclude-dev bans
+cargo deny --exclude-dev check bans
 cargo deny check licenses sources
 cargo audit -d /private/tmp/selene-advisory-db
 bash .github/scripts/check-file-size.sh
@@ -340,6 +445,7 @@ bash .github/scripts/check-no-rowid-arith.sh
 bash .github/scripts/check-no-version-locked-feature-error.sh
 bash .github/scripts/check-bench-invocation.sh
 bash .github/scripts/check-benchmarks-doc.sh .
+bash .github/scripts/check-doc-constants.sh
 bash .github/scripts/check-mimalloc-dev-dep.sh
 git diff --check
 ```
@@ -402,9 +508,9 @@ specific PR needs that stress point.
 
 - `development` is the integration trunk.
 - Release PRs go from `development` to `main`.
-- PRs to `development` run the cheap CI gate: formatting, file-size, secret
-  scan, row-id arithmetic, version-locked feature errors, benchmark invocation
-  and docs checks, plus dependency gates when manifests changed.
+- Non-draft PRs to `development` run formatting and repository-policy checks,
+  a workspace all-features compile/nextest lane, and the 2.0 plan contract;
+  dependency gates remain conditional on manifest changes.
 - PRs to `main` run the full release workflow: clippy, nextest, doctests, deny,
   audit, third-party attribution, macOS validation, and fuzz.
 - `.githooks/pre-commit` mirrors cheap local checks.
@@ -424,14 +530,15 @@ bench(algorithms): add graph retrieval pressure rows
 docs(workflow): refresh agent instructions
 ```
 
-Use GitHub connector tools when available for PR comments, CI polling, and
-merges. If the connector does not expose a needed operation, use `gh` and request
-network escalation when sandboxing blocks it. Under the current long-goal user
-direction, merge PRs to `development` after local validation, local review, and
-green CI. Do not use trigger mentions for the cloud reviewer and do not add PR
-reactions.
+Use GitHub connector tools when available for permitted read-only state checks
+and CI polling. The implementer returns the tested worktree and handoff without
+Git or GitHub mutations. The orchestrator performs the permitted commit, push,
+non-draft PR, consolidated review-comment, and eligible merge operations. If a
+permitted orchestrator operation is unavailable, use `gh` and request network
+escalation when sandboxing blocks it.
 
-After every merged PR in this long-running goal workflow:
+After every merged PR in this long-running goal workflow, the orchestrator or
+repository owner runs:
 
 ```bash
 git switch development

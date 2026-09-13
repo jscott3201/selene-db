@@ -177,29 +177,20 @@ fn concurrent_reader_never_sees_bumped_epoch_without_the_change() {
 
 #[test]
 fn failed_commit_does_not_bump_schema_version() {
-    let durable: Arc<dyn DurableProvider> = Arc::new(FailingDurableProvider);
-    let shared = SharedGraph::from_graph_with_core_and_durables(
-        SeleneGraph::new(GraphId::new(108)),
-        Vec::new(),
-        vec![durable],
-        None,
-        None,
-        crate::committer_batch::CommitBatching::Off,
-    )
-    .unwrap();
+    let shared = SharedGraph::new(GraphId::new(108));
     let mut txn = shared.begin_write();
-    txn.mutator().schema_change(
-        GraphId::new(108),
-        SchemaChange::GraphCreated {
-            id: GraphId::new(109),
-            name: db_string("failed.schema.commit").unwrap(),
-            graph_type: None,
-        },
-    );
+    txn.mutator().schema_change(SchemaChange::GraphCreated {
+        id: GraphId::new(109),
+        name: db_string("failed.schema.commit").unwrap(),
+        graph_type: None,
+    });
 
+    let mut sealed = txn.seal(None, None).unwrap();
+    sealed.fail_publish = true;
     assert!(matches!(
-        txn.commit(),
-        Err(GraphError::Durable { reason }) if reason.contains("synthetic durable failure")
+        shared.submit_sealed_for_test(sealed),
+        Err(GraphError::IndeterminateOutcome { reason })
+            if reason.contains("synthetic memory publication failure")
     ));
     assert_eq!(shared.schema_version(), 0);
 }

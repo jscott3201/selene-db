@@ -49,28 +49,24 @@ fn column_strings(table: &BindingTable, name: &str) -> Vec<String> {
 }
 
 fn semver_like(value: &str) -> bool {
-    let mut parts = value.split('.');
-    let Some(major) = parts.next() else {
-        return false;
-    };
-    let Some(minor) = parts.next() else {
-        return false;
-    };
-    let Some(patch) = parts.next() else {
-        return false;
-    };
-    parts.next().is_none()
-        && major.parse::<u64>().is_ok()
-        && minor.parse::<u64>().is_ok()
-        && patch.parse::<u64>().is_ok()
+    semver::Version::parse(value).is_ok()
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_68_procedures() {
+fn semver_like_accepts_prereleases_and_rejects_invalid_versions() {
+    assert!(semver_like("2.0.0-alpha.1"));
+    assert!(semver_like("2.0.0-rc.1+build.5"));
+    assert!(!semver_like("2.0"));
+    assert!(!semver_like("2.00.0"));
+    assert!(!semver_like("2.0.0-alpha.01"));
+}
+
+#[test]
+fn default_registry_exposes_non_empty_metadata_for_all_69_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 68);
+    assert_eq!(procedures.len(), 69);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +129,7 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 68);
+    assert_eq!(table.row_count(), 69);
 
     let names = column_strings(&table, "name");
     let signatures = column_strings(&table, "signature");

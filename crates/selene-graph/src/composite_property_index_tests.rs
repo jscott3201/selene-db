@@ -472,3 +472,6 @@ fn apply_create_admits_string_string_component() {
         .contains(4)
     );
 }
+
+#[path = "composite_property_index_tests/drift.rs"]
+mod drift;

@@ -1,6 +1,7 @@
 //! Query and top-level statement Flagger walk.
 
-use selene_core::{DbString, feature_register::FeatureId};
+use selene_core::DbString;
+use selene_profile::FeatureId;
 
 use crate::{
     LimitValue, PipelineStatement, QueryPipeline, ReturnClause, SessionResetTarget, SetOp,
@@ -73,6 +74,8 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
             SessionResetTarget::AllCharacteristics => {
                 record_feature(uses, FeatureId::GS04, *span);
             }
+            SessionResetTarget::Schema => record_feature(uses, FeatureId::GS05, *span),
+            SessionResetTarget::Graph => record_feature(uses, FeatureId::GS06, *span),
             SessionResetTarget::Parameters => record_feature(uses, FeatureId::GS08, *span),
             SessionResetTarget::TimeZone => record_feature(uses, FeatureId::GS07, *span),
             SessionResetTarget::Parameter(_) => {
@@ -91,6 +94,17 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
 }
 
 pub(crate) fn query_pipeline(pipeline: &QueryPipeline, uses: &mut Vec<FeatureUse>) {
+    for clause in &pipeline.working_scopes {
+        match clause {
+            crate::WorkingScopeClause::At { span, .. } => {
+                record_feature(uses, FeatureId::GP16, *span)
+            }
+            crate::WorkingScopeClause::Use { span, .. } => {
+                record_feature(uses, FeatureId::GQ01, *span)
+            }
+            crate::WorkingScopeClause::Nested(_) => {}
+        }
+    }
     let mut projection_names = None;
     for (index, statement) in pipeline.statements.iter().enumerate() {
         if index > 0 && matches!(statement, PipelineStatement::Match(_)) {
@@ -271,7 +285,29 @@ fn node_pattern(pattern: &NodePattern, uses: &mut Vec<FeatureUse>) {
 }
 
 fn edge_pattern(pattern: &EdgePattern, uses: &mut Vec<FeatureUse>) {
-    if pattern.direction == EdgeDirection::Undirected {
+    let complete = !matches!(
+        pattern.direction,
+        EdgeDirection::Right | EdgeDirection::Left | EdgeDirection::Any
+    );
+    if pattern.abbreviated {
+        record_feature(
+            uses,
+            if complete {
+                FeatureId::G045
+            } else {
+                FeatureId::G044
+            },
+            pattern.span,
+        );
+    } else if complete {
+        record_feature(uses, FeatureId::G043, pattern.span);
+    }
+    if matches!(
+        pattern.direction,
+        EdgeDirection::Undirected
+            | EdgeDirection::LeftOrUndirected
+            | EdgeDirection::UndirectedOrRight
+    ) {
         record_feature(uses, FeatureId::GH02, pattern.span);
     }
     if let Some(quantifier) = pattern.quantifier {
@@ -327,11 +363,11 @@ fn order_terms(
 ) {
     if let Some(first) = terms.first() {
         // Stamp every ORDER BY clause with GA07. The strict spec rule
-        // (sort key must be a return alias unless GA07 is claimed) is a
-        // bind-pass concern — the Flagger cannot tell at parse time
-        // whether a sort key is an alias. The conservative gate is to
-        // claim GA07 on any ORDER BY presence; selene-db's D1 claim list
-        // includes GA07, so this stamp does not produce rejections.
+        // (sort key must be a return alias without GA07) is a bind-pass
+        // concern — the Flagger cannot tell at parse time whether a sort key
+        // is an alias. The conservative gate records GA07 for any ORDER BY;
+        // the generated profile marks GA07 supported, so this stamp does not
+        // produce rejections.
         record_feature(uses, FeatureId::GA07, first.span);
     }
     for term in terms {

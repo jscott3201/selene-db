@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GC02
+// also-covers: GC01
+// expects: parse-ok
+CREATE SCHEMA IF NOT EXISTS /memory

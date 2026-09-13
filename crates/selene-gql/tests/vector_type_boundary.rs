@@ -1,10 +1,11 @@
 //! Regression coverage for first-class VECTOR value type support.
 
-use selene_core::{GraphId, Value, VectorValue, db_string, feature_register::FeatureId};
+use selene_core::{GraphId, Value, VectorValue, db_string};
 use selene_gql::{
     EmptyProcedureRegistry, GqlStatus, Session, StatementOutput, feature_walk, parse,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 
 fn first_value(source: &str) -> Value {
     let graph = SharedGraph::new(GraphId::new(41_210));

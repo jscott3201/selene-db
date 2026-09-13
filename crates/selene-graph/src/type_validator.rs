@@ -4,9 +4,9 @@ use std::fmt;
 
 use selene_core::{
     Change, DbString, EdgeId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value,
-    byte_string_fits_type, character_string_fits_type, decimal_fits_type,
 };
 
+use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::graph_types::{EdgeEndpointDef, GraphTypeDef, PropertyTypeDef, ValidationMode};
 
@@ -14,10 +14,10 @@ mod unique;
 
 #[cfg(test)]
 pub(crate) use unique::unique_property_check_required;
-pub(crate) use unique::{validate_unique_property_changes, validate_unique_property_state};
+pub(crate) use unique::{ConstraintIndexes, validate_unique_property_state};
 
 /// Identifier for a typed graph entity.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum EntityId {
     /// Node entity.
     Node(NodeId),
@@ -150,6 +150,20 @@ pub enum TypeViolation {
         property: DbString,
         /// Node or edge type that declares the property.
         declared_in: DbString,
+    },
+
+    /// UNIQUE values do not share a selected comparison domain.
+    #[error("{entity_id} property {property} declared in {declared_in}: {source}")]
+    #[diagnostic(code(SLENE_G_039))]
+    UniquePropertyComparison {
+        /// Entity whose value cannot be compared in the constraint domain.
+        entity_id: EntityId,
+        /// Unique property name.
+        property: DbString,
+        /// Node or edge type declaring the constraint.
+        declared_in: DbString,
+        /// Comparison failure, distinct from duplicate and assignment failures.
+        source: selene_core::ValueComparisonError,
     },
 }
 
@@ -300,6 +314,11 @@ fn revalidate_incident_edges(
             }
         }
     }
+    if let Some(entry) = graph.undirected_edges(node) {
+        for edge in entry.iter() {
+            warnings.extend(validate_edge_state(edge.edge_id, graph, type_def)?.1);
+        }
+    }
     Ok(warnings)
 }
 
@@ -308,20 +327,30 @@ pub fn validate_entity_state(
     graph: &SeleneGraph,
     type_def: &GraphTypeDef,
 ) -> Result<Vec<TypeWarning>, TypeViolation> {
+    let warnings = validate_entity_shape(graph, type_def)?;
+    validate_unique_property_state(graph, type_def)?;
+    Ok(warnings)
+}
+
+/// Validate materialized element shapes without repeating constraint-index work.
+#[doc(hidden)]
+pub fn validate_entity_shape(
+    graph: &SeleneGraph,
+    type_def: &GraphTypeDef,
+) -> Result<Vec<TypeWarning>, TypeViolation> {
     let mut warnings = Vec::new();
-    for row in graph.node_store.alive.iter() {
-        let id = graph
-            .node_id_for_row(crate::store::RowIndex::new(row))
-            .expect("alive node row has a mapped external id (BRIEF-Item-4a)");
+    let nodes = graph
+        .live_node_candidates()
+        .expect("alive nodes have consistent typed stable-ID mappings");
+    for id in nodes.iter() {
         warnings.extend(validate_node_state(id, graph, type_def)?.1);
     }
-    for row in graph.edge_store.alive.iter() {
-        let id = graph
-            .edge_id_for_row(crate::store::RowIndex::new(row))
-            .expect("alive edge row has a mapped external id (BRIEF-Item-4a)");
+    let edges = graph
+        .live_edge_candidates()
+        .expect("alive edges have consistent typed stable-ID mappings");
+    for id in edges.iter() {
         warnings.extend(validate_edge_state(id, graph, type_def)?.1);
     }
-    validate_unique_property_state(graph, type_def)?;
     Ok(warnings)
 }
 
@@ -376,11 +405,41 @@ fn validate_edge_state<'a>(
                 id,
                 label: label.clone(),
             })?;
+    let directionality =
+        graph
+            .edge_directionality(id)
+            .ok_or_else(|| TypeViolation::UnknownEdgeLabel {
+                id,
+                label: label.clone(),
+            })?;
+    let (edge_type, mut warnings) =
+        validate_edge_endpoints(id, label, (source, target), directionality, graph, type_def)?;
+    let empty_props = PropertyMap::new();
+    let properties = graph.edge_properties(id).unwrap_or(&empty_props);
+    warnings.extend(validate_properties(
+        EntityId::Edge(id),
+        edge_type.name.clone(),
+        edge_type.validation_mode,
+        &edge_type.properties,
+        properties,
+    )?);
+    Ok((edge_type, warnings))
+}
+
+pub(crate) fn validate_edge_endpoints<'a>(
+    id: EdgeId,
+    label: DbString,
+    (source, target): (NodeId, NodeId),
+    directionality: selene_core::EdgeDirectionality,
+    graph: &SeleneGraph,
+    type_def: &'a GraphTypeDef,
+) -> Result<(&'a crate::graph_types::EdgeTypeDef, Vec<TypeWarning>), TypeViolation> {
     let (source_type, mut warnings) = validate_node_state(source, graph, type_def)?;
     let (target_type, target_warnings) = validate_node_state(target, graph, type_def)?;
     warnings.extend(target_warnings);
-
-    let Some(edge_type) = type_def.find_edge_type(label.clone(), source_type, target_type) else {
+    let Some(edge_type) =
+        type_def.find_mixed_edge_type(label.clone(), source_type, target_type, directionality)
+    else {
         let Some(expected) = type_def.first_edge_type_with_label(label.clone()) else {
             return Err(TypeViolation::UnknownEdgeLabel { id, label });
         };
@@ -393,15 +452,6 @@ fn validate_edge_state<'a>(
             observed_target_type: target_type,
         });
     };
-    let empty_props = PropertyMap::new();
-    let properties = graph.edge_properties(id).unwrap_or(&empty_props);
-    warnings.extend(validate_properties(
-        EntityId::Edge(id),
-        edge_type.name.clone(),
-        edge_type.validation_mode,
-        &edge_type.properties,
-        properties,
-    )?);
     Ok((edge_type, warnings))
 }
 
@@ -500,55 +550,40 @@ fn validate_properties(
     Ok(warnings)
 }
 
-fn property_value_matches(declaration: &PropertyTypeDef, value: &Value) -> bool {
-    match declaration.value_type {
-        PropertyValueType::List => {
-            let Some(element_type) = declaration.list_element_type.as_ref() else {
-                return matches!(value, Value::List(_));
-            };
-            match value {
-                Value::List(values) => values.iter().all(|value| element_type.matches(value)),
-                _ => false,
-            }
+pub(crate) fn validate_property_default(declaration: &PropertyTypeDef) -> GraphResult<()> {
+    let Some(default) = declaration.default.as_ref() else {
+        return Ok(());
+    };
+    let value = default.to_value()?;
+    selene_core::StoredValue::validate(&value)?;
+    if matches!(value, Value::Null) {
+        if declaration.required {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "required property {} cannot use NULL as its default",
+                    declaration.name
+                ),
+            });
         }
-        // A RECORD-typed property accepts either record value form — the open
-        // `Value::Record` (the `RECORD{...}` constructor / by-name form) or the positional
-        // `Value::RecordTyped` — because the constructor always yields the open form
-        // regardless of the declared type. Structural conformance against a closed
-        // descriptor (or permissive acceptance for an open/bare `None` descriptor) is then
-        // decided by [`RecordFieldTypes::matches`].
-        // Why: closed/typed RECORD conformance per ISO 39075:2024 §4.15.4 (a closed record
-        // value must have the same field-name set as the descriptor and each field must
-        // match) → graph type violation G2000 (§4.13.2.1).
-        PropertyValueType::Record | PropertyValueType::RecordTyped => {
-            if !matches!(value, Value::Record(_) | Value::RecordTyped(_)) {
-                return false;
-            }
-            match declaration.record_field_types.as_ref() {
-                Some(fields) => fields.matches(value),
-                None => true,
-            }
-        }
-        PropertyValueType::Decimal => match declaration.decimal_type {
-            Some(decimal_type) => {
-                matches!(value, Value::Decimal(value) if decimal_fits_type(*value, decimal_type))
-            }
-            None => declaration.value_type.matches(value),
-        },
-        PropertyValueType::String => match declaration.character_string_type {
-            Some(character_string_type) => {
-                matches!(value, Value::String(value) if character_string_fits_type(value, character_string_type))
-            }
-            None => declaration.value_type.matches(value),
-        },
-        PropertyValueType::Bytes => match declaration.byte_string_type {
-            Some(byte_string_type) => {
-                matches!(value, Value::Bytes(value) if byte_string_fits_type(value, byte_string_type))
-            }
-            None => declaration.value_type.matches(value),
-        },
-        _ => declaration.value_type.matches(value),
+        return Ok(());
     }
+    if property_value_matches(declaration, &value) {
+        return Ok(());
+    }
+    Err(GraphError::Inconsistent {
+        reason: format!(
+            "property {} default type {} does not match declared {} descriptor",
+            declaration.name,
+            PropertyValueType::observed_name(&value),
+            declaration.value_type
+        ),
+    })
+}
+
+fn property_value_matches(declaration: &PropertyTypeDef, value: &Value) -> bool {
+    declaration
+        .structural_type()
+        .is_ok_and(|ty| ty.matches(value))
 }
 
 #[cfg(test)]

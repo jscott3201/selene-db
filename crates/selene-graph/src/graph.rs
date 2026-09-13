@@ -4,29 +4,39 @@ use std::borrow::Cow;
 use std::ops::RangeBounds;
 use std::sync::Arc;
 
-use imbl::HashMap;
+use immutable_chunkmap::map::MapM;
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
+use selene_catalog::ElementKind::{Edge, Node};
+use selene_catalog::IndexFamily::{Property, Text, Vector};
 use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::adjacency::AdjacencyEntry;
+use crate::candidate_set::SnapshotLayout;
 use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
 use crate::id_map::{EngineIdMap, engine_id_map};
-use crate::store::{EdgeStore, NodeStore, RowIndex};
+use crate::store::{EdgeRow, EdgeStore, NodeRow, NodeStore};
 use crate::text_index::TextIndex;
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 use crate::vector_index::VectorIndex;
 
+mod cardinality;
+mod constraint_declarations;
 mod index_entries;
+mod index_stats;
+mod property_info;
+mod registrations;
 
 pub use index_entries::{
     CompositePropertyIndexEntry, CompositePropertyIndexEntryRow, PropertyIndexEntry,
     TextIndexEntry, TextIndexEntryRow, VectorIndexEntry, VectorIndexEntryRow,
 };
+pub use index_stats::{IndexedEntity, PropertyIndexStatsRow};
+pub use property_info::PropertyIndexReadInfo;
 
 /// Snapshot metadata.
 #[derive(
@@ -65,10 +75,12 @@ pub struct SeleneGraph {
     pub adjacency_out: EngineIdMap<NodeId, AdjacencyEntry>,
     /// Incoming adjacency keyed by target node.
     pub adjacency_in: EngineIdMap<NodeId, AdjacencyEntry>,
+    /// Undirected incidence, once per distinct endpoint, without orientation.
+    pub adjacency_undirected: EngineIdMap<NodeId, AdjacencyEntry>,
     /// Bitmap of node rows carrying each label.
-    pub idx_label: HashMap<DbString, RoaringBitmap>,
+    pub idx_label: MapM<DbString, RoaringBitmap>,
     /// Bitmap of edge rows carrying each edge label.
-    pub idx_edge_label: HashMap<DbString, RoaringBitmap>,
+    pub idx_edge_label: MapM<DbString, RoaringBitmap>,
     /// Per-`(label, property)` node value indexes. See spec 03 section 5.2.
     pub property_index: FxHashMap<(DbString, DbString), PropertyIndexEntry>,
     /// Per-`(edge label, property)` edge value indexes.
@@ -80,13 +92,19 @@ pub struct SeleneGraph {
     pub vector_index: FxHashMap<(DbString, DbString), VectorIndexEntry>,
     /// Per-`(label, property)` node BM25 text indexes.
     pub text_index: FxHashMap<(DbString, DbString), TextIndexEntry>,
-    /// External `NodeId -> RowIndex` lookup (the inverse of
-    /// [`NodeStore::row_to_id`]). Replaces the `id.get() - 1` arithmetic so the
-    /// external id can stay stable while the row is remapped by compaction
-    /// (D22 / BRIEF-Item-4a). `imbl` for cheap copy-on-write snapshot clones.
-    pub node_id_to_row: EngineIdMap<NodeId, RowIndex>,
-    /// External `EdgeId -> RowIndex` lookup (inverse of [`EdgeStore::row_to_id`]).
-    pub edge_id_to_row: EngineIdMap<EdgeId, RowIndex>,
+    /// Typed node inverse map used by graph internals.
+    pub(crate) node_rows: EngineIdMap<NodeId, NodeRow>,
+    /// Typed edge inverse map used by graph internals.
+    pub(crate) edge_rows: EngineIdMap<EdgeId, EdgeRow>,
+    /// Private, non-serialized identity for this physical snapshot layout.
+    pub(crate) layout: SnapshotLayout,
+    /// Derived catalog binding for facade-owned graphs, never snapshot/WAL payload.
+    pub(crate) catalog_binding: Option<registrations::CatalogBinding>,
+    pub(crate) expression_indexes: crate::expression_index::ExpressionIndexes,
+    /// Complete constraint backing; never serialized and never supplied by callers.
+    pub(crate) constraints: crate::type_validator::ConstraintIndexes,
+    pub(crate) named_constraints:
+        Option<(Arc<GraphTypeDef>, crate::type_validator::ConstraintIndexes)>,
 }
 
 impl SeleneGraph {
@@ -105,15 +123,21 @@ impl SeleneGraph {
             edge_store: EdgeStore::new(),
             adjacency_out: engine_id_map(),
             adjacency_in: engine_id_map(),
-            idx_label: HashMap::new(),
-            idx_edge_label: HashMap::new(),
+            adjacency_undirected: engine_id_map(),
+            idx_label: MapM::new(),
+            idx_edge_label: MapM::new(),
             property_index: FxHashMap::default(),
             edge_property_index: FxHashMap::default(),
             composite_property_index: FxHashMap::default(),
             vector_index: FxHashMap::default(),
             text_index: FxHashMap::default(),
-            node_id_to_row: engine_id_map(),
-            edge_id_to_row: engine_id_map(),
+            node_rows: engine_id_map(),
+            edge_rows: engine_id_map(),
+            layout: SnapshotLayout::new(),
+            catalog_binding: None,
+            expression_indexes: Default::default(),
+            constraints: crate::type_validator::ConstraintIndexes::default(),
+            named_constraints: None,
         }
     }
 
@@ -127,20 +151,6 @@ impl SeleneGraph {
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.node_store.alive.len() as usize
-    }
-
-    /// Bitmap of alive node *row indices*.
-    ///
-    /// Returned bitmap is row-indexed (matching `nodes_with_label`), not
-    /// `NodeId`-indexed; consumers convert a row to its external `NodeId` via
-    /// [`Self::node_id_for_row`] (never by `row + 1` arithmetic — the external id
-    /// is stable while compaction renumbers the row). Used by `selene-algorithms`
-    /// to seed the "all alive nodes" baseline of a `GraphProjection`.
-    #[must_use]
-    pub fn live_nodes(&self) -> &RoaringBitmap {
-        // B1: alive is Arc-shared COW state; expose the bitmap, not the Arc,
-        // so the crate boundary (selene-algorithms) is unchanged.
-        &self.node_store.alive
     }
 
     /// Number of alive edges.
@@ -158,61 +168,26 @@ impl SeleneGraph {
         crate::compaction::CompactionStats::from_graph(self)
     }
 
-    /// Bitmap of alive edge *row indices*.
-    ///
-    /// The edge-side sibling of [`Self::live_nodes`]. The returned bitmap is
-    /// row-indexed (matching `edges_with_label`), not `EdgeId`-indexed; consumers
-    /// convert a row to its external `EdgeId` via [`Self::edge_id_for_row`] (never
-    /// by `row + 1` arithmetic). Covers every alive edge regardless of label —
-    /// used by the `DROP GRAPH` factory-reset (BRIEF-152) to enumerate every live
-    /// edge, including untyped/arbitrary-label ones that a per-type truncate would
-    /// miss.
-    #[must_use]
-    pub fn live_edges(&self) -> &RoaringBitmap {
-        // B1: see `live_nodes` — deref the COW Arc at the boundary.
-        &self.edge_store.alive
+    pub(crate) fn node_row_for_id(&self, id: NodeId) -> Option<NodeRow> {
+        self.node_rows.get(&id).copied()
     }
 
-    /// Map an external [`NodeId`] to its internal [`RowIndex`].
-    ///
-    /// Returns `None` for a never-committed (aborted-tx hole) id. A deleted id
-    /// still resolves — to its now-dead row — so liveness, not existence,
-    /// distinguishes it (the row's `alive` bit is clear). This is the map-backed
-    /// replacement for the old `id - 1` arithmetic; the external id stays stable
-    /// while BRIEF-Item-4b compaction renumbers the row.
-    #[must_use]
-    pub fn row_for_node_id(&self, id: NodeId) -> Option<RowIndex> {
-        self.node_id_to_row.get(&id).copied()
+    pub(crate) fn edge_row_for_id(&self, id: EdgeId) -> Option<EdgeRow> {
+        self.edge_rows.get(&id).copied()
     }
 
-    /// Map an external [`EdgeId`] to its internal [`RowIndex`]; see
-    /// [`Self::row_for_node_id`].
-    #[must_use]
-    pub fn row_for_edge_id(&self, id: EdgeId) -> Option<RowIndex> {
-        self.edge_id_to_row.get(&id).copied()
-    }
-
-    /// Recover the external [`NodeId`] bound to a materialized [`RowIndex`].
-    ///
-    /// Reads the `row_to_id` column (the persistence-stable per-row id), never
-    /// synthesizing `row + 1`. Returns `None` past the column end or for a
-    /// never-committed hole row (which holds [`NodeId::TOMBSTONE`]).
-    #[must_use]
-    pub fn node_id_for_row(&self, row: RowIndex) -> Option<NodeId> {
+    pub(crate) fn node_id_for_node_row(&self, row: NodeRow) -> Option<NodeId> {
         self.node_store
             .row_to_id
-            .get(row.get() as usize)
+            .get(row.index())
             .copied()
             .filter(|id| *id != NodeId::TOMBSTONE)
     }
 
-    /// Recover the external [`EdgeId`] bound to a materialized [`RowIndex`]; see
-    /// [`Self::node_id_for_row`].
-    #[must_use]
-    pub fn edge_id_for_row(&self, row: RowIndex) -> Option<EdgeId> {
+    pub(crate) fn edge_id_for_edge_row(&self, row: EdgeRow) -> Option<EdgeId> {
         self.edge_store
             .row_to_id
-            .get(row.get() as usize)
+            .get(row.index())
             .copied()
             .filter(|id| *id != EdgeId::TOMBSTONE)
     }
@@ -250,7 +225,8 @@ impl SeleneGraph {
             .and_then(|row| self.edge_store.label.get(row))
     }
 
-    /// Return edge endpoints for an alive edge.
+    /// Return stored endpoints for an alive edge. For undirected edges these
+    /// are canonical ID order, never a semantic source/destination pair.
     #[must_use]
     pub fn edge_endpoints(&self, id: EdgeId) -> Option<(NodeId, NodeId)> {
         self.live_edge_row(id).and_then(|row| {
@@ -266,6 +242,33 @@ impl SeleneGraph {
     pub fn edge_properties(&self, id: EdgeId) -> Option<&PropertyMap> {
         self.live_edge_row(id)
             .and_then(|row| self.edge_store.properties.get(row))
+    }
+
+    /// Return intrinsic directionality for an alive edge.
+    #[must_use]
+    pub fn edge_directionality(&self, id: EdgeId) -> Option<selene_core::EdgeDirectionality> {
+        self.live_edge_row(id)
+            .and_then(|row| self.edge_store.directionality.get(row).copied())
+    }
+
+    /// Construct a versioned logical record independent of physical row layout.
+    #[must_use]
+    pub fn edge_record(&self, id: EdgeId) -> Option<selene_core::EdgeRecordV1> {
+        let (first, second) = self.edge_endpoints(id)?;
+        Some(selene_core::EdgeRecordV1 {
+            id,
+            label: self.edge_label(id)?.clone(),
+            directionality: self.edge_directionality(id)?,
+            first,
+            second,
+            properties: self.edge_properties(id)?.clone(),
+        })
+    }
+
+    /// Return undirected incidence, once per edge identity at this endpoint.
+    #[must_use]
+    pub fn undirected_edges(&self, endpoint: NodeId) -> Option<&AdjacencyEntry> {
+        self.adjacency_undirected.get(&endpoint)
     }
 
     /// Return outgoing adjacency for `source`.
@@ -288,17 +291,20 @@ impl SeleneGraph {
             || self
                 .incoming_edges(id)
                 .is_some_and(|entry| !entry.is_empty())
+            || self
+                .undirected_edges(id)
+                .is_some_and(|entry| !entry.is_empty())
     }
 
     /// Return the bitmap of node rows carrying `label`.
     #[must_use]
-    pub fn nodes_with_label(&self, label: &DbString) -> Option<&RoaringBitmap> {
+    pub(crate) fn nodes_with_label(&self, label: &DbString) -> Option<&RoaringBitmap> {
         self.idx_label.get(label)
     }
 
     /// Return the bitmap of edge rows carrying `label`.
     #[must_use]
-    pub fn edges_with_label(&self, label: &DbString) -> Option<&RoaringBitmap> {
+    pub(crate) fn edges_with_label(&self, label: &DbString) -> Option<&RoaringBitmap> {
         self.idx_edge_label.get(label)
     }
 
@@ -315,27 +321,31 @@ impl SeleneGraph {
     }
 
     /// Return a clone of the registered `(label, property)` index.
+    ///
+    /// `None` also means the index omits live rows it cannot key, matching the
+    /// probe accessors. Keeping the two in step stops the optimizer costing a
+    /// plan against an index whose probes will decline at runtime.
     #[must_use]
     pub fn property_index_for(
         &self,
         label: &DbString,
         property: &DbString,
     ) -> Option<Arc<TypedIndex>> {
-        self.property_index
-            .get(&(label.clone(), property.clone()))
-            .map(|entry| Arc::clone(&entry.index))
+        self.query_property_entry(Node, label, property)
+            .and_then(PropertyIndexEntry::probe_arc)
     }
 
     /// Return a clone of the registered edge `(label, property)` index.
+    ///
+    /// Declines on an incomplete index, as [`SeleneGraph::property_index_for`].
     #[must_use]
     pub fn edge_property_index_for(
         &self,
         label: &DbString,
         property: &DbString,
     ) -> Option<Arc<TypedIndex>> {
-        self.edge_property_index
-            .get(&(label.clone(), property.clone()))
-            .map(|entry| Arc::clone(&entry.index))
+        self.query_property_entry(Edge, label, property)
+            .and_then(PropertyIndexEntry::probe_arc)
     }
 
     /// Return a clone of the registered composite index.
@@ -346,7 +356,7 @@ impl SeleneGraph {
         properties: &[DbString],
     ) -> Option<Arc<CompositeTypedIndex>> {
         self.composite_property_index_entry_for(label, properties)
-            .map(|entry| Arc::clone(&entry.index))
+            .and_then(CompositePropertyIndexEntry::probe_arc)
     }
 
     /// Return composite index metadata for a property set.
@@ -356,27 +366,39 @@ impl SeleneGraph {
         label: &DbString,
         properties: &[DbString],
     ) -> Option<&CompositePropertyIndexEntry> {
+        if !self.catalog_index_usable(Node, label, properties, Property) {
+            return None;
+        }
         let key = composite_property_key(properties);
         self.composite_property_index.get(&(label.clone(), key))
     }
 
-    /// Return a clone of the registered vector index.
+    /// Return a clone of the registered vector index, declining incomplete
+    /// accelerators left by a lenient rebuild. Exact search does not need one.
     #[must_use]
     pub fn vector_index_for(
         &self,
         label: &DbString,
         property: &DbString,
     ) -> Option<Arc<VectorIndex>> {
+        if !self.catalog_index_usable(Node, label, std::slice::from_ref(property), Vector) {
+            return None;
+        }
         self.vector_index
             .get(&(label.clone(), property.clone()))
+            .filter(|entry| entry.index.is_complete())
             .map(|entry| Arc::clone(&entry.index))
     }
 
     /// Return a clone of the registered text index.
     #[must_use]
     pub fn text_index_for(&self, label: &DbString, property: &DbString) -> Option<Arc<TextIndex>> {
+        if !self.catalog_index_usable(Node, label, std::slice::from_ref(property), Text) {
+            return None;
+        }
         self.text_index
             .get(&(label.clone(), property.clone()))
+            .filter(|entry| entry.index.has_current_contract())
             .map(|entry| Arc::clone(&entry.index))
     }
 
@@ -485,92 +507,92 @@ impl SeleneGraph {
 
     /// Return rows matching `value` under a registered property index.
     ///
-    /// `None` means no index is registered for `(label, property)` or the
-    /// supplied value cannot be used with that index kind. `Some(empty)` means
-    /// the index exists but no row matches. A kind-mismatched probe returns
-    /// `None` so the caller drops to a linear scan; open-graph kind drift
-    /// remains discoverable via cross-variant `value_compare`.
+    /// `None` means the index cannot answer and the caller must scan; every
+    /// probe on this type shares that contract. It covers three cases: no index
+    /// is registered for `(label, property)`, the supplied value cannot be used
+    /// with the registered kind, or the index omits live rows whose variant it
+    /// cannot key and is therefore an incomplete view of the column.
+    ///
+    /// That last case is why probing with the index's own kind is not enough to
+    /// stay correct. GQL equality is cross-variant, so `Int(3)` and
+    /// `Float(3.0)` are equal, and an index keyed on one variant silently drops
+    /// the other. Declining keeps the indexed and unindexed answers identical.
+    ///
+    /// `Some(empty)` means the index answered and no row matches.
     #[must_use]
-    pub fn nodes_with_property_eq(
+    pub(crate) fn nodes_with_property_eq(
         &self,
         label: &DbString,
         property: &DbString,
         value: &Value,
     ) -> Option<Cow<'_, RoaringBitmap>> {
-        self.property_index
-            .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_eq(value))
+        self.query_property_entry(Node, label, property)
+            .and_then(|entry| entry.lookup_eq(value))
     }
 
     /// Return the union of node rows matching any indexed scalar value.
     ///
-    /// `None` means no node property index is registered for `(label, property)`
-    /// or at least one supplied value cannot be used with that index kind.
-    /// `Some(empty)` means the index exists but no row matches the value set.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
-    pub fn nodes_with_property_any(
+    pub(crate) fn nodes_with_property_any(
         &self,
         label: &DbString,
         property: &DbString,
         values: &[Value],
     ) -> Option<RoaringBitmap> {
-        let entry = self
-            .property_index
-            .get(&(label.clone(), property.clone()))?;
+        let entry = self.query_property_entry(Node, label, property)?;
         let mut rows = RoaringBitmap::new();
         for value in values {
-            rows |= entry.index.lookup_eq(value)?.as_ref();
+            rows |= entry.lookup_eq(value)?.as_ref();
         }
         Some(rows)
     }
 
     /// Return edge rows matching `value` under a registered edge property index.
     ///
-    /// `None` means no edge index is registered for `(label, property)` or the
-    /// supplied value cannot be used with that index kind. `Some(empty)` means
-    /// the index exists but no edge row matches.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
-    pub fn edges_with_property_eq(
+    pub(crate) fn edges_with_property_eq(
         &self,
         label: &DbString,
         property: &DbString,
         value: &Value,
     ) -> Option<Cow<'_, RoaringBitmap>> {
-        self.edge_property_index
-            .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_eq(value))
+        self.query_property_entry(Edge, label, property)
+            .and_then(|entry| entry.lookup_eq(value))
     }
 
     /// Return the union of edge rows matching any indexed scalar value.
     ///
-    /// `None` means no edge property index is registered for `(label,
-    /// property)` or at least one supplied value cannot be used with that index
-    /// kind. `Some(empty)` means the index exists but no row matches the value
-    /// set.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
-    pub fn edges_with_property_any(
+    pub(crate) fn edges_with_property_any(
         &self,
         label: &DbString,
         property: &DbString,
         values: &[Value],
     ) -> Option<RoaringBitmap> {
-        let entry = self
-            .edge_property_index
-            .get(&(label.clone(), property.clone()))?;
+        let entry = self.query_property_entry(Edge, label, property)?;
         let mut rows = RoaringBitmap::new();
         for value in values {
-            rows |= entry.index.lookup_eq(value)?.as_ref();
+            rows |= entry.lookup_eq(value)?.as_ref();
         }
         Some(rows)
     }
 
     /// Return rows matching `range` under a registered property index.
     ///
-    /// `None` means no index is registered or the supplied bounds do not match
-    /// the index kind. `Some(empty)` means the index exists but the range
-    /// matches no rows.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
-    pub fn nodes_with_property_range<R>(
+    pub(crate) fn nodes_with_property_range<R>(
         &self,
         label: &DbString,
         property: &DbString,
@@ -579,18 +601,17 @@ impl SeleneGraph {
     where
         R: RangeBounds<Value>,
     {
-        self.property_index
-            .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_range(range))
+        self.query_property_entry(Node, label, property)
+            .and_then(|entry| entry.lookup_range(range))
     }
 
     /// Return edge rows matching `range` under a registered edge property index.
     ///
-    /// `None` means no edge index is registered or the supplied bounds do not
-    /// match the index kind. `Some(empty)` means the index exists but no edge
-    /// row matches.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
-    pub fn edges_with_property_range<R>(
+    pub(crate) fn edges_with_property_range<R>(
         &self,
         label: &DbString,
         property: &DbString,
@@ -599,37 +620,36 @@ impl SeleneGraph {
     where
         R: RangeBounds<Value>,
     {
-        self.edge_property_index
-            .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_range(range))
+        self.query_property_entry(Edge, label, property)
+            .and_then(|entry| entry.lookup_range(range))
     }
 
     /// Return rows whose string property key starts with `prefix`.
     ///
-    /// `None` means no index is registered or the registered index is not a
-    /// string index.
+    /// Shares the tri-state contract documented on
+    /// [`SeleneGraph::nodes_with_property_eq`]: `None` also covers an index that
+    /// omits live rows it cannot key, so the caller must scan.
     #[must_use]
-    pub fn nodes_with_property_prefix(
+    pub(crate) fn nodes_with_property_prefix(
         &self,
         label: &DbString,
         property: &DbString,
         prefix: &str,
     ) -> Option<RoaringBitmap> {
-        self.property_index
-            .get(&(label.clone(), property.clone()))
-            .and_then(|entry| entry.index.lookup_prefix(prefix))
+        self.query_property_entry(Node, label, property)
+            .and_then(|entry| entry.lookup_prefix(prefix))
     }
 
     fn live_node_row(&self, id: NodeId) -> Option<usize> {
-        let row = self.row_for_node_id(id)?.get();
-        ((row as usize) < self.node_store.len() && self.node_store.is_alive(row))
-            .then_some(row as usize)
+        let row = self.node_row_for_id(id)?;
+        (row.index() < self.node_store.len() && self.node_store.is_alive_row(row))
+            .then_some(row.index())
     }
 
     fn live_edge_row(&self, id: EdgeId) -> Option<usize> {
-        let row = self.row_for_edge_id(id)?.get();
-        ((row as usize) < self.edge_store.len() && self.edge_store.is_alive(row))
-            .then_some(row as usize)
+        let row = self.edge_row_for_id(id)?;
+        (row.index() < self.edge_store.len() && self.edge_store.is_alive_row(row))
+            .then_some(row.index())
     }
 }
 

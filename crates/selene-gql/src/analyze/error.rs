@@ -35,6 +35,28 @@ use crate::{
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum AnalysisError {
+    /// An inferred or supplied type has no valid normalized structural form.
+    #[error("invalid structural type: {source}")]
+    #[diagnostic(code(SLENE_A_STRUCTURAL_TYPE))]
+    StructuralType {
+        /// Exact normalization failure, retained in the source chain.
+        source: selene_core::StructuralTypeError,
+        /// Original expression or declaration span.
+        #[label("invalid value type")]
+        span: SourceSpan,
+    },
+    /// A request would access a second graph under unsupported GT03.
+    #[error("accessing multiple graphs is not supported: {first:?} then {requested:?}")]
+    #[diagnostic(code(SLENE_GQL_25G04))]
+    MultipleGraphs {
+        /// The transaction's first or pinned graph.
+        first: selene_catalog::GraphId,
+        /// The second graph selected by source.
+        requested: selene_catalog::GraphId,
+        /// Original second-access span.
+        #[label("second graph in the transaction")]
+        span: SourceSpan,
+    },
     /// A reference does not resolve to any binding in the enclosing scopes.
     #[error("undefined reference: {name}")]
     #[diagnostic(code(SLENE_GQL_42N03))]
@@ -188,6 +210,26 @@ pub enum AnalysisError {
     SortKeyContainsAggregate {
         /// Source span of the invalid sort key.
         #[label("aggregate function is not allowed in this sort key")]
+        span: SourceSpan,
+    },
+
+    /// ISO 14.10 SR IV: a sort key referenced a binding outside ORDER_REFS.
+    ///
+    /// Reached only when `GROUP BY`, `DISTINCT`, or an aggregate return item
+    /// has closed the set to the return aliases (plus grouping keys). A plain
+    /// `RETURN` keeps the incoming working table in scope and the planner
+    /// carries the referenced binding across the projection instead.
+    #[error(
+        "ORDER BY sort key references `{name}`, which this RETURN discards; \
+         GROUP BY, DISTINCT, and aggregate projections can only be ordered by \
+         their output columns"
+    )]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    SortKeyReferenceNotInScope {
+        /// The out-of-scope binding variable name.
+        name: String,
+        /// Source span of the invalid sort key.
+        #[label("this binding does not survive the projection")]
         span: SourceSpan,
     },
 
@@ -501,6 +543,20 @@ impl AnalysisError {
     #[must_use]
     pub const fn gqlstatus(&self) -> GqlStatus {
         match self {
+            Self::StructuralType {
+                source: selene_core::StructuralTypeError::Unsupported(_),
+                ..
+            } => GqlStatus::FEATURE_NOT_SUPPORTED,
+            Self::StructuralType {
+                source: selene_core::StructuralTypeError::DepthLimit,
+                ..
+            } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
+            Self::StructuralType {
+                source: selene_core::StructuralTypeError::DuplicateField(_),
+                ..
+            } => GqlStatus::RECORD_DATA_FIELD_UNASSIGNABLE,
+            Self::StructuralType { .. } => GqlStatus::DATATYPE_MISMATCH,
+            Self::MultipleGraphs { .. } => GqlStatus::MULTIPLE_GRAPHS_NOT_SUPPORTED,
             Self::UndefinedReference { .. } => GqlStatus::UNDEFINED_REFERENCE,
             Self::Shadow { .. }
             | Self::PatternKindMismatch { .. }
@@ -513,6 +569,7 @@ impl AnalysisError {
             Self::ReturnStarRequiresInput { .. } => GqlStatus::SYNTAX_ERROR,
             Self::SortKeyContainsNestedQuery { .. } => GqlStatus::SYNTAX_ERROR,
             Self::SortKeyContainsAggregate { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::SortKeyReferenceNotInScope { .. } => GqlStatus::SYNTAX_ERROR,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } | Self::ConflictingParameterTypes { .. } => {

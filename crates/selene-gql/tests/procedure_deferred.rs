@@ -1,7 +1,7 @@
 //! Deferred procedure-surface parser gates.
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{ParserError, parse};
+use selene_profile::FeatureId;
 
 #[test]
 fn procedure_reference_arguments_report_unsupported_features() {

@@ -1,0 +1,1406 @@
+{
+  "title": "Selene DB 2.0 — Luna finish plan",
+  "reviewed_on": "2026-09-06",
+  "repository": "jscott3201/selene-db",
+  "branch": "development",
+  "status": "proposed replacement of remaining delivery plan; no implementation performed by this package",
+  "authority": "PR Markdown owns behavior; this JSON owns scheduling/navigation. Adopt into the existing docs/v2/roadmap program in PLAN-01, not as a parallel active tracker.",
+  "baseline": {
+    "workspace_version": "2.0.0-alpha.1",
+    "rust_version_observed": "1.97.1",
+    "workspace_crates_observed": 9,
+    "live_plan_items": 65,
+    "fully_merged_plan_items": 21,
+    "partial_item": "M04-PR02; Parts 1 and 2 landed; 3A and 3B remain",
+    "latest_reviewed_planning_pr": 1181,
+    "rust_workspace_tests_run_in_this_review": false
+  },
+  "milestones": [
+    {
+      "id": "F01",
+      "title": "Finish graph identity and mixed topology",
+      "file": "Milestone-F01.md",
+      "lane": "Graph frontier",
+      "exit": "No public graph storage-row boundary; mixed edges preserve one identity, orientation and logical mutation semantics."
+    },
+    {
+      "id": "F02",
+      "title": "Bring durable embedding forward",
+      "file": "Milestone-F02.md",
+      "lane": "Persistence and facade",
+      "exit": "Facade create/open/commit/checkpoint/recover/verify work on format 2 only; canceled, committed and indeterminate outcomes have failure evidence."
+    },
+    {
+      "id": "F03",
+      "title": "Complete the semantic compiler",
+      "file": "Milestone-F03.md",
+      "lane": "Compiler",
+      "exit": "One semantic→logical analysis route; no public ambiguous lower Value/GqlType bridge; diagnostics and generation dependencies survive lowering."
+    },
+    {
+      "id": "F04",
+      "title": "Deliver batch execution and native retrieval",
+      "file": "Milestone-F04.md",
+      "lane": "Execution and native adapters",
+      "exit": "One production batch executor supports all selected families, native algorithms, vector retrieval, BM25/text and JSON; old row runtime is deleted."
+    },
+    {
+      "id": "F05",
+      "title": "Finish paths, indexes and measured performance",
+      "file": "Milestone-F05.md",
+      "lane": "Semantics and accelerators",
+      "exit": "Independent path oracles agree; composite/key enforcement is complete and incremental; scalar JSON paths are indexable; balanced performance decisions are recorded."
+    },
+    {
+      "id": "F06",
+      "title": "Qualify and release 2.0",
+      "file": "Milestone-F06.md",
+      "lane": "Integrated release",
+      "exit": "Owner-authorized release uses tested packages, accurate support/format statements and evidence-bounded GQL claims."
+    }
+  ],
+  "pull_requests": [
+    {
+      "id": "PLAN-01",
+      "milestone": null,
+      "title": "Adopt the finish plan and remove mechanical planning blockers",
+      "state": "proposed",
+      "file": "PLAN-01.md",
+      "depends_on": [],
+      "replaces": [],
+      "skills": [
+        "tracer-bullet-planning",
+        "source-verification",
+        "handoff-continuity"
+      ],
+      "issues": []
+    },
+    {
+      "id": "F01-PR01",
+      "milestone": "F01",
+      "title": "Finish the graph-internal candidate migration",
+      "file": "Milestone-F01-PR-01.md",
+      "depends_on": [
+        "PLAN-01"
+      ],
+      "replaces": [
+        "M04-PR02"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-test-design",
+        "rust-performance"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F01-PR02",
+      "milestone": "F01",
+      "title": "Remove downstream public-row APIs and close candidate safety",
+      "file": "Milestone-F01-PR-02.md",
+      "depends_on": [
+        "F01-PR01"
+      ],
+      "replaces": [
+        "M04-PR02"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-test-design",
+        "rust-review"
+      ],
+      "state": "proposed",
+      "issues": [
+        1093
+      ]
+    },
+    {
+      "id": "F01-PR03",
+      "milestone": "F01",
+      "title": "Store mixed edges and complete their logical change records",
+      "file": "Milestone-F01-PR-03.md",
+      "depends_on": [
+        "F01-PR02"
+      ],
+      "replaces": [
+        "M04-PR03",
+        "M04-PR05"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-storage-durability",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F01-PR04",
+      "milestone": "F01",
+      "title": "Make traversal and GQL predicates obey mixed-edge semantics",
+      "file": "Milestone-F01-PR-04.md",
+      "depends_on": [
+        "F01-PR03"
+      ],
+      "replaces": [
+        "M04-PR04"
+      ],
+      "skills": [
+        "rust-test-design",
+        "rust-api-design",
+        "rust-review"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F02-PR01",
+      "milestone": "F02",
+      "title": "Anchor store operations and establish format-2 store control",
+      "file": "Milestone-F02-PR-01.md",
+      "depends_on": [
+        "PLAN-01"
+      ],
+      "replaces": [
+        "M09-PR01",
+        "M09-PR02"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-api-design",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": [
+        1088
+      ]
+    },
+    {
+      "id": "F02-PR02",
+      "milestone": "F02",
+      "title": "Unify catalog metadata for constraints, indexes and native registrations",
+      "file": "Milestone-F02-PR-02.md",
+      "depends_on": [
+        "PLAN-01"
+      ],
+      "replaces": [
+        "M08-PR01"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-storage-durability",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F02-PR03",
+      "milestone": "F02",
+      "title": "Encode complete logical transactions in the format-2 WAL",
+      "file": "Milestone-F02-PR-03.md",
+      "depends_on": [
+        "F02-PR01",
+        "F02-PR02",
+        "F01-PR03",
+        "F03-PR02"
+      ],
+      "replaces": [
+        "M09-PR04"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-protocol-codecs",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F02-PR04",
+      "milestone": "F02",
+      "title": "Connect durable commit to the existing publication authority",
+      "file": "Milestone-F02-PR-04.md",
+      "depends_on": [
+        "F02-PR03"
+      ],
+      "replaces": [
+        "M09-PR03"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-async-concurrency",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": [
+        1128
+      ]
+    },
+    {
+      "id": "F02-PR05",
+      "milestone": "F02",
+      "title": "Checkpoint a coherent database and reopen the first durable slice",
+      "file": "Milestone-F02-PR-05.md",
+      "depends_on": [
+        "F02-PR04"
+      ],
+      "replaces": [
+        "M09-PR05",
+        "M09-PR07"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-test-design",
+        "rust-api-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F02-PR06",
+      "milestone": "F02",
+      "title": "Make checkpoint publication, rotation and retention one safe lifecycle",
+      "file": "Milestone-F02-PR-06.md",
+      "depends_on": [
+        "F02-PR05"
+      ],
+      "replaces": [
+        "M09-PR06"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-async-concurrency",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F02-PR07",
+      "milestone": "F02",
+      "title": "Close recovery classification and failure evidence",
+      "file": "Milestone-F02-PR-07.md",
+      "depends_on": [
+        "F02-PR06"
+      ],
+      "replaces": [
+        "M09-PR07"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-test-design",
+        "rust-review"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F02-PR08",
+      "milestone": "F02",
+      "title": "Cut over exclusively to format 2 and expose a durable integration preview",
+      "file": "Milestone-F02-PR-08.md",
+      "depends_on": [
+        "F02-PR07"
+      ],
+      "replaces": [
+        "M09-PR08"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-api-design",
+        "rust-ci-release"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F03-PR01",
+      "milestone": "F03",
+      "title": "Introduce immutable semantic analysis through a working query slice",
+      "file": "Milestone-F03-PR-01.md",
+      "depends_on": [
+        "PLAN-01"
+      ],
+      "replaces": [
+        "M05-PR01",
+        "M05-PR02"
+      ],
+      "skills": [
+        "rust-api-design",
+        "module-design",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F03-PR02",
+      "milestone": "F03",
+      "title": "Unify structural types, values and reference boundaries",
+      "file": "Milestone-F03-PR-02.md",
+      "depends_on": [
+        "F03-PR01",
+        "F01-PR02"
+      ],
+      "replaces": [
+        "M05-PR03"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-test-design",
+        "rust-storage-durability"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F03-PR03",
+      "milestone": "F03",
+      "title": "Make effects and logical binding-table operations executable",
+      "file": "Milestone-F03-PR-03.md",
+      "depends_on": [
+        "F03-PR02"
+      ],
+      "replaces": [
+        "M05-PR04",
+        "M05-PR05"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-test-design",
+        "module-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F03-PR04",
+      "milestone": "F03",
+      "title": "Complete logical lowering and remove mixed syntax/execution planning",
+      "file": "Milestone-F03-PR-04.md",
+      "depends_on": [
+        "F03-PR03",
+        "F05-PR01"
+      ],
+      "replaces": [
+        "M05-PR05",
+        "M05-PR06"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-test-design",
+        "rust-review"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F04-PR01",
+      "milestone": "F04",
+      "title": "Build the physical batch substrate with one working scan",
+      "file": "Milestone-F04-PR-01.md",
+      "depends_on": [
+        "F03-PR03",
+        "F01-PR02"
+      ],
+      "replaces": [
+        "M06-PR01",
+        "M06-PR02"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-memory-layout",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F04-PR02",
+      "milestone": "F04",
+      "title": "Execute primitive query operators in batches",
+      "file": "Milestone-F04-PR-02.md",
+      "depends_on": [
+        "F04-PR01",
+        "F01-PR04"
+      ],
+      "replaces": [
+        "M06-PR03"
+      ],
+      "skills": [
+        "rust-performance",
+        "rust-test-design",
+        "rust-api-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F04-PR03",
+      "milestone": "F04",
+      "title": "Implement joins and set operations without losing multiplicity",
+      "file": "Milestone-F04-PR-03.md",
+      "depends_on": [
+        "F04-PR02"
+      ],
+      "replaces": [
+        "M06-PR04"
+      ],
+      "skills": [
+        "rust-test-design",
+        "rust-memory-layout",
+        "rust-performance"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F04-PR04",
+      "milestone": "F04",
+      "title": "Implement aggregation, grouping and bounded sorting",
+      "file": "Milestone-F04-PR-04.md",
+      "depends_on": [
+        "F04-PR02"
+      ],
+      "replaces": [
+        "M06-PR04"
+      ],
+      "skills": [
+        "rust-test-design",
+        "rust-performance",
+        "rust-memory-layout"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F04-PR05",
+      "milestone": "F04",
+      "title": "Route batch mutations and control operations through one transaction",
+      "file": "Milestone-F04-PR-05.md",
+      "depends_on": [
+        "F04-PR02",
+        "F03-PR04"
+      ],
+      "replaces": [
+        "M06-PR05"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-test-design",
+        "rust-api-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F04-PR06",
+      "milestone": "F04",
+      "title": "Integrate procedure registration, batch calls and graph algorithms",
+      "file": "Milestone-F04-PR-06.md",
+      "depends_on": [
+        "F04-PR02",
+        "F03-PR03",
+        "F02-PR02"
+      ],
+      "replaces": [
+        "M06-PR06",
+        "M10-PR01",
+        "M10-PR04"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-test-design",
+        "rust-performance"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F04-PR07",
+      "milestone": "F04",
+      "title": "Restore vector retrieval through the stable native boundary",
+      "file": "Milestone-F04-PR-07.md",
+      "depends_on": [
+        "F04-PR06"
+      ],
+      "replaces": [
+        "M10-PR02"
+      ],
+      "skills": [
+        "rust-numerics-simd",
+        "rust-storage-durability",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F04-PR08",
+      "milestone": "F04",
+      "title": "Restore text, JSON and maintained providers through the same boundary",
+      "file": "Milestone-F04-PR-08.md",
+      "depends_on": [
+        "F04-PR06"
+      ],
+      "replaces": [
+        "M10-PR03"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-test-design",
+        "rust-performance"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F04-PR09",
+      "milestone": "F04",
+      "title": "Make batch execution the only production executor",
+      "file": "Milestone-F04-PR-09.md",
+      "depends_on": [
+        "F04-PR03",
+        "F04-PR04",
+        "F04-PR05",
+        "F04-PR07",
+        "F04-PR08",
+        "F05-PR04",
+        "F03-PR04"
+      ],
+      "replaces": [
+        "M06-PR07"
+      ],
+      "skills": [
+        "rust-review",
+        "rust-test-design",
+        "rust-performance"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F05-PR01",
+      "milestone": "F05",
+      "title": "Lower path semantics into one automata contract",
+      "file": "Milestone-F05-PR-01.md",
+      "depends_on": [
+        "F03-PR03",
+        "F01-PR04"
+      ],
+      "replaces": [
+        "M07-PR01"
+      ],
+      "skills": [
+        "rust-api-design",
+        "rust-test-design",
+        "module-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F05-PR02",
+      "milestone": "F05",
+      "title": "Execute bounded product-graph paths and exact mode restrictions",
+      "file": "Milestone-F05-PR-02.md",
+      "depends_on": [
+        "F05-PR01"
+      ],
+      "replaces": [
+        "M07-PR02",
+        "M07-PR03"
+      ],
+      "skills": [
+        "rust-test-design",
+        "rust-memory-layout",
+        "rust-performance"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F05-PR03",
+      "milestone": "F05",
+      "title": "Implement selective paths and materialize correct path values",
+      "file": "Milestone-F05-PR-03.md",
+      "depends_on": [
+        "F05-PR02"
+      ],
+      "replaces": [
+        "M07-PR04",
+        "M07-PR05"
+      ],
+      "skills": [
+        "rust-test-design",
+        "rust-performance",
+        "rust-memory-layout"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F05-PR04",
+      "milestone": "F05",
+      "title": "Integrate paths with logical planning and batches, then delete legacy paths",
+      "file": "Milestone-F05-PR-04.md",
+      "depends_on": [
+        "F05-PR03",
+        "F04-PR02",
+        "F03-PR04"
+      ],
+      "replaces": [
+        "M07-PR06"
+      ],
+      "skills": [
+        "rust-test-design",
+        "rust-review",
+        "rust-performance"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F05-PR05",
+      "milestone": "F05",
+      "title": "Enforce composite uniqueness and keys incrementally",
+      "file": "Milestone-F05-PR-05.md",
+      "depends_on": [
+        "F02-PR02",
+        "F03-PR03",
+        "F01-PR02"
+      ],
+      "replaces": [
+        "M08-PR02",
+        "M08-PR03"
+      ],
+      "skills": [
+        "rust-storage-durability",
+        "rust-test-design",
+        "rust-performance"
+      ],
+      "state": "proposed",
+      "issues": [
+        1092,
+        1094
+      ]
+    },
+    {
+      "id": "F05-PR06",
+      "milestone": "F05",
+      "title": "Reuse scalar indexes for deterministic expressions and JSON paths",
+      "file": "Milestone-F05-PR-06.md",
+      "depends_on": [
+        "F05-PR05",
+        "F04-PR02"
+      ],
+      "replaces": [
+        "M08-PR04",
+        "M08-PR05"
+      ],
+      "skills": [
+        "rust-test-design",
+        "rust-storage-durability",
+        "rust-performance"
+      ],
+      "state": "proposed",
+      "issues": [
+        1097
+      ]
+    },
+    {
+      "id": "F05-PR07",
+      "milestone": "F05",
+      "title": "Resolve measured read-path regressions with balanced evidence",
+      "file": "Milestone-F05-PR-07.md",
+      "depends_on": [
+        "F01-PR02"
+      ],
+      "replaces": [
+        "M08-PR06"
+      ],
+      "skills": [
+        "rust-performance",
+        "rust-memory-layout",
+        "diagnosis-loop"
+      ],
+      "state": "proposed",
+      "issues": [
+        1137
+      ]
+    },
+    {
+      "id": "F06-PR01",
+      "milestone": "F06",
+      "title": "Close release behavior, public API and truthful GQL claims",
+      "file": "Milestone-F06-PR-01.md",
+      "depends_on": [
+        "F02-PR08",
+        "F04-PR09",
+        "F05-PR06",
+        "F05-PR07"
+      ],
+      "replaces": [
+        "M10-PR05",
+        "M10-PR06"
+      ],
+      "skills": [
+        "rust-review",
+        "rust-api-design",
+        "source-verification"
+      ],
+      "state": "proposed",
+      "issues": []
+    },
+    {
+      "id": "F06-PR02",
+      "milestone": "F06",
+      "title": "Qualify release artifacts and complete the authorized 2.0 release",
+      "file": "Milestone-F06-PR-02.md",
+      "depends_on": [
+        "F06-PR01"
+      ],
+      "replaces": [
+        "M10-PR07"
+      ],
+      "skills": [
+        "rust-ci-release",
+        "rust-storage-durability",
+        "rust-test-design"
+      ],
+      "state": "proposed",
+      "issues": []
+    }
+  ],
+  "integration_gates": [
+    {
+      "id": "facade-smoke",
+      "name": "In-memory consumer integration",
+      "requires": [
+        "F01-PR02"
+      ],
+      "meaning": "Exercise the existing stable facade and candidate-safe consumers; not a persistence or GA claim."
+    },
+    {
+      "id": "durable-preview",
+      "name": "Durable format-2 integration preview",
+      "requires": [
+        "F02-PR08"
+      ],
+      "meaning": "Deliberate integration testing with supported durable semantics; no claim that batch/path/native migration is complete."
+    },
+    {
+      "id": "native-consumer-preview",
+      "name": "Durable native retrieval and constrained metadata preview",
+      "requires": [
+        "F02-PR08",
+        "F04-PR07",
+        "F04-PR08",
+        "F05-PR05"
+      ],
+      "meaning": "Vector/text/JSON/native call and unique/key consumers can integrate before final path/batch cutover; run their actual combined facade/restart scenarios."
+    },
+    {
+      "id": "ga",
+      "name": "Owner-authorized 2.0 release",
+      "requires": [
+        "F06-PR02"
+      ],
+      "meaning": "All agreed behavior, package qualification and truthful claim gates complete; publication separately authorized."
+    }
+  ],
+  "issues": [
+    {
+      "number": 1088,
+      "title": "Support directory-capability persistence to eliminate parent rename TOCTOU",
+      "closure_owner": "F02-PR01"
+    },
+    {
+      "number": 1092,
+      "title": "Composite (multi-property) UNIQUE is not expressible",
+      "closure_owner": "F05-PR05"
+    },
+    {
+      "number": 1093,
+      "title": "Row-indexed bitmaps yield bare u32 and defeat RowIndex safety",
+      "closure_owner": "F01-PR02"
+    },
+    {
+      "number": 1094,
+      "title": "UNIQUE enforcement rescans every alive node and edge",
+      "closure_owner": "F05-PR05"
+    },
+    {
+      "number": 1097,
+      "title": "JSON-valued properties are unindexable",
+      "closure_owner": "F05-PR06"
+    },
+    {
+      "number": 1128,
+      "title": "Truncate WAL to a flushed-offset watermark on committer poison exit",
+      "closure_owner": "F02-PR04"
+    },
+    {
+      "number": 1137,
+      "title": "Read hot paths regressed 8–81% after map migration",
+      "closure_owner": "F05-PR07"
+    }
+  ],
+  "legacy_work_items": [
+    {
+      "id": "M00-PR01",
+      "title": "Declare 1.x End-of-Life and Establish the 2.0 Line",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M00-PR02",
+      "title": "Commit the Finalized 2.0 Architecture and Milestone Contract",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M00-PR03",
+      "title": "Enforce the 2.0 PR, Review, and CI Operating Model",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M00-PR04",
+      "title": "Capture the Executable 1.x Baseline and 2.0 Deletion Inventory",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M01-PR01",
+      "title": "Introduce the Canonical `selene-profile` Registry",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M01-PR02",
+      "title": "Encode Feature Taxonomy and Transitive Implication Closure",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M01-PR03",
+      "title": "Build the Exact Annex B Implementation-Defined Profile",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M01-PR04",
+      "title": "Generate Flagger, Feature Status, and Documentation from the Profile",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M01-PR05",
+      "title": "Static conformance-rule registry (live split from original M01-PR05)",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M01-PR06",
+      "title": "Executable conformance/evidence harness (live split from original M01-PR05)",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M02-PR01",
+      "title": "Add the `selene-catalog` and Stable `selene-db` Facade Skeleton",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M02-PR02",
+      "title": "Implement Persistent Catalog IDs, Canonical Names, and Flat Schema Descriptors",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M02-PR03",
+      "title": "Add Catalog-Owned Named Graph and Graph-Type Lifecycle in Rust",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M02-PR04",
+      "title": "Implement GQL Catalog DDL over the Catalog Service",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M02-PR05",
+      "title": "Cut Over Public Construction and Sessions to the Catalog-First Facade",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M03-PR01",
+      "title": "Implement `SessionContext`, Principal, and Profile Defaults",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M03-PR02",
+      "title": "Implement `RequestContext`, Typed Parameters, Timestamp, and Request Outcome",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M03-PR03",
+      "title": "Implement Execution Context Stack, Binding Tables, and Structured Outcomes",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M03-PR04",
+      "title": "Serializable transactions: atomic publication authority and session demarcation",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M03-PR05",
+      "title": "Persistent session controls and generation-safe plan reuse",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M04-PR01",
+      "title": "Formalize Stable Element Identity, Reference Handles, and Generation Tokens",
+      "state": "merged",
+      "new_owners": [],
+      "note": "Completed foundation; preserved without reopening."
+    },
+    {
+      "id": "M04-PR02",
+      "title": "Introduce Typed Generation-Bound Candidate Sets and Remove Row Bitmap APIs",
+      "state": "partial",
+      "new_owners": [
+        "F01-PR01",
+        "F01-PR02"
+      ],
+      "note": "Parts 1 and 2 already landed. F01-PR01 owns remaining Part 3A; F01-PR02 owns Part 3B and final closure. Old item remains incomplete until both finish."
+    },
+    {
+      "id": "M04-PR03",
+      "title": "Add Explicit Directed and Undirected Edge Storage",
+      "state": "unmerged",
+      "new_owners": [
+        "F01-PR03"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M04-PR04",
+      "title": "Implement Mixed-Edge Traversal, Pattern Orientation, and Predicates",
+      "state": "unmerged",
+      "new_owners": [
+        "F01-PR04"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M04-PR05",
+      "title": "Finalize Directional Change Events and 2.0 Snapshot-Logical Model",
+      "state": "unmerged",
+      "new_owners": [
+        "F01-PR03"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M05-PR01",
+      "title": "Separate the Source Syntax AST from the Annotated Semantic Tree",
+      "state": "unmerged",
+      "new_owners": [
+        "F03-PR01"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M05-PR02",
+      "title": "Implement Catalog-Aware Name, Scope, and Reference Resolution",
+      "state": "unmerged",
+      "new_owners": [
+        "F03-PR01"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M05-PR03",
+      "title": "Implement Structural Type Descriptors, Nullability, References, and Binding Table Schemas",
+      "state": "unmerged",
+      "new_owners": [
+        "F03-PR02"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M05-PR04",
+      "title": "Implement Statement Effects, Procedure Side-Effect Classes, and Transaction Write Sets",
+      "state": "unmerged",
+      "new_owners": [
+        "F03-PR03"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M05-PR05",
+      "title": "Introduce the Logical Binding-Table and Graph Algebra IR",
+      "state": "unmerged",
+      "new_owners": [
+        "F03-PR03",
+        "F03-PR04"
+      ],
+      "note": "Working logical/effect slice in F03-PR03; complete family coverage and compiler cutover in F03-PR04."
+    },
+    {
+      "id": "M05-PR06",
+      "title": "Unify Compiler Diagnostics and Cut Over to Semantic→Logical Planning",
+      "state": "unmerged",
+      "new_owners": [
+        "F03-PR04"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M06-PR01",
+      "title": "Define Physical Plan Nodes, Properties, and Operator Contracts",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR01"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M06-PR02",
+      "title": "Implement Typed Binding Batches, Column Vectors, and Active-Row Selection",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR01"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M06-PR03",
+      "title": "Implement Batch Scan, Match Seed, Filter, Project, and Page Operators",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR02"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M06-PR04",
+      "title": "Implement Batch Joins, Grouping, Aggregation, Sort, and Set Operations",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR03",
+        "F04-PR04"
+      ],
+      "note": "Intentionally split into joins/sets and grouping/aggregate/sort to keep distinct semantic risks reviewable."
+    },
+    {
+      "id": "M06-PR05",
+      "title": "Implement Batch Mutation, Catalog, Session, and Transaction Operators",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR05"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M06-PR06",
+      "title": "Implement Batch Procedure Calls and Native Value/Result Adapters",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR06"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M06-PR07",
+      "title": "Cut Over to the Batch Executor and Delete the Row-at-a-Time Bridge",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR09"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M07-PR01",
+      "title": "Define Path Pattern Semantic IR and Automata Lowering",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR01"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M07-PR02",
+      "title": "Implement Product-Graph Execution for Bounded Paths",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR02"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M07-PR03",
+      "title": "Implement WALK, TRAIL, SIMPLE, ACYCLIC, and Match Modes",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR02"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M07-PR04",
+      "title": "Implement Selective Path Search Prefixes and Endpoint Partitioning",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR03"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M07-PR05",
+      "title": "Implement Path Values and Compact Shared Path Representation",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR03"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M07-PR06",
+      "title": "Integrate Path Planning, Differential Conformance, and Delete Legacy Path Execution",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR04"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M08-PR01",
+      "title": "Create Catalog-Owned Index and Constraint Descriptors",
+      "state": "unmerged",
+      "new_owners": [
+        "F02-PR02"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M08-PR02",
+      "title": "Implement Named Composite Unique and Key Constraints",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR05"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M08-PR03",
+      "title": "Make Uniqueness Incremental and Backing-Index Enforced",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR05"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M08-PR04",
+      "title": "Introduce Deterministic Scalar Expression Index Targets",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR06"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M08-PR05",
+      "title": "Add JSON Scalar-Path Expression Indexes and Planner Pushdown",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR06"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M08-PR06",
+      "title": "Resolve Read-Hot Map Regressions and Install Balanced Performance Gates",
+      "state": "unmerged",
+      "new_owners": [
+        "F05-PR07"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M09-PR01",
+      "title": "Introduce the Anchored `StoreDirectory` Filesystem Capability",
+      "state": "unmerged",
+      "new_owners": [
+        "F02-PR01"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M09-PR02",
+      "title": "Define the 2.0 Store Layout, Store Identity, Lock, Epoch, and Manifest Model",
+      "state": "unmerged",
+      "new_owners": [
+        "F02-PR01"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M09-PR03",
+      "title": "Implement WAL Segment Writer Watermarks and Precise Commit Outcomes",
+      "state": "unmerged",
+      "new_owners": [
+        "F02-PR04"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M09-PR04",
+      "title": "Define and Encode the Logical Transaction WAL Record Format 2.0",
+      "state": "unmerged",
+      "new_owners": [
+        "F02-PR03"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M09-PR05",
+      "title": "Implement Snapshot Format 2.0 and Coherent Catalog/Graph Checkpoints",
+      "state": "unmerged",
+      "new_owners": [
+        "F02-PR05"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M09-PR06",
+      "title": "Implement Checkpoint, WAL Rotation, Retention, and Manifest Publication Protocol",
+      "state": "unmerged",
+      "new_owners": [
+        "F02-PR06"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M09-PR07",
+      "title": "Implement Recovery State Machine, Corruption Classification, and Crash Matrix",
+      "state": "unmerged",
+      "new_owners": [
+        "F02-PR05",
+        "F02-PR07"
+      ],
+      "note": "First executable reopen path in F02-PR05; full classification/crash coverage in F02-PR07. The early tracer does not close recovery."
+    },
+    {
+      "id": "M09-PR08",
+      "title": "Cut Over Exclusively to Format 2.0 and Remove Legacy Persistence Bridges",
+      "state": "unmerged",
+      "new_owners": [
+        "F02-PR08"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M10-PR01",
+      "title": "Reintegrate Graph Algorithms through Catalog Graph Handles and Batch Results",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR06"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M10-PR02",
+      "title": "Reintegrate Vector Values, Indexes, and Search through the 2.0 Catalog",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR07"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M10-PR03",
+      "title": "Reintegrate BM25 Text, JSON Search, and Maintained Native Providers",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR08"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M10-PR04",
+      "title": "Complete Named Procedure Catalog and Selene Extension Profile",
+      "state": "unmerged",
+      "new_owners": [
+        "F04-PR06"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M10-PR05",
+      "title": "Close the Selected GQL Profile and Generate the Release Conformance Declaration",
+      "state": "unmerged",
+      "new_owners": [
+        "F06-PR01"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M10-PR06",
+      "title": "Finalize Public API, Documentation, Examples, and No-Migration Release Guidance",
+      "state": "unmerged",
+      "new_owners": [
+        "F06-PR01"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    },
+    {
+      "id": "M10-PR07",
+      "title": "Run Release Candidate Hardening, Final Review, Tag, and Publish",
+      "state": "unmerged",
+      "new_owners": [
+        "F06-PR02"
+      ],
+      "note": "Remaining behavior carried into the listed finish PRs; no obligation dropped."
+    }
+  ],
+  "delivery_policy_changes": {
+    "D-021": "One coherent, reviewable behavior; touched-file and line counts are review signals, not binding allowlists or automatic stop triggers. Include necessary callers and tests. Replan material contract changes, not routine mechanical spread. Existing source-size/style gates stay unless separately changed.",
+    "D-022": "Luna edits/tests; orchestrator coordinates integration and authorized Git/PR work. Use one independent read-only reviewer by default, with a second focused review for durability/concurrency/complex semantic risk when useful. Reviews/checks must still cover the current change; no separate manual revision bookkeeping. Tags/publication/permissions remain owner-authorized."
+  },
+  "sources_file": "SOURCE-NOTES.md",
+  "entrypoint": "00-START-HERE.md"
+}

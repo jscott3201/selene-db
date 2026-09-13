@@ -11,6 +11,22 @@ fn parse_return_integer() {
 }
 
 #[test]
+fn integer_literal_decimal_digit_boundary_matches_il010() {
+    let item = only_item("RETURN 9223372036854775807");
+    assert_eq!(
+        item.expr,
+        ValueExpr::Literal(Literal::Integer(i64::MAX, SourceSpan::new(7, 19)))
+    );
+
+    let error = parse("RETURN 18446744073709551615")
+        .expect_err("a 20-digit u64 maximum does not fit in i64");
+    let ParserError::SyntaxError { hint, .. } = error else {
+        panic!("expected an integer-literal syntax error")
+    };
+    assert_eq!(hint.as_deref(), Some("integer literals must fit in i64"));
+}
+
+#[test]
 fn parse_return_string() {
     let item = only_item("RETURN 'hello'");
     let ValueExpr::Literal(Literal::String(value, span, kind)) = &item.expr else {

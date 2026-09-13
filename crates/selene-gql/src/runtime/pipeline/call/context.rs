@@ -25,7 +25,7 @@ pub(super) fn validate_call_tier(call: &PlannedCall) -> Result<(), ExecutorError
     Ok(())
 }
 
-pub(super) fn build<'borrow, 'ctx, 'g>(
+pub(crate) fn build<'borrow, 'ctx, 'g>(
     call: &PlannedCall,
     ctx: &'borrow mut TxContext<'ctx, 'g>,
 ) -> Result<ProcedureContext<'borrow, 'g>, ExecutorError>
@@ -70,7 +70,7 @@ where
     }
 }
 
-pub(super) fn build_read_only<'borrow, 'ctx, 'g>(
+pub(crate) fn build_read_only<'borrow, 'ctx, 'g>(
     call: &PlannedCall,
     ctx: &'borrow TxContext<'ctx, 'g>,
 ) -> Result<ProcedureContext<'borrow, 'g>, ExecutorError>
@@ -112,7 +112,7 @@ pub(super) const fn tier_for_mutability(mutability: ProcedureMutability) -> Proc
     }
 }
 
-pub(super) fn procedure_error(
+pub(crate) fn procedure_error(
     source: ProcedureError,
     span: crate::SourceSpan,
     deadline: Option<Instant>,
@@ -134,6 +134,9 @@ pub(super) fn procedure_error(
             detail: "node scan budget exceeded",
             span,
         },
+        ProcedureError::ProgramLimitExceeded { detail } => {
+            ExecutorError::ProgramLimitExceeded { detail, span }
+        }
         source => ExecutorError::Procedure { source, span },
     }
 }

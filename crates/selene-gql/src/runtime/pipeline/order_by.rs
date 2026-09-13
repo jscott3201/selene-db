@@ -5,43 +5,16 @@ use selene_core::Value;
 use crate::{
     NullsPolicy, OrderDirection, OrderKey,
     runtime::{
-        Binding, BindingTable, EvalCtx, ExecutorError, evaluator,
+        Binding, EvalCtx, ExecutorError, evaluator,
         value_compare::{self, NullSortOrder},
     },
 };
 
-pub(super) fn execute(
-    keys: &[OrderKey],
-    table: BindingTable,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<BindingTable, ExecutorError> {
-    let (schema, rows) = table.into_parts();
-    let mut keyed_rows = Vec::with_capacity(rows.len());
-    let mut rows_since_check = 0;
-    for row in rows {
-        ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
-        let tuple = evaluate_key_tuple(keys, &row, &schema, ctx)?;
-        keyed_rows.push(KeyedRow { tuple, row });
-    }
-
-    // Phase A deliberately ignores OrderKey.access. That planner hint is
-    // reserved for the Phase B scan-order shortcut; executor sorting remains
-    // explicit and stable here.
-    ctx.tx.check_cancellation()?;
-    keyed_rows.sort_by(|lhs, rhs| compare_key_tuples(&lhs.tuple, &rhs.tuple, keys));
-
-    Ok(BindingTable::new(
-        schema,
-        keyed_rows.into_iter().map(|row| row.row).collect(),
-    ))
-}
-
-struct KeyedRow {
-    tuple: Vec<Value>,
-    row: Binding,
-}
-
-pub(super) fn evaluate_key_tuple(
+/// Evaluate one row's sort-key tuple in key order.
+///
+/// Shared with the batch sort operator so both engines sort the same key
+/// values with the same evaluation errors.
+pub(crate) fn evaluate_key_tuple(
     keys: &[OrderKey],
     row: &Binding,
     schema: &crate::BindingTableSchema,
@@ -52,7 +25,15 @@ pub(super) fn evaluate_key_tuple(
         .collect()
 }
 
-pub(super) fn compare_key_tuples(lhs: &[Value], rhs: &[Value], keys: &[OrderKey]) -> Ordering {
+/// Compare two sort-key tuples key by key with per-key direction and null
+/// ordering.
+///
+/// Shared with the batch sort operator so ties, null placement, and the
+/// selected (binary) string collation agree exactly. The comparison is
+/// stable by construction: equal tuples compare `Equal`, and both engines
+/// use stable sorts, so ties keep input order and no implicit total order
+/// is invented.
+pub(crate) fn compare_key_tuples(lhs: &[Value], rhs: &[Value], keys: &[OrderKey]) -> Ordering {
     lhs.iter()
         .zip(rhs.iter())
         .zip(keys.iter())

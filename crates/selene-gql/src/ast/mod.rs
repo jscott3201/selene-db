@@ -1,6 +1,7 @@
 //! Public GQL abstract syntax tree types.
 
 pub mod call;
+pub mod catalog_ref;
 pub mod ddl;
 pub mod eq;
 pub mod expr;
@@ -13,11 +14,13 @@ pub mod statement;
 pub mod types;
 pub mod util;
 mod walk;
+pub mod working_scope;
 
 pub use call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem};
+pub use catalog_ref::{CatalogObjectReference, CatalogPathSegment, IdentifierForm};
 pub use ddl::{
-    DdlStatement, DropBehavior, EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint,
-    TypePropertyDef, ValidationMode,
+    CatalogGraphTypeDefinition, CatalogNodeTypeDefinition, DdlStatement, DropBehavior,
+    EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint, TypePropertyDef, ValidationMode,
 };
 pub use eq::structurally_eq;
 pub use expr::{
@@ -50,3 +53,4 @@ pub use types::{
     CharacterStringTypeForm, GqlType, RecordType,
 };
 pub use util::{EmptyVecError, NonEmpty, Vec2OrMore};
+pub use working_scope::{GraphExpression, WorkingScopeClause};

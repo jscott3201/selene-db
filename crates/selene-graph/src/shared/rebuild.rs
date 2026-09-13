@@ -12,14 +12,16 @@ use selene_core::DbString;
 use crate::adjacency::AdjacencyEdge;
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
+use crate::id_map::{engine_id_map, get_or_insert_default};
 use crate::index_provider::{IndexProvider, ProviderError};
-use crate::store::{EdgeStore, RowIndex};
+use crate::store::{EdgeRow, EdgeStore, NodeRow};
 
 pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
-    graph.idx_label.clear();
-    graph.idx_edge_label.clear();
-    graph.adjacency_out.clear();
-    graph.adjacency_in.clear();
+    graph.idx_label = Default::default();
+    graph.idx_edge_label = Default::default();
+    graph.adjacency_out = engine_id_map();
+    graph.adjacency_in = engine_id_map();
+    graph.adjacency_undirected = engine_id_map();
 
     let node_count = graph.node_store.labels.len();
     for row_index in 0..node_count {
@@ -29,16 +31,13 @@ pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> 
                  caps rows at u32::MAX",
             ),
         })?;
-        if !graph.node_store.is_alive(row) {
+        let row = NodeRow::new(row);
+        if !graph.node_store.is_alive_row(row) {
             continue;
         }
         if let Some(labels) = graph.node_store.labels.get(row_index) {
             for label in labels.iter() {
-                graph
-                    .idx_label
-                    .entry(label.clone())
-                    .or_default()
-                    .insert(row);
+                get_or_insert_default(&mut graph.idx_label, label.clone()).insert(row.get());
             }
         }
     }
@@ -51,15 +50,12 @@ pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> 
                  caps rows at u32::MAX",
             ),
         })?;
-        if !graph.edge_store.is_alive(row) {
+        let row = EdgeRow::new(row);
+        if !graph.edge_store.is_alive_row(row) {
             continue;
         }
         if let Some(label) = graph.edge_store.label.get(row_index) {
-            graph
-                .idx_edge_label
-                .entry(label.clone())
-                .or_default()
-                .insert(row);
+            get_or_insert_default(&mut graph.idx_edge_label, label.clone()).insert(row.get());
         }
     }
     // BRIEF-Item-4a: bind external ids to rows BEFORE rebuild_adjacency, which
@@ -90,8 +86,8 @@ pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> 
 /// STEP-8 grep-gate; BRIEF-Item-4b drops it once every construction path
 /// persists ids.
 fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
-    graph.node_id_to_row.clear();
-    graph.edge_id_to_row.clear();
+    graph.node_rows = engine_id_map();
+    graph.edge_rows = engine_id_map();
     // Externally-built graphs may not have populated row_to_id; pad it to the
     // row-column length with tombstones so every materialized row is in-bounds.
     let node_len = graph.node_store.len();
@@ -125,7 +121,8 @@ fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
             id = selene_core::NodeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
             graph.node_store.row_to_id.set(row, id);
         }
-        graph.node_id_to_row.insert(id, RowIndex::new(raw));
+        let row = NodeRow::new(raw);
+        graph.node_rows.insert_cow(id, row);
     }
     for row in 0..edge_len {
         let raw = row as u32;
@@ -142,7 +139,8 @@ fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
             id = selene_core::EdgeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
             graph.edge_store.row_to_id.set(row, id);
         }
-        graph.edge_id_to_row.insert(id, RowIndex::new(raw));
+        let row = EdgeRow::new(raw);
+        graph.edge_rows.insert_cow(id, row);
     }
     Ok(())
 }
@@ -172,38 +170,64 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
                  caps rows at u32::MAX",
             ),
         })?;
-        if !graph.edge_store.is_alive(row) {
+        let row = EdgeRow::new(row);
+        if !graph.edge_store.is_alive_row(row) {
             continue;
         }
         let (label, source, target) = edge_row_parts(&graph.edge_store, row_index)?;
         // rebuild_id_maps ran first, so the edge id is read from the row_to_id
         // column (the persistence-stable id), never synthesized as row + 1.
-        let edge_id =
-            graph
-                .edge_id_for_row(RowIndex::new(row))
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "alive edge row {row} has no mapped external id during rebuild"
-                    ),
-                })?;
-        graph
-            .adjacency_out
-            .entry(source)
-            .or_default()
-            .add(AdjacencyEdge {
+        let edge_id = graph
+            .edge_id_for_edge_row(row)
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: format!(
+                    "alive edge row {} has no mapped external id during rebuild",
+                    row.get()
+                ),
+            })?;
+        let directionality = graph
+            .edge_store
+            .directionality
+            .get(row_index)
+            .copied()
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: format!("edge directionality column missing row {row_index}"),
+            })?;
+        if !graph.is_node_alive(source) || !graph.is_node_alive(target) {
+            return Err(GraphError::Inconsistent {
+                reason: format!("edge {edge_id} has an absent endpoint"),
+            });
+        }
+        if directionality == selene_core::EdgeDirectionality::Undirected {
+            if source > target {
+                return Err(GraphError::Inconsistent {
+                    reason: format!("edge {edge_id} has noncanonical undirected endpoints"),
+                });
+            }
+            get_or_insert_default(&mut graph.adjacency_undirected, source).add(AdjacencyEdge {
                 label: label.clone(),
                 neighbor: target,
                 edge_id,
             });
-        graph
-            .adjacency_in
-            .entry(target)
-            .or_default()
-            .add(AdjacencyEdge {
-                label,
-                neighbor: source,
-                edge_id,
-            });
+            if source != target {
+                get_or_insert_default(&mut graph.adjacency_undirected, target).add(AdjacencyEdge {
+                    label,
+                    neighbor: source,
+                    edge_id,
+                });
+            }
+            continue;
+        }
+        get_or_insert_default(&mut graph.adjacency_out, source).add(AdjacencyEdge {
+            label: label.clone(),
+            neighbor: target,
+            edge_id,
+        });
+        get_or_insert_default(&mut graph.adjacency_in, target).add(AdjacencyEdge {
+            label,
+            neighbor: source,
+            edge_id,
+        });
     }
     Ok(())
 }

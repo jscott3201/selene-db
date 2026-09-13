@@ -2,7 +2,6 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
     collections::BTreeMap,
-    rc::Rc,
     sync::Arc,
 };
 
@@ -10,7 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::{DbString, Value};
 use selene_graph::{IndexProvider, SeleneGraph, SharedGraph, WriteTxn};
 
-use crate::{ProcedureRegistry, plan::ImplDefinedCaps, runtime::BindingTableRegistry};
+use crate::{ProcedureRegistry, plan::ImplDefinedCaps, runtime::request_runtime::RequestRuntime};
 
 use super::{AdaptiveOptimizer, TxContext};
 
@@ -22,7 +21,8 @@ struct TxContextParts<'a, 'g> {
     registry: &'a dyn ProcedureRegistry,
     providers: &'a [Arc<dyn IndexProvider>],
     parameters: Cow<'a, BTreeMap<DbString, Value>>,
-    binding_tables: Rc<BindingTableRegistry>,
+    request_runtime: Arc<RequestRuntime>,
+    request_timestamp: jiff::Timestamp,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
     maintenance_graph: Option<&'g SharedGraph>,
@@ -35,7 +35,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
-        binding_tables: Rc<BindingTableRegistry>,
+        request_runtime: Arc<RequestRuntime>,
+        request_timestamp: jiff::Timestamp,
     ) -> TxContextParts<'a, 'g> {
         TxContextParts {
             snapshot,
@@ -43,7 +44,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             registry,
             providers,
             parameters,
-            binding_tables,
+            request_runtime,
+            request_timestamp,
             reopt_hook: None,
             write_txn: None,
             maintenance_graph: None,
@@ -57,7 +59,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             registry: parts.registry,
             providers: parts.providers,
             parameters: parts.parameters,
-            binding_tables: parts.binding_tables,
+            request_runtime: parts.request_runtime,
             reopt_hook: parts.reopt_hook,
             plan_expr_ids: None,
             plan_subqueries: None,
@@ -71,7 +73,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             write_txn: parts.write_txn,
             maintenance_graph: parts.maintenance_graph,
             session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
+            request_timestamp: parts.request_timestamp,
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
@@ -106,7 +108,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             registry,
             providers,
             Cow::Borrowed(parameters),
-            Rc::new(BindingTableRegistry::new()),
+            Arc::new(RequestRuntime::new()),
+            jiff::Timestamp::now(),
         ))
     }
 
@@ -143,7 +146,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             registry,
             providers,
             Cow::Borrowed(parameters),
-            Rc::new(BindingTableRegistry::new()),
+            Arc::new(RequestRuntime::new()),
+            jiff::Timestamp::now(),
         );
         parts.reopt_hook = Some(reopt_hook);
         Self::from_parts(parts)
@@ -182,19 +186,21 @@ impl<'a, 'g> TxContext<'a, 'g> {
             registry,
             providers,
             Cow::Borrowed(parameters),
-            Rc::new(BindingTableRegistry::new()),
+            Arc::new(RequestRuntime::new()),
+            jiff::Timestamp::now(),
         );
         parts.write_txn = Some(txn);
         Self::from_parts(parts)
     }
 
-    pub(crate) fn read_only_with_owned_parameters_and_registry(
+    pub(crate) fn read_only_with_owned_parameters_and_runtime(
         snapshot: Arc<SeleneGraph>,
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
-        binding_tables: Rc<BindingTableRegistry>,
+        request_runtime: Arc<RequestRuntime>,
+        request_timestamp: jiff::Timestamp,
     ) -> Self {
         Self::from_parts(Self::base_parts(
             snapshot,
@@ -202,18 +208,23 @@ impl<'a, 'g> TxContext<'a, 'g> {
             registry,
             providers,
             parameters,
-            binding_tables,
+            request_runtime,
+            request_timestamp,
         ))
     }
 
-    pub(crate) fn write_with_owned_parameters_and_registry(
+    // Category constructors enumerate request-owned state explicitly; hiding
+    // the timestamp in ambient state would break the request-time invariant.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_with_owned_parameters_and_runtime(
         snapshot: Arc<SeleneGraph>,
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
         txn: &'a mut WriteTxn<'g>,
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
-        binding_tables: Rc<BindingTableRegistry>,
+        request_runtime: Arc<RequestRuntime>,
+        request_timestamp: jiff::Timestamp,
     ) -> Self {
         let mut parts = Self::base_parts(
             snapshot,
@@ -221,20 +232,23 @@ impl<'a, 'g> TxContext<'a, 'g> {
             registry,
             providers,
             parameters,
-            binding_tables,
+            request_runtime,
+            request_timestamp,
         );
         parts.write_txn = Some(txn);
         Self::from_parts(parts)
     }
 
-    pub(crate) fn maintenance_with_owned_parameters_and_registry(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn maintenance_with_owned_parameters_and_runtime(
         snapshot: Arc<SeleneGraph>,
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
         graph: &'g SharedGraph,
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
-        binding_tables: Rc<BindingTableRegistry>,
+        request_runtime: Arc<RequestRuntime>,
+        request_timestamp: jiff::Timestamp,
     ) -> Self {
         let mut parts = Self::base_parts(
             snapshot,
@@ -242,7 +256,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             registry,
             providers,
             parameters,
-            binding_tables,
+            request_runtime,
+            request_timestamp,
         );
         parts.maintenance_graph = Some(graph);
         Self::from_parts(parts)

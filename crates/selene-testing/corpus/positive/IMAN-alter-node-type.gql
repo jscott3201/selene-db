@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: IM_ALTER_NODE_TYPE
+// expects: parse-ok
+ALTER NODE TYPE :Person (nickname :: STRING, metadata :: JSON DEFAULT '{}')

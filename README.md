@@ -6,8 +6,9 @@ first-class JSON metadata, BM25 full-text search, and local persistence.
 
 It is a library, not a service. There is no bundled database server, wire
 protocol, auth layer, cloud control plane, extension loader, or procedure-pack
-system. Applications link the crates they need, own their network and security
-boundary, and run the engine in process.
+system. Applications depend on the `selene-db` facade, own their network and
+security boundary, and run the engine in process. Lower workspace crates remain
+available for advanced engine work without the facade's 2.x stability promise.
 
 The project north star is strict ISO GQL at the language boundary plus
 pragmatic native retrieval primitives for graph-heavy and agentic-memory
@@ -15,10 +16,24 @@ workloads. Non-standard capabilities are exposed through implementation-defined
 values, indexes, and `CALL selene.*` / `CALL algo.*` procedures, not by adding
 SQL, Cypher, SPARQL, or ad hoc grammar.
 
+## Release Status
+
+The active source line is `2.0.0-alpha.1`. The 1.x line is end of life: it
+receives no fixes, security patches, compatibility work, new releases, or data
+migration support. The alpha coordinate may not yet be published; use path
+dependencies from a source checkout when it is unavailable on crates.io. See
+the [2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md).
+The [tracked 2.0 program](docs/v2/README.md) owns finalized decisions,
+milestones, work-item contracts, review roles, issue ownership, and
+evidence-gated conformance wording.
+The [release-readiness note](docs/v2/release-readiness.md) separates the current
+embedding contract, executable regression evidence and unresolved claim gaps.
+
 ## What Is Here
 
 | Area | Current surface |
 |---|---|
+| Facade | Memory-only builder or fallible format-2 create/open, catalog-owned schemas and named graphs, database-owning sessions, structured diagnostics, and immutable result rows with declared descriptors. |
 | GQL | Parser, analyzer, planner, optimizer, executor, parameter binding, source-string plan cache, feature-status reporting, and ISO-oriented errors. |
 | Graph storage | In-memory property graph with stable external IDs, dense internal rows, immutable reader snapshots, typed property indexes, composite indexes, and one mutation funnel. |
 | Transactions | Serialized writers, snapshot readers, rollback by non-publication, and provider fanout under the write lock. |
@@ -32,10 +47,15 @@ SQL, Cypher, SPARQL, or ad hoc grammar.
 
 ## Workspace Crates
 
-There is no umbrella facade crate. Use the layers directly.
+`selene-db` is the stability-promised embedding surface. The other crates are
+advanced/internal boundaries unless the facade intentionally re-exports a
+type.
 
 | Crate | Owns |
 |---|---|
+| [`selene-db`](crates/selene-db) | Stable database builder, catalog lifecycle, selected graph sessions, facade errors, and summary outcomes. |
+| [`selene-catalog`](crates/selene-catalog) | Immutable catalog descriptors, stable typed IDs, canonical names, read snapshots, and storage-neutral mutation drafts. |
+| [`selene-profile`](crates/selene-profile) | Generated GQL profile, implementation-choice, and conformance-evidence authority. |
 | [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, `JsonValue`, IDs, `DbString`, labels, property maps, schema metadata, codecs, origins, changesets, and core vector kernels. |
 | [`selene-graph`](crates/selene-graph) | Graph storage, transactions, mutation funnel, property/composite/vector/text indexes, exact and ANN vector search, BM25 search, exact JSON search, maintained candidate state, graph type validation, compaction, and recovery providers. |
 | [`selene-persist`](crates/selene-persist) | WAL, snapshots, MANIFEST recovery, retention pruning, and audit log files. It stays below graph semantics. |
@@ -43,71 +63,60 @@ There is no umbrella facade crate. Use the layers directly.
 | [`selene-gql`](crates/selene-gql) | GQL grammar, AST, analysis, planning, optimization, execution, procedure traits, and the built-in procedure registry. |
 | [`selene-testing`](crates/selene-testing) | Test fixtures, graph generators, benchmark corpora, opt-in local/remote embedding helpers, and snapshot-harness utilities. |
 
-The intended dependency direction is:
+The main engine dependency direction is:
 
 ```text
-selene-core -> selene-graph -> selene-algorithms -> selene-gql
+selene-core -> selene-graph -> selene-algorithms -> selene-gql -> selene-db
 ```
 
-`selene-persist` depends on `selene-core` and remains graph-blind.
-`selene-testing` is for tests and benchmarks.
+`selene-profile` feeds runtime profile consumers. `selene-catalog` is
+storage-neutral and has no engine-crate dependencies; `selene-db` privately
+composes the catalog and engine layers. `selene-persist` depends on
+`selene-core` and remains graph-blind. `selene-testing` is for tests and
+benchmarks.
 
 ## Quickstart
 
-Starting with v1.2.0, the public packages are published to crates.io under the
-`selene-db-*` namespace. Depend on the layers your application uses while
-keeping the Rust crate names stable:
+The example follows the current source coordinate; confirm the alpha is
+published before using it as a registry dependency. A source checkout can use
+the equivalent path dependency.
 
 ```toml
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.4.0" }
-selene-graph = { package = "selene-db-graph", version = "1.4.0" }
-selene-gql = { package = "selene-db-gql", version = "1.4.0" }
+selene-db = { version = "2.0.0-alpha.1" }
 ```
 
-Create a graph, write through the mutation funnel, and query with GQL:
+Build an in-memory database, create a schema and named graph, then select that
+graph for a facade session:
 
 ```rust
-use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
-use selene_gql::{BuiltinProcedureRegistry, Session, StatementOutput};
-use selene_graph::SharedGraph;
+use selene_db::{CreatePolicy, Database, ObjectPath, SchemaPath};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let graph = SharedGraph::new(GraphId::new(1));
+fn main() -> Result<(), selene_db::Error> {
+    let database = Database::builder().build();
+    let catalog = database.catalog();
+    let schema = SchemaPath::regular("selene", "memory")?;
+    catalog.create_schema(&schema, CreatePolicy::Strict)?;
+    let graph_path = ObjectPath::regular("selene", "memory", "episodes")?;
+    catalog.create_graph(&graph_path, None, CreatePolicy::Strict)?;
+    let session = database.session(&graph_path)?;
 
-    let person = db_string("Person")?;
-    let name = db_string("name")?;
-
-    let mut tx = graph.begin_write();
-    {
-        let props = PropertyMap::from_pairs([(
-            name,
-            Value::String(db_string("Ada")?),
-        )])?;
-        tx.mutator().create_node(LabelSet::single(person), props)?;
-    }
-    tx.commit()?;
-
-    let registry = BuiltinProcedureRegistry::new();
-    let mut session = Session::new(&graph);
-    let output = session.execute_source(
-        "MATCH (p:Person) RETURN p.name AS name",
-        &registry,
-    )?;
-
-    let StatementOutput::Rows(rows) = output else {
-        panic!("MATCH ... RETURN should return rows");
-    };
-    assert_eq!(rows.row_count(), 1);
+    session.execute("INSERT (:Person { name: 'Ada' })")?;
+    let output = session.execute("MATCH (p:Person) RETURN p")?;
+    assert_eq!(output.row_count(), Some(1));
 
     Ok(())
 }
 ```
 
-For a fuller walk through graph creation, typed properties, parameters,
-transactions, and persistence wiring, start with
-[Getting Started](docs/getting-started.md) and the
-[Embedding Guide](docs/embedding-guide.md).
+The facade returns immutable row values, analyzer-declared result descriptors,
+and structured diagnostics. A session retains the selected graph's stable
+identity and revalidates it for each request; drop or replacement makes the old
+session stale. Transaction and supported `SESSION` controls use facade-owned
+state. Sessions are `Send` and intentionally not `Sync`; serialize each session's
+requests. GQL catalog DDL routes to the same catalog lifecycle service used above.
+The [Embedding Guide](docs/embedding-guide.md) identifies the stable entry point
+and documents the lower advanced APIs separately.
 
 ## GQL Boundary
 
@@ -131,8 +140,9 @@ FINISH
 
 ```gql
 CALL selene.feature_status()
-YIELD feature_id, feature_name, status, rationale
-RETURN feature_id, status
+YIELD feature_id, status, rationale, feature_name, surface,
+      profile_relation, claim_state, evidence_status, evidence_count, profile_hash
+RETURN feature_id, status, surface, profile_hash
 ```
 
 Quantified edge bindings are list-valued. Projecting a property from one of
@@ -148,26 +158,13 @@ Native procedures are part of the engine, not loadable extensions. Tests can
 inject alternate `ProcedureRegistry` implementations, but production code uses
 the in-tree `BuiltinProcedureRegistry`.
 
-Closed graph schemas support typed property declarations with durable literal
-defaults. Scalar defaults cover the implemented value families, `JSON` defaults
-canonicalize from JSON string images, `VECTOR` defaults use numeric list
-literals, and `LIST<T>` defaults use recursively validated list literals such as
-`tags :: LIST<STRING> DEFAULT ['agentic', 'memory']` or
-`embeddings :: LIST<VECTOR> DEFAULT [[1, 0], [0, 1]]`. Closed and open
-`RECORD` properties can use record-constructor defaults such as
-`config :: RECORD{host :: STRING, port :: INTEGER} DEFAULT RECORD{host: 'h', port: 1}`,
-with nested field validation for lists, vectors, JSON fields, and nested
-records.
-
-Forward-only edge schema migrations can widen endpoint sets and add optional
-properties without rebuilding the store:
-
-```gql
-ALTER EDGE TYPE :CONCERNS (
-  FROM :Issue, :PullRequest, :Commit TO :Document,
-  commit_sha :: STRING
-)
-```
+The facade's Rust `GraphTypeDefinition` builder supports closed graph schemas,
+typed properties and recursively validated durable defaults, including lists,
+records, JSON and vectors. This does **not** imply complete GG02 GQL graph-type
+syntax: the GQL catalog subset remains property-free named node types. Do not
+use historical `CREATE/ALTER NODE TYPE` or `ALTER EDGE TYPE` recipes as facade
+grammar. See the [schema/reopen contract](docs/v2/checkpoint-reopen.md) and the
+[runnable facade examples](docs/v2/roadmap/examples/facade_release.rs).
 
 ## Native Retrieval
 
@@ -422,14 +419,22 @@ RETURN node_id, score
 
 ## Persistence
 
-Persistence stays below graph semantics:
+Use `Database::create` on an existing empty directory and `Database::open` to
+reopen it. These fallible APIs use format 2 only on native Linux/macOS. Open is
+non-destructive and eagerly reconstructs retained supported indexes; the
+infallible builder remains memory-only. Checkpoint serializes writes. Prune is
+explicit and respects active artifact leases; verification is read-only, not a
+writer-readiness or physical-durability guarantee.
 
-- WAL records changes and provider sections;
-- snapshots store graph and provider state;
-- MANIFEST recovery chooses the live snapshot/WAL set;
-- retention pruning removes old snapshots and WAL archives;
-- vector and text providers rebuild derived in-memory state from primary graph
-  values during recovery and compaction.
+Drop all owning sessions/catalog handles before reopening as another writer.
+Stable graph/element IDs survive ordinary reopen, but process-local references
+must be issued again. An indeterminate result is **not** permission to retry:
+inspect its phase, live visibility and durable outcome, then reconcile. See
+[durable commit](docs/v2/durable-commit.md) and
+[recovery verification](docs/v2/recovery-verification.md).
+
+Format 1 is rejected, not decoded or migrated. Rebuild a fresh database from
+application-owned source data; the project provides no 1.x migration support.
 
 The library crates are allocator-agnostic. Benchmark binaries use mimalloc by
 default so allocator A/B rows can be measured without forcing an embedder-wide
@@ -437,9 +442,12 @@ allocator policy.
 
 ## ISO GQL Posture
 
-`selene-db` targets ISO/IEC 39075:2024 minimum conformance plus a curated set of
-optional features. `selene-core::feature_register` is the source of truth for
-optional feature status.
+The current engine is GQL-oriented and implements selected ISO/IEC 39075:2024
+syntax and semantics plus namespaced extensions. `spec/gql-profile/profile.json`
+and the generated `selene-profile` API are the authority for parser admission,
+runtime inventory, claim state, and evidence. Those dimensions remain separate,
+and the inventory is not a formal 2.0 conformance claim. See the
+[2.0 conformance policy](docs/v2/conformance-policy.md).
 
 Important boundaries:
 
@@ -515,6 +523,7 @@ current local evidence.
 
 ## Project Docs
 
+- [2.0 Program](docs/v2/README.md)
 - [Getting Started](docs/getting-started.md)
 - [Embedding Guide](docs/embedding-guide.md)
 - [GQL Reference](docs/gql-reference.md)

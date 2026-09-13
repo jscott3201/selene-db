@@ -1,4 +1,0 @@
-// corpus: negative
-// feature: GS06
-// expects: parse-rejected(GS06)
-SESSION RESET PROPERTY GRAPH

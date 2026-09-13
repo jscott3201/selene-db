@@ -1,6 +1,6 @@
 //! DDL Flagger walk.
 
-use selene_core::feature_register::FeatureId;
+use selene_profile::FeatureId;
 
 use crate::{
     DdlStatement,
@@ -11,30 +11,73 @@ use super::{FeatureUse, expr, record_feature};
 
 pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
     match statement {
-        DdlStatement::CreateGraph {
-            or_replace,
-            if_not_exists,
+        // ISO/IEC 39075:2024 section 12.2/12.3 CR1-CR2: schema statements are
+        // GC01; the conditional modifier adds GC02.
+        DdlStatement::CreateSchema {
+            if_not_exists: conditional,
+            span,
+            ..
+        }
+        | DdlStatement::DropSchema {
+            if_exists: conditional,
             span,
             ..
         } => {
-            let _ = or_replace;
-            record_feature(uses, FeatureId::GG01, *span);
+            record_feature(uses, FeatureId::GC01, *span);
+            if *conditional {
+                record_feature(uses, FeatureId::GC02, *span);
+            }
+        }
+        // Section 12.4: CREATE GRAPH is GC04 and the conditional modifier adds
+        // GC05. The type clause records GG01 for an open graph or GG02 for a
+        // named closed graph. OR REPLACE has no feature of its own.
+        DdlStatement::CreateGraph {
+            if_not_exists,
+            graph_type,
+            span,
+            ..
+        } => {
             record_feature(uses, FeatureId::GC04, *span);
+            record_feature(
+                uses,
+                if graph_type.is_some() {
+                    FeatureId::GG02
+                } else {
+                    FeatureId::GG01
+                },
+                *span,
+            );
             if *if_not_exists {
                 record_feature(uses, FeatureId::GC05, *span);
             }
         }
+        // Section 12.5 CR1-CR2: DROP GRAPH is GC04 (+GC05 with IF EXISTS).
         DdlStatement::DropGraph {
             if_exists, span, ..
         } => {
-            // BRIEF-152 / audit Item 10: DROP GRAPH ships as the IM_DROP_GRAPH
-            // factory-reset extension (a supported selene-db vendor flag), NOT
-            // GC04. CREATE GRAPH stays on GC04 (unsupported) so it remains
-            // parse-rejected under D1 single-graph. IF EXISTS is informational
-            // under D1 (the session graph always exists), so it carries no extra
-            // flag — both DROP GRAPH and DROP GRAPH IF EXISTS flag IM_DROP_GRAPH.
-            let _ = if_exists;
-            record_feature(uses, FeatureId::IM_DROP_GRAPH, *span);
+            record_feature(uses, FeatureId::GC04, *span);
+            if *if_exists {
+                record_feature(uses, FeatureId::GC05, *span);
+            }
+        }
+        DdlStatement::CreateGraphType {
+            if_not_exists,
+            span,
+            ..
+        } => {
+            record_feature(uses, FeatureId::GG02, *span);
+            record_feature(uses, FeatureId::GG20, *span);
+            if *if_not_exists {
+                record_feature(uses, FeatureId::GC03, *span);
+            }
+        }
+        DdlStatement::DropGraphType {
+            if_exists, span, ..
+        } => {
+            record_feature(uses, FeatureId::GG02, *span);
+            if *if_exists {
+                record_feature(uses, FeatureId::GC03, *span);
+            }
         }
         DdlStatement::CreateNodeType {
             key_label_set,
@@ -72,6 +115,13 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             if extends.is_some() {
                 record_feature(uses, FeatureId::IM_EXTENDS, *span);
             }
+            property_defs(properties, uses);
+        }
+        DdlStatement::AlterNodeType {
+            properties, span, ..
+        } => {
+            record_feature(uses, FeatureId::IM_ALTER_NODE_TYPE, *span);
+            type_ddl(*span, false, uses);
             property_defs(properties, uses);
         }
         DdlStatement::AlterEdgeType {

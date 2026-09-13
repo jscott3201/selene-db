@@ -19,7 +19,6 @@ mod duration_ops;
 mod identity_length_fns;
 mod json_fns;
 mod modulus_fns;
-mod path_constructor;
 mod predicates;
 mod scalar_fns;
 mod string_fns;
@@ -108,13 +107,22 @@ pub fn evaluate(
             eval_list_literal(items, *span, binding, schema, ctx)
         }
         ValueExpr::PathConstructor { elements, span } => {
-            path_constructor::eval_path_constructor(elements, *span, binding, schema, ctx)
+            let values = elements
+                .iter()
+                .map(|element| evaluate(element, binding, schema, ctx))
+                .collect::<Result<Vec<_>, _>>()?;
+            super::product_path::construct_path(values, *span, ctx)
         }
         ValueExpr::Parameter {
             name,
             declared_type,
             span,
-        } => resolve_parameter(name.clone(), declared_type.as_ref(), *span, ctx),
+        } => resolve_parameter(
+            name.clone(),
+            ctx.expr_ids.parameter_type(name).or(declared_type.as_ref()),
+            *span,
+            ctx,
+        ),
         ValueExpr::FunctionCall {
             name,
             args,
@@ -255,12 +263,16 @@ fn lookup_variable(
         .iter()
         .position(|column| column.name.as_ref() == Some(name))
     else {
-        // GA07 binder keeps pre-projection bindings visible after RETURN.
-        // OrderBy evaluates against the projected schema when the TopK
-        // rewrite does not apply (unbounded ORDER BY); a strict
-        // InvalidReference here would break those plans. Surface
-        // analyzer-fault unbound vars at bind-time instead.
-        return Ok(Value::Null);
+        // Strict. This used to return NULL so that ORDER BY over a discarded
+        // binding would not fail — but the sort key then evaluated to NULL for
+        // every row and the stable sort returned input order, silently. The
+        // planner now carries those bindings across the projection (ISO §14.10
+        // SR VIII) and the analyzer rejects the references ISO puts out of
+        // scope, so reaching this point means the plan and the schema disagree.
+        return Err(ExecutorError::InvalidReference {
+            name: name.as_str().to_owned(),
+            span,
+        });
     };
     binding
         .get(index)
@@ -298,6 +310,7 @@ pub(super) fn property_access(
     span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
+    require_live_referent(target, span, ctx)?;
     match target {
         Value::Null => Ok(Value::Null),
         Value::NodeRef(id) => Ok(property_from_node(*id, &key, ctx)),
@@ -324,6 +337,7 @@ fn property_list_access(
 ) -> Result<Value, ExecutorError> {
     let mut values = Vec::with_capacity(items.len());
     for item in items {
+        require_live_referent(item, span, ctx)?;
         let value = match item {
             Value::Null => Value::Null,
             Value::NodeRef(id) => property_from_node(*id, key, ctx),
@@ -340,6 +354,28 @@ fn property_list_access(
         values.push(value);
     }
     Ok(Value::List(values))
+}
+
+/// Check only operations which access graph state; copying and identity tests
+/// do not access referents and may retain deleted references (ISO 4.4.4).
+pub(crate) fn require_live_referent(
+    value: &Value,
+    span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<(), ExecutorError> {
+    let alive = match value {
+        Value::NodeRef(id) => ctx.tx.snapshot().is_node_alive(*id),
+        Value::EdgeRef(id) => ctx.tx.snapshot().is_edge_alive(*id),
+        _ => true,
+    };
+    if !alive {
+        return Err(ExecutorError::data_exception(
+            crate::runtime::DataExceptionSubclass::InvalidReferenceValue,
+            "referenced graph element has been deleted".to_owned(),
+            span,
+        ));
+    }
+    Ok(())
 }
 
 fn property_from_node(
@@ -368,7 +404,7 @@ fn property_from_edge(
         .unwrap_or(Value::Null)
 }
 
-fn literal_value(literal: &Literal) -> Value {
+pub(crate) fn literal_value(literal: &Literal) -> Value {
     match literal {
         Literal::Bool(value, _) => Value::Bool(*value),
         Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => Value::Int(*value),

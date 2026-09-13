@@ -14,7 +14,8 @@ use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
-use selene_graph::SharedGraph;
+use selene_graph::{SharedGraph, TypedIndexKind};
+use selene_profile::{PROFILE_HASH, capabilities};
 
 fn db_string(value: &str) -> DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")
@@ -73,7 +74,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 }
 
 #[test]
-fn show_procedures_lists_all_sixty_eight_procedures() {
+fn show_procedures_lists_all_sixty_nine_procedures() {
     let graph = graph(330_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -83,10 +84,11 @@ fn show_procedures_lists_all_sixty_eight_procedures() {
 
     assert_eq!(
         table.row_count(),
-        68,
-        "19 algo procedures + 49 platform built-ins"
+        69,
+        "19 algo procedures + 50 platform built-ins"
     );
     for expected in [
+        "selene.property_index_stats",
         "selene.health",
         "selene.feature_status",
         "selene.verify",
@@ -171,26 +173,54 @@ fn health_reports_node_and_edge_counts() {
 }
 
 #[test]
-fn feature_status_reports_supported_rows() {
+fn feature_status_reports_generated_capability_records() {
     let graph = graph(330_003);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
 
     let table = execute_rows(
         &mut session,
-        "CALL selene.feature_status() YIELD feature_id, status, rationale",
+        "CALL selene.feature_status() YIELD feature_id, status, rationale, feature_name, surface, profile_relation, claim_state, evidence_status, evidence_count, profile_hash",
         &registry,
     );
     let feature_ids = string_column(&table, "feature_id");
     let statuses = string_column(&table, "status");
     let rationales = string_column(&table, "rationale");
+    let names = string_column(&table, "feature_name");
+    let surfaces = string_column(&table, "surface");
+    let relations = string_column(&table, "profile_relation");
+    let claims = string_column(&table, "claim_state");
+    let evidence_statuses = string_column(&table, "evidence_status");
+    let evidence_counts = uint_column(&table, "evidence_count");
+    let profile_hashes = string_column(&table, "profile_hash");
 
-    assert!(!feature_ids.is_empty());
+    assert_eq!(feature_ids.len(), 211);
+    assert_eq!(
+        feature_ids,
+        capabilities()
+            .iter()
+            .map(|record| record.id.as_str().to_owned())
+            .collect::<Vec<_>>()
+    );
     let gp04 = feature_ids
         .iter()
         .position(|value| value == "GP04")
         .expect("GP04 row exists");
     assert_eq!(statuses[gp04], "supported");
+    assert_eq!(rationales[gp04], "Named procedure calls");
+    assert_eq!(names[gp04], "Named procedure calls");
+    assert_eq!(surfaces[gp04], "iso");
+    assert_eq!(relations[gp04], "direct");
+    assert_eq!(claims[gp04], "implemented_unclaimed");
+    assert_eq!(evidence_statuses[gp04], "incomplete");
+    assert_eq!(evidence_counts[gp04], 0);
+    for feature in ["GQ01", "GP16"] {
+        let index = feature_ids.iter().position(|id| id == feature).unwrap();
+        assert_eq!(statuses[index], "unsupported");
+        assert_eq!(relations[index], "direct");
+        assert_eq!(claims[index], "unsupported");
+        assert!(!rationales[index].is_empty());
+    }
 
     for (feature_id, expected_name) in [
         ("GQ12", "ORDER BY and page statement: OFFSET clause"),
@@ -205,6 +235,63 @@ fn feature_status_reports_supported_rows() {
         assert_eq!(statuses[index], "supported");
         assert_eq!(rationales[index], expected_name);
     }
+
+    for feature_id in [
+        "GC03", "GE04", "GE05", "GG02", "GG20", "GG21", "GV66", "GV67",
+    ] {
+        let index = feature_ids
+            .iter()
+            .position(|value| value == feature_id)
+            .unwrap_or_else(|| panic!("{feature_id} row exists"));
+        assert_eq!(statuses[index], "unsupported");
+        assert!(!rationales[index].is_empty());
+    }
+    for feature_id in ["GS04", "GS05", "GS06", "G043", "G044", "G045", "GH02"] {
+        let index = feature_ids
+            .iter()
+            .position(|value| value == feature_id)
+            .unwrap_or_else(|| panic!("{feature_id} row exists"));
+        assert_eq!(statuses[index], "supported");
+    }
+    let gv65 = feature_ids
+        .iter()
+        .position(|value| value == "GV65")
+        .expect("GV65 row exists");
+    assert_eq!(statuses[gv65], "referenced");
+    assert_eq!(relations[gv65], "implied");
+
+    for feature_id in ["GG02", "GV66"] {
+        let index = feature_ids
+            .iter()
+            .position(|value| value == feature_id)
+            .unwrap_or_else(|| panic!("{feature_id} row exists"));
+        assert_eq!(statuses[index], "unsupported");
+        assert!(!rationales[index].is_empty());
+    }
+    let gc04 = feature_ids
+        .iter()
+        .position(|value| value == "GC04")
+        .unwrap();
+    assert_eq!(relations[gc04], "direct");
+    assert_eq!(statuses[gc04], "supported");
+
+    let im_json = feature_ids
+        .iter()
+        .position(|value| value == "IM_JSON")
+        .expect("IM_JSON row exists");
+    assert_eq!(statuses[im_json], "supported");
+    assert_eq!(surfaces[im_json], "extension");
+    assert_eq!(relations[im_json], "extension");
+    assert_eq!(claims[im_json], "not_applicable");
+
+    assert!(profile_hashes.iter().all(|hash| hash == PROFILE_HASH));
+    assert!(
+        rationales
+            .iter()
+            .chain(names.iter())
+            .all(|value| !value.contains("crates/") && !value.contains("tests/")),
+        "procedure output must not expose internal evidence paths"
+    );
 }
 
 #[test]
@@ -229,6 +316,91 @@ fn verify_reports_ok_for_a_consistent_graph() {
     assert!(
         statuses.iter().all(|status| status == "ok"),
         "a freshly inserted graph must verify clean: {statuses:?}"
+    );
+}
+
+#[test]
+fn verify_reports_ok_for_mixed_parallel_edges_and_both_loop_kinds() {
+    use selene_core::{
+        EdgeDirectionality::{Directed, Undirected},
+        LabelSet, PropertyMap,
+    };
+    let graph = graph(330_007);
+    let mut tx = graph.begin_write();
+    {
+        let mut m = tx.mutator();
+        let a = m.create_node(LabelSet::new(), PropertyMap::new()).unwrap();
+        let b = m.create_node(LabelSet::new(), PropertyMap::new()).unwrap();
+        for (first, second, kind) in [
+            (a, b, Directed),
+            (b, a, Directed),
+            (a, b, Directed),
+            (a, b, Undirected),
+            (b, a, Undirected),
+            (a, a, Directed),
+            (a, a, Undirected),
+        ] {
+            m.create_mixed_edge(db_string("E"), first, second, kind, PropertyMap::new())
+                .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+    let before = graph.read();
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    for (source, expected_rows) in [
+        ("CALL selene.verify() YIELD check, status, detail", 4),
+        ("CALL selene.verify(true) YIELD check, status, detail", 6),
+    ] {
+        let table = execute_rows(&mut session, source, &registry);
+        assert_eq!(table.row_count(), expected_rows);
+        assert!(
+            string_column(&table, "status")
+                .iter()
+                .all(|status| status == "ok"),
+            "healthy mixed graph failed verify: {:?}",
+            string_column(&table, "detail")
+        );
+    }
+    assert_eq!(graph.read().meta.generation, before.meta.generation);
+    assert_eq!(graph.read().edge_count(), 7);
+}
+
+/// Deep verify re-derives each row's expected key through the same float key
+/// constructors the index used, so collapsing `-0.0` onto `+0.0` has to leave
+/// both sides agreeing. A collapse applied on only one side would surface here
+/// as a corrupt index on data that is in fact consistent.
+#[test]
+fn verify_reports_ok_for_a_float_index_holding_both_signed_zeros() {
+    let graph = graph(330_006);
+    let registry = BuiltinProcedureRegistry::new();
+    {
+        let mut session = Session::new(&graph);
+        session
+            .execute_source(
+                "INSERT (:Reading { level: -0.0e0 }) INSERT (:Reading { level: 0.0e0 })",
+                &registry,
+            )
+            .expect("seed inserts");
+    }
+    graph
+        .create_property_index(
+            db_string("Reading"),
+            db_string("level"),
+            TypedIndexKind::F64,
+        )
+        .expect("float index builds over both signed zeros");
+
+    let mut session = Session::new(&graph);
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.verify(true) YIELD check, status, detail",
+        &registry,
+    );
+    let statuses = string_column(&table, "status");
+    assert!(
+        statuses.iter().all(|status| status == "ok"),
+        "a float index keying both signed zeros is consistent: {statuses:?}"
     );
 }
 

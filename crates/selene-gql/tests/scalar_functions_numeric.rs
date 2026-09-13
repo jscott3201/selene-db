@@ -6,9 +6,10 @@ mod exec_common;
 
 use exec_common::{column_values, db_string, execute_read, execute_read_result};
 use rust_decimal::Decimal;
-use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_core::{GraphId, Value};
 use selene_gql::{EmptyProcedureRegistry, Session, feature_walk, parse};
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 
 const EPSILON: f64 = 1e-12;
 const PI: f64 = std::f64::consts::PI;

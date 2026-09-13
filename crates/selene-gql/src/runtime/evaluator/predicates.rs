@@ -193,9 +193,13 @@ fn eval_is_directed(
     span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
+    super::require_live_referent(&value, span, ctx)?;
     match value {
         Value::Null => Ok(Value::Null),
-        Value::EdgeRef(id) => Ok(Value::Bool(ctx.tx.snapshot().edge_endpoints(id).is_some())),
+        Value::EdgeRef(id) => Ok(Value::Bool(
+            ctx.tx.snapshot().edge_directionality(id)
+                == Some(selene_core::EdgeDirectionality::Directed),
+        )),
         Value::NodeRef(_) => data_exception("IS DIRECTED operand is not an edge", span),
         _ => data_exception("IS DIRECTED operand is not a graph element", span),
     }
@@ -207,6 +211,7 @@ fn eval_is_labeled(
     span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
+    super::require_live_referent(&value, span, ctx)?;
     match value {
         Value::Null => Ok(Value::Null),
         Value::NodeRef(id) => {
@@ -251,6 +256,8 @@ fn eval_is_endpoint(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let value = evaluate(value, binding, schema, ctx)?;
+    super::require_live_referent(&operand, span, ctx)?;
+    super::require_live_referent(&value, span, ctx)?;
     if matches!(operand, Value::Null) || matches!(value, Value::Null) {
         return Ok(Value::Null);
     }
@@ -260,6 +267,11 @@ fn eval_is_endpoint(
     let Value::EdgeRef(edge_id) = value else {
         return data_exception("endpoint predicate value is not an edge", span);
     };
+    if ctx.tx.snapshot().edge_directionality(edge_id)
+        != Some(selene_core::EdgeDirectionality::Directed)
+    {
+        return Ok(Value::Bool(false));
+    }
     Ok(Value::Bool(
         ctx.tx
             .snapshot()

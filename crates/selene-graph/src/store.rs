@@ -1,4 +1,30 @@
 //! Structure-of-arrays node and edge stores per spec 03 section 3.1.
+//!
+//! Physical kind rows are not repository-public APIs:
+//!
+//! ```compile_fail
+//! use selene_graph::store::{EdgeRow, NodeRow};
+//!
+//! fn cannot_cross_or_mix(edge: EdgeRow) {
+//!     let _: NodeRow = edge;
+//! }
+//! ```
+//!
+//! Physical row indices are not repository-public APIs:
+//!
+//! ```compile_fail
+//! use selene_graph::RowIndex;
+//! ```
+//!
+//! Candidates of different kinds cannot be mixed:
+//!
+//! ```compile_fail
+//! use selene_graph::{CandidateSet, Edge, Node};
+//!
+//! fn cannot_mix(nodes: CandidateSet<Node>) {
+//!     let _: CandidateSet<Edge> = nodes;
+//! }
+//! ```
 
 use std::sync::Arc;
 
@@ -8,37 +34,47 @@ use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
 
 use crate::chunked_vec::ChunkedVec;
 
-/// Internal storage row index — the position of a node or edge in its store's
-/// structure-of-arrays columns.
-///
-/// Distinct from the external [`NodeId`]/[`EdgeId`]: a `RowIndex` is dense,
-/// remappable by compaction (D22 / BRIEF-Item-4b/4c), and **never persisted** —
-/// only external ids reach the WAL, snapshot, or `Change` stream. There is **no**
-/// fixed arithmetic relationship between a row and its id: post-4c new rows are
-/// appended at the dense end (the current row count) while the monotonic id
-/// counter advances independently, and a compaction pass renumbers rows under
-/// stable ids. The mapping is resolved *only* through the
-/// [`SeleneGraph`](crate::SeleneGraph) `node_id_to_row`/`edge_id_to_row` maps and
-/// the per-store `row_to_id` reverse columns — never by index arithmetic.
-/// Keeping it a newtype lets the compiler flag any site that still conflates a
-/// row with an external id.
+/// Physical node-store position. Deliberately private to the graph crate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct RowIndex(u32);
+pub(crate) struct NodeRow(u32);
 
-impl RowIndex {
+impl NodeRow {
     /// Sentinel for "no row" (`u32::MAX`, never a valid dense row position).
-    pub const TOMBSTONE: RowIndex = RowIndex(u32::MAX);
+    #[allow(dead_code)]
+    pub(crate) const TOMBSTONE: NodeRow = NodeRow(u32::MAX);
 
-    /// Construct a `RowIndex` from a raw `u32` row position.
-    #[must_use]
-    pub const fn new(raw: u32) -> Self {
+    pub(crate) const fn new(raw: u32) -> Self {
         Self(raw)
     }
 
-    /// Return the raw `u32` row position.
-    #[must_use]
-    pub const fn get(self) -> u32 {
+    pub(crate) const fn get(self) -> u32 {
         self.0
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Physical edge-store position. Deliberately private to the graph crate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) struct EdgeRow(u32);
+
+impl EdgeRow {
+    /// Sentinel for "no row" (`u32::MAX`, never a valid dense row position).
+    #[allow(dead_code)]
+    pub(crate) const TOMBSTONE: EdgeRow = EdgeRow(u32::MAX);
+
+    pub(crate) const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
     }
 }
 
@@ -97,6 +133,22 @@ impl NodeStore {
     pub fn is_alive(&self, index: u32) -> bool {
         self.alive.contains(index)
     }
+
+    pub(crate) fn is_alive_row(&self, row: NodeRow) -> bool {
+        self.alive.contains(row.get())
+    }
+
+    pub(crate) fn alive_rows(&self) -> impl Iterator<Item = NodeRow> + '_ {
+        self.alive.iter().map(NodeRow::new)
+    }
+
+    pub(crate) fn mark_alive(&mut self, row: NodeRow) {
+        self.alive_mut().insert(row.get());
+    }
+
+    pub(crate) fn mark_dead(&mut self, row: NodeRow) {
+        self.alive_mut().remove(row.get());
+    }
 }
 
 impl Default for NodeStore {
@@ -107,16 +159,17 @@ impl Default for NodeStore {
 
 /// Edge columns plus liveness bitmap.
 ///
-/// Stored edges are directed by construction: every live row has exactly one
-/// source node and one target node. Undirected query patterns are a matching
-/// convenience and do not add an undirected storage bit.
+/// One row per identity, including parallel undirected edges and self-loops.
+/// Endpoint order on an undirected row is canonical, not semantic orientation.
 #[derive(Clone, Debug)]
 pub struct EdgeStore {
+    /// Intrinsic directionality for each row.
+    pub directionality: ChunkedVec<selene_core::EdgeDirectionality>,
     /// Per-row edge label.
     pub label: ChunkedVec<DbString>,
-    /// Per-row edge source node.
+    /// Source for directed edges; first canonical endpoint for undirected edges.
     pub source: ChunkedVec<NodeId>,
-    /// Per-row edge target node.
+    /// Target for directed edges; second canonical endpoint for undirected edges.
     pub target: ChunkedVec<NodeId>,
     /// Per-row edge property maps.
     pub properties: ChunkedVec<PropertyMap>,
@@ -136,6 +189,7 @@ impl EdgeStore {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            directionality: ChunkedVec::new(),
             label: ChunkedVec::new(),
             source: ChunkedVec::new(),
             target: ChunkedVec::new(),
@@ -168,6 +222,22 @@ impl EdgeStore {
     #[must_use]
     pub fn is_alive(&self, index: u32) -> bool {
         self.alive.contains(index)
+    }
+
+    pub(crate) fn is_alive_row(&self, row: EdgeRow) -> bool {
+        self.alive.contains(row.get())
+    }
+
+    pub(crate) fn alive_rows(&self) -> impl Iterator<Item = EdgeRow> + '_ {
+        self.alive.iter().map(EdgeRow::new)
+    }
+
+    pub(crate) fn mark_alive(&mut self, row: EdgeRow) {
+        self.alive_mut().insert(row.get());
+    }
+
+    pub(crate) fn mark_dead(&mut self, row: EdgeRow) {
+        self.alive_mut().remove(row.get());
     }
 }
 

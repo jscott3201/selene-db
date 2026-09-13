@@ -264,7 +264,7 @@ fn different_edges_anonymous_quantified_edge_plans_and_executes() {
     // can read its edges — ISO §16.4 NOTE 222 imparts TRAIL to each path
     // pattern. Before the fix this failed to plan ("path mode over quantified
     // edge without edge group slot") while the named form `[r:K*1..2]` worked,
-    // leaving a legal G002 pattern unsupported right after claiming the feature.
+    // leaving a legal G002 pattern broken despite reporting it as runtime-supported.
     let fixture = MatchModeFixture::build();
     let anon = "MATCH DIFFERENT EDGES (a:N {name: 'A'})-[:K*1..2]->(b) RETURN b";
     let named = "MATCH DIFFERENT EDGES (a:N {name: 'A'})-[r:K*1..2]->(b) RETURN b";

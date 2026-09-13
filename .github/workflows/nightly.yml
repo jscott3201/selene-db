@@ -50,8 +50,8 @@ jobs:
     name: clippy (macos-latest)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -65,12 +65,13 @@ jobs:
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest
+          tool: nextest@0.9.143
+          fallback: none
       - name: cargo nextest + doctests
         run: |
           cargo nextest run --workspace --locked --all-features
@@ -86,11 +87,11 @@ jobs:
     name: cargo-audit (advisory-db drift)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cargo/advisory-db
           key: advisory-db-${{ runner.os }}-${{ github.run_id }}
@@ -103,7 +104,7 @@ jobs:
     # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -112,7 +113,7 @@ jobs:
       # Cache key is content-addressed (corpus seed source) so we get cache HITs
       # across runs instead of the prior `${{ github.run_id }}` shape which
       # never hit the exact key.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: crates/selene-gql/fuzz/corpus
           key: gql-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-testing/corpus/positive/**/*.gql', 'crates/selene-gql/fuzz/fuzz_targets/**') }}
@@ -167,23 +168,23 @@ jobs:
     # minutes. The cached corpus carries discovered inputs forward across nights.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: crates/selene-persist/fuzz/corpus
           key: persist-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-persist/fuzz/fuzz_targets/**') }}
           restore-keys: persist-fuzz-corpus-${{ runner.os }}-
-      - name: fuzz decoders (4 x 60s)
+      - name: fuzz decoders (5 x 60s)
         working-directory: crates/selene-persist/fuzz
         # Invariant: arbitrary bytes -> Ok or typed PersistError, never
         # panic/OOM/hang. -timeout=20 fails any input that hangs; -max_len=65536
         # bounds the audit record count and the manifest/section length fields.
         run: |
-          for target in decode_manifest decode_wal decode_audit decode_snapshot; do
+          for target in decode_control decode_manifest decode_wal decode_snapshot decode_logical decode_logical_value decode_logical_snapshot; do
             cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=60 -timeout=20 -max_len=65536
           done

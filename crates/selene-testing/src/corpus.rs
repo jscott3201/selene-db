@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use selene_core::feature_register::{FeatureId, feature_id_from_str};
+use selene_profile::{FeatureId, capability_by_id};
 
 /// Corpus polarity declared by a `.gql` file.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -239,13 +239,15 @@ fn parse_feature_or_none(
 }
 
 fn parse_feature(path: &Path, line: usize, value: &str) -> Result<FeatureId, CorpusError> {
-    feature_id_from_str(value).ok_or_else(|| {
-        header_error(
-            path,
-            line,
-            format!("unknown ISO feature identifier `{value}`"),
-        )
-    })
+    capability_by_id(value)
+        .map(|record| record.id)
+        .ok_or_else(|| {
+            header_error(
+                path,
+                line,
+                format!("unknown ISO feature identifier `{value}`"),
+            )
+        })
 }
 
 fn validate_contract(
@@ -281,7 +283,7 @@ fn header_error(path: &Path, line: usize, message: impl Into<String>) -> CorpusE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_core::feature_register::FeatureId;
+    use selene_profile::FeatureId;
 
     fn parse(source: &str) -> CorpusCase {
         parse_corpus_header(Path::new("case.gql"), source.to_owned()).expect("header parses")

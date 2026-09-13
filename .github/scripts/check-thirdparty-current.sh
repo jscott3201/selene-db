@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 # Verify THIRDPARTY.md is in sync with Cargo.lock by regenerating with
-# cargo-about and diffing. Drift indicates a dependency was added/changed
+# cargo-about 0.9.2 and diffing. Drift indicates a dependency was added/changed
 # without updating the attribution file, or attribution was hand-edited.
-# Per CLAUDE.md hard rule 13: third-party attribution drift blocks merge.
 
 set -euo pipefail
 
+SUPPORTED_VERSION="0.9.2"
+INSTALL_COMMAND="cargo install cargo-about --version $SUPPORTED_VERSION --locked --features cli"
+
 if ! command -v cargo-about >/dev/null 2>&1; then
-  echo "cargo-about not found. Install with: cargo install cargo-about --features cli" >&2
+  echo "cargo-about $SUPPORTED_VERSION not found. Install with: $INSTALL_COMMAND" >&2
+  exit 2
+fi
+
+FOUND_VERSION="$(cargo about --version 2>&1)"
+if [ "$FOUND_VERSION" != "cargo-about $SUPPORTED_VERSION" ]; then
+  echo "cargo-about $SUPPORTED_VERSION is required; found: $FOUND_VERSION" >&2
+  echo "Install the supported version with: $INSTALL_COMMAND" >&2
   exit 2
 fi
 
@@ -25,4 +34,4 @@ if ! diff -q THIRDPARTY.md "$GENERATED" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "OK: THIRDPARTY.md is in sync with Cargo.lock."
+echo "OK: THIRDPARTY.md is in sync with Cargo.lock using cargo-about $SUPPORTED_VERSION."

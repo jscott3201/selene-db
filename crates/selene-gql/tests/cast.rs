@@ -1,7 +1,7 @@
 //! BRIEF-135a commit 1 + commit 2 acceptance bars — CAST(<expr> AS <type>)
 //! parser, analyzer, walker, format, GQLSTATUS, and runtime ISO §22 dispatch
-//! matrix coverage. The CONFORMANCE-00 conformance-honesty bars (CAST records
-//! GA05 "Cast specification"; GA05 claimed, GE08 not; corpus + CHANGELOG pins)
+//! matrix coverage. The CONFORMANCE-00 inventory-honesty bars (CAST records
+//! GA05 "Cast specification"; GA05 is runtime-supported, GE08 is not; corpus + CHANGELOG pins)
 //! live in the sibling `cast_conformance.rs` so both files stay under the
 //! 700-LOC cap.
 
@@ -14,9 +14,9 @@ mod exec_scalar;
 
 use selene_core::{GraphId, Value, db_string};
 use selene_gql::{
-    AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry,
-    GqlStatus, GqlType, PipelineStatement, ReturnItem, Session, Statement, StatementOutput,
-    ValueExpr, analyze, ast::format::format_read_statement, parse,
+    AnalysisError, AnalyzedStatement, AnalyzedType, EmptyProcedureRegistry, GqlStatus, GqlType,
+    PipelineStatement, ReturnItem, Session, Statement, StatementOutput, ValueExpr, analyze,
+    ast::format::format_read_statement, parse,
 };
 use selene_graph::SharedGraph;
 
@@ -37,7 +37,7 @@ fn analyze_or_panic(source: &str) -> AnalyzedStatement {
 }
 
 fn return_items(analyzed: &AnalyzedStatement) -> &[ReturnItem] {
-    let AnalyzedStatementKind::Query(query) = &analyzed.statement else {
+    let Statement::Query(query) = analyzed.source() else {
         panic!("expected query statement");
     };
     query

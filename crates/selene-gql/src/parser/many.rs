@@ -248,15 +248,45 @@ fn rebase_statement_spans(statement: &mut Statement, offset: usize) {
             rebase_span(span, offset);
             rebase_value(value, offset);
         }
-        Statement::SessionSetTimeZone { span, .. }
-        | Statement::SessionSetGraph { span, .. }
-        | Statement::SessionReset { span, .. }
-        | Statement::SessionClose { span } => rebase_span(span, offset),
+        Statement::SessionSetTimeZone { span, .. } => rebase_span(span, offset),
+        Statement::SessionSetGraph { target, span } => {
+            rebase_span(span, offset);
+            if let crate::SessionSetGraphTarget::CatalogReference(reference)
+            | crate::SessionSetGraphTarget::SchemaReference(reference) = target
+            {
+                rebase_span(&mut reference.span, offset);
+            }
+        }
+        Statement::SessionReset { span, .. } | Statement::SessionClose { span } => {
+            rebase_span(span, offset)
+        }
     }
 }
 
 fn rebase_query_pipeline(pipeline: &mut QueryPipeline, offset: usize) {
     rebase_span(&mut pipeline.span, offset);
+    if let Some(origin) = &mut pipeline.select_origin {
+        rebase_span(origin, offset);
+    }
+    for clause in &mut pipeline.working_scopes {
+        match clause {
+            crate::WorkingScopeClause::Nested(span) => rebase_span(span, offset),
+            crate::WorkingScopeClause::At { reference, span } => {
+                rebase_span(span, offset);
+                rebase_span(&mut reference.span, offset);
+            }
+            crate::WorkingScopeClause::Use { expression, span } => {
+                rebase_span(span, offset);
+                match expression {
+                    crate::GraphExpression::Reference { reference, .. } => {
+                        rebase_span(&mut reference.span, offset)
+                    }
+                    crate::GraphExpression::Variable { span, .. }
+                    | crate::GraphExpression::Current { span, .. } => rebase_span(span, offset),
+                }
+            }
+        }
+    }
     for statement in &mut pipeline.statements {
         match statement {
             crate::PipelineStatement::Match(value) => rebase_match(value, offset),
@@ -443,9 +473,47 @@ fn rebase_mutation_pipeline(pipeline: &mut MutationPipeline, offset: usize) {
 
 fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
     match statement {
-        DdlStatement::CreateGraph { span, .. }
-        | DdlStatement::DropGraph { span, .. }
-        | DdlStatement::DropNodeType { span, .. }
+        DdlStatement::CreateSchema {
+            reference, span, ..
+        }
+        | DdlStatement::DropSchema {
+            reference, span, ..
+        }
+        | DdlStatement::DropGraph {
+            reference, span, ..
+        }
+        | DdlStatement::DropGraphType {
+            reference, span, ..
+        } => {
+            rebase_span(span, offset);
+            rebase_span(&mut reference.span, offset);
+        }
+        DdlStatement::CreateGraph {
+            reference,
+            graph_type,
+            span,
+            ..
+        } => {
+            rebase_span(span, offset);
+            rebase_span(&mut reference.span, offset);
+            if let Some(graph_type) = graph_type {
+                rebase_span(&mut graph_type.span, offset);
+            }
+        }
+        DdlStatement::CreateGraphType {
+            reference,
+            definition,
+            span,
+            ..
+        } => {
+            rebase_span(span, offset);
+            rebase_span(&mut reference.span, offset);
+            rebase_span(&mut definition.span, offset);
+            for node_type in &mut definition.node_types {
+                rebase_span(&mut node_type.span, offset);
+            }
+        }
+        DdlStatement::DropNodeType { span, .. }
         | DdlStatement::DropEdgeType { span, .. }
         | DdlStatement::TruncateNodeType { span, .. }
         | DdlStatement::TruncateEdgeType { span, .. }
@@ -475,7 +543,10 @@ fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
                 rebase_property_def(property, offset);
             }
         }
-        DdlStatement::AlterEdgeType {
+        DdlStatement::AlterNodeType {
+            properties, span, ..
+        }
+        | DdlStatement::AlterEdgeType {
             properties, span, ..
         } => {
             rebase_span(span, offset);

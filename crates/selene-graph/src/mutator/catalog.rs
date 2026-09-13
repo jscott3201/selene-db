@@ -321,7 +321,7 @@ fn endpoint_depends_on_shifted_node(endpoint: &EdgeEndpointDef, removed_index: u
     }
 }
 
-fn core_node_type_def(node_type: &NodeTypeDef) -> GraphResult<selene_core::NodeTypeDef> {
+pub(crate) fn core_node_type_def(node_type: &NodeTypeDef) -> GraphResult<selene_core::NodeTypeDef> {
     Ok(selene_core::NodeTypeDef {
         labels: node_type.key_labels.clone(),
         properties: core_node_properties(&node_type.properties)?,
@@ -330,7 +330,7 @@ fn core_node_type_def(node_type: &NodeTypeDef) -> GraphResult<selene_core::NodeT
     })
 }
 
-pub(super) fn core_edge_type_def(
+pub(crate) fn core_edge_type_def(
     graph_type: &GraphTypeDef,
     edge_type: &EdgeTypeDef,
 ) -> GraphResult<selene_core::EdgeTypeDef> {
@@ -351,7 +351,7 @@ pub(super) fn core_edge_type_def(
     })
 }
 
-fn core_edge_endpoint_def(
+pub(super) fn core_edge_endpoint_def(
     graph_type: &GraphTypeDef,
     edge_name: DbString,
     endpoint: &EdgeEndpointDef,
@@ -385,63 +385,37 @@ fn core_edge_endpoint_def(
 }
 
 fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<[PropertyDef; 8]>> {
-    let mut out = SmallVec::new();
-    for property in properties {
-        out.push(PropertyDef {
-            name: property.name.clone(),
-            value_type: core_value_type(
-                property.value_type,
-                property.list_element_type.as_ref(),
-                property.decimal_type,
-                property.character_string_type,
-                property.byte_string_type,
-                property.required,
-            )?,
-            nullable: !property.required,
-            default: property
-                .default
-                .as_ref()
-                .map(|default| default.to_value())
-                .transpose()?,
-            immutable: property.immutable,
-            unique: property.unique,
-            record_fields: core_record_fields(
-                property.value_type,
-                property.record_field_types.as_ref(),
-            )?,
-        });
-    }
-    Ok(out)
+    properties.iter().map(core_property_def).collect()
 }
 
 fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<[PropertyDef; 4]>> {
-    let mut out = SmallVec::new();
-    for property in properties {
-        out.push(PropertyDef {
-            name: property.name.clone(),
-            value_type: core_value_type(
-                property.value_type,
-                property.list_element_type.as_ref(),
-                property.decimal_type,
-                property.character_string_type,
-                property.byte_string_type,
-                property.required,
-            )?,
-            nullable: !property.required,
-            default: property
-                .default
-                .as_ref()
-                .map(|default| default.to_value())
-                .transpose()?,
-            immutable: property.immutable,
-            unique: property.unique,
-            record_fields: core_record_fields(
-                property.value_type,
-                property.record_field_types.as_ref(),
-            )?,
-        });
-    }
-    Ok(out)
+    properties.iter().map(core_property_def).collect()
+}
+
+pub(super) fn core_property_def(property: &PropertyTypeDef) -> GraphResult<PropertyDef> {
+    Ok(PropertyDef {
+        name: property.name.clone(),
+        value_type: core_value_type(
+            property.value_type,
+            property.list_element_type.as_ref(),
+            property.decimal_type,
+            property.character_string_type,
+            property.byte_string_type,
+            property.required,
+        )?,
+        nullable: !property.required,
+        default: property
+            .default
+            .as_ref()
+            .map(|default| default.to_value())
+            .transpose()?,
+        immutable: property.immutable,
+        unique: property.unique,
+        record_fields: core_record_fields(
+            property.value_type,
+            property.record_field_types.as_ref(),
+        )?,
+    })
 }
 
 const fn core_validation_mode(mode: ValidationMode) -> selene_core::ValidationMode {

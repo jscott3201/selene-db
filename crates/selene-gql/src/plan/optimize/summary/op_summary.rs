@@ -62,8 +62,11 @@ pub(super) fn session_summary(session: &SessionOp) -> String {
             param.as_str()
         ),
         SessionOp::SetTimeZone { zone, .. } => format!("op=SetTimeZone(zone={zone})"),
+        SessionOp::SetSchema { .. } => "op=SetSchema".to_owned(),
         SessionOp::SetGraph { target, .. } => format!("op=SetGraph(target={target:?})"),
         SessionOp::ResetAllCharacteristics { .. } => "op=ResetAllCharacteristics".to_owned(),
+        SessionOp::ResetSchema { .. } => "op=ResetSchema".to_owned(),
+        SessionOp::ResetGraph { .. } => "op=ResetGraph".to_owned(),
         SessionOp::ResetParameters { .. } => "op=ResetParameters".to_owned(),
         SessionOp::ResetTimeZone { .. } => "op=ResetTimeZone".to_owned(),
         SessionOp::ResetParameter { param, .. } => {

@@ -14,19 +14,19 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    DbString, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, HnswIndexConfig,
-    IvfIndexConfig, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyMap, RecordTypeDef,
+    DbString, EdgeEndpointDef, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId,
+    HnswIndexConfig, IvfIndexConfig, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyDef,
+    PropertyMap, RecordTypeDef,
 };
 
 mod diff;
+mod stored;
 
 pub use diff::{LabelDiff, PropertyDiff};
 
 /// A graph or schema change carried by the WAL.
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-// Invariant: serde+postcard tag stability - append new variants, never insert.
-// Reordering corrupts WAL files written under prior tag layouts.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Change {
     /// Node creation.
     NodeCreated {
@@ -55,11 +55,13 @@ pub enum Change {
     EdgeCreated {
         /// Created edge ID.
         id: EdgeId,
+        /// Intrinsic directionality; endpoint order is not orientation for an undirected edge.
+        directionality: crate::EdgeDirectionality,
         /// Edge label.
         label: DbString,
-        /// Source node ID.
+        /// Source node ID, or first canonical undirected endpoint.
         source: NodeId,
-        /// Target node ID.
+        /// Target node ID, or second canonical undirected endpoint.
         target: NodeId,
         /// Initial properties.
         properties: PropertyMap,
@@ -159,7 +161,7 @@ pub enum Change {
 
 /// Schema change payload.
 #[allow(clippy::large_enum_variant)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SchemaChange {
     /// Graph creation.
     GraphCreated {
@@ -380,6 +382,37 @@ pub enum SchemaChange {
         label: DbString,
         /// Indexed edge property key.
         property: DbString,
+    },
+    /// In-place node type alteration carrying newly added properties.
+    ///
+    /// Declared after every existing variant so the `postcard` discriminants of
+    /// all earlier variants remain stable. Recovery validates that the payload
+    /// is additive before extending the named node-type slot in place.
+    NodeTypeAlteredV2 {
+        /// Owning graph type.
+        graph_type: GraphTypeId,
+        /// Altered node type label.
+        label: DbString,
+        /// Newly added property descriptors in declaration order.
+        properties: SmallVec<[PropertyDef; 8]>,
+    },
+    /// In-place edge type alteration carrying only additive changes.
+    ///
+    /// Declared after every existing variant so the `postcard` discriminants of
+    /// all earlier variants remain stable. Endpoint references identify node
+    /// types by name. Recovery validates endpoint widening and property
+    /// additions before replacing the named edge-type slot in place.
+    EdgeTypeAlteredV2 {
+        /// Owning graph type.
+        graph_type: GraphTypeId,
+        /// Altered edge type name.
+        name: DbString,
+        /// Replacement source endpoint when it changed.
+        source_node_type: Option<EdgeEndpointDef>,
+        /// Replacement target endpoint when it changed.
+        target_node_type: Option<EdgeEndpointDef>,
+        /// Newly added property descriptors in declaration order.
+        properties: SmallVec<[PropertyDef; 4]>,
     },
 }
 

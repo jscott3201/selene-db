@@ -1,7 +1,7 @@
 //! GQL execution runtime.
 //!
 //! The runtime consumes an optimized `ExecutionPlan` and a transaction context,
-//! walks pattern join trees into binding tables, applies pipeline operators,
+//! assembles physical batch trees and eager transaction barriers,
 //! dispatches procedure calls through tier-checked contexts, and coordinates
 //! statement-level transaction control. It relies on parser, analyzer, and
 //! planner invariants for binding and type structure; this layer owns runtime
@@ -9,63 +9,90 @@
 //! propagation, and statement output shaping. See Spec 08 §5-§8 and Spec 14
 //! §3-§8.
 
+/// The sole production executor: physical batches and eager effect barriers.
+///
+/// Batch positions are private offsets, never graph identities. Materialized
+/// binding tables remain the result and transaction-barrier representation;
+/// they do not select an alternate execution engine. Scalar expressions remain
+/// in [`evaluator`]. No statement family can decline to a row dispatcher.
+pub(crate) mod batch;
 mod binding_table;
 mod binding_table_registry;
 mod builtin_registry;
 mod builtins;
 mod call_plan_cache;
+mod comparison_domain;
 mod context;
 mod context_tiers;
 mod edge_access;
 mod error;
 pub(crate) mod evaluator;
-mod expand;
-mod hash_join;
-mod match_mode;
+mod execution_context;
+mod join_domain;
 mod native_algorithms;
-mod outer;
+mod outcome;
 mod parameter_type;
-mod path_mode;
-mod path_search;
 mod pattern;
 mod pipeline;
 mod plan_cache;
 mod plan_runner;
-mod questioned;
-mod repeat;
+mod prepared_catalog;
+pub mod product_path;
+mod property_filter_rows;
+mod reference_access;
+mod request;
+mod request_runtime;
+mod result_order;
 mod scan;
 mod scan_bind;
+mod scan_duration;
 mod scan_resolve;
 mod scan_seed;
 mod session;
 #[cfg(any(test, feature = "test-harness"))]
 mod snapshot_summary;
 mod statement;
-mod subplan;
+mod statement_exec;
 mod value_compare;
 mod value_key;
 mod value_type_match;
-mod visited_set;
-mod wco;
 
 pub use binding_table::{Binding, BindingTable};
-pub use binding_table_registry::BindingTableRegistry;
+pub use binding_table_registry::{
+    BindingTableAllocationError, BindingTableLookupError, BindingTableRegistry,
+};
 pub use builtin_registry::BuiltinProcedureRegistry;
 pub use call_plan_cache::{CallPlanCache, CallPlanCacheStats, CallPlanKey};
 pub use context::{AdaptiveOptimizer, EvalCtx, TxContext};
 pub use context_tiers::{GraphContext, MaintenanceContext, MutationContext, ProcedureContext};
 pub use error::{DataExceptionSubclass, ExecutorError, ExecutorWarning, WarningSink};
+pub use execution_context::{
+    ExecutionContext, ExecutionContextError, ExecutionFrame, ExecutionStack, Record,
+};
+pub use outcome::{
+    BindingTableDescriptor, BindingTableField, DiagnosticBundle, ExecutionOutcome, GqlStatusObject,
+};
+pub use parameter_type::validate_parameter_value;
 pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;
 pub use plan_cache::{PlanCache, PlanCacheStats, SharedPlanCache, SharedPlanCacheStats};
 pub(crate) use plan_runner::execute_plan;
+#[doc(hidden)]
+pub use prepared_catalog::{
+    PreparedCatalogMutationOutput, PreparedCatalogPlan, PreparedCatalogRequest,
+    PreparedCatalogRequestKind, PreparedSessionControl, PreparedTransactionControl,
+    parse_graph_independent_session_control, parse_session_close, parse_transaction_control,
+};
+pub use request::{RequestExecutionInput, RequestParameter};
+#[doc(hidden)]
+pub use request_runtime::RequestRuntimeHandle;
 pub use session::{RollbackOutcome, Session, SessionParameterValue, TransactionOutcome};
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{
     ExecutorSnapshot, ExecutorSummaryInput, NetGraphDelta, RowOrderPolicy, SnapshotColumn,
     executor_summary,
 };
-pub use statement::{StatementOutput, WriteOutcome, execute_statement};
+pub use statement::{CatalogSessionOutput, StatementOutput, WriteOutcome, execute_statement};
 
 pub use crate::plan::{BindingTableColumn, BindingTableSchema};
 

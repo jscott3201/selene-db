@@ -398,9 +398,28 @@ fn mutation_pipeline_classifies_as_data_modifying() {
 }
 
 #[test]
-fn create_graph_classifies_as_catalog_modifying() {
-    let error = parse("CREATE GRAPH demo").expect_err("CREATE GRAPH is outside D1");
-    assert_eq!(error.gqlstatus().as_str(), "42N01");
+fn alter_node_type_classifies_as_catalog_modifying() {
+    let analyzed = analyze_one("ALTER NODE TYPE :Person (active BOOLEAN)").expect("analyzes");
+    assert_eq!(analyzed.category, StatementCategory::CatalogModifying);
+    assert!(analyzed.write_set.is_none());
+}
+
+#[test]
+fn database_catalog_ddl_classifies_as_catalog_modifying() {
+    for source in [
+        "CREATE SCHEMA /demo",
+        "DROP SCHEMA IF EXISTS /demo",
+        "CREATE GRAPH demo ANY",
+        "DROP GRAPH /demo/g",
+    ] {
+        let analyzed = analyze_one(source).unwrap_or_else(|error| panic!("{source}: {error:?}"));
+        assert_eq!(
+            analyzed.category,
+            StatementCategory::CatalogModifying,
+            "{source}"
+        );
+        assert!(analyzed.write_set.is_none(), "{source}");
+    }
 }
 
 #[test]

@@ -141,7 +141,7 @@ fn index_entry_dropped_when_bitmap_empties() {
         assert_eq!(mutator.read().label_count(), 1);
         mutator.delete_node(id).unwrap();
         assert_eq!(mutator.read().label_count(), 0);
-        assert!(!mutator.read().idx_label.contains_key(&label));
+        assert!(mutator.read().idx_label.get(&label).is_none());
     }
     txn.commit().unwrap();
     assert_eq!(shared.read().label_count(), 0);

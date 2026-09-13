@@ -1,9 +1,11 @@
 //! Closed graph type catalog definitions.
 
 mod endpoint;
+mod legacy_default_serde;
 mod property_defaults;
 mod property_element_types;
 mod record_types;
+mod structural;
 
 use std::collections::BTreeSet;
 
@@ -106,6 +108,30 @@ impl GraphTypeDef {
                     .target_node_type
                     .matches_node_type(target_node_type)
         })
+    }
+
+    /// Match endpoints without assigning an orientation to an undirected edge.
+    /// Ambiguous unordered declarations do not select an arbitrary property schema.
+    #[must_use]
+    pub fn find_mixed_edge_type(
+        &self,
+        label: DbString,
+        first: u32,
+        second: u32,
+        directionality: selene_core::EdgeDirectionality,
+    ) -> Option<&EdgeTypeDef> {
+        if directionality == selene_core::EdgeDirectionality::Directed {
+            return self.find_edge_type(label, first, second);
+        }
+        let mut matches = self.edge_types.iter().filter(|edge| {
+            edge.label == label
+                && ((edge.source_node_type.matches_node_type(first)
+                    && edge.target_node_type.matches_node_type(second))
+                    || (edge.source_node_type.matches_node_type(second)
+                        && edge.target_node_type.matches_node_type(first)))
+        });
+        let matched = matches.next()?;
+        matches.next().is_none().then_some(matched)
     }
 
     /// Return the first edge type carrying `label`.
@@ -249,6 +275,20 @@ fn validate_property_element_types(
     properties: &[PropertyTypeDef],
 ) -> GraphResult<()> {
     for property in properties {
+        let ty = property
+            .structural_type()
+            .map_err(|source| GraphError::Inconsistent {
+                reason: source.to_string(),
+            })?;
+        if !ty.is_storable_descriptor() {
+            return Err(
+                selene_core::CoreError::from(selene_core::StoredValueError::QueryOnly {
+                    family: "property descriptor",
+                })
+                .into(),
+            );
+        }
+
         if property.decimal_type.is_some() && property.value_type != PropertyValueType::Decimal {
             return Err(GraphError::Inconsistent {
                 reason: format!(
@@ -276,19 +316,16 @@ fn validate_property_element_types(
             });
         }
         if property.value_type == PropertyValueType::List {
-            let Some(element_type) = property.list_element_type.as_ref() else {
-                // Legacy snapshots written before typed LIST<T> descriptors
-                // stored only the coarse LIST tag. Keep that shape valid so
-                // recovery preserves existing closed graph schemas; new GQL
-                // catalog DDL always fills the descriptor.
-                continue;
-            };
-            validate_property_element_type(
-                type_name.clone(),
-                property.name.clone(),
-                element_type,
-                1,
-            )?;
+            // Legacy bare LIST keeps its unconstrained element descriptor,
+            // but still validates defaults and storage admission below.
+            if let Some(element_type) = property.list_element_type.as_ref() {
+                validate_property_element_type(
+                    type_name.clone(),
+                    property.name.clone(),
+                    element_type,
+                    1,
+                )?;
+            }
         } else if property.value_type == PropertyValueType::RecordTyped {
             // Bare RecordTyped is permissive (mirrors legacy untyped LIST): with no
             // declared field structure there is nothing to validate.
@@ -310,6 +347,7 @@ fn validate_property_element_types(
                 ),
             });
         }
+        crate::type_validator::validate_property_default(property)?;
     }
     Ok(())
 }

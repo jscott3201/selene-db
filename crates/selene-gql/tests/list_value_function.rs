@@ -5,13 +5,12 @@
 mod exec_common;
 
 use exec_common::{column_values, db_string, execute_read, execute_read_result};
-use selene_core::{
-    EdgeDirection, EdgeId, GraphId, NodeId, Path, PathSegment, Value, feature_register::FeatureId,
-};
+use selene_core::{EdgeDirection, EdgeId, GraphId, NodeId, Path, PathSegment, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ImplDefinedCaps, Session, StatementOutput, feature_walk, parse,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 use smallvec::smallvec;
 
 fn single_value(source: &str, column: &str) -> Value {

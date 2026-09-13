@@ -1,11 +1,12 @@
 //! Explicit value-type nullability coverage (GV90).
 
-use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_core::{GraphId, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlStatus, GqlType, PipelineStatement, Session,
     Statement, StatementOutput, ValueExpr, ast::format_read_statement, feature_walk, parse,
 };
 use selene_graph::{GraphTypeDef, PropertyElementType, RecordFieldType, SharedGraph};
+use selene_profile::FeatureId;
 
 fn db_string(value: &str) -> selene_core::DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")
@@ -65,7 +66,7 @@ fn not_null_type_names_round_trip_through_parser_and_formatter() {
 }
 
 #[test]
-fn feature_walk_claims_gv90_and_inner_type_features() {
+fn feature_walk_records_gv90_and_inner_type_features() {
     let parsed = parse("RETURN $x :: UINT8 NOT NULL AS x").expect("source parses");
     let features = feature_walk(&parsed)
         .into_iter()
@@ -99,8 +100,6 @@ fn typed_predicates_treat_unspecified_value_types_as_nullable() {
         ("RETURN NULL IS TYPED STRING AS ok", true),
         ("RETURN NULL IS TYPED STRING NOT NULL AS ok", false),
         ("RETURN NULL IS NOT TYPED STRING NOT NULL AS ok", true),
-        ("RETURN NULL IS TYPED NULL AS ok", true),
-        ("RETURN NULL IS TYPED NOTHING AS ok", false),
         ("RETURN [NULL] IS TYPED LIST<INTEGER> AS ok", true),
         ("RETURN [NULL] IS TYPED LIST<INTEGER NOT NULL> AS ok", false),
         ("RETURN {a: NULL} IS TYPED RECORD{a :: INTEGER} AS ok", true),
@@ -111,6 +110,14 @@ fn typed_predicates_treat_unspecified_value_types_as_nullable() {
     ];
     for (source, expected) in cases {
         assert_eq!(one_value(source), Value::Bool(expected), "{source}");
+    }
+    for source in [
+        "RETURN NULL IS TYPED NULL AS ok",
+        "RETURN NULL IS TYPED NOTHING AS ok",
+    ] {
+        let error =
+            parse(source).expect_err("optional immaterial type syntax is not runtime-supported");
+        assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }
 }
 

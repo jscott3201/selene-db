@@ -4,7 +4,495 @@ All notable changes to selene-db are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-alpha.1] - 2026-09-13
+
+This is a source-candidate summary, not a verified registry publication or GA
+compatibility promise. Publication, tagging and release require separate owner
+authorization; this edit authorizes none of them. See the
+[release-notes draft](docs/v2/release-notes-alpha.md) and
+[qualification evidence](docs/v2/release-qualification.md).
+
+### Added
+
+- The `selene-db` embedded Rust facade provides named graphs, owned sessions,
+  requests and results, schema construction and durable lifecycle. GQL is the
+  only query/mutation language. The native engine combines batch execution,
+  mixed directed/undirected edges, bounded paths, constraints, scalar JSON
+  expression indexes and graph/vector/text/JSON retrieval. Native values,
+  indexes and `selene.*` / `algo.*` procedures are disclosed Selene facilities,
+  not extra ISO grammar or a loadable extension ABI.
+- Eight public Rust crates package and build in dependency order with MIT OR
+  Apache-2.0 license texts, NOTICE and third-party attribution. External consumer
+  smoke tests passed with default/all features using extracted candidate packages
+  for local engine dependencies and normal version requirements in normalized
+  manifests. No new server binaries, binding releases or wheels are included.
+
+### Changed
+
+- The alpha boundary is **ISO-aligned with disclosed conformance gaps; not a
+  complete selected-profile claim**. Neither ISO minimum nor complete
+  selected-profile conformance is claimed; the formal `selected_profile` claim
+  remains **denied-by-design for alpha**. The September 13 selection narrowing is
+  prose-only: canonical feature selection, generated claims, evidence dispositions
+  and the Flagger are unchanged. Gaps remain GC03, GE04, GE05, GG02, GG20, GG21,
+  GP16, GQ01, GV66, GV67 and implied GV60/GV61/GV65; the rule inventory remains
+  `seeded_incomplete` and applicable Annex B choices remain pending.
+- Managed filesystem mode reads/writes **format 2 only** and rejects format-1
+  headers before payload decoding. There is no 1.x decoder, migration or
+  maintenance support: rebuild from application-owned source data into a fresh
+  store. No cross-alpha persisted-format compatibility is promised.
+- The infallible builder is memory-only. Fallible create/open/checkpoint use
+  retained directory handles, one writer ownership domain and eager required-index
+  reconstruction; open does not silently repair or return background readiness.
+  Cancellation, indeterminate outcomes and synchronized-but-unacknowledged
+  completion are distinct typed outcomes. Reconcile authoritative state before
+  retrying a non-idempotent write after an indeterminate result.
+- Checkpoint/rotation and explicit prune preserve selected artifacts and reader
+  leases. Verification covers a captured on-disk view, not acknowledgment, write
+  permission, physical durability or subsequent freshness. Reissue graph/node/edge
+  handles after reopen; stable IDs and process-local provenance are distinct.
+- Rust 1.97.1 / edition 2024 is the declared floor. Managed filesystem mode supports
+  native Linux/macOS on compatible storage stacks and returns typed errors for
+  unsupported platforms. The candidate was exercised on native macOS arm64;
+  **Linux qualification is unavailable, not passed**. Other CPU/filesystem
+  combinations were not qualified. Process-kill tests are not power-loss
+  certification.
+- Resources remain bounded: no unlimited intermediate state, path search or disk
+  spill is promised. Bounded fuzz campaigns are evidence, not exhaustive DoS proof.
+
+### Fixed
+
+- A pre-pest `5GQL1` program limit rejects excessive active bare nested-query
+  wrappers before descent, preventing the reproduced brace-backtracking timeout.
+  Eight consecutive bare query levels remain admitted; further active
+  brace-to-brace wrappers reject. Record and `EXISTS` nesting retain their existing
+  limits; grammar, normal result semantics and fuzz timeouts are unchanged.
+
 ## [Unreleased]
+
+### Changed
+
+- The workspace and every Selene path-version constraint now use the
+  `2.0.0-alpha.1` source coordinate. The 1.x line is end of life and receives
+  no fixes, security patches, compatibility work, new releases, persisted-data
+  readers, or migration support. The alpha coordinate does not assert crates.io
+  publication; see the
+  [2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md).
+
+- Graph ID, label, and adjacency maps now use the maintained
+  `immutable-chunkmap` Arc-backed chunked tree. Snapshot clones retain
+  structural sharing while the archived `bitmaps` and duplicate `wide` 0.7
+  dependency path are removed; detached-node cascades batch sorted neighbor
+  adjacency removals.
+
+- The workspace toolchain and minimum supported Rust version are now 1.97.1.
+  Direct crates, standalone fuzz-workspace manifests, and CI action dependencies
+  have moved to their current stable releases; this includes the fixed `rkyv`
+  0.8.18 and `lru` 0.18.2 lines, `wide` 1.6.1 for native vector kernels, and
+  `wgpu` 30.0.0 for the opt-in GPU benchmark prototype.
+
+- **BREAKING (on-disk format): the WAL format version is now 3.0.** Stores
+  written by v1.0.0-v1.4.0 (WAL 2.0 or 2.2) are rejected at open with
+  `PersistError::UnsupportedVersion` before any artifact is read further or
+  modified. There is no dual decoder and no migrator — recreate the store from
+  source. The entry prefix grows from 32 to 40 bytes and the file header from
+  16 to 24; the `origin_tag` byte becomes a flag bit, and undefined flag bits
+  are now rejected at both append and read.
+
+- **BREAKING (on-disk format): the audit-log format version is now 2.** `audit.log`
+  files written by v1.0.0-v1.4.0 are rejected at open with
+  `PersistError::UnsupportedVersion`. There is no dual decoder and no migrator;
+  the audit log is an events surface with its own retention, so the recovery
+  path for a v1 file is to archive or discard it. The record header grows from
+  20 to 24 bytes to carry a checksum over its own framing fields.
+
+- **`PersistError::UnsupportedVersion` now names the artifact that failed.** A
+  store holds four independently versioned artifacts, but the message read
+  `wal version unsupported` whichever one raised it — so an operator told to
+  recreate the store could not tell which file was at fault. It now reports,
+  for example, `audit log version unsupported: 1.0`. The variant carries a new
+  `artifact: PersistArtifact` field.
+
+- **The documented 1.x read-side compatibility guarantee is retracted and the
+  former 1.x policy is superseded.** The compatibility claim was
+  never enforced: both the WAL and the snapshot readers gate on an exact
+  `(major, minor)` match, so several released minor versions already could not
+  open one another's stores. `docs/persistence-and-recovery.md` now states the
+  policy the code implements — exactly one supported format, recreate from
+  source across a break — and carries the table of shipped format identities.
+  The 2.0 line will not open or migrate 1.x stores, and alpha persisted data has
+  no compatibility promise across later alpha builds.
+
+- **BREAKING (API): `Mutator::schema_change` no longer takes a `GraphId`.** The
+  emitted `Change::SchemaChanged` record is stamped from the live transaction
+  instead. The parameter was never validated against the live graph, and since
+  the caller-asserted-id enforcement landed, a durable record carrying a foreign
+  id makes the directory unrecoverable under *every* id because recovery refuses
+  it as cross-wired. Rejecting a mismatch would have left a parameter with
+  exactly one computable value, so it is gone and the bad state is
+  unrepresentable. Callers drop the first argument; every in-tree producer
+  already derived the id this way.
+
+### Added
+
+- **`selene.property_index_stats` makes a demoted property index diagnosable.**
+  A typed index cannot key a value whose variant does not match its registered
+  kind, and an open graph accepts any variant. Since the #1099 fix a single
+  unkeyable live row makes the index decline *every* probe, so queries silently
+  fall back to a scan — correct, but invisible: the index stays registered,
+  `SHOW INDEXES` lists it unchanged, and `selene.verify` deliberately audits
+  through the drift-ignoring probe and so reported a clean bill of health. The
+  new graph-tier procedure yields `name`, `entity`, `label`, `properties`,
+  `kind`, `indexed_rows`, `drifted_rows`, and `answers_probes` for all three
+  families that carry drift (node single-property, edge single-property, and
+  composite). `selene.verify`'s coverage detail now carries the drift count as
+  well, while its status stays `ok` — a demoted index is not corrupt. The
+  platform built-in count moves from 49 to 50, and the total procedure count
+  from 68 to 69.
+- **`SharedGraph::recovery_tail_repair()` reports a torn WAL tail discarded
+  during recovery.** `SharedGraph::recover` returning `Ok` never meant nothing
+  was lost: a final frame that is short, corrupt, or zero-filled was never
+  acknowledged, so discarding exactly it is correct crash recovery, but a commit
+  a client believed it had submitted may have been in it. `WalWriter::tail_repair()`
+  reported that to direct `selene-persist` callers only; `recover` owns its
+  writer internally and returns `GraphResult<Self>` with nowhere to put an
+  outcome, so through the documented recovery entry point the only trace was a
+  `tracing::warn!` an embedder with no subscriber never sees. All four `recover*`
+  variants now stamp the repair, and `WalTailRepair` / `WalTailReason` are
+  re-exported from `selene-graph`. It is a report, not an error — recovery
+  succeeded either way, and the use is reconciliation.
+- `PersistenceReadGuard` now provides a shared, cross-handle/process epoch
+  transaction for online recovery and backup-style artifact reads. Guarded
+  readers can re-read the authoritative MANIFEST and pin its snapshot, active
+  WAL, and retained archives while rotation, prune, and direct MANIFEST
+  publication wait.
+- `SharedGraph::checkpoint` now provides an ordered, durable checkpoint facade
+  for WAL-backed graphs. It snapshots every provider at one committed
+  generation, flushes the group-commit boundary, and performs the MANIFEST/WAL
+  rotation while later writes wait in the committer queue and lock-free reads
+  continue. First rotation bootstraps the prior MANIFEST epoch, active-WAL reset
+  uses a synced atomic replacement, relative WAL paths stay anchored to their
+  open-time directory, and unique snapshot temporaries make crash retries
+  progress without reusing a stale fixed temp file.
+- `ALTER NODE TYPE` can now add optional properties to an existing node type in
+  a closed graph type without dropping its instances. The
+  implementation-defined migration preserves node-type ordering during WAL
+  replay; required properties, descriptor changes, inline indexes, and
+  key-label changes remain rejected.
+
+- `Value::is_number` and `TypedIndexKind::is_numeric` name the ISO numeric
+  family — the one family whose values compare across distinct variants
+  (§4.16.5.2), absent Feature GA04. Both are exhaustive matches, so a future
+  variant or index kind must be classified deliberately rather than defaulting
+  to "not a number".
+
+### Fixed
+
+- **A checkpoint failure that poisoned the committer now says so.**
+  `SharedGraph::checkpoint` returned the raw rotation error — an
+  ordinary-looking `Persist(Io(..))` — for failures that had already killed the
+  handle, so an embedder could not tell a retryable preparation failure from one
+  requiring reopen. Poisoning failures now return
+  `GraphError::IndeterminateOutcome` with the source error text preserved, and
+  `GraphError::requires_reopen()` is the supported test for the condition in
+  preference to matching a variant. Preparation failures and the verified
+  artifact-collision case stay their own typed errors and stay retryable.
+
+  This also removes an inconsistency: a *second* checkpoint on a poisoned handle
+  already reported the indeterminate outcome through the committer's poison
+  gate. Only the call that caused the poison behaved differently.
+
+- **A failed `commit()` no longer claims the transition did not happen.** Once a
+  commit reaches the durable path, the engine cannot honour ISO/IEC 39075:2024
+  §8.4 `<commit command>` GR 1)b)'s "any changes ... are canceled": the WAL
+  record may already be written, or written and fsynced, and a reopen replays
+  it. Every commit error-acked on a committer poison exit now returns the new
+  `GraphError::IndeterminateOutcome` (named for the operation-neutral condition,
+  because checkpoints report it too) (GQLSTATUS `40003`, *transaction rollback —
+  statement completion unknown*, §23.1 Table 8) instead of `GraphError::Durable`
+  (`5GQL0`), which read as a definite negative. A caller must reopen and read
+  back before retrying; retrying blind double-applies. `docs/persistence-and-
+  recovery.md` gains a "Commit outcomes" section stating the contract.
+
+  **Downstream impact:** `GraphError` is `#[non_exhaustive]`, so the new variant
+  compiles additively — but code that matched `GraphError::Durable { .. }` to
+  detect a failed commit now falls through to its wildcard arm. Match
+  `GraphError::IndeterminateOutcome` (or GQLSTATUS `40003`) instead, and treat it
+  as "unknown", not "failed".
+
+  The prior behaviour rested on three doc comments asserting that
+  appended-but-unflushed bytes are "correct to lose on reopen". That holds for
+  losing the page cache — a machine crash — but poisoning the committer requires
+  a reopen, not a crash. Regression tests now reopen a real WAL and show five
+  error-acked commits leaving two live nodes behind.
+
+- Composite property-index drift classification no longer distinguishes a
+  rejected NaN from a rejected wrong variant by comparing a diagnostic string
+  against the literal `"NaN"`. `CompositeIndexValueError` gained a
+  `ComponentNaN` variant (additive; the enum is `#[non_exhaustive]`) so the
+  distinction is a discriminant. The two are classified oppositely — a NaN row
+  is one a scan omits as well, a kind-mismatched row is not — so rewording one
+  diagnostic could previously have disabled indexes that need no disabling.
+
+- JSON values no longer change arbitrary-precision numbers into private
+  serde-json transport objects during postcard, WAL, or snapshot recovery when
+  a consumer enables serde-json's `arbitrary_precision` feature. Recovery now
+  preserves both decimal and oversized-integer number kinds without changing
+  the persisted JSON representation.
+
+- `ORDER BY` on a property access no longer runs and does nothing. `ORDER BY
+  d.version DESC` parsed, planned, reached the executor, and returned rows in
+  insertion order; only `ORDER BY <alias>` sorted. `OrderBy` runs after
+  `Project`, so the node binding `d` was no longer in scope, every row's sort key
+  evaluated to `NULL`, and the stable sort preserved input order. With `LIMIT 1`
+  that silently returned the wrong row — the shape of every "latest version",
+  "highest score", and "most recent reading" query.
+
+  ISO/IEC 39075:2024 §14.10 SR 4)c)i)2)A)VIII specifies the fix directly: for
+  every sort-key reference the return items do not already cover, append
+  `REF AS REF` to a copy of the return item list, and (GR 1)b)ii) drop exactly
+  those columns once the ordering and page statement has run. The planner now
+  does that, and the engine already claimed the features it needs — GA07
+  "Ordering by discarded binding variables" and GQ14 "Complex expressions in
+  sort keys".
+
+  The same rule closes the set in the other direction. SR III defines ORDER_REFS
+  in three cases, and the two narrowing ones are now enforced. Under `DISTINCT`
+  or an aggregate return item with no `GROUP BY`, ORDER_REFS is the output
+  columns alone, and a sort key reaching past them is rejected with
+  `SortKeyReferenceNotInScope` (GQLSTATUS `42001`) instead of silently sorting by
+  `NULL`. Under `GROUP BY` — a case that applies whether or not `DISTINCT` is
+  also present — ORDER_REFS adds every binding variable the grouping keys
+  reference, so `RETURN count(*) AS c GROUP BY x ORDER BY x` now sorts by the
+  grouping key instead of returning groups in encounter order.
+
+  Two consequences worth calling out. Because SR IX applies the set quantifier to
+  the *augmented* return item list, a carried binding participates in `DISTINCT`;
+  under `GROUP BY` the grouping keys are already unique per group, so the dedup
+  becomes a no-op and more rows can survive than before. And because SR III case
+  2 admits any binding the grouping keys mention, `GROUP BY n.tenant ORDER BY
+  n.score` is legal and orders by the group's representative row.
+
+  The root cause is closed too: the evaluator returned `Value::NULL` for any
+  variable missing from the row schema, with a comment explaining that a strict
+  error "would break those plans". It is strict again, and the carriers now
+  reach the shapes that comment was protecting — including path bindings and a
+  subquery body's imported outer bindings, which the runtime supplies in the
+  pre-projection row.
+
+
+- WAL framing is now under integrity protection. Each entry carries a prefix
+  checksum over its framing fields — payload length, principal length, flags,
+  and the payload's own checksum — plus an extent checksum over the replicated
+  provenance tail and the principal bytes; the file header is checksummed too.
+  Previously the only checksum covered the payload, so a flipped bit in
+  `hlc_seconds` replayed with the wrong timestamp, a flipped bit in the
+  principal replayed under the wrong audit identity, and a flipped bit in
+  `payload_len` was used directly as a file offset. The prefix checksum is
+  verified before any framing field is used as a length or an offset.
+
+- Recovery no longer silently discards committed WAL frames after a corrupt
+  one. `WalWriter::open` truncated at the first frame that failed validation,
+  wherever it sat, so bit rot in the middle of a log deleted every committed
+  frame after it while `SharedGraph::recover` returned `Ok` — measured as five
+  committed nodes becoming one. Corruption and a torn tail are now
+  distinguished by whether anything follows the failing frame: the writer only
+  appends, so trailing bytes prove the frame was complete before them, and that
+  case refuses with the new `PersistError::WalMidLogCorruption` — which carries
+  the underlying failure as its source and, unlike a bare checksum error, says
+  that the file was left intact — and leaves the log untouched for offline
+  recovery. A genuine tear — a frame running past end of file, a
+  failing frame with nothing after it, or a trailing run of zeros — is still
+  repaired transparently and is now reported through the new
+  `WalWriter::tail_repair()` rather than only logged. The two cases are split by
+  type rather than by care: a frame prefix exists only in its verified form, and
+  every check that can fail with a knowable extent takes one as an argument.
+
+- The WAL version gate no longer reports a corrupted version field as an
+  unsupported version. The gate runs before the header checksum so that a
+  16-byte v2 header is diagnosed by version rather than as truncated, which made
+  the version the one checksum-covered field corruption could escape through —
+  and `UnsupportedVersion` means *recreate the store from source*. A single
+  flipped bit would have told an operator to discard an intact log. The gate now
+  substitutes the current version and re-checks the stored checksum, which
+  matches only if the rest of the header is a current-version header.
+
+- `decode_wal` fuzzing now synthesizes valid framing around the fuzzer's bytes
+  in a second pass. Without it the new checksums made the target vacuous: a
+  coverage-guided fuzzer cannot invert xxh3, so every input died at the first
+  frame and the extent, principal, payload, zstd, and postcard paths were
+  unreachable. Corpus seeds are no longer pinned to a format version.
+
+- `SharedGraph::write_snapshot` now enforces the two preconditions it previously
+  only documented. It refuses a target directory that already holds a `MANIFEST`
+  or a `wal.log` with `GraphError::ExistingStore`, and it encodes every provider
+  section at one pinned graph generation, then re-checks that the published
+  graph was not replaced, failing with `GraphError::Inconsistent` instead of
+  writing an envelope torn across generations. Previously the section loop used
+  the unpinned encode hook and re-read the published graph once per section, so
+  a commit landing between two of the eight CORE sections produced an
+  internally inconsistent snapshot with nothing to detect it; and a standalone
+  snapshot dropped into a live directory made recovery cross-check it against
+  the WAL and hard-fail, leaving the directory unrecoverable. Presence, not
+  content, is the directory test: a bare-header WAL still declares an epoch, and
+  a checkpointed directory's active WAL is reset to a bare header while its data
+  lives in a snapshot. The pin is checked by pointer identity rather than
+  generation equality, because compaction and vector-index rebuilds republish
+  with `GraphMeta` — and therefore the generation — copied verbatim while every
+  row is renumbered. `write_snapshot` also now rejects re-entry from a provider
+  callback, matching `checkpoint`, `compact`, and the rebuild entry points.
+  `ExistingStoreEvidence` gains an `ActiveWal` variant.
+
+- `SharedGraphBuilder::with_wal` and `SharedGraph::from_graph_with_wal` now also
+  refuse a directory holding a `snapshot.N.snap` with no `MANIFEST` — what
+  `write_snapshot` exports. Recovery treats such a directory as a store, applying
+  the highest on-disk snapshot and seeding a fresh WAL header from that sequence,
+  so attaching an unrelated WAL beside one wrote a `snapshot_seq: 0` header that
+  recovery then cross-checked against the applied snapshot and rejected, leaving
+  the directory unopenable. The guard asks the same question through the same
+  `find_latest_snapshot` helper recovery uses, so the two cannot disagree.
+  `ExistingStoreEvidence` gains a `StandaloneSnapshot` variant. Recovering an
+  export directory is unaffected and remains the supported way to open one.
+
+- `SharedGraphBuilder::with_wal` and `SharedGraph::from_graph_with_wal` now
+  refuse a persistence directory that already holds a committed store, with the
+  new `GraphError::ExistingStore` (`SLENE_G_028`) reporting which evidence was
+  found. Attaching does not replay: `WalWriter::open` positions an existing WAL
+  for append, so attaching a graph that does not already reflect the store
+  layered a second dataset's commits onto the first — node ids restarted at 1,
+  collided with ids the store had already allocated, and the directory then
+  failed to recover at all with the original data unreachable. Two pieces of
+  evidence are checked, because neither is sufficient alone: committed entries
+  in the WAL, and a `MANIFEST` naming a published snapshot. The second matters
+  because checkpoint rotation archives the entries and resets the active WAL to
+  a bare header, so a checkpointed directory has an empty-*looking* WAL while
+  its dataset sits in a snapshot. `SharedGraph::recover` is the operation that
+  reads an existing store and is unaffected; a refusal releases the writer lock
+  and leaves the directory byte-for-byte recoverable.
+
+- Recovery now enforces the caller-asserted `GraphId` against the WAL, not only
+  against a snapshot's `CORE/META`. Every schema record carries the graph id it
+  was authored under, and recovery refuses when one disagrees with the asserted
+  identity, so a WAL-only directory can no longer be reconstructed under a
+  `GraphId` nobody wrote it with and then written into. A WAL holding two
+  identities is refused under either. This is a new hard failure for a
+  DDL-bearing directory opened under the wrong id, and coverage is partial by
+  construction: a WAL carrying only data changes declares no identity, so a
+  wrong assertion against it still cannot be detected.
+
+- `ALTER EDGE TYPE` WAL replay now applies endpoint and property deltas in
+  place. Replay previously dropped and re-added the edge type, which moved it to
+  the end of declaration order and discarded property descriptors the alter did
+  not touch.
+
+- Recovery now holds a shared persistence epoch across MANIFEST selection,
+  snapshot callbacks, and WAL replay, preventing a concurrent rotation from
+  pairing snapshot N with the reset header-only WAL for N+1 and silently
+  omitting committed changes. `SharedGraph::recover` also retains an existing
+  WAL lock across guarded replay, creates a missing WAL only after snapshot
+  verification, and requires the retained writer tip to match replay exactly,
+  so writer takeover has no unsafe handoff and later commits stay above the
+  recovered snapshot floor.
+- Coordinated graph checkpoints now append a typed, empty WAL watermark before
+  MANIFEST rotation, so every checkpoint receives a fresh physical sequence
+  even when no user mutation followed the prior snapshot. This makes
+  compaction and other WAL-free maintenance durably checkpointable, permits an
+  empty graph to checkpoint at sequence 1, and keeps recovery generation
+  accounting based on logical commit frames rather than physical watermark
+  entries.
+- WAL writers now resolve and retain the canonical parent directory before
+  opening the active file, reject a final `wal.log` symlink or non-file entry,
+  and stage, fsync, and fail-on-existing publish every new WAL header before the
+  final path becomes visible. Parent-alias retargeting can no longer split the
+  active WAL, snapshot, archive, MANIFEST, lock, or recovered graph writer
+  across directories, and concurrent readers cannot observe a partially
+  initialized WAL.
+- MANIFEST publication, WAL rotation, and snapshot/archive pruning now share a
+  persistent per-directory `MANIFEST.lock`. Rotation holds it through active-WAL
+  reset and prune through post-commit deletion, preventing a stale prune from
+  regressing the live epoch or deleting an in-flight checkpoint's artifacts.
+- MANIFEST-backed rotation now accepts pre-existing same-sequence snapshots and
+  WAL archives only after exact regular-file byte comparison with the newly
+  written temporary. Completed same-sequence lower-level rotations return an
+  explicit already-current outcome instead of comparing or recreating the historical
+  archive from the header-only active WAL. Ahead-MANIFEST and invalid committed
+  artifact states poison stale writers until reopen, preventing sequence reuse
+  that recovery could otherwise filter.
+
+- `ORDER BY EXISTS { ... }` now sorts instead of failing. A free outer reference
+  inside the subquery body — the `n` in
+  `RETURN n.name AS name ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }` — is a
+  binding variable reference *contained in* the sort key, because ISO
+  §5.3.2.1 defines containment transitively. Neither the analyzer nor the
+  planner saw it: both walked sort keys with a child walk that does not descend
+  into a subquery body. The planner therefore appended no carrier, and at
+  runtime the post-projection row had no `n`, so an analyzer-accepted query died
+  with an internal-invariant diagnostic (`subquery outer binding missing from
+  source row`).
+
+  Both halves now collect those references. The analyzer enforces §14.10 SR IV
+  over them, so under `DISTINCT` or an aggregate — where SR III case 3 makes
+  ORDER_REFS the return identifiers alone — the query is rejected with
+  `SortKeyReferenceNotInScope` rather than silently sorting by `NULL`. The
+  planner carries them per SR VIII. Variables the subquery body defines itself
+  are excluded, which §14.10 CR 4 names directly.
+
+- **`ORDER BY EXISTS { ... RETURN ... }` is now rejected.** ISO §14.10
+  SR 4)c)i)2)A)I forbids a `<nested query specification>` in a sort key, and the
+  fifth `<exists predicate>` alternative (§19.4) is exactly that — the other four
+  admit only a graph pattern or a match statement block. The check previously
+  matched only the `VALUE { ... }` spelling. The graph-pattern and match-block
+  forms remain legal: §19.4 SR 2/3 do rewrite them into a nested query
+  specification, but §5.3.2.4 applies a contained element's Syntax Rules "at the
+  same time as" its container's, so that rewrite does not feed SR I.
+
+- A sort key naming a variable that is bound nowhere now reports an undefined
+  reference instead of `SortKeyReferenceNotInScope`. SR IV is about a reference
+  that resolves but sits outside ORDER_REFS; a name that resolves to nothing is
+  a different and more actionable error, and the SR IV check previously ran
+  before the sort key was bound and so could not tell them apart.
+
+- The audit log no longer truncates from the first bad record to end of file.
+  `read_one_record` reported a short read, an over-cap length and a checksum
+  mismatch all as an undiscriminated end-of-log, `scan_durable_end` stopped
+  there, and `AuditLog::open` called `set_len` and fsynced the shortened file
+  before returning `Ok`. Flipping one bit in record 10 of 100 deleted records
+  10-100, and because `SharedGraph::recover` reopens the audit log by file
+  presence, the loss recurred on every recovery and looked like success.
+
+  This is the defect the WAL fix closed, and it could not be ported directly.
+  The WAL's rule — a frame that fails validation is a torn tail only if nothing
+  follows it — rests on the v3 prefix checksum making a frame's declared extent
+  trustworthy. The audit format had no counterpart: `payload_len` was the only
+  field saying where a record ended and nothing protected it, so the question
+  was unanswerable exactly when it mattered. Format v2 adds a checksum over the
+  record header, which supplies that prerequisite.
+
+  Interior damage now refuses with `PersistError::AuditMidLogCorruption` and
+  leaves the file byte-identical, preserving both the surviving records and the
+  evidence needed to recover them by other means. Only a genuine final tear is
+  repaired. `AuditLog::read_all` and `AuditLog::decode_all` refuse as well
+  rather than silently returning the prefix before the damage.
+
+- Indexed float reads no longer disagree with an unindexed read about signed
+  zero. `-0.0` and `0.0` compare equal under GQL, but typed `F32`/`F64` index
+  keys were built from the raw bit pattern and ordered by `total_cmp`, which
+  files the two zeros under separate keys and sorts `-0.0` strictly below
+  `+0.0`. An indexed `= 0.0` returned only the rows that happened to store the
+  same sign, and an indexed `> -0.0` returned a `0.0` row that `0.0 > -0.0`
+  rejects. Every row stayed keyable throughout, so the drift tally could not
+  see it and `selene.verify` reported the index healthy.
+
+  Both key constructors now collapse `-0.0` onto `+0.0`. That is the single
+  coercion point behind reads, writes, range bounds, update maintenance,
+  composite components and verify, so equality, hashing, ordering and range
+  bounds become consistent together. Range semantics change with it: `> -0.0`
+  now excludes a `0.0` row, matching a scan.
+
+### Security
+
+- Updated the transitive `crossbeam-epoch` dependency from 0.9.18 to 0.9.20,
+  closing RUSTSEC-2026-0204's invalid pointer dereference in pointer formatting.
 
 ## [1.4.0] - 2026-06-24
 
@@ -1653,13 +2141,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.0] — 2026-05-16
 
-First stable release. selene-db is now usable as a Rust dependency for
-embedding a property graph engine that targets ISO/IEC 39075:2024 (GQL)
-conformance. The public API surface across `selene-core`,
-`selene-graph`, `selene-persist`, `selene-gql`, and `selene-pack` is
-considered stable: subsequent 1.x releases will maintain
-backwards-compatible additions and reserve breaking changes for major
-version bumps.
+First stable release. At release time, selene-db was presented as a Rust
+dependency for embedding a property graph engine that targets ISO/IEC
+39075:2024 (GQL) conformance. The public API surface across `selene-core`,
+`selene-graph`, `selene-persist`, `selene-gql`, and `selene-pack` was declared
+stable, with a stated plan to keep subsequent 1.x additions backward
+compatible. That policy was later retracted and is superseded by the
+[2.0 line and 1.x end-of-life policy](docs/v2/eol-and-version-policy.md).
 
 ### Highlights
 
@@ -1798,9 +2286,10 @@ This release introduces a full user-facing documentation set under
 The README is now focused on evaluation and orientation; depth lives in
 the documentation pages above.
 
-### Stability guarantees
+### Stability guarantees recorded at v1.0.0 (superseded)
 
-The following surfaces are stable starting with 1.0.0:
+The v1.0.0 release declared the following surfaces stable. These historical
+claims do not create current 1.x support or compatibility obligations:
 
 - Public types and traits in `selene-core` (`Value`, `IStr`,
   `PropertyMap`, `LabelSet`, `Change`, `Codec`).
@@ -1825,10 +2314,10 @@ The following surfaces are stable starting with 1.0.0:
 | macOS (Apple Silicon, Intel) | Primary development target |
 | Windows | Out of scope |
 
-### Known deferrals (post-1.0.0)
+### Known deferrals recorded at v1.0.0 (superseded)
 
-The following items are intentionally deferred and tracked for future
-1.x releases:
+The v1.0.0 release listed the following items as future 1.x work. This is a
+historical list, not a current commitment:
 
 - Louvain parallelization (currently sequential).
 - Edge-index planner support (typed/composite indexes for edges

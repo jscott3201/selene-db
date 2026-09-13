@@ -7,7 +7,7 @@ use selene_core::{DbString, NodeId};
 
 use super::{TextIndex, TextPosting, TextTerm, count_document_terms};
 
-pub(super) struct TextIndexBuilder {
+pub(crate) struct TextIndexBuilder {
     label: DbString,
     property: DbString,
     rows: RoaringBitmap,
@@ -46,7 +46,7 @@ impl TextIndexBuilder {
         }
     }
 
-    pub(super) fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
+    pub(crate) fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
         let (counts, len) = count_document_terms(text, |token| {
             intern_existing_builder_term(&self.postings, token)
         });
@@ -77,6 +77,7 @@ impl TextIndexBuilder {
         self.document_lengths.shrink_to_fit();
         self.document_terms.shrink_to_fit();
         TextIndex {
+            contract_version: super::contract::VERSION,
             label: self.label,
             property: self.property,
             rows: self.rows,

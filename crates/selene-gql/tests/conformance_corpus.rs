@@ -2,8 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::feature_register::{NOT_SUPPORTED_RATIONALE, SUPPORTED_FEATURES};
 use selene_gql::{ParserError, feature_walk, parse};
+use selene_profile::{CapabilityStatus, FeatureId, FlaggerStatus, capabilities, capability};
 use selene_testing::corpus::{CorpusKind, Expectation, load_default_corpus};
 
 #[test]
@@ -26,6 +26,14 @@ fn corpus_contracts_hold() {
                     .map(|feature| feature.feature_id)
                     .collect::<BTreeSet<_>>();
                 for feature in declared_features {
+                    assert_eq!(
+                        capability(feature)
+                            .expect("declared feature is generated")
+                            .flagger_status,
+                        FlaggerStatus::Accepted,
+                        "{}: positive feature {feature} is not Flagger-accepted",
+                        case.path.display()
+                    );
                     assert!(
                         observed.contains(&feature),
                         "{}: declared feature {feature} was not observed; observed {:?}",
@@ -48,6 +56,14 @@ fn corpus_contracts_hold() {
                     );
                 };
                 assert_eq!(feature_id, expected, "{}", case.path.display());
+                assert_eq!(
+                    capability(feature_id)
+                        .expect("rejected feature is generated")
+                        .flagger_status,
+                    FlaggerStatus::Rejected,
+                    "{}: Flagger-accepted feature was rejected",
+                    case.path.display()
+                );
             }
             (CorpusKind::Negative, Expectation::ParseRejectedSyntax) => {
                 let error = parse(&case.source).unwrap_err_or_else(|| {
@@ -70,16 +86,16 @@ fn corpus_contracts_hold() {
 }
 
 #[test]
-fn corpus_covers_feature_register() {
+fn corpus_covers_generated_flagger_capabilities() {
     let cases = load_default_corpus().expect("corpus loads");
     let positive = cases
         .iter()
         .filter(|case| case.kind == CorpusKind::Positive)
         .flat_map(|case| case.declared_features())
         .collect::<BTreeSet<_>>();
-    // Some claimed features have no independent parser surface and are only
-    // reachable behind an unclaimed feature that must reject first.
-    let blocked_supported = cases
+    // Some accepted features have no independent parser surface and are only
+    // reachable behind a feature that must reject first.
+    let blocked_accepted = cases
         .iter()
         .filter(|case| case.kind == CorpusKind::Negative)
         .flat_map(|case| case.also_covers.iter().copied())
@@ -90,23 +106,36 @@ fn corpus_covers_feature_register() {
         .flat_map(|case| case.declared_features())
         .collect::<BTreeSet<_>>();
 
-    let missing_supported = SUPPORTED_FEATURES
+    let missing_accepted = capabilities()
         .iter()
-        .copied()
-        .filter(|feature| !positive.contains(feature) && !blocked_supported.contains(feature))
+        .filter(|record| record.flagger_status == FlaggerStatus::Accepted)
+        .map(|record| record.id)
+        // Rust catalog-only facility: deliberately no GQL grammar or Flagger
+        // stamping site. Activation/write/reopen coverage is in the facade's
+        // composite_constraints integration tests, not a fabricated GQL clause.
+        .filter(|feature| *feature != FeatureId::IM_COMPOSITE_CONSTRAINTS)
+        .filter(|feature| !positive.contains(feature) && !blocked_accepted.contains(feature))
         .collect::<Vec<_>>();
     assert!(
-        missing_supported.is_empty(),
-        "missing positive corpus coverage for {:?}",
-        missing_supported
+        missing_accepted.is_empty(),
+        "missing parser-accepted corpus coverage for {:?}",
+        missing_accepted
             .iter()
             .map(|feature| feature.as_str())
             .collect::<Vec<_>>()
     );
 
-    let missing_rejected = NOT_SUPPORTED_RATIONALE
+    let missing_rejected = capabilities()
         .iter()
-        .map(|(feature, _)| *feature)
+        .filter(|record| {
+            record.flagger_status == FlaggerStatus::Rejected
+                && record.status == CapabilityStatus::Unsupported
+        })
+        .map(|record| record.id)
+        // The historical factory-reset extension remains a generated registry
+        // identity, but no source form stamps it after catalog DROP replaced
+        // that behavior. It therefore has no negative parser form to exercise.
+        .filter(|feature| *feature != FeatureId::IM_DROP_GRAPH)
         .filter(|feature| !negative.contains(feature))
         .collect::<Vec<_>>();
     assert!(
@@ -145,7 +174,10 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
         ("GA01-ieee754-arithmetic.gql", &["GA01"]),
         ("GA06-value-type-predicate.gql", &["GA06"]),
         ("GE07-xor.gql", &["GE07"]),
-        ("GH02-undirected-edge-pattern.gql", &["GH02"]),
+        ("GH02-undirected-edge-pattern.gql", &["G043", "GH02"]),
+        ("G043-complete-full-edge.gql", &["G043"]),
+        ("G044-basic-abbreviated-edge.gql", &["G044"]),
+        ("G045-complete-abbreviated-edge.gql", &["G045"]),
         ("GQ02-otherwise.gql", &["GQ02"]),
         ("GQ03-union.gql", &["GQ03"]),
         ("GQ08-filter.gql", &["GQ08"]),
@@ -165,6 +197,7 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
             ],
         ),
         ("GP01-inline-procedure.gql", &["GP01", "GP02", "GQ09"]),
+        ("GP04-named-procedure-call.gql", &["GP04"]),
         ("GQ18-value-subquery.gql", &["GQ13", "GQ18"]),
         ("GV45-record-literal.gql", &["GV45", "GV50"]),
         ("GV46-closed-record-type.gql", &["GA06", "GV45", "GV46"]),
@@ -178,6 +211,9 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
         // IM_UUID; both are observed here.
         ("IMU-uuid-cast.gql", &["GA05", "IM_UUID"]),
         ("IMJ-json-functions.gql", &["IM_JSON"]),
+        // OR REPLACE rides on GC04 (ISO section 12.4 CR1); it must add no
+        // stamp of its own.
+        ("GC04-create-or-replace-graph.gql", &["GC04", "GG01"]),
     ];
 
     let cases = load_default_corpus().expect("corpus loads");

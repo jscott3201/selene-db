@@ -97,28 +97,46 @@ fn parse_finish_terminator() {
 
 #[test]
 fn parse_graph_ddl() {
-    // CREATE GRAPH stays parse-rejected under D1 single-graph (GC04 unsupported
-    // — cannot create a second graph).
     for source in [
-        "CREATE GRAPH foo",
-        "CREATE GRAPH IF NOT EXISTS foo",
         "CREATE GRAPH foo ANY",
+        "CREATE GRAPH IF NOT EXISTS foo ANY",
         "CREATE GRAPH foo TYPED fooType",
         "CREATE GRAPH foo ::fooType",
+    ] {
+        let DdlStatement::CreateGraph {
+            reference,
+            if_not_exists,
+            ..
+        } = parse_ddl(source)
+        else {
+            panic!("expected CREATE GRAPH DDL for {source}");
+        };
+        assert_eq!(reference.leaf().name.as_str(), "foo");
+        assert_eq!(if_not_exists, source.contains("IF NOT EXISTS"), "{source}");
+    }
+    for source in [
         "CREATE GRAPH /foo LIKE /bar",
         "CREATE GRAPH foo ANY AS COPY OF bar",
         "CREATE GRAPH foo {(Person :Person {name STRING})}",
     ] {
-        let error = parse(source).expect_err(source);
+        let error = selene_gql::parse(source).expect_err(source);
         assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }
-    // DROP GRAPH now parses (BRIEF-152): it is the IM_DROP_GRAPH factory-reset
-    // extension, reaching the executor instead of dying in the flagger. Under
-    // D1 the parsed name is informational and IF EXISTS is trivially satisfied.
-    for source in ["DROP GRAPH foo", "DROP GRAPH IF EXISTS foo"] {
-        let DdlStatement::DropGraph { if_exists, .. } = parse_ddl(source) else {
+    for source in ["CREATE GRAPH foo", "CREATE GRAPH IF NOT EXISTS foo"] {
+        let error = selene_gql::parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus(), GqlStatus::SYNTAX_ERROR);
+    }
+    for source in ["DROP GRAPH foo", "DROP GRAPH IF EXISTS /s/foo"] {
+        let DdlStatement::DropGraph {
+            reference,
+            if_exists,
+            ..
+        } = parse_ddl(source)
+        else {
             panic!("expected DROP GRAPH DDL for {source}");
         };
+        assert_eq!(reference.leaf().name.as_str(), "foo");
+        assert_eq!(reference.absolute, source.contains("/s/"), "{source}");
         assert_eq!(if_exists, source.contains("IF EXISTS"), "{source}");
     }
 }
@@ -398,8 +416,8 @@ fn deferred_surfaces_return_not_implemented() {
 #[test]
 fn removed_non_iso_grammar_is_syntax_error() {
     // Triggers, materialized views, procedure DDL, and auth (users/roles/grants)
-    // are out of spec entirely (auth = embedder concern D1; procedures are native
-    // built-ins; triggers/views are not in the D1 claim list). They have no
+    // are out of spec entirely (auth is an embedder concern; procedures are native
+    // built-ins; triggers/views have no ISO GQL feature IDs). They have no
     // ISO equivalent and were removed from the grammar, so they now fail to
     // parse with SYNTAX_ERROR (42601) rather than FEATURE_NOT_SUPPORTED.
     for source in [

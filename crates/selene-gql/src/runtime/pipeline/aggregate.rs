@@ -4,35 +4,60 @@ use selene_core::Value;
 use crate::{
     Aggregate, GqlStatus, SourceSpan,
     runtime::{
-        Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError,
-        ExecutorWarning, evaluator, value_compare, value_key::RuntimeEqKey,
+        Binding, BindingTableSchema, EvalCtx, ExecutorError, ExecutorWarning, evaluator,
+        value_compare, value_key::RuntimeEqKey,
     },
 };
 
 mod numeric;
 
 use self::numeric::{
-    NumericSum, Welford, add_numeric, avg_to_value, count_to_value, data_exception_value,
-    percentile_cont_to_value, percentile_disc_to_value, percentile_numeric_to_f64,
-    percentile_value, stddev_pop_to_value, stddev_samp_to_value,
+    NumericSum, Welford, add_numeric, avg_to_value, count_to_value, percentile_cont_to_value,
+    percentile_disc_to_value, percentile_numeric_to_f64, percentile_value, stddev_pop_to_value,
+    stddev_samp_to_value,
 };
 
-pub(super) struct AggregateSlot<'plan> {
+/// One aggregate application with its running state and `DISTINCT` set.
+///
+/// Shared with the batch group operator so batch accumulation runs the same
+/// state transitions, null elimination, `DISTINCT` handling, and
+/// finalization (including type promotion and specified empty-group
+/// results) as the row path, from the same analyzed [`Aggregate`]
+/// descriptor. The grouping loop itself stays native to each engine.
+pub(crate) struct AggregateSlot<'plan> {
     aggregate: &'plan Aggregate,
     state: AggregateState,
     seen: FxHashSet<RuntimeEqKey>,
+    domain: crate::runtime::comparison_domain::ComparisonDomain,
 }
 
 impl<'plan> AggregateSlot<'plan> {
-    pub(super) fn new(aggregate: &'plan Aggregate) -> Result<Self, ExecutorError> {
+    /// Classify `aggregate` and build its empty state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ImplementationDefined` for star/arity shapes the executor
+    /// does not implement.
+    pub(crate) fn new(aggregate: &'plan Aggregate) -> Result<Self, ExecutorError> {
         Ok(Self {
             aggregate,
             state: AggregateState::new(classify(aggregate)?),
             seen: FxHashSet::default(),
+            domain: Default::default(),
         })
     }
 
-    pub(super) fn observe(
+    /// Observe one input row: evaluate the argument, eliminate nulls (with
+    /// the shared `NULL_VALUE_ELIMINATED_IN_SET_FUNCTION` warning),
+    /// deduplicate `DISTINCT` arguments, and advance the state.
+    ///
+    /// `COUNT(*)` counts rows without evaluating an argument, exactly as on
+    /// the row path.
+    ///
+    /// # Errors
+    ///
+    /// Returns evaluation, domain, and numeric data exceptions unchanged.
+    pub(crate) fn observe(
         &mut self,
         row: &Binding,
         schema: &BindingTableSchema,
@@ -70,6 +95,10 @@ impl<'plan> AggregateSlot<'plan> {
             return Ok(());
         }
         if self.aggregate.distinct {
+            self.domain.observe(
+                std::slice::from_ref(&value),
+                selene_core::ComparisonMode::Distinctness,
+            )?;
             let key = RuntimeEqKey::from_row(vec![value.clone()]);
             if !self.seen.insert(key) {
                 return Ok(());
@@ -78,12 +107,23 @@ impl<'plan> AggregateSlot<'plan> {
         self.state.observe(Some(value), self.aggregate.span)
     }
 
-    pub(super) fn finalize_value(self) -> Result<Value, ExecutorError> {
+    /// Finalize the running state into the aggregate result value,
+    /// preserving the specified empty-group results (`COUNT` zero, `SUM`
+    /// zero, `AVG`/`MIN`/`MAX`/deviations null, `COLLECT_LIST` empty).
+    ///
+    /// # Errors
+    ///
+    /// Returns the numeric range errors the final conversion can raise.
+    pub(crate) fn finalize_value(self) -> Result<Value, ExecutorError> {
         self.state.finalize(self.aggregate.span)
     }
 }
 
-pub(super) fn output_names(aggregate: &Aggregate) -> Vec<selene_core::DbString> {
+/// Output column names for one aggregate application.
+///
+/// Shared with the batch group operator so both engines describe the same
+/// synthesized columns.
+pub(crate) fn output_names(aggregate: &Aggregate) -> Vec<selene_core::DbString> {
     vec![aggregate.output_name.clone()]
 }
 
@@ -327,17 +367,24 @@ fn update_min_max(
     let next = next.ok_or(ExecutorError::ImplementationDefined {
         detail: "aggregate value missing",
     })?;
+    crate::runtime::comparison_domain::ensure_pair(
+        &next,
+        &next,
+        selene_core::ComparisonMode::Ordering,
+        span,
+    )?;
     let Some(current_value) = current else {
         *current = Some(next);
         return Ok(());
     };
-    let ordering = value_compare::compare_non_null(&next, current_value).ok_or_else(|| {
-        data_exception_value(
-            DataExceptionSubclass::ValuesNotComparable,
-            "aggregate value is not order-comparable",
-            span,
-        )
-    })?;
+    crate::runtime::comparison_domain::ensure_pair(
+        &next,
+        current_value,
+        selene_core::ComparisonMode::Ordering,
+        span,
+    )?;
+    let ordering =
+        value_compare::compare_for_sort(&next, current_value, value_compare::NullSortOrder::Last);
     if (keep_min && ordering.is_lt()) || (!keep_min && ordering.is_gt()) {
         *current_value = next;
     }

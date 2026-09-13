@@ -8,8 +8,8 @@
 //! iteration. Tie-break is smallest label ID (spec 16 §E30). Converges when
 //! no labels change in an iteration, or `max_iter` reached.
 //!
-//! State arrays sized by live-node count via `RowIndex` (§E26). Unit weights
-//! only — donor pattern; weighted variants deferred to v1.x per §E25 / §J Q5.
+//! State arrays sized by live-node count via `RowIndex` (§E26). Only unit
+//! weights are implemented; weighted variants are not supported.
 
 use selene_core::{CancellationChecker, NodeId};
 
@@ -64,16 +64,8 @@ pub fn label_propagation_with_checker(
             check_algorithm_stride(checker, &mut rows_since_check)?;
             touched_labels.clear();
 
-            // Multiplicity-faithful: count each directed half-edge separately
-            // per §E25. Parallel edges therefore contribute multiple times.
-            for nb in proj.out_neighbors_dense(d) {
-                bump_label_count(
-                    labels[nb.dense as usize],
-                    &mut label_counts,
-                    &mut touched_labels,
-                );
-            }
-            for nb in proj.in_neighbors_dense(d) {
+            // Count logical incidence once; distinct parallel IDs still vote.
+            for nb in proj.incident_neighbors_dense(d) {
                 bump_label_count(
                     labels[nb.dense as usize],
                     &mut label_counts,

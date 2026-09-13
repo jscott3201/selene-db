@@ -5,10 +5,10 @@
 //! summarizing the inconsistencies it found; the orchestration and row shaping
 //! live in the parent [`super`] module.
 
-use selene_core::{DbString, DurationOrderKey, EdgeId, NodeId, Value, duration_order_key};
+use selene_core::{DbString, DurationOrderKey, Value, duration_order_key};
 use selene_graph::{
-    AdjacencyEntry, CompositeKey, CompositeKeyComponent, CompositeTypedIndex, NotNanF32, NotNanF64,
-    RowIndex, SeleneGraph, TypedIndex,
+    CompositeKey, CompositeKeyComponent, CompositeTypedIndex, NotNanF32, NotNanF64, SeleneGraph,
+    TypedIndex,
 };
 
 use super::CheckResult;
@@ -35,7 +35,7 @@ pub(super) fn check_label_index_cardinality(snapshot: &SeleneGraph) -> CheckResu
         }
     }
 
-    for row in snapshot.live_nodes() {
+    for row in snapshot.node_store.alive.iter() {
         let Some(labels) = snapshot.node_store.labels.get(row as usize) else {
             issues += 1;
             continue;
@@ -43,7 +43,8 @@ pub(super) fn check_label_index_cardinality(snapshot: &SeleneGraph) -> CheckResu
         for label in labels.iter() {
             expected_rows += 1;
             if !snapshot
-                .nodes_with_label(label)
+                .idx_label
+                .get(label)
                 .is_some_and(|bitmap| bitmap.contains(row))
             {
                 issues += 1;
@@ -69,7 +70,7 @@ pub(super) fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResu
 
     for ((label, property), entry) in &snapshot.property_index {
         indexed_rows += entry.index.cardinality();
-        for row in snapshot.live_nodes() {
+        for row in snapshot.node_store.alive.iter() {
             let Some(labels) = snapshot.node_store.labels.get(row as usize) else {
                 issues += 1;
                 continue;
@@ -84,7 +85,14 @@ pub(super) fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResu
             let Some(value) = properties.get(property) else {
                 continue;
             };
-            if let Some(bitmap) = snapshot.nodes_with_property_eq(label, property, value) {
+            // Audit the index against its column, so probe the entry directly
+            // rather than through `SeleneGraph::nodes_with_property_eq`. That
+            // accessor declines once the index omits rows it cannot key, which
+            // is right for queries and wrong here: every row would return
+            // `None`, `expected_rows` would stay 0 against a non-zero
+            // `indexed_rows`, and the tally below would report one issue per
+            // indexed row on an index that is behaving as designed.
+            if let Some(bitmap) = entry.lookup_eq_ignoring_drift(value) {
                 expected_rows += 1;
                 if !bitmap.contains(row) {
                     issues += 1;
@@ -94,7 +102,7 @@ pub(super) fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResu
     }
     for ((label, _), entry) in &snapshot.composite_property_index {
         indexed_rows += entry.index.cardinality();
-        for row in snapshot.live_nodes() {
+        for row in snapshot.node_store.alive.iter() {
             let Some(labels) = snapshot.node_store.labels.get(row as usize) else {
                 issues += 1;
                 continue;
@@ -131,161 +139,44 @@ pub(super) fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResu
     if indexed_rows != expected_rows {
         issues += indexed_rows.abs_diff(expected_rows) as usize;
     }
+    // Drift is counted into the detail but never into `issues` (#1102). A
+    // demoted index is not corrupt — it declines every probe and callers fall
+    // back to a scan, so queries still return the same rows — and this is a
+    // corruption audit. Reporting it as an issue would make `selene.verify`
+    // cry wolf on a graph behaving exactly as designed. Reporting it nowhere
+    // was the other failure: the audit then actively confirmed health for an
+    // index answering nothing from its own bitmaps. `selene.property_index_stats`
+    // is the surface for acting on this; the detail here is so an operator
+    // already running verify is not told a half-truth.
+    let drifted_rows = snapshot
+        .iter_property_index_stats()
+        .fold(0_u64, |total, row| total.saturating_add(row.drifted_rows));
     CheckResult::new(
         issues,
         format!(
-            "indexed property rows={indexed_rows}; expected property rows={expected_rows}; issues={issues}"
+            "indexed property rows={indexed_rows}; expected property rows={expected_rows}; \
+             drifted rows={drifted_rows}; issues={issues}"
         ),
     )
-}
-
-pub(super) fn check_adjacency_symmetry(snapshot: &SeleneGraph) -> CheckResult {
-    let mut issues = 0_usize;
-    let mut outgoing_edges = 0_usize;
-    let mut incoming_edges = 0_usize;
-    let mut live_edges = 0_usize;
-
-    for (source, entry) in &snapshot.adjacency_out {
-        for edge in entry.iter() {
-            outgoing_edges += 1;
-            if !snapshot.is_node_alive(*source) || !snapshot.is_node_alive(edge.neighbor) {
-                issues += 1;
-            }
-            match expected_edge(snapshot, edge.edge_id) {
-                Some((actual_source, actual_target, actual_label)) => {
-                    if actual_source != *source || actual_target != edge.neighbor {
-                        issues += 1;
-                    }
-                    if actual_label != edge.label {
-                        issues += 1;
-                    }
-                }
-                None => {
-                    issues += 1;
-                }
-            }
-            if !snapshot
-                .incoming_edges(edge.neighbor)
-                .is_some_and(|incoming| {
-                    incoming.iter().any(|candidate| {
-                        candidate.edge_id == edge.edge_id
-                            && candidate.neighbor == *source
-                            && candidate.label == edge.label
-                    })
-                })
-            {
-                issues += 1;
-            }
-        }
-    }
-
-    for (target, entry) in &snapshot.adjacency_in {
-        for edge in entry.iter() {
-            incoming_edges += 1;
-            if !snapshot.is_node_alive(*target) || !snapshot.is_node_alive(edge.neighbor) {
-                issues += 1;
-            }
-            match expected_edge(snapshot, edge.edge_id) {
-                Some((actual_source, actual_target, actual_label)) => {
-                    if actual_source != edge.neighbor || actual_target != *target {
-                        issues += 1;
-                    }
-                    if actual_label != edge.label {
-                        issues += 1;
-                    }
-                }
-                None => {
-                    issues += 1;
-                }
-            }
-            if !snapshot
-                .outgoing_edges(edge.neighbor)
-                .is_some_and(|outgoing| {
-                    outgoing.iter().any(|candidate| {
-                        candidate.edge_id == edge.edge_id
-                            && candidate.neighbor == *target
-                            && candidate.label == edge.label
-                    })
-                })
-            {
-                issues += 1;
-            }
-        }
-    }
-
-    for row in snapshot.edge_store.alive.iter() {
-        live_edges += 1;
-        let Some(edge_id) = snapshot.edge_id_for_row(RowIndex::new(row)) else {
-            issues += 1;
-            continue;
-        };
-        let Some((source, target, label)) = expected_edge(snapshot, edge_id) else {
-            issues += 1;
-            continue;
-        };
-        if !adjacency_entry_contains(
-            snapshot.outgoing_edges(source),
-            target,
-            edge_id,
-            label.clone(),
-        ) {
-            issues += 1;
-        }
-        if !adjacency_entry_contains(snapshot.incoming_edges(target), source, edge_id, label) {
-            issues += 1;
-        }
-    }
-
-    if outgoing_edges != live_edges {
-        issues += outgoing_edges.abs_diff(live_edges);
-    }
-    if incoming_edges != live_edges {
-        issues += incoming_edges.abs_diff(live_edges);
-    }
-    CheckResult::new(
-        issues,
-        format!(
-            "live edges={live_edges}; outgoing adjacency edges={outgoing_edges}; incoming adjacency edges={incoming_edges}; issues={issues}"
-        ),
-    )
-}
-
-fn expected_edge(snapshot: &SeleneGraph, edge_id: EdgeId) -> Option<(NodeId, NodeId, DbString)> {
-    let (source, target) = snapshot.edge_endpoints(edge_id)?;
-    let label = snapshot.edge_label(edge_id)?.clone();
-    Some((source, target, label))
-}
-
-fn adjacency_entry_contains(
-    entry: Option<&AdjacencyEntry>,
-    neighbor: NodeId,
-    edge_id: EdgeId,
-    label: DbString,
-) -> bool {
-    entry.is_some_and(|entry| {
-        entry
-            .iter()
-            .any(|edge| edge.neighbor == neighbor && edge.edge_id == edge_id && edge.label == label)
-    })
 }
 
 pub(super) fn check_edge_endpoint_liveness(snapshot: &SeleneGraph) -> CheckResult {
     let mut issues = 0_usize;
     let mut checked = 0_usize;
 
-    for row in snapshot.edge_store.alive.iter() {
-        checked += 1;
-        let Some(edge_id) = snapshot.edge_id_for_row(RowIndex::new(row)) else {
-            issues += 1;
-            continue;
-        };
-        match snapshot.edge_endpoints(edge_id) {
-            Some((source, target))
-                if snapshot.is_node_alive(source) && snapshot.is_node_alive(target) => {}
-            _ => {
-                issues += 1;
+    if let Ok(live_edge_candidates) = snapshot.live_edge_candidates() {
+        for edge_id in live_edge_candidates.iter() {
+            checked += 1;
+            match snapshot.edge_endpoints(edge_id) {
+                Some((source, target))
+                    if snapshot.is_node_alive(source) && snapshot.is_node_alive(target) => {}
+                _ => {
+                    issues += 1;
+                }
             }
         }
+    } else {
+        issues += 1;
     }
 
     CheckResult::new(
@@ -332,7 +223,7 @@ pub(super) fn check_roaring_bitmap_density(snapshot: &SeleneGraph) -> CheckResul
     let mut issues = 0_usize;
     let mut bitmaps = 0_usize;
 
-    for bitmap in snapshot.idx_label.values() {
+    for (_, bitmap) in &snapshot.idx_label {
         bitmaps += 1;
         for row in bitmap {
             if !live_node_row(snapshot, row) {
@@ -340,7 +231,7 @@ pub(super) fn check_roaring_bitmap_density(snapshot: &SeleneGraph) -> CheckResul
             }
         }
     }
-    for bitmap in snapshot.idx_edge_label.values() {
+    for (_, bitmap) in &snapshot.idx_edge_label {
         bitmaps += 1;
         for row in bitmap {
             if !live_edge_row(snapshot, row) {

@@ -1,10 +1,10 @@
 use smallvec::SmallVec;
 
 use crate::{
-    Change, DbString, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId,
-    IvfIndexConfig, LabelDiff, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, NodeTypeRef,
-    PropertyDiff, PropertyMap, RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
-    SchemaVectorIndexKind,
+    Change, DbString, EdgeEndpointDef, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType,
+    GraphTypeId, IvfIndexConfig, LabelDiff, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1,
+    NodeTypeRef, PredefinedValueType, PropertyDef, PropertyDiff, PropertyMap, RecordTypeDef,
+    RecordTypeId, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind, ValueType,
 };
 
 impl Change {
@@ -25,6 +25,7 @@ impl Change {
         },
         || Self::NodeDeleted { id: NodeId::new(1) },
         || Self::EdgeCreated {
+            directionality: crate::EdgeDirectionality::Directed,
             id: EdgeId::new(1),
             label: changeset_variant_string("change.all.edge"),
             source: NodeId::new(1),
@@ -235,6 +236,18 @@ impl SchemaChange {
             label: changeset_variant_string("schema.all.edge"),
             property: changeset_variant_string("schema.all.edge.property"),
         },
+        || Self::NodeTypeAlteredV2 {
+            graph_type: changeset_graph_type_id(),
+            label: changeset_variant_string("schema.all.node.altered.v2"),
+            properties: SmallVec::from_vec(vec![changeset_property_def()]),
+        },
+        || Self::EdgeTypeAlteredV2 {
+            graph_type: changeset_graph_type_id(),
+            name: changeset_variant_string("schema.all.edge.altered.v2"),
+            source_node_type: Some(EdgeEndpointDef::Any),
+            target_node_type: None,
+            properties: SmallVec::from_vec(vec![changeset_property_def()]),
+        },
     ];
 
     /// Number of known [`SchemaChange`] variants in this build.
@@ -266,6 +279,8 @@ impl SchemaChange {
             Self::TextIndexDropped { .. } => "TextIndexDropped",
             Self::EdgePropertyIndexCreated { .. } => "EdgePropertyIndexCreated",
             Self::EdgePropertyIndexDropped { .. } => "EdgePropertyIndexDropped",
+            Self::NodeTypeAlteredV2 { .. } => "NodeTypeAlteredV2",
+            Self::EdgeTypeAlteredV2 { .. } => "EdgeTypeAlteredV2",
         }
     }
 }
@@ -283,4 +298,16 @@ fn changeset_graph_type() -> GraphType {
         changeset_graph_type_id(),
         changeset_variant_string("schema.all.graph_type"),
     )
+}
+
+fn changeset_property_def() -> PropertyDef {
+    PropertyDef {
+        name: changeset_variant_string("schema.all.node.altered.property"),
+        value_type: ValueType::predefined(PredefinedValueType::String),
+        nullable: true,
+        default: None,
+        immutable: false,
+        unique: false,
+        record_fields: None,
+    }
 }

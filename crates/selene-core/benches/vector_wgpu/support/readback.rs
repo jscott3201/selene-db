@@ -15,7 +15,13 @@ impl WgpuBench {
         });
         self.poll(submission)?;
         recv_map_result(rx)?;
-        let mapped = slice.get_mapped_range();
+        let mapped = match slice.get_mapped_range() {
+            Ok(mapped) => mapped,
+            Err(error) => {
+                self.readback_buffer.unmap();
+                return Err(format!("readback mapped range failed: {error}"));
+            }
+        };
         fill_f32(scores, &mapped);
         drop(mapped);
         self.readback_buffer.unmap();
@@ -44,8 +50,23 @@ impl WgpuBench {
         self.poll(submission)?;
         recv_map_result(distance_rx)?;
         recv_map_result(index_rx)?;
-        let mapped_distances = distance_slice.get_mapped_range();
-        let mapped_indices = index_slice.get_mapped_range();
+        let mapped_distances = match distance_slice.get_mapped_range() {
+            Ok(mapped) => mapped,
+            Err(error) => {
+                self.partial_index_readback_buffer.unmap();
+                self.partial_distance_readback_buffer.unmap();
+                return Err(format!("distance readback mapped range failed: {error}"));
+            }
+        };
+        let mapped_indices = match index_slice.get_mapped_range() {
+            Ok(mapped) => mapped,
+            Err(error) => {
+                drop(mapped_distances);
+                self.partial_index_readback_buffer.unmap();
+                self.partial_distance_readback_buffer.unmap();
+                return Err(format!("index readback mapped range failed: {error}"));
+            }
+        };
         fill_f32(distances, &mapped_distances);
         fill_u32(indices, &mapped_indices);
         drop(mapped_indices);
@@ -71,7 +92,13 @@ impl WgpuBench {
         });
         self.poll(submission)?;
         recv_map_result(rx)?;
-        let mapped = slice.get_mapped_range();
+        let mapped = match slice.get_mapped_range() {
+            Ok(mapped) => mapped,
+            Err(error) => {
+                self.partial_hit_readback_buffer.unmap();
+                return Err(format!("partial-hit readback mapped range failed: {error}"));
+            }
+        };
         fill_partial_hits(distances, indices, &mapped);
         drop(mapped);
         self.partial_hit_readback_buffer.unmap();

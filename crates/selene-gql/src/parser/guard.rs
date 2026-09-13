@@ -2,6 +2,21 @@
 
 use crate::{SourceSpan, error::ParserError};
 
+mod backtracking;
+mod braces;
+mod name_slots;
+mod numeric;
+mod parsed;
+mod query_frames;
+mod quoted;
+mod type_names;
+mod value_queries;
+pub(super) use parsed::{RetryCheck, validate, validate_parsed};
+use quoted::{
+    skip_backtick_quoted, skip_double_quoted, skip_identifier_quoted, skip_no_escape_quoted,
+    skip_single_quoted,
+};
+
 /// Maximum syntactic nesting depth admitted by the parser.
 ///
 /// This bounds pest recursion on hostile malformed expressions while leaving
@@ -40,9 +55,9 @@ pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 /// cap, by contrast, would reject a legitimate ten-hop fixed path purely for
 /// its opener count.) The cap of 32 is an order of magnitude above the deepest
 /// legitimate `[` nesting anywhere in the workspace (3, a `[[[1]]]` literal)
-/// and comfortably below the ~57-deep empirical blow-up point. `(` and `{`
-/// nesting is not a demonstrated backtracking vector (the fuzz corpus contains
-/// only `[`) and is bounded by [`MAX_NESTING_DEPTH`] alone.
+/// and comfortably below the ~57-deep empirical blow-up point. Bare nested-query
+/// braces have a separate backtracking bound in [`braces`]; ordinary record,
+/// `EXISTS` and parenthesis nesting retain [`MAX_NESTING_DEPTH`].
 pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 
 /// Maximum zero-delimiter recursive-descent depth admitted by the parser.
@@ -139,7 +154,10 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 /// of any kind anywhere in the workspace is 3.
 pub(crate) const MAX_RECURSION_DEPTH: u32 = 256;
 
-pub(super) fn validate(source: &str) -> Result<(), ParserError> {
+fn validate_with_quotes(
+    source: &str,
+    mut quote_end: impl FnMut(usize) -> Option<usize>,
+) -> Result<RetryCheck, ParserError> {
     let bytes = source.as_bytes();
     // Index of the final `'` in the input. A single-quoted string treats `\'`
     // as an escaped quote ONLY when a later `'` exists (pest `escaped_quote`);
@@ -154,6 +172,9 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let mut index = 0;
     let mut depth = 0_u32;
     let mut list_depth = 0_u32;
+    let mut braces = braces::BareQueryDepth::default();
+    let mut backtracking = backtracking::BacktrackingDepth::default();
+    let mut queries = query_frames::QueryFrames::default();
     // Recursion-pressure counters (see `MAX_RECURSION_DEPTH`). Their SUM with
     // `depth` is the bounded quantity: it tracks the native stack depth at the
     // current position. pest treats comments as whitespace, so a comment between
@@ -175,15 +196,29 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     // is not in an identifier position — see the word arm.
     let mut case_depth = 0_u32;
     // Lookbehind for the word classifier. `prev_sig_byte` is the last
-    // *significant* (non-whitespace, non-comment) byte; only `.`/`$` matter (a
-    // word right after them is a `prop_ident`/`param_ref` identifier, never the
-    // keyword). `prev_word` is the last significant *keyword word* that admits an
-    // identifier after it (`AS <alias>`, `YIELD <item>`); a word right after one
-    // of those is an identifier. Both are left UNCHANGED by whitespace/comment.
+    // *significant* (non-whitespace, non-comment) byte. `.`/`$` identify a
+    // following `prop_ident`/`param_ref`; `i` is the internal marker for a real
+    // `IN` keyword so a following `[` can open a retry frame. Query entry and
+    // field-name positions are tracked by `queries`. `prev_word` is the last
+    // significant *keyword word* that admits
+    // an identifier after it (`AS <alias>`, `YIELD <item>`); a word right after
+    // one of those is an identifier. Both are unchanged by whitespace/comments.
     let mut prev_sig_byte: Option<u8> = None;
     let mut prev_word = PrevWord::Other;
 
     while index < bytes.len() {
+        let parsed_quote_end = quote_end(index);
+        let observed = queries
+            .observe(
+                source,
+                index,
+                prev_sig_byte,
+                matches!(prev_word, PrevWord::As | PrevWord::Yield),
+            )
+            .map_err(|error| ParserError::ComplexityLimitExceeded {
+                limit: error.limit,
+                span: point_span(index),
+            })?;
         match bytes[index] {
             // Quoted string/identifier spans are primaries for guard purposes:
             // they reset the unary and `NOT` runs (a primary terminates a
@@ -216,6 +251,14 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 prev_word = PrevWord::Other;
                 prev_sig_byte = Some(b'\'');
                 index = skip_single_quoted(bytes, index + 1, last_single_quote);
+            }
+            b'"' | b'`' if parsed_quote_end.is_some() || observed.quoted_identifier => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(bytes[index]);
+                index = parsed_quote_end
+                    .unwrap_or_else(|| skip_identifier_quoted(bytes, index + 1, bytes[index]));
             }
             b'"' => {
                 sign_run = 0;
@@ -250,6 +293,11 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             // expression is the operand of any enclosing unary chain, which
             // stays open and must keep counting toward the combined cap.
             b'(' | b'{' => {
+                if bytes[index] == b'{' {
+                    braces.open(prev_sig_byte == Some(b'{'), index)?;
+                    let retries = prev_sig_byte == Some(b'{') || observed.query_brace;
+                    backtracking.open(b'{', retries, index);
+                }
                 depth += 1;
                 prev_word = PrevWord::Other;
                 prev_sig_byte = Some(bytes[index]);
@@ -267,6 +315,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 }
             }
             b'[' => {
+                backtracking.open(b'[', prev_sig_byte == Some(b'i'), index);
                 // `[` is the demonstrated super-linear backtracking vector, so
                 // it carries the tighter dedicated depth cap on top of the
                 // shared nesting cap. Check the tighter cap first so a deeply
@@ -300,6 +349,10 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             // chain that wrapped it (if any) is now complete: reset both runs.
             // `case_depth` is NOT touched — a `)` closes a paren, not a `CASE`.
             b')' | b'}' => {
+                if bytes[index] == b'}' {
+                    braces.close();
+                    backtracking.close(b'{');
+                }
                 depth = depth.saturating_sub(1);
                 sign_run = 0;
                 not_run = 0;
@@ -307,6 +360,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 prev_sig_byte = Some(bytes[index]);
             }
             b']' => {
+                backtracking.close(b'[');
                 depth = depth.saturating_sub(1);
                 list_depth = list_depth.saturating_sub(1);
                 sign_run = 0;
@@ -332,6 +386,18 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             // Whitespace is transparent to all counters and lookbehind (pest
             // skips it), so it leaves every counter and `prev_*` UNCHANGED.
             b' ' | b'\t' | b'\r' | b'\n' => {}
+            // Consume numeric literals as one token. Numeric grammar permits an
+            // immediately adjacent keyword (`0.IN[`, `0min[`, `0e0in[`,
+            // `0x0in[`), so scanning digits byte-by-byte can either mistake the
+            // decimal point for property access or absorb a suffix into `IN`.
+            byte if byte.is_ascii_digit() => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(b'n');
+                index = numeric::scan(bytes, index);
+                continue;
+            }
             // An identifier-start byte begins a whole word. UTF-8 lead/continuation
             // bytes (>= 0x80) route here too so a Unicode identifier (`éCASE`) is
             // consumed whole and never mis-segments its ASCII tail as a keyword.
@@ -356,6 +422,10 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                     || matches!(prev_word, PrevWord::As | PrevWord::Yield)
                     || next_sig_is_colon(bytes, word_end);
                 let class = classify_word(&source[index..word_end]);
+                let retry_keyword = match &class {
+                    WordClass::In if !in_ident_pos => b'i',
+                    _ => b'w',
+                };
                 match class {
                     WordClass::Not if !in_ident_pos => {
                         not_run += 1;
@@ -412,8 +482,9 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         _ => PrevWord::Other,
                     }
                 };
-                // The word itself is now the predecessor — a non-`.`/`$` byte.
-                prev_sig_byte = Some(b'w');
+                // Preserve IN candidates for the delimiter arms; every
+                // other word is a generic non-`.`/`$` predecessor.
+                prev_sig_byte = Some(retry_keyword);
                 index = word_end;
                 continue;
             }
@@ -431,7 +502,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
         index += 1;
     }
 
-    Ok(())
+    Ok(RetryCheck(backtracking.error))
 }
 
 /// Whether the combined recursion pressure exceeds [`MAX_RECURSION_DEPTH`].
@@ -460,6 +531,8 @@ fn next_is(bytes: &[u8], index: usize, expected: u8) -> bool {
 /// Only the keywords the guard reacts to are distinguished; everything else
 /// (including all non-keyword identifiers) is [`WordClass::Other`].
 enum WordClass {
+    /// `IN` — may introduce a list-literal predicate wrapper.
+    In,
     /// `NOT` — a unary-run opener.
     Not,
     /// `CASE` — opens a (monotone) nested-`CASE` frame.
@@ -528,7 +601,9 @@ fn scan_word_chars(source: &str, start: usize) -> usize {
 /// Classify a complete identifier word (ASCII-case-insensitively, matching the
 /// `^"…"` case-insensitive keyword rules).
 fn classify_word(word: &str) -> WordClass {
-    if word.eq_ignore_ascii_case("NOT") {
+    if word.eq_ignore_ascii_case("IN") {
+        WordClass::In
+    } else if word.eq_ignore_ascii_case("NOT") {
         WordClass::Not
     } else if word.eq_ignore_ascii_case("CASE") {
         WordClass::Case
@@ -564,67 +639,6 @@ fn next_sig_is_colon(bytes: &[u8], from: usize) -> bool {
         }
     }
     false
-}
-
-fn skip_single_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>) -> usize {
-    while index < bytes.len() {
-        match bytes[index] {
-            // `\'` where the `'` is the final quote in the input is a *dangling*
-            // escape (pest `dangling_escape`): the `\` is literal and the `'`
-            // closes the string. Return the `'` position so the scan resumes
-            // after it and still counts any following brackets — matching pest,
-            // which closes the string here too. Any other `\X` (including a
-            // `\'` with a later quote — pest `escaped_quote`) escapes one byte.
-            b'\\' if bytes.get(index + 1) == Some(&b'\'') && Some(index + 1) == last_quote => {
-                return index + 1;
-            }
-            b'\\' => index += 2,
-            b'\'' if next_is(bytes, index, b'\'') => index += 2,
-            b'\'' => return index,
-            _ => index += 1,
-        }
-    }
-    bytes.len()
-}
-
-fn skip_double_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>) -> usize {
-    while index < bytes.len() {
-        match bytes[index] {
-            b'\\' if bytes.get(index + 1) == Some(&b'"') && Some(index + 1) == last_quote => {
-                return index + 1;
-            }
-            b'\\' => index += 2,
-            b'"' if next_is(bytes, index, b'"') => index += 2,
-            b'"' => return index,
-            _ => index += 1,
-        }
-    }
-    bytes.len()
-}
-
-fn skip_no_escape_quoted(bytes: &[u8], mut index: usize, delimiter: u8) -> usize {
-    while index < bytes.len() {
-        if bytes[index] == delimiter {
-            return index;
-        }
-        index += 1;
-    }
-    bytes.len()
-}
-
-fn skip_backtick_quoted(bytes: &[u8], mut index: usize, last_backtick: Option<usize>) -> usize {
-    while index < bytes.len() {
-        match bytes[index] {
-            b'\\' if bytes.get(index + 1) == Some(&b'`') && Some(index + 1) == last_backtick => {
-                return index + 1;
-            }
-            b'\\' => index += 2,
-            b'`' if next_is(bytes, index, b'`') => index += 2,
-            b'`' => return index,
-            _ => index += 1,
-        }
-    }
-    bytes.len()
 }
 
 fn skip_line_comment(bytes: &[u8], mut index: usize) -> usize {

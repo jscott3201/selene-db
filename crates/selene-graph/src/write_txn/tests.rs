@@ -5,7 +5,7 @@ use selene_core::{Change, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueT
 
 use crate::{
     GraphTypeDef, IndexProvider, NodeTypeDef, PropertyTypeDef, ProviderError, ProviderTag,
-    SharedGraph, SubTag, ValidationMode,
+    SharedGraph, ValidationMode,
 };
 
 fn db_string(value: &str) -> selene_core::DbString {
@@ -86,14 +86,6 @@ impl IndexProvider for PanicOnSecondChangeProvider {
         self.tag
     }
 
-    fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
-        Ok(())
-    }
-
-    fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
-        Ok(Vec::new())
-    }
-
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
         self.seen.lock().push((self.tag, change.clone()));
         let mut calls = self.calls.lock();
@@ -101,23 +93,11 @@ impl IndexProvider for PanicOnSecondChangeProvider {
         assert_ne!(*calls, 2, "synthetic provider panic on the second change");
         Ok(())
     }
-
-    fn declared_sub_tags(&self) -> &[SubTag] {
-        &[]
-    }
 }
 
 impl IndexProvider for RecordingProvider {
     fn provider_tag(&self) -> ProviderTag {
         self.tag
-    }
-
-    fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
-        Ok(())
-    }
-
-    fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
-        Ok(Vec::new())
     }
 
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
@@ -129,10 +109,6 @@ impl IndexProvider for RecordingProvider {
         } else {
             Ok(())
         }
-    }
-
-    fn declared_sub_tags(&self) -> &[SubTag] {
-        &[]
     }
 }
 
@@ -312,7 +288,7 @@ fn rollback_after_panic_during_mutation() {
 }
 
 #[test]
-fn rollback_after_panic_during_meta_bump() {
+fn rollback_after_counter_exhaustion_during_meta_bump() {
     let mut graph = crate::SeleneGraph::new(GraphId::new(1));
     graph.meta.generation = u64::MAX;
     let shared = Arc::new(SharedGraph::from_graph(graph));
@@ -327,10 +303,15 @@ fn rollback_after_panic_during_meta_bump() {
                 .create_node(LabelSet::new(), PropertyMap::new())
                 .expect("create_node succeeds");
         }
-        let _ = txn.commit();
+        txn.commit()
     }));
 
-    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap(),
+        Err(crate::GraphError::CounterExhausted {
+            kind: "graph generation"
+        })
+    ));
     assert_eq!(shared.read().node_count(), pre_count);
     assert_eq!(shared.read().meta.generation, u64::MAX);
     let txn = shared.begin_write();
@@ -652,3 +633,4 @@ fn concurrent_writers_serialize() {
 /// completes regardless. The `chained_count` increments only if the
 /// nested write completes; it must stay at 0.
 mod provider_tests;
+mod unpublished;

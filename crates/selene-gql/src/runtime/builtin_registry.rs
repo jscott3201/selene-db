@@ -47,12 +47,15 @@
 //! `selene.text_score_candidate_state_nodes`,
 //! `selene.text_score_candidate_state_expanded_batch`,
 //! `selene.reciprocal_rank_fusion`) are registered here,
-//! bringing the total to 68;
+//! bringing the total to 69;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
 
 use std::collections::HashMap;
+
+#[path = "native_declarations.rs"]
+mod native_declarations;
 
 use selene_core::{DbString, GraphId, Value, db_string};
 
@@ -89,6 +92,8 @@ pub struct BuiltinProcedureRegistry {
     ordered: Vec<(Vec<DbString>, ProcedureMetadata)>,
     /// Engine-internal, per-`GraphId`, ephemeral projection catalogs.
     catalogs: AlgorithmCatalogs,
+    /// Canonical immutable declarations normalized from the same closed specs.
+    declarations: Vec<selene_catalog::CatalogDescriptor>,
 }
 
 impl BuiltinProcedureRegistry {
@@ -105,17 +110,21 @@ impl BuiltinProcedureRegistry {
         let mut by_name = HashMap::new();
         let mut by_handle = HashMap::new();
         let mut ordered = Vec::new();
+        let mut declarations = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 49 `selene.*`
-        // platform built-ins (handles 20..=68), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 50 `selene.*`
+        // platform built-ins (handles 20..=69), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
             let handle = ProcedureHandle::new(next_handle);
             next_handle += 1;
             let name = procedure_name_segments(spec.name);
-            let metadata = spec.kind.metadata(handle, spec.description);
+            let mut metadata = spec.kind.metadata(handle, spec.description);
+            let declaration = native_declarations::descriptor(handle.raw(), &name, &metadata);
+            metadata.declaration = Some(std::sync::Arc::new(declaration.clone()));
+            declarations.push(declaration);
 
             by_handle.insert(handle, Dispatch::Algo(spec.kind));
             by_name.insert(name.clone().into_boxed_slice(), metadata.clone());
@@ -125,9 +134,12 @@ impl BuiltinProcedureRegistry {
             let handle = ProcedureHandle::new(next_handle);
             next_handle += 1;
             let name = procedure_name_segments(spec.name);
-            let metadata = spec
+            let mut metadata = spec
                 .kind
                 .metadata(handle, spec.description, spec.since_version);
+            let declaration = native_declarations::descriptor(handle.raw(), &name, &metadata);
+            metadata.declaration = Some(std::sync::Arc::new(declaration.clone()));
+            declarations.push(declaration);
 
             by_handle.insert(handle, Dispatch::Builtin(spec.kind));
             by_name.insert(name.clone().into_boxed_slice(), metadata.clone());
@@ -139,7 +151,58 @@ impl BuiltinProcedureRegistry {
             by_handle,
             ordered,
             catalogs: AlgorithmCatalogs::default(),
+            declarations,
         }
+    }
+
+    /// Canonical frozen native declaration inventory. Runtime tables are derived
+    /// dispatch adapters; changing catalog payloads cannot install callable code.
+    pub fn declarations(&self) -> impl Iterator<Item = &selene_catalog::CatalogDescriptor> {
+        self.declarations.iter()
+    }
+
+    /// Reject a facade publication that would misdescribe its frozen code bindings.
+    #[doc(hidden)]
+    pub fn validate_catalog(
+        &self,
+        catalog: &selene_catalog::CatalogSnapshot,
+    ) -> selene_catalog::CatalogResult<()> {
+        let engine = selene_catalog::CatalogObjectId::Catalog(catalog.catalog_id());
+        let actual: Vec<_> = catalog.declarations(engine).collect();
+        if actual.len() != self.declarations.len()
+            || self
+                .declarations
+                .iter()
+                .any(|expected| catalog.descriptor(expected.id()) != Some(expected))
+        {
+            return Err(selene_catalog::CatalogError::InvalidDeclaration {
+                reason: "unsupported_native_activation",
+            });
+        }
+        for descriptor in catalog.descriptors() {
+            if matches!(descriptor.payload(), selene_catalog::CatalogPayload::Procedure(native)
+                if native.metadata.state == selene_catalog::DeclarationState::Ready)
+                && descriptor.parent()
+                    != selene_catalog::CatalogParent::Catalog(catalog.catalog_id())
+                && !matches!(
+                    (descriptor.parent(), descriptor.payload()),
+                    (
+                        selene_catalog::CatalogParent::Graph(_),
+                        selene_catalog::CatalogPayload::Procedure(
+                            selene_catalog::NativeDeclaration {
+                                binding: selene_catalog::NativeBinding::CandidateState(_),
+                                ..
+                            }
+                        )
+                    )
+                )
+            {
+                return Err(selene_catalog::CatalogError::InvalidDeclaration {
+                    reason: "unsupported_native_activation",
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Reclaim the ephemeral projection catalog for a dropped graph.

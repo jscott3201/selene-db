@@ -7,11 +7,11 @@
 //! runtime treats it as inert (the lowered plan is byte-identical to the
 //! no-keyword spelling). These tests pin every one of those four facts.
 
-use selene_core::feature_register::{FeatureId, SUPPORTED_FEATURES};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ParserError, PipelineStatement, Statement, analyze,
     feature_walk, parse, plan,
 };
+use selene_profile::{CapabilityStatus, FeatureId, capability};
 
 /// Parse `source`, returning the `MatchClause.path_or_paths` flag of the first
 /// pipeline statement.
@@ -39,10 +39,11 @@ fn observes_g014(source: &str) -> bool {
 }
 
 #[test]
-fn g014_is_claimed_supported() {
+fn g014_is_runtime_supported() {
     assert!(
-        SUPPORTED_FEATURES.contains(&FeatureId::G014),
-        "G014 (Explicit PATH/PATHS keywords) must be claimed in SUPPORTED_FEATURES"
+        capability(FeatureId::G014)
+            .is_some_and(|record| record.status == CapabilityStatus::Supported),
+        "G014 (Explicit PATH/PATHS keywords) must be runtime-supported"
     );
 }
 
@@ -158,7 +159,7 @@ fn counted_group_accepts_path_or_paths_in_iso_order() {
     // Codex (PR #244, P2): ISO §16.6 <counted shortest group search> is
     // `SHORTEST [n] [mode] [<path or paths>] {GROUP|GROUPS}` — <path or paths> comes
     // BEFORE the group discriminator. That conforming spelling is parsed inside
-    // counted_shortest_tail and sets the G014 flag (combining the claimed G014 +
+    // counted_shortest_tail and sets the G014 flag (combining the runtime-supported G014 +
     // G020 surfaces).
     for source in [
         "MATCH SHORTEST 2 PATHS GROUPS (a)-[:K]->(b) RETURN b",

@@ -72,6 +72,26 @@ impl LiveIndexCatalog {
 }
 
 impl IndexCatalog for LiveIndexCatalog {
+    fn expression_index(
+        &self,
+        label: &DbString,
+        expression: &selene_core::scalar_index_expression::ScalarIndexExpression,
+        value: &Value,
+    ) -> Option<(TypedIndexLookup, u64)> {
+        self.snapshot
+            .scalar_expression_indexes(label)
+            .find_map(|(id, candidate, kind)| {
+                if candidate != expression {
+                    return None;
+                }
+                let count = self.snapshot.scalar_expression_cardinality(id, value)?;
+                Some((
+                    TypedIndexLookup::new(IndexHandle::new(id), index_kind_from(kind)),
+                    count,
+                ))
+            })
+    }
+
     fn typed_index(
         &self,
         target: IndexTarget,
@@ -117,6 +137,9 @@ impl IndexCatalog for LiveIndexCatalog {
         let entry = self
             .snapshot
             .composite_property_index_entry_for(&label, &canonical)?;
+        if !entry.is_complete() {
+            return None;
+        }
         let kinds = entry.kinds();
         // Per-component IndexKind in declaration order enables parameter-aware
         // composite probes (BRIEF-154 §B.2). The runtime re-derives the actual
@@ -153,16 +176,8 @@ impl IndexCatalog for LiveIndexCatalog {
             // Absent bitmap = zero rows carry the label; report 0 (an exact,
             // maximally-selective count) rather than None so the cost gate can
             // still prefer the index.
-            IndexTarget::Node => Some(
-                self.snapshot
-                    .nodes_with_label(&label)
-                    .map_or(0, |bm| bm.len()),
-            ),
-            IndexTarget::Edge => Some(
-                self.snapshot
-                    .edges_with_label(&label)
-                    .map_or(0, |bm| bm.len()),
-            ),
+            IndexTarget::Node => Some(self.snapshot.node_label_cardinality(&label)),
+            IndexTarget::Edge => Some(self.snapshot.edge_label_cardinality(&label)),
         }
     }
 
@@ -176,12 +191,10 @@ impl IndexCatalog for LiveIndexCatalog {
         match target {
             IndexTarget::Node => self
                 .snapshot
-                .nodes_with_property_eq(&label, &property, value)
-                .map(|cow| cow.len()),
+                .node_property_eq_cardinality(&label, &property, value),
             IndexTarget::Edge => self
                 .snapshot
-                .edges_with_property_eq(&label, &property, value)
-                .map(|cow| cow.len()),
+                .edge_property_eq_cardinality(&label, &property, value),
         }
     }
 
@@ -195,12 +208,10 @@ impl IndexCatalog for LiveIndexCatalog {
         match target {
             IndexTarget::Node => self
                 .snapshot
-                .nodes_with_property_range(&label, &property, range)
-                .map(|bm| bm.len()),
+                .node_property_range_cardinality(&label, &property, range),
             IndexTarget::Edge => self
                 .snapshot
-                .edges_with_property_range(&label, &property, range)
-                .map(|bm| bm.len()),
+                .edge_property_range_cardinality(&label, &property, range),
         }
     }
 

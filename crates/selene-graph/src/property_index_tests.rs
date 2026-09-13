@@ -51,6 +51,8 @@ impl RoaringRows {
 
 #[path = "property_index_tests/candidate_keys.rs"]
 mod candidate_keys;
+#[path = "property_index_tests/drift.rs"]
+mod drift;
 #[path = "property_index_tests/lifecycle.rs"]
 mod lifecycle;
 #[path = "property_index_tests/rebuild.rs"]

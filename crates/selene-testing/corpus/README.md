@@ -1,11 +1,11 @@
 # SeleneDB Conformance Corpus
 
-This directory is the tracked home for claimed-feature query coverage.
+This directory is the tracked home for runtime-support query coverage.
 
 Layout:
 
-- `positive/` - queries that exercise claimed features and parse cleanly.
-- `negative/` - queries that require unclaimed features and declare parser rejections.
+- `positive/` - queries that exercise runtime-supported features and parse cleanly.
+- `negative/` - queries that require runtime-unsupported features and declare parser rejections.
 - `fixtures/` - graph and procedure-pack fixtures used by corpus entries.
 
 File names start with the relevant ISO feature ID, for example

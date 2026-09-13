@@ -42,6 +42,7 @@
 //!   `selene.vector_search_candidate_state_expanded_ann`,
 //!   `selene.vector_search_expanded_candidates_ann_batch`,
 //!   `selene.vector_index_stats`, `selene.text_index_stats`,
+//!   `selene.property_index_stats`,
 //!   `selene.json_contains_nodes`, `selene.json_path_exists_nodes`,
 //!   `selene.json_path_contains_nodes`, `selene.json_path_value_nodes`,
 //!   `selene.json_contains_candidate_nodes`,
@@ -92,6 +93,7 @@ mod json_path_contains_nodes;
 mod json_path_exists_nodes;
 mod json_path_value_nodes;
 mod meta;
+mod property_index_stats;
 mod reachable_nodes;
 mod rebuild_vector_indexes;
 mod reciprocal_rank_fusion;

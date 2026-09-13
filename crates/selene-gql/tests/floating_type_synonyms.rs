@@ -1,11 +1,11 @@
 //! Conformance coverage for ISO approximate numeric type-name synonyms.
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{
     ParserError,
     ast::{format_read_statement, structurally_eq},
     feature_walk, parse,
 };
+use selene_profile::FeatureId;
 
 fn assert_syntax_error(source: &str) {
     let err = parse(source).expect_err(source);

@@ -1,7 +1,7 @@
 # Release gate for selene-db — runs on PRs into `main` (i.e. `development` → `main`).
 #
 # Workflow model (2026-05-28): everyday Brief work merges into `development`
-# behind the cheap `ci.yml` gate + local hooks. A release batches `development`
+# behind the routine `ci.yml` gate + local hooks. A release batches `development`
 # into a single PR against `main`; THIS workflow is the comprehensive pre-merge
 # gate that runs everything the fast gate skipped — full build, lint, tests,
 # doctests, macOS validation, dependency audit, and a parser fuzz pass.
@@ -19,7 +19,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     tags:
-      - 'v*.*.*'
+      - 'v2.*.*'
   workflow_dispatch:
 
 concurrency:
@@ -31,19 +31,45 @@ env:
   RUST_BACKTRACE: short
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 permissions:
   contents: read
   pull-requests: read
 
 jobs:
+  release-policy:
+    name: release tag policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: bash .github/scripts/check-release-tag.test.sh
+
+  conformance-claim:
+    name: ISO-aligned conformance claim
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v2.'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: verify ISO-aligned claim at exact revision
+        run: bash scripts/check-conformance-claim.sh "$EXPECTED_REVISION" iso_aligned
+
   fmt:
     name: fmt
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt
       - run: cargo fmt --all --check
@@ -53,8 +79,23 @@ jobs:
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-repository-home.sh .
+
+  v2-plan-contract:
+    name: 2.0 plan contract
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: verify checkout provenance
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
+      - run: python3 -B .github/scripts/check-v2-plan.py --root .
+      - run: python3 -B .github/scripts/check-v2-plan.test.py
 
   clippy:
     name: clippy (${{ matrix.os }})
@@ -65,8 +106,10 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -85,12 +128,15 @@ jobs:
       # runner mmap cap (SIGBUS otherwise). See ci-spend-triage / BRIEF-131c.
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest
+          tool: nextest@0.9.143
+          fallback: none
       - name: cargo nextest + doctests
         run: |
           cargo nextest run --workspace --locked --all-features --profile ci
@@ -101,10 +147,13 @@ jobs:
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check --exclude-dev bans
+          arguments: --all-features --exclude-dev
+          command: check bans
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses sources
@@ -114,11 +163,13 @@ jobs:
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cargo/advisory-db
           key: advisory-db-${{ runner.os }}-${{ github.run_id }}
@@ -130,12 +181,15 @@ jobs:
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-about
+          tool: cargo-about@0.9.2
+          fallback: none
       - run: bash .github/scripts/check-thirdparty-current.sh
 
   file-size-cap:
@@ -143,7 +197,9 @@ jobs:
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-file-size.sh
 
   no-secret-scan:
@@ -151,7 +207,9 @@ jobs:
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-no-secrets.sh
 
   bench-invocation-lint:
@@ -159,7 +217,9 @@ jobs:
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: bash .github/scripts/check-bench-invocation.sh .
       - run: bash .github/scripts/check-bench-invocation.test.sh
       - run: bash .github/scripts/check-mimalloc-dev-dep.sh .
@@ -173,13 +233,15 @@ jobs:
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: crates/selene-gql/fuzz/corpus
           key: gql-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-testing/corpus/positive/**/*.gql') }}
@@ -213,7 +275,9 @@ jobs:
     if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -221,47 +285,74 @@ jobs:
           tool: cargo-fuzz
       # Cache the evolving corpus libFuzzer accretes across runs (no committed
       # seed files; the key is content-addressed on the target sources).
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: crates/selene-persist/fuzz/corpus
           key: persist-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-persist/fuzz/fuzz_targets/**') }}
           restore-keys: persist-fuzz-corpus-${{ runner.os }}-
-      - name: fuzz decoders (4 x 20s)
+      - name: fuzz decoders (5 x 20s)
         working-directory: crates/selene-persist/fuzz
         # Invariant: arbitrary bytes -> Ok or typed PersistError, never
         # panic/OOM/hang. -timeout=20 fails any input that hangs; -max_len=65536
         # bounds the audit record count and the manifest/section length fields.
         run: |
-          for target in decode_manifest decode_wal decode_audit decode_snapshot; do
+          for target in decode_control decode_manifest decode_wal decode_snapshot decode_logical decode_logical_value decode_logical_snapshot; do
             cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=20 -timeout=20 -max_len=65536
           done
 
+  package-crates:
+    name: package public crates (${{ matrix.os }})
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@v2
+      - run: bash .github/scripts/check-package-release.test.sh
+      - run: bash .github/scripts/check-package-release.sh
+      # Cargo stages the selected workspace closure in dependency order, so
+      # validation does not require an earlier upload of this source version.
+      - run: cargo package --workspace --exclude selene-db-testing --locked
+      - run: bash .github/scripts/check-package-release.sh --archives target/package
+      - run: bash scripts/smoke-packaged-crates.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crates-${{ runner.os }}-${{ runner.arch }}
+          path: target/package/*.crate
+          if-no-files-found: error
+
   publish-crates:
     name: publish crates.io
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'jscott3201/selene-db'
+    needs: [release-policy, conformance-claim]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v2.') && github.repository == 'jscott3201/selene-db'
     runs-on: ubuntu-latest
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.1
       - name: publish public crates
         run: |
           set -euo pipefail
 
-          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
-            echo "CARGO_REGISTRY_TOKEN secret is required for crates.io publishing." >&2
-            exit 1
-          fi
-
-          version="${GITHUB_REF_NAME#v}"
           workspace_version="$(awk -F' = ' '
             $0 == "[workspace.package]" { in_workspace = 1; next }
             /^\[/ && in_workspace { exit }
             in_workspace && $1 == "version" { gsub(/"/, "", $2); print $2; exit }
           ' Cargo.toml)"
-          if [ "$workspace_version" != "$version" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match workspace version $workspace_version." >&2
+          bash .github/scripts/check-release-tag.sh "$GITHUB_REF_NAME" "$workspace_version"
+          version="${GITHUB_REF_NAME#v}"
+
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "CARGO_REGISTRY_TOKEN secret is required for crates.io publishing." >&2
             exit 1
           fi
 
@@ -298,16 +389,15 @@ jobs:
             wait_for_index "$crate" "$version"
           }
 
-          publish_crate selene-db-core
-          publish_crate selene-db-persist
-          publish_crate selene-db-graph
-          publish_crate selene-db-algorithms
-          publish_crate selene-db-gql
+          bash .github/scripts/check-package-release.sh
+          while IFS= read -r crate; do
+            publish_crate "$crate"
+          done < .github/scripts/public-crates.txt
 
   github-release:
     name: GitHub release
     needs: publish-crates
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'jscott3201/selene-db'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v2.') && github.repository == 'jscott3201/selene-db'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -316,7 +406,9 @@ jobs:
       TAG_NAME: ${{ github.ref_name }}
       TARGET_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: create or update release
         run: |
           set -euo pipefail

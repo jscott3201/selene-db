@@ -2,33 +2,22 @@
 
 use selene_core::DbString;
 
-use crate::{DropBehavior, EdgeEndpointSpec, GqlType, SourceSpan, ValidationMode};
+use crate::{
+    DatabaseCatalogCommand, DropBehavior, EdgeEndpointSpec, GqlType, SourceSpan, ValidationMode,
+};
 
 use super::ProjectExpr;
 
 /// Catalog operation produced by DDL lowering.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CatalogOp {
-    /// Create an open graph.
-    CreateGraph {
-        /// Graph name.
-        name: DbString,
-        /// Whether `OR REPLACE` was requested.
-        or_replace: bool,
-        /// Whether `IF NOT EXISTS` was requested.
-        if_not_exists: bool,
-        /// Source span.
-        span: SourceSpan,
-    },
-    /// Drop a graph.
-    DropGraph {
-        /// Graph name.
-        name: DbString,
-        /// Whether `IF EXISTS` was requested.
-        if_exists: bool,
-        /// Source span.
-        span: SourceSpan,
-    },
+    /// A database-catalog statement (`CREATE/DROP SCHEMA`, `CREATE/DROP
+    /// GRAPH`) reduced to its storage-neutral command.
+    ///
+    /// The graph-local executor cannot honor these: the database facade
+    /// intercepts the plan before execution and dispatches the command to the
+    /// catalog service. A bare lower session reports a structured error.
+    DatabaseCatalog(DatabaseCatalogCommand),
     /// Create a node type.
     CreateNodeType {
         /// Node label.
@@ -75,6 +64,15 @@ pub enum CatalogOp {
         properties: Vec<PlannedTypePropertyDef>,
         /// Optional validation mode.
         validation_mode: Option<ValidationMode>,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// Alter an existing node type through forward-only additive changes.
+    AlterNodeType {
+        /// Node type label.
+        label: DbString,
+        /// Property definitions to add.
+        properties: Vec<PlannedTypePropertyDef>,
         /// Source span.
         span: SourceSpan,
     },

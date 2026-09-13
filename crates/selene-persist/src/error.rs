@@ -1,383 +1,102 @@
-//! Error types for persistence formats.
+//! Errors for retained filesystem authority and format-2 control.
 
-use std::path::PathBuf;
-
-use crate::provider::RecoveryError;
-
-/// Result alias for persistence operations.
+/// Persistence operation result.
 pub type PersistResult<T> = Result<T, PersistError>;
 
-/// Error type for WAL persistence operations.
-#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+/// Retired artifact recognized only by a bounded, read-only header probe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum PersistError {
-    /// I/O failure on a persistence file.
-    #[error("persistence io: {0}")]
-    #[diagnostic(code(SLENE_P_001))]
-    Io(#[from] std::io::Error),
-
-    /// WAL entry-header encode/decode failure.
-    #[error("wal header codec: {0}")]
-    #[diagnostic(code(SLENE_P_002))]
-    HeaderCodec(String),
-
-    /// Postcard encode/decode failure for the payload `Vec<Change>`.
-    #[error("wal payload codec: {0}")]
-    #[diagnostic(code(SLENE_P_003))]
-    PayloadCodec(String),
-
-    /// Compression or decompression failure.
-    #[error("wal payload compression: {0}")]
-    #[diagnostic(code(SLENE_P_004))]
-    Compression(String),
-
-    /// Payload exceeds the WAL entry cap.
-    #[error("wal payload too large: {len} bytes (max {max})")]
-    #[diagnostic(code(SLENE_P_005))]
-    PayloadTooLarge {
-        /// Encoded payload length.
-        len: usize,
-        /// Maximum encoded payload length.
-        max: usize,
-    },
-
-    /// Principal slot exceeds the D12 cap.
-    #[error("wal principal too large: {len} bytes (max {max})")]
-    #[diagnostic(code(SLENE_P_006))]
-    PrincipalTooLarge {
-        /// Principal byte length.
-        len: usize,
-        /// Maximum principal byte length.
-        max: usize,
-    },
-
-    /// Magic bytes do not match the expected persistence format.
-    #[error("persistence magic mismatch: got {observed:?}")]
-    #[diagnostic(code(SLENE_P_007))]
-    MagicMismatch {
-        /// Observed four-byte file magic.
-        observed: [u8; 4],
-    },
-
-    /// File-header version is unsupported.
-    #[error("wal version unsupported: {major}.{minor}")]
-    #[diagnostic(code(SLENE_P_008))]
-    UnsupportedVersion {
-        /// Major version read from disk.
-        major: u16,
-        /// Minor version read from disk.
-        minor: u16,
-    },
-
-    /// Entry checksum does not match the payload.
-    #[error("wal entry checksum mismatch at sequence {sequence}")]
-    #[diagnostic(code(SLENE_P_009))]
-    ChecksumMismatch {
-        /// WAL sequence number.
-        sequence: u64,
-    },
-
-    /// Sequence numbers are not strictly monotonic.
-    #[error("wal entry sequence non-monotonic: previous {previous}, current {current}")]
-    #[diagnostic(code(SLENE_P_010))]
-    NonMonotonicSequence {
-        /// Previous valid sequence number.
-        previous: u64,
-        /// Current sequence number.
-        current: u64,
-    },
-
-    /// File header missing or short read at open.
-    #[error("wal file truncated before completing the file header")]
-    #[diagnostic(code(SLENE_P_011))]
-    TruncatedFileHeader,
-
-    /// Last entry was partially written.
-    #[error("wal entry truncated at offset {offset}; iterator stopped")]
-    #[diagnostic(code(SLENE_P_012))]
-    TruncatedEntry {
-        /// File offset where the truncated entry started.
-        offset: u64,
-    },
-
-    /// Another writer holds the exclusive WAL lock.
-    #[error("wal writer lock is held by another process or handle")]
-    #[diagnostic(code(SLENE_P_013))]
-    WriterLockHeld,
-
-    /// Snapshot header missing or short read at open.
-    #[error("snapshot file truncated before completing the file header")]
-    #[diagnostic(code(SLENE_P_014))]
-    TruncatedSnapshotHeader,
-
-    /// Snapshot section table missing or short read.
-    #[error("snapshot section table truncated at offset {offset}")]
-    #[diagnostic(code(SLENE_P_015))]
-    TruncatedSectionTable {
-        /// File offset where the truncated table row started.
-        offset: u64,
-    },
-
-    /// Snapshot contains more sections than the u16 section-count field can hold.
-    #[error("snapshot has too many sections: {count} (max {max})")]
-    #[diagnostic(code(SLENE_P_016))]
-    TooManySections {
-        /// Requested section count.
-        count: usize,
-        /// Maximum section count.
-        max: usize,
-    },
-
-    /// Snapshot section payload exceeds the hard per-section cap.
-    #[error("snapshot section too large: {len} bytes (max {max})")]
-    #[diagnostic(code(SLENE_P_017))]
-    SectionTooLarge {
-        /// Encoded or decoded section length.
-        len: usize,
-        /// Maximum section byte length.
-        max: usize,
-    },
-
-    /// Snapshot builder saw the same provider/sub tag twice.
-    #[error("duplicate snapshot section tag: provider {provider:?}, sub {sub:?}")]
-    #[diagnostic(code(SLENE_P_018))]
-    DuplicateSection {
-        /// Provider tag.
-        provider: [u8; 4],
-        /// Provider-owned sub-tag.
-        sub: [u8; 4],
-    },
-
-    /// Snapshot body hash does not match the section table and payload bytes.
-    #[error("snapshot body hash mismatch: expected {expected:?}, observed {observed:?}")]
-    #[diagnostic(code(SLENE_P_019))]
-    BodyHashMismatch {
-        /// Hash stored in the snapshot header.
-        expected: [u8; 16],
-        /// Hash recomputed by the reader.
-        observed: [u8; 16],
-    },
-
-    /// Snapshot header set a flag this implementation does not support.
-    #[error("snapshot flag unsupported: {flag:#06x}")]
-    #[diagnostic(code(SLENE_P_020))]
-    UnsupportedFlag {
-        /// Unsupported flag bit or mask.
-        flag: u16,
-    },
-
-    /// Snapshot header reserved bytes were not zero.
-    #[error("snapshot reserved bytes were nonzero at offset {offset}")]
-    #[diagnostic(code(SLENE_P_021))]
-    ReservedBytesNonZero {
-        /// File offset of the first nonzero reserved byte.
-        offset: u64,
-    },
-
-    /// Snapshot filename could not be parsed.
-    #[error("malformed snapshot filename")]
-    #[diagnostic(code(SLENE_P_022))]
-    MalformedSnapshotFilename,
-
-    /// Requested snapshot section tag is not present.
-    #[error("snapshot section missing: provider {provider:?}, sub {sub:?}")]
-    #[diagnostic(code(SLENE_P_023))]
-    SectionMissing {
-        /// Provider tag.
-        provider: [u8; 4],
-        /// Provider-owned sub-tag.
-        sub: [u8; 4],
-    },
-
-    /// Snapshot section table claims a payload range that overlaps the
-    /// header/table region, runs past end-of-file, or overflows `u64`.
-    #[error("malformed snapshot section layout: {reason}")]
-    #[diagnostic(code(SLENE_P_024))]
-    MalformedSectionLayout {
-        /// Human-readable reason for the layout rejection.
-        reason: &'static str,
-    },
-
-    /// Recovery provider registry saw the same provider tag twice.
-    #[error("duplicate recovery provider tag: {tag:?}")]
-    #[diagnostic(code(SLENE_P_025))]
-    DuplicateProviderTag {
-        /// Duplicate provider tag.
-        tag: [u8; 4],
-    },
-
-    /// Snapshot section table referenced an unregistered provider.
-    #[error("unknown recovery provider: provider {provider:?}, sub {sub:?}")]
-    #[diagnostic(code(SLENE_P_026))]
-    UnknownProvider {
-        /// Provider tag from the snapshot section row.
-        provider: [u8; 4],
-        /// Provider-owned sub-tag from the snapshot section row.
-        sub: [u8; 4],
-    },
-
-    /// Recovery provider returned an error while applying bytes or changes.
-    #[error("recovery provider {provider:?} failed for sub {sub:?}: {source}")]
-    #[diagnostic(code(SLENE_P_027))]
-    ProviderFailed {
-        /// Provider tag whose callback failed.
-        provider: [u8; 4],
-        /// Section sub-tag for snapshot failures, or `None` for WAL changes.
-        sub: Option<[u8; 4]>,
-        /// Provider-owned source error.
-        #[source]
-        source: RecoveryError,
-    },
-
-    /// WAL file extends a different snapshot epoch than the snapshot applied.
-    #[error(
-        "wal snapshot sequence {wal_snapshot_seq} does not match applied snapshot {snapshot_seq}"
-    )]
-    #[diagnostic(code(SLENE_P_028))]
-    WalSnapshotMismatch {
-        /// Snapshot sequence recorded in the WAL header.
-        wal_snapshot_seq: u64,
-        /// Snapshot sequence selected by recovery.
-        snapshot_seq: u64,
-    },
-
-    /// WAL rotation refused to overwrite an existing archive path.
-    #[error("wal archive already exists: {path}")]
-    #[diagnostic(code(SLENE_P_029))]
-    WalArchiveExists {
-        /// Existing archive path.
-        path: PathBuf,
-    },
-
-    /// WAL rotation archived the old file but could not restore a usable active WAL.
-    #[error("wal rotation incomplete: archived {archived_path}, active {new_path}")]
-    #[diagnostic(code(SLENE_P_030))]
-    WalRotationIncomplete {
-        /// Path containing the archived pre-rotation WAL.
-        archived_path: PathBuf,
-        /// Active WAL path that could not be restored.
-        new_path: PathBuf,
-    },
-
-    /// WAL rotation was asked to rotate at a snapshot sequence that does not
-    /// match the writer's current high-water mark.
-    #[error(
-        "wal rotation snapshot sequence {snapshot_seq} does not match current sequence {last_sequence}"
-    )]
-    #[diagnostic(code(SLENE_P_031))]
-    WalRotationSequenceMismatch {
-        /// Sequence covered by the caller's finalized snapshot.
-        snapshot_seq: u64,
-        /// Current WAL high-water mark.
-        last_sequence: u64,
-    },
-
-    /// A committed MANIFEST named an active WAL file other than the one this
-    /// build recovers from. The active-WAL name is a de-facto fixed contract
-    /// (always [`crate::DEFAULT_WAL_FILE_NAME`]); recovery opens that file by
-    /// name and rejects a divergent name rather than silently ignoring it.
-    #[error("manifest names unexpected active wal {observed:?}, expected {expected:?}")]
-    #[diagnostic(code(SLENE_P_032))]
-    UnexpectedActiveWal {
-        /// Active WAL name read from the committed MANIFEST.
-        observed: String,
-        /// Active WAL name this build recovers from.
-        expected: &'static str,
-    },
+pub enum PersistArtifact {
+    /// Old SLDB WAL or archive.
+    Wal,
+    /// Old SLSN snapshot (not SLSNP2).
+    Snapshot,
+    /// Old SLMF manifest.
+    Manifest,
+    /// Old SLAU audit log; audit is excluded from the preview.
+    AuditLog,
 }
-
-impl PersistError {
-    /// Map this error to its 5-character ISO GQLSTATUS code.
-    #[must_use]
-    pub const fn gqlstatus(&self) -> &'static str {
-        match self {
-            Self::PrincipalTooLarge { .. } => "22G03",
-            Self::PayloadTooLarge { .. }
-            | Self::TooManySections { .. }
-            | Self::SectionTooLarge { .. } => "5GQL1",
-            Self::DuplicateSection { .. } | Self::DuplicateProviderTag { .. } => "22G03",
-            Self::UnsupportedVersion { .. } => "08000",
-            Self::Io(_)
-            | Self::HeaderCodec(_)
-            | Self::PayloadCodec(_)
-            | Self::Compression(_)
-            | Self::MagicMismatch { .. }
-            | Self::ChecksumMismatch { .. }
-            | Self::NonMonotonicSequence { .. }
-            | Self::TruncatedFileHeader
-            | Self::TruncatedEntry { .. }
-            | Self::WriterLockHeld
-            | Self::TruncatedSnapshotHeader
-            | Self::TruncatedSectionTable { .. }
-            | Self::BodyHashMismatch { .. }
-            | Self::UnsupportedFlag { .. }
-            | Self::ReservedBytesNonZero { .. }
-            | Self::MalformedSnapshotFilename
-            | Self::SectionMissing { .. }
-            | Self::MalformedSectionLayout { .. }
-            | Self::UnknownProvider { .. }
-            | Self::ProviderFailed { .. }
-            | Self::WalSnapshotMismatch { .. }
-            | Self::WalArchiveExists { .. }
-            | Self::WalRotationIncomplete { .. }
-            | Self::WalRotationSequenceMismatch { .. }
-            | Self::UnexpectedActiveWal { .. } => "5GQL0",
-        }
+impl std::fmt::Display for PersistArtifact {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str(match self {
+            Self::Wal => "wal",
+            Self::Snapshot => "snapshot",
+            Self::Manifest => "MANIFEST",
+            Self::AuditLog => "audit log",
+        })
     }
 }
 
+/// Filesystem/control failure. Logical frame and stream errors retain their own types.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[non_exhaustive]
+pub enum PersistError {
+    /// Managed basename diagnostic, never filesystem authority.
+    #[error("selected artifact {name:?}: {source}")]
+    Artifact {
+        /// Managed basename.
+        name: String,
+        /// Original typed cause.
+        source: Box<PersistError>,
+    },
+    /// Retained-directory or platform contract failure.
+    #[error(transparent)]
+    Directory(#[from] crate::DirectoryError),
+    /// Format-2 control failure.
+    #[error(transparent)]
+    Control(#[from] crate::ControlError),
+    /// Native I/O failure.
+    #[error("persistence io: {0}")]
+    #[diagnostic(code(SLENE_P_001))]
+    Io(#[from] std::io::Error),
+    /// Recognized retired artifact, without decoding or validating its payload.
+    #[error("{artifact} version unsupported: {major}.{minor}")]
+    #[diagnostic(code(SLENE_P_008))]
+    UnsupportedVersion {
+        /// Recognized artifact family.
+        artifact: PersistArtifact,
+        /// Observed major version, zero when the prefix is incomplete.
+        major: u16,
+        /// Observed minor version, zero when absent.
+        minor: u16,
+    },
+    /// Another handle or process owns the permanent writer lock.
+    #[error("store writer lock is held by another process or handle")]
+    #[diagnostic(code(SLENE_P_013))]
+    WriterLockHeld,
+}
+impl PersistError {
+    /// Five-character GQLSTATUS for the lower persistence diagnostic.
+    #[must_use]
+    pub const fn gqlstatus(&self) -> &'static str {
+        match self {
+            Self::Artifact { source, .. } => source.gqlstatus(),
+            Self::UnsupportedVersion { .. } => "08000",
+            Self::Directory(_) | Self::Control(_) | Self::Io(_) | Self::WriterLockHeld => "5GQL0",
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
-
-    #[rstest]
-    #[case(PersistError::HeaderCodec("bad".to_owned()), "5GQL0")]
-    #[case(PersistError::PayloadCodec("bad".to_owned()), "5GQL0")]
-    #[case(PersistError::Compression("bad".to_owned()), "5GQL0")]
-    #[case(PersistError::PayloadTooLarge { len: 1, max: 0 }, "5GQL1")]
-    #[case(PersistError::PrincipalTooLarge { len: 1, max: 0 }, "22G03")]
-    #[case(PersistError::MagicMismatch { observed: *b"NOPE" }, "5GQL0")]
-    #[case(PersistError::UnsupportedVersion { major: 2, minor: 0 }, "08000")]
-    #[case(PersistError::ChecksumMismatch { sequence: 7 }, "5GQL0")]
-    #[case(PersistError::NonMonotonicSequence { previous: 7, current: 7 }, "5GQL0")]
-    #[case(PersistError::TruncatedFileHeader, "5GQL0")]
-    #[case(PersistError::TruncatedEntry { offset: 16 }, "5GQL0")]
-    #[case(PersistError::WriterLockHeld, "5GQL0")]
-    #[case(PersistError::TruncatedSnapshotHeader, "5GQL0")]
-    #[case(PersistError::TruncatedSectionTable { offset: 32 }, "5GQL0")]
-    #[case(PersistError::TooManySections { count: 2, max: 1 }, "5GQL1")]
-    #[case(PersistError::SectionTooLarge { len: 2, max: 1 }, "5GQL1")]
-    #[case(PersistError::DuplicateSection { provider: *b"CORE", sub: *b"META" }, "22G03")]
-    #[case(PersistError::BodyHashMismatch { expected: [1; 16], observed: [2; 16] }, "5GQL0")]
-    #[case(PersistError::UnsupportedFlag { flag: 1 }, "5GQL0")]
-    #[case(PersistError::ReservedBytesNonZero { offset: 12 }, "5GQL0")]
-    #[case(PersistError::MalformedSnapshotFilename, "5GQL0")]
-    #[case(PersistError::SectionMissing { provider: *b"CORE", sub: *b"META" }, "5GQL0")]
-    #[case(PersistError::MalformedSectionLayout { reason: "test" }, "5GQL0")]
-    #[case(PersistError::DuplicateProviderTag { tag: *b"CORE" }, "22G03")]
-    #[case(PersistError::UnknownProvider { provider: *b"CORE", sub: *b"META" }, "5GQL0")]
-    #[case(PersistError::ProviderFailed {
-        provider: *b"CORE",
-        sub: Some(*b"META"),
-        source: Box::new(std::io::Error::other("provider failed")),
-    }, "5GQL0")]
-    #[case(PersistError::WalSnapshotMismatch { wal_snapshot_seq: 2, snapshot_seq: 1 }, "5GQL0")]
-    #[case(PersistError::WalArchiveExists { path: "wal.1.archive".into() }, "5GQL0")]
-    #[case(PersistError::WalRotationIncomplete {
-        archived_path: "wal.1.archive".into(),
-        new_path: "wal.log".into(),
-    }, "5GQL0")]
-    #[case(PersistError::WalRotationSequenceMismatch {
-        snapshot_seq: 1,
-        last_sequence: 2,
-    }, "5GQL0")]
-    fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
-        assert_eq!(error.gqlstatus(), status);
-        assert!(
-            selene_core::gqlstatus_name(status).is_some(),
-            "GQLSTATUS code {status} emitted by PersistError but not in ALL_GQLSTATUS_NAMES"
-        );
+    #[test]
+    fn gqlstatus_for_retained_errors_and_artifact_context() {
+        for error in [
+            PersistError::WriterLockHeld,
+            std::io::Error::other("io").into(),
+            crate::ControlError::Checksum.into(),
+            crate::DirectoryError::NotDirectory.into(),
+        ] {
+            assert_eq!(error.gqlstatus(), "5GQL0");
+        }
+        let error = PersistError::Artifact {
+            name: "wal.log".into(),
+            source: Box::new(PersistError::UnsupportedVersion {
+                artifact: PersistArtifact::Wal,
+                major: 3,
+                minor: 1,
+            }),
+        };
+        assert_eq!(error.gqlstatus(), "08000");
     }
 }

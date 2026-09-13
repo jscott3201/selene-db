@@ -1,0 +1,86 @@
+{
+  "format_version": 1,
+  "registry_version": 2,
+  "profile_id": "selene-gql-core-2.0",
+  "profile_hash": "04fbecdb1dcaa6795a65654cb1dcb1ea18ba35d3e8249b5f9b47e8407b6fda60",
+  "rules_hash": "e97dd73391a5ad423d006087eeac063e802582c3403a039222045704829a8a94",
+  "evidence": [
+    {
+      "id": "EVID-CONFORMANCE-G010-POSITIVE",
+      "targets": [{ "rule_id": "RULE-24.3-G010", "requirement_id": "REQ-POSITIVE" }],
+      "expected": {
+        "status": { "kind": "success" },
+        "result_type": { "kind": "not_asserted" },
+        "nullability": "not_applicable",
+        "ordering": "unspecified",
+        "side_effects": "forbidden"
+      },
+      "registration": "REG-G010-POSITIVE",
+      "disposition": { "disposition": "complete" }
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-POSITIVE",
+      "targets": [{ "rule_id": "RULE-24.6-GC04", "requirement_id": "REQ-POSITIVE" }],
+      "expected": {
+        "status": { "kind": "success" },
+        "result_type": { "kind": "not_asserted" },
+        "nullability": "not_applicable",
+        "ordering": "not_applicable",
+        "side_effects": "required"
+      },
+      "registration": "REG-GC04-POSITIVE",
+      "disposition": { "disposition": "complete" }
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-NEGATIVE",
+      "targets": [{ "rule_id": "RULE-24.6-GC04", "requirement_id": "REQ-NEGATIVE" }],
+      "expected": {
+        "status": { "kind": "error" },
+        "result_type": { "kind": "not_asserted" },
+        "nullability": "not_applicable",
+        "ordering": "not_applicable",
+        "side_effects": "forbidden"
+      },
+      "registration": "REG-GC04-NEGATIVE",
+      "disposition": { "disposition": "complete" }
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-STATUS",
+      "targets": [{ "rule_id": "RULE-24.6-GC04", "requirement_id": "REQ-STATUS" }],
+      "expected": {
+        "status": { "kind": "exact", "gqlstatus": "42N10" },
+        "result_type": { "kind": "not_asserted" },
+        "nullability": "not_applicable",
+        "ordering": "not_applicable",
+        "side_effects": "forbidden"
+      },
+      "registration": "REG-GC04-STATUS",
+      "disposition": { "disposition": "complete" }
+    },
+    {
+      "id": "EVID-CONFORMANCE-INVENTORY-PENDING",
+      "targets": [
+        { "rule_id": "RULE-24.2-001", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-24.3-GC04", "requirement_id": "REQ-SUPPORT" },
+        { "rule_id": "RULE-24.3-001", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-24.5-001", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-24.7-001", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-24.7-002", "requirement_id": "REQ-INVENTORY" },
+        { "rule_id": "RULE-ANNEX-B-001", "requirement_id": "REQ-INVENTORY" }
+      ],
+      "expected": {
+        "status": { "kind": "not_applicable" },
+        "result_type": { "kind": "not_asserted" },
+        "nullability": "not_applicable",
+        "ordering": "not_applicable",
+        "side_effects": "not_applicable"
+      },
+      "registration": null,
+      "disposition": {
+        "disposition": "pending",
+        "owner_pr": "M10-PR05",
+        "reason": "M10-PR05 owns complete inventory and the final claim transition."
+      }
+    }
+  ]
+}

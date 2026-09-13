@@ -7,18 +7,19 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "In-memory property-graph storage core (ArcSwap + imbl CoW, label/typed indexes, write funnel) for selene-db."
+description = "In-memory property-graph storage core (ArcSwap + persistent CoW, label/typed indexes, write funnel) for selene-db."
 autobenches = false
 
 [lib]
 name = "selene_graph"
 
 [dependencies]
-selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.4.0" }
+selene-catalog.workspace = true
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "2.0.0-alpha.1" }
 selene-persist.workspace = true
 arc-swap.workspace = true
 parking_lot.workspace = true
-imbl.workspace = true
+immutable-chunkmap.workspace = true
 rustc-hash.workspace = true
 jiff.workspace = true
 roaring.workspace = true
@@ -42,19 +43,37 @@ wide.workspace = true
 metrics = ["selene-core/metrics"]
 
 [dev-dependencies]
+blake3.workspace = true
 criterion.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 selene-testing = { package = "selene-db-testing", path = "../selene-testing" }
-serde_json.workspace = true
+# Keep WAL/snapshot recovery covered under consumer feature unification.
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
 
 [[bench]]
 name = "single_graph"
 harness = false
 
 [[bench]]
+name = "read_write_guard"
+harness = false
+
+[[bench]]
+name = "mixed_edge_storage"
+harness = false
+
+[[bench]]
+name = "logical_wal"
+harness = false
+
+[[bench]]
 name = "vector_index_rebuild"
+harness = false
+
+[[bench]]
+name = "vector_native"
 harness = false
 
 [[bench]]
@@ -119,10 +138,6 @@ harness = false
 
 [[bench]]
 name = "graph_delete_reclamation"
-harness = false
-
-[[bench]]
-name = "graph_snapshot_roundtrip"
 harness = false
 
 [[bench]]

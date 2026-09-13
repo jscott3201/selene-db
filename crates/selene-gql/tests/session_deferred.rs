@@ -1,7 +1,7 @@
 //! Deferred session-management parser gates.
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{ParserError, parse};
+use selene_profile::FeatureId;
 
 #[test]
 fn session_set_binding_table_reports_unsupported_features() {

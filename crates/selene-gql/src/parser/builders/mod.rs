@@ -1,6 +1,7 @@
 //! Pair-to-AST builders.
 
 pub(super) mod call;
+pub(super) mod catalog_ddl;
 pub(super) mod ddl;
 pub(super) mod explain;
 pub(super) mod expr;
@@ -8,16 +9,15 @@ pub(super) mod let_stmt;
 pub(super) mod mutation;
 pub(super) mod pattern;
 pub(super) mod query;
+pub(super) mod scopes;
 pub(super) mod session;
 pub(super) mod transaction;
 
 use std::borrow::Cow;
 
 use pest::iterators::Pair;
-use selene_core::{
-    DbString,
-    feature_register::{FeatureId, name_of, non_supported_rationale},
-};
+use selene_core::DbString;
+use selene_profile::{FeatureId, capability};
 
 use crate::{
     ast::{GqlType, QueryPipeline, SetOp, SourceSpan, Statement, util::NonEmpty},
@@ -33,17 +33,18 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
             build_statement(child)
         }
         Rule::query_pipeline => query::build_query_pipeline(program_pair).map(Statement::Query),
+        Rule::schema_query => scopes::build_specification(program_pair).map(Statement::Query),
         Rule::call_query_pipeline => {
             query::build_call_query_pipeline(program_pair).map(Statement::Query)
         }
-        Rule::composite_query => build_composite(program_pair),
-        Rule::chained_query => build_chained(program_pair),
+        Rule::query_expression => build_query_expression(program_pair),
         Rule::pipeline_statement => {
             let span = span(&program_pair);
             let statement = query::build_pipeline_statement(program_pair)?;
             Ok(Statement::Query(QueryPipeline {
                 statements: vec![statement],
                 span,
+                ..QueryPipeline::default()
             }))
         }
         Rule::select_stmt => query::build_select_pipeline(program_pair).map(Statement::Query),
@@ -51,11 +52,9 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
             mutation::build_mutation_pipeline(program_pair).map(Statement::Mutate)
         }
         Rule::ddl_statement => ddl::build_ddl_statement(program_pair).map(Statement::Ddl),
-        Rule::create_schema_command => Err(unsupported_feature(
-            &program_pair,
-            FeatureId::GC02,
-            "CREATE SCHEMA is outside the current catalog claim",
-        )),
+        Rule::catalog_statement_chain => {
+            Err(catalog_ddl::reject_catalog_statement_chain(&program_pair))
+        }
         Rule::call_stmt => call::build_top_level_call(program_pair),
         Rule::explain_stmt => explain::build_explain_statement(program_pair),
         Rule::transaction_control => transaction::build_transaction_control(program_pair),
@@ -64,26 +63,41 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
     }
 }
 
-fn unsupported_feature(
-    pair: &Pair<'_, Rule>,
-    feature_id: FeatureId,
-    fallback_hint: &'static str,
-) -> ParserError {
+pub(super) fn unsupported_feature(pair: &Pair<'_, Rule>, feature_id: FeatureId) -> ParserError {
+    let record = capability(feature_id).expect("parser feature IDs are generated capabilities");
     ParserError::UnsupportedFeature {
         feature_id,
-        display_name: name_of(feature_id).unwrap_or("unnamed feature"),
+        display_name: record.name,
         span: span(pair),
-        hint: non_supported_rationale(feature_id).unwrap_or(fallback_hint),
+        hint: record.non_support_rationale,
     }
 }
 
-fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
+fn build_query_expression(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let first = children
         .next()
         .ok_or_else(ParserError::empty_program)
         .and_then(|pair| query::build_query_pipeline(pair))?;
+    match children.next() {
+        None => Ok(Statement::Query(first)),
+        Some(tail) if tail.as_rule() == Rule::composite_query => {
+            build_composite(first, tail, source_span)
+        }
+        Some(tail) if tail.as_rule() == Rule::chained_query => {
+            build_chained(first, tail, source_span)
+        }
+        Some(tail) => Err(unexpected_pair(tail, "expected query composition tail")),
+    }
+}
+
+fn build_composite(
+    first: QueryPipeline,
+    tail: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Statement, ParserError> {
+    let mut children = tail.into_inner();
     let mut rest = Vec::new();
 
     while let Some(op_pair) = children.next() {
@@ -92,6 +106,13 @@ fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
             .next()
             .ok_or_else(ParserError::empty_program)
             .and_then(|pair| query::build_query_pipeline(pair))?;
+        if focused(&first) != focused(&pipeline) {
+            return Err(ParserError::syntax(
+                "focused and ambient query arms cannot be mixed (ISO 14.2 SR4)",
+                pipeline.span,
+                None,
+            ));
+        }
         rest.push((op, pipeline));
     }
 
@@ -103,20 +124,38 @@ fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     })
 }
 
-fn build_chained(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
-    let source_span = span(&pair);
-    let blocks = pair
-        .into_inner()
-        .filter(|child| child.as_rule() == Rule::query_pipeline)
-        .map(query::build_query_pipeline)
-        .collect::<Result<Vec<_>, _>>()?;
-    if blocks.is_empty() {
-        return Err(ParserError::empty_program());
+fn build_chained(
+    first: QueryPipeline,
+    tail: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Statement, ParserError> {
+    let mut blocks = vec![first];
+    for child in tail.into_inner() {
+        if child.as_rule() == Rule::query_pipeline {
+            blocks.push(query::build_query_pipeline(child)?);
+        }
+    }
+    if blocks
+        .iter()
+        .any(|block| focused(block) != focused(&blocks[0]))
+    {
+        return Err(ParserError::syntax(
+            "focused and ambient NEXT statements cannot be mixed (ISO 9.2 SR5)",
+            source_span,
+            None,
+        ));
     }
     Ok(Statement::Chained {
         blocks,
         span: source_span,
     })
+}
+
+fn focused(query: &QueryPipeline) -> bool {
+    matches!(
+        query.working_scopes.first(),
+        Some(crate::WorkingScopeClause::Use { .. })
+    )
 }
 
 fn build_set_op(pair: Pair<'_, Rule>) -> Result<SetOp, ParserError> {
@@ -149,9 +188,7 @@ fn contains_word(text: &str, word: &str) -> bool {
         .any(|part| part == word)
 }
 
-use query::{
-    build_exists_match_body_pipeline, build_filter, build_query_pipeline, build_return_clause,
-};
+use query::{build_exists_match_body_pipeline, build_filter, build_return_clause};
 
 pub(super) fn first_child(pair: Pair<'_, Rule>) -> Result<Pair<'_, Rule>, ParserError> {
     let pair_span = span(&pair);

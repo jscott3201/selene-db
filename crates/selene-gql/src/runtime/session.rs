@@ -5,14 +5,15 @@ use std::{
 };
 
 use selene_core::{CancellationToken, Change, DbString, Value};
-use selene_graph::{CommitOutcome, SharedGraph, WriteTxn};
+use selene_graph::{CommitOutcome, SharedGraph, WriteTxn, write_txn::PreparedGraphCommit};
 
 use crate::{
     GqlStatus, SourceSpan,
     plan::ImplDefinedCaps,
     runtime::{
-        BindingTable, BindingTableRegistry, CallPlanCache, ExecutorError, ExecutorWarning,
-        PlanCache, PlanCacheStats, SharedPlanCache, WarningSink, WriteOutcome,
+        BindingTable, BindingTableAllocationError, BindingTableRegistry, CallPlanCache,
+        ExecutorError, ExecutorWarning, PlanCache, PlanCacheStats, RequestExecutionInput,
+        SharedPlanCache, WarningSink, WriteOutcome, request_runtime::RequestRuntime,
     },
 };
 
@@ -59,6 +60,14 @@ pub struct Session<'g> {
     /// `SESSION RESET TIME ZONE` clears it back to `None`. The threaded value
     /// is consumed by the section 20.27 current-datetime functions.
     pub(crate) time_zone: Option<jiff::tz::TimeZone>,
+    /// Explicit facade request metadata; direct lower sessions leave this absent.
+    pub(crate) request: Option<RequestExecutionInput>,
+    /// Selected-facade execution prepares instead of graph-locally publishing.
+    pub(crate) prepare_unpublished: bool,
+    /// Owned result of one selected-facade unpublished write.
+    pub(crate) prepared_graph: Option<PreparedGraphCommit>,
+    #[cfg(test)]
+    pub(crate) before_statement_execution: Option<Box<dyn FnOnce() + 'g>>,
     /// Session termination flag (ISO/IEC 39075:2024 section 7.3).
     ///
     /// Set by `SESSION CLOSE`; once set, every subsequent `execute_source`
@@ -77,12 +86,12 @@ pub(crate) fn materialize_parameter_values<'a>(
     parameters: &'a BTreeMap<DbString, SessionParameterValue>,
     scalar_parameters: &'a BTreeMap<DbString, Value>,
     registry: &BindingTableRegistry,
-) -> Cow<'a, BTreeMap<DbString, Value>> {
+) -> Result<Cow<'a, BTreeMap<DbString, Value>>, BindingTableAllocationError> {
     if parameters
         .values()
         .all(|value| matches!(value, SessionParameterValue::Scalar(_)))
     {
-        return Cow::Borrowed(scalar_parameters);
+        return Ok(Cow::Borrowed(scalar_parameters));
     }
 
     let mut materialized = scalar_parameters.clone();
@@ -90,11 +99,11 @@ pub(crate) fn materialize_parameter_values<'a>(
         if let SessionParameterValue::Table(table) = value {
             materialized.insert(
                 name.clone(),
-                Value::TableRef(registry.register(Arc::clone(table))),
+                Value::TableRef(registry.register(Arc::clone(table))?),
             );
         }
     }
-    Cow::Owned(materialized)
+    Ok(Cow::Owned(materialized))
 }
 
 /// Metadata returned after committing an explicit transaction through a [`Session`].
@@ -109,7 +118,9 @@ pub struct TransactionOutcome {
     pub next_node_id: u64,
     /// Next edge ID after the commit.
     pub next_edge_id: u64,
-    /// Highest sequence reported by commit-critical durable providers.
+    /// Durable-sequence slot; always `None` from the in-graph publisher.
+    /// Sequence assignment below the graph layer is the owning database
+    /// handle's authority.
     pub durable_at: Option<u64>,
     /// Wall-clock duration from `start_transaction` to commit completion.
     pub duration_micros: u64,
@@ -165,6 +176,11 @@ impl<'g> Session<'g> {
             warning_sink: None,
             index_selection: true,
             time_zone: None,
+            request: None,
+            prepare_unpublished: false,
+            prepared_graph: None,
+            #[cfg(test)]
+            before_statement_execution: None,
             closed: false,
             caps: ImplDefinedCaps::DEFAULT,
         }
@@ -173,28 +189,9 @@ impl<'g> Session<'g> {
     /// Create a session that forwards opaque principal bytes to commits.
     #[must_use]
     pub fn with_principal(graph: &'g SharedGraph, principal: Arc<[u8]>) -> Self {
-        Self {
-            graph,
-            principal: Some(principal),
-            parameters: BTreeMap::new(),
-            scalar_parameters: BTreeMap::new(),
-            plan_cache: None,
-            shared_plan_cache: None,
-            call_plan_cache: None,
-            active_txn: None,
-            aborted: false,
-            tx_started_at: None,
-            tx_statement_count: 0,
-            cancellation: None,
-            deadline: None,
-            max_nodes_scanned: None,
-            row_cap: None,
-            warning_sink: None,
-            index_selection: true,
-            time_zone: None,
-            closed: false,
-            caps: ImplDefinedCaps::DEFAULT,
-        }
+        let mut session = Self::new(graph);
+        session.principal = Some(principal);
+        session
     }
 
     /// Attach a cooperative cancellation token to subsequent statements.
@@ -364,6 +361,22 @@ impl<'g> Session<'g> {
         self.time_zone.clone().unwrap_or(jiff::tz::TimeZone::UTC)
     }
 
+    /// Return one timestamp for the statement, preserving an explicit facade request instant.
+    #[must_use]
+    pub(crate) fn effective_request_timestamp(&self) -> jiff::Timestamp {
+        self.request
+            .as_ref()
+            .map_or_else(jiff::Timestamp::now, |request| request.timestamp)
+    }
+
+    /// Clone this explicit request's runtime, or create one for a direct statement.
+    pub(crate) fn execution_runtime(&self) -> Arc<RequestRuntime> {
+        self.request.as_ref().map_or_else(
+            || Arc::new(RequestRuntime::new()),
+            RequestExecutionInput::runtime,
+        )
+    }
+
     /// Reset every session characteristic (ISO feature GS04).
     ///
     /// Clears all session parameters and resets the time zone to its default.
@@ -408,7 +421,7 @@ impl<'g> Session<'g> {
     pub(crate) fn materialize_parameters<'a>(
         &'a self,
         registry: &BindingTableRegistry,
-    ) -> Cow<'a, BTreeMap<DbString, Value>> {
+    ) -> Result<Cow<'a, BTreeMap<DbString, Value>>, BindingTableAllocationError> {
         materialize_parameter_values(&self.parameters, &self.scalar_parameters, registry)
     }
 
@@ -490,6 +503,19 @@ impl<'g> Session<'g> {
     #[must_use]
     pub(crate) const fn graph(&self) -> &'g SharedGraph {
         self.graph
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_before_statement_execution(mut self, hook: impl FnOnce() + 'g) -> Self {
+        self.before_statement_execution = Some(Box::new(hook));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_before_statement_execution(&mut self) {
+        if let Some(hook) = self.before_statement_execution.take() {
+            hook();
+        }
     }
 
     /// Clone the principal bytes for a commit boundary.
@@ -600,29 +626,6 @@ impl<'g> Session<'g> {
             statement_count,
             duration_micros,
         })
-    }
-
-    /// Flush every commit-critical durable provider registered on this graph.
-    ///
-    /// Returns the highest durable sequence reported by providers, or `None`
-    /// when the graph has no durable providers.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ExecutorError::Flush`] when any provider-owned flush fails.
-    pub fn flush(&self) -> Result<Option<u64>, ExecutorError> {
-        let mut highest = None;
-        for provider in self.graph.durable_providers() {
-            let tag = provider.provider_tag();
-            let seq = provider.flush().map_err(|error| ExecutorError::Flush {
-                provider_tag: tag,
-                reason: error.to_string(),
-            })?;
-            if let Some(seq) = seq {
-                highest = Some(highest.map_or(seq, |current: u64| current.max(seq)));
-            }
-        }
-        Ok(highest)
     }
 
     /// Roll back and clear the explicit transaction, when one is active.

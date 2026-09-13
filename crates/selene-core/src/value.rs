@@ -1,9 +1,9 @@
 //! In-memory GQL value representation per spec 02 section 3.
 //!
-//! The [`Value`] variant order is canonical and append-only. Reordering,
-//! removing, or inserting variants in the middle is a major-version and
-//! durability-format change. The serde/postcard and rkyv serialization
-//! derives are part of the same durability contract.
+//! [`Value`] is a runtime carrier, deliberately without generic serde encoding.
+//! Format-2 persistence uses the explicit logical value codec.
+//! Durable admission uses [`crate::StoredValue`], which excludes query references
+//! and process-local identities recursively.
 
 use std::sync::Arc;
 
@@ -24,17 +24,17 @@ pub const MAX_VECTOR_DIMENSION: usize = u16::MAX as usize;
 
 /// In-memory representation of a GQL value.
 ///
-/// IA001: default floating-point arithmetic is IEEE 754 binary64; `Float32`
-/// remains distinct for schema storage. Rust equality preserves GQL's
-/// `+0.0 == -0.0` behavior, while NaN ordering is handled by query-engine
-/// `ORDER BY` logic outside this crate.
+/// ID037: `Float` uses IEEE 754 binary64 storage, while `Float32` remains
+/// distinct with binary32 storage. Rust equality preserves GQL's
+/// `+0.0 == -0.0` behavior; IA025 NaN predicate and ordering behavior is
+/// handled by the query engine outside this crate.
 ///
 /// Value equality matches IEEE 754 for non-NaN AND treats all NaN bit-patterns
 /// as equal for round-trip integrity. This is the internal Rust-level equality
 /// used by `PropertyMap` serde round-trip and snapshot diffs. The GQL `=`
 /// operator is intercepted at the runtime layer (`runtime::value_compare`)
 /// and preserves ISO 3VL semantics — `NaN = NaN` returns NULL there.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum Value {
     /// Boolean value.
@@ -44,15 +44,15 @@ pub enum Value {
     /// Unsigned integer up to 64 bits.
     Uint(u64),
     /// Signed 128-bit integer.
-    Int128(#[serde(with = "serde_i128_le")] i128),
+    Int128(i128),
     /// Unsigned 128-bit integer.
-    Uint128(#[serde(with = "serde_u128_le")] u128),
+    Uint128(u128),
     /// Default floating-point value.
     Float(f64),
     /// Distinct 32-bit floating-point value.
     Float32(f32),
     /// Fixed-precision decimal value.
-    Decimal(#[serde(with = "serde_decimal_str")] rust_decimal::Decimal),
+    Decimal(rust_decimal::Decimal),
     /// String value.
     String(DbString),
     /// Byte-string value.
@@ -186,6 +186,64 @@ impl Value {
 
     /// Number of known [`Value`] variants in this build.
     pub const VARIANT_COUNT: usize = Self::ALL.len();
+
+    /// Whether this value is a *number* in the ISO sense.
+    ///
+    /// ISO/IEC 39075:2024 §4.16.5.2 states that "any two numbers are
+    /// essentially comparable values", which makes the numeric types the one
+    /// family whose values compare across distinct variants. Every other family
+    /// is narrower: temporal instants are comparable only at "the same most
+    /// specific static value types" (§4.16.6.2), temporal durations only within
+    /// one unit group (§4.16.6.3), and otherwise only identical values are
+    /// essentially comparable (§4.4.2 NOTE 25). Absent Feature GA04, "Universal
+    /// comparison" — which the generated runtime inventory does not report as
+    /// supported — §4.4.2 NOTE 26 leaves no further comparability, so a
+    /// cross-variant pair outside this family can never compare equal.
+    ///
+    /// That is why this predicate is engine-wide rather than local to one
+    /// consumer: query evaluation and index-drift classification have to agree
+    /// on it exactly, and a second copy could only ever drift from the first.
+    ///
+    /// The match is written out rather than as a `matches!` of the numeric arms
+    /// because `#[non_exhaustive]` does not apply inside `selene-core`: a new
+    /// variant is a compile error here and has to be classified deliberately.
+    /// A catch-all would answer `false` for a new numeric variant, and a caller
+    /// that skips a row on the strength of that answer would silently omit it
+    /// from results it belongs in.
+    #[must_use]
+    pub const fn is_number(&self) -> bool {
+        match self {
+            Self::Int(_)
+            | Self::Uint(_)
+            | Self::Int128(_)
+            | Self::Uint128(_)
+            | Self::Float(_)
+            | Self::Float32(_)
+            | Self::Decimal(_) => true,
+            Self::Bool(_)
+            | Self::String(_)
+            | Self::Bytes(_)
+            | Self::List(_)
+            | Self::Record(_)
+            | Self::RecordTyped(_)
+            | Self::Path(_)
+            | Self::NodeRef(_)
+            | Self::EdgeRef(_)
+            | Self::GraphRef(_)
+            | Self::TableRef(_)
+            | Self::ZonedDateTime(_)
+            | Self::LocalDateTime(_)
+            | Self::Date(_)
+            | Self::ZonedTime(_)
+            | Self::LocalTime(_)
+            | Self::Duration(_)
+            | Self::Extended { .. }
+            | Self::Null
+            | Self::Uuid(_)
+            | Self::Vector(_)
+            | Self::Json(_) => false,
+        }
+    }
 
     /// Stable telemetry name for this value variant.
     ///
@@ -364,7 +422,7 @@ impl<'de> Deserialize<'de> for VectorValue {
 }
 
 /// Open record value.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Record {
     /// Open `RECORD` literal in expressions.
@@ -372,7 +430,7 @@ pub enum Record {
 }
 
 /// Closed record value tied to a graph-type-defined record type.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RecordTyped {
     /// Identifier pointing to a `RecordTypeDef` in the graph type catalog.
     pub type_id: RecordTypeId,
@@ -381,7 +439,7 @@ pub struct RecordTyped {
 }
 
 /// Path value.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Path {
     /// Graph the path lives within.
     pub graph: GraphId,
@@ -392,7 +450,7 @@ pub struct Path {
 }
 
 /// One traversal step in a [`Path`].
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PathSegment {
     /// Edge traversed in this step.
     pub edge: EdgeId,
@@ -411,66 +469,6 @@ pub enum EdgeDirection {
     Incoming,
     /// Undirected edge.
     Undirected,
-}
-
-mod serde_i128_le {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub(super) fn serialize<S>(value: &i128, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        value.to_le_bytes().serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<i128, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        <[u8; 16]>::deserialize(deserializer).map(i128::from_le_bytes)
-    }
-}
-
-mod serde_u128_le {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub(super) fn serialize<S>(value: &u128, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        value.to_le_bytes().serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        <[u8; 16]>::deserialize(deserializer).map(u128::from_le_bytes)
-    }
-}
-
-mod serde_decimal_str {
-    use std::str::FromStr;
-
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub(super) fn serialize<S>(
-        value: &rust_decimal::Decimal,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&value.to_string())
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<rust_decimal::Decimal, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        rust_decimal::Decimal::from_str(&value).map_err(serde::de::Error::custom)
-    }
 }
 
 #[cfg(test)]

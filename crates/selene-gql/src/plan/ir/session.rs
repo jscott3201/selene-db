@@ -2,7 +2,7 @@
 
 use selene_core::DbString;
 
-use crate::{GqlType, SessionSetGraphTarget, SourceSpan, ValueExpr};
+use crate::{CatalogObjectReference, GqlType, SessionSetGraphTarget, SourceSpan, ValueExpr};
 
 /// Session-control operation lowered from a `SESSION` command.
 #[derive(Clone, Debug)]
@@ -30,6 +30,13 @@ pub enum SessionOp {
         /// Source span.
         span: SourceSpan,
     },
+    /// `SESSION SET SCHEMA <schema reference>`.
+    SetSchema {
+        /// Unresolved schema reference resolved by the selected facade.
+        reference: CatalogObjectReference,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `SESSION SET [PROPERTY] GRAPH <current graph>` (ISO/IEC 39075:2024 section 7.1).
     SetGraph {
         /// Current-graph expression selected by the command.
@@ -39,6 +46,16 @@ pub enum SessionOp {
     },
     /// `SESSION RESET [ALL] CHARACTERISTICS` / bare `SESSION RESET` (GS04).
     ResetAllCharacteristics {
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION RESET SCHEMA` (ISO feature GS05).
+    ResetSchema {
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION RESET [PROPERTY] GRAPH` (ISO feature GS06).
+    ResetGraph {
         /// Source span.
         span: SourceSpan,
     },

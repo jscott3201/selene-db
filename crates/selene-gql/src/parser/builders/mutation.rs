@@ -62,7 +62,7 @@ fn build_mutation_op(pair: Pair<'_, Rule>) -> Result<MutationStatement, ParserEr
             build_delete(inner, DeleteMode::Detach).map(MutationStatement::Delete)
         }
         Rule::delete_op => build_delete_op(inner).map(MutationStatement::Delete),
-        Rule::merge_op => Err(not_implemented(&inner, "MERGE is not claimed under D1")),
+        Rule::merge_op => Err(not_implemented(&inner, "MERGE is deferred")),
         _ => Err(unexpected_pair(inner, "expected mutation operation")),
     }
 }
@@ -139,11 +139,13 @@ fn build_insert_edge_pattern(pair: Pair<'_, Rule>) -> Result<EdgePattern, Parser
     let direction = match inner.as_rule() {
         Rule::insert_edge_right => EdgeDirection::Right,
         Rule::insert_edge_left => EdgeDirection::Left,
+        Rule::insert_edge_undirected => EdgeDirection::Undirected,
         _ => return Err(unexpected_pair(inner, "expected INSERT edge pattern")),
     };
     let mut pattern = EdgePattern {
         binding: None,
         direction,
+        abbreviated: false,
         label_expr: None,
         properties: Vec::new(),
         quantifier: None,

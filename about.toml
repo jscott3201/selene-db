@@ -2,7 +2,7 @@
 # Cargo.lock. Verified in CI by .github/scripts/check-thirdparty-current.sh.
 #
 # Permissive licenses we accept for transitive deps; mirrors deny.toml's
-# [licenses].allow list (decision D7 added MPL-2.0 for imbl).
+# [licenses].allow list.
 
 accepted = [
   "MIT",
@@ -17,7 +17,6 @@ accepted = [
   "CC0-1.0",
   "Zlib",
   "BSL-1.0",
-  "MPL-2.0",
 ]
 
 # Crates that have unclear license metadata or require manual override

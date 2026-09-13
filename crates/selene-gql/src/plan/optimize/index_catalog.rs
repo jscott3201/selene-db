@@ -20,6 +20,18 @@ pub enum IndexTarget {
 /// Embedders that cache plans across snapshot rotations must either re-plan or
 /// validate handles against the new snapshot before execution.
 pub trait IndexCatalog: Send + Sync {
+    /// Discover an equivalent complete node expression index and exact probe
+    /// cardinality. Unknown semantic/profile or data completeness must decline.
+    fn expression_index(
+        &self,
+        label: &DbString,
+        expression: &selene_core::scalar_index_expression::ScalarIndexExpression,
+        value: &Value,
+    ) -> Option<(TypedIndexLookup, u64)> {
+        let _ = (label, expression, value);
+        None
+    }
+
     /// Return a typed-property index for `(target, label, property)`, if any.
     fn typed_index(
         &self,
@@ -146,7 +158,7 @@ pub trait IndexCatalog: Send + Sync {
 pub(crate) type ValueRange = (std::ops::Bound<Value>, std::ops::Bound<Value>);
 
 /// Assert at compile time that the range tuple satisfies `RangeBounds<Value>`
-/// (the shape `SeleneGraph::nodes_with_property_range` consumes).
+/// (the shape `SeleneGraph::node_property_range_cardinality` consumes).
 const _: fn() = || {
     fn _assert<R: RangeBounds<Value>>() {}
     _assert::<ValueRange>();

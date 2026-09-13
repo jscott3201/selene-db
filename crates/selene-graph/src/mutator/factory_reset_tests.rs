@@ -13,7 +13,6 @@ use selene_core::{Change, GraphId, NodeId, PropertyMap, Value, db_string};
 
 use super::*;
 use crate::SharedGraph;
-use crate::store::RowIndex;
 
 fn prop(key: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
@@ -83,7 +82,7 @@ fn compacted_open_fixture_with_non_identity_ids() -> (SharedGraph, NodeId, NodeI
     {
         let g = shared.read();
         let row = g
-            .row_for_node_id(keep_b)
+            .node_row_for_id(keep_b)
             .expect("keep_b survives compaction");
         assert_ne!(
             u64::from(row.get()) + 1,
@@ -96,15 +95,7 @@ fn compacted_open_fixture_with_non_identity_ids() -> (SharedGraph, NodeId, NodeI
 }
 
 fn live_node_ids(graph: &crate::SeleneGraph) -> Vec<NodeId> {
-    graph
-        .live_nodes()
-        .iter()
-        .map(|row| {
-            graph
-                .node_id_for_row(RowIndex::new(row))
-                .expect("live node row has external id")
-        })
-        .collect()
+    graph.live_node_candidates().unwrap().iter().collect()
 }
 
 #[test]
@@ -120,15 +111,19 @@ fn factory_reset_wipes_all_nodes_and_edges_including_untyped() {
     let g = shared.read();
     assert_eq!(g.node_count(), 0, "all nodes wiped, incl untyped");
     assert_eq!(g.edge_count(), 0, "all edges wiped, incl untyped-incident");
-    assert!(g.idx_label.values().all(roaring::RoaringBitmap::is_empty));
     assert!(
-        g.idx_edge_label
-            .values()
-            .all(roaring::RoaringBitmap::is_empty),
+        (&g.idx_label)
+            .into_iter()
+            .all(|(_, bitmap)| bitmap.is_empty())
+    );
+    assert!(
+        (&g.idx_edge_label)
+            .into_iter()
+            .all(|(_, bitmap)| bitmap.is_empty()),
         "edge-label index buckets cleared"
     );
-    assert!(g.adjacency_out.is_empty(), "outgoing adjacency cleared");
-    assert!(g.adjacency_in.is_empty(), "incoming adjacency cleared");
+    assert_eq!(g.adjacency_out.len(), 0, "outgoing adjacency cleared");
+    assert_eq!(g.adjacency_in.len(), 0, "incoming adjacency cleared");
 }
 
 #[test]
@@ -147,13 +142,13 @@ fn factory_reset_after_compaction_uses_external_id_maps() {
     assert!(!g.is_node_alive(keep_a));
     assert!(!g.is_node_alive(keep_b));
     assert!(
-        g.row_for_node_id(keep_b).is_some(),
+        g.node_row_for_id(keep_b).is_some(),
         "reset leaves deleted ids mapped to dead rows until compaction"
     );
-    assert!(g.idx_label.is_empty(), "node label index cleared");
-    assert!(g.idx_edge_label.is_empty(), "edge label index cleared");
-    assert!(g.adjacency_out.is_empty(), "outgoing adjacency cleared");
-    assert!(g.adjacency_in.is_empty(), "incoming adjacency cleared");
+    assert_eq!(g.idx_label.len(), 0, "node label index cleared");
+    assert_eq!(g.idx_edge_label.len(), 0, "edge label index cleared");
+    assert_eq!(g.adjacency_out.len(), 0, "outgoing adjacency cleared");
+    assert_eq!(g.adjacency_in.len(), 0, "incoming adjacency cleared");
 }
 
 #[test]

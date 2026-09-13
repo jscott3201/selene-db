@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use selene_core::feature_register::FeatureId;
+use selene_profile::FeatureId;
 
 use crate::ast::span::SourceSpan;
 
@@ -11,6 +11,23 @@ use crate::ast::span::SourceSpan;
 pub struct GqlStatus([u8; 5]);
 
 impl GqlStatus {
+    /// Maps to GQLSTATUS 00000: successful completion with a regular result.
+    pub const SUCCESSFUL_COMPLETION: Self = Self(*b"00000");
+    /// Maps to GQLSTATUS 00001 per ISO/IEC 39075:2024 section 23.1 Table 8:
+    /// the completion condition of a successful outcome with an omitted
+    /// result (section 4.9.3), which every catalog-modifying statement
+    /// produces (section 12.1 GR2).
+    pub const SUCCESSFUL_COMPLETION_OMITTED_RESULT: Self = Self(*b"00001");
+    /// Maps to GQLSTATUS 01G03 per ISO/IEC 39075:2024 section 23.1 Table 8:
+    /// the `DROP GRAPH IF EXISTS` completion condition when the graph is
+    /// absent (section 12.5 GR1).
+    pub const GRAPH_DOES_NOT_EXIST: Self = Self(*b"01G03");
+    /// Maps to GQLSTATUS 02000: successful completion with no data.
+    pub const NO_DATA: Self = Self(*b"02000");
+    /// Maps to GQLSTATUS 42000 per ISO/IEC 39075:2024 section 23.1 Table 8:
+    /// the class-level "syntax error or access rule violation" condition.
+    /// ISO leaves access rules to the implementation (IE005).
+    pub const SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION: Self = Self(*b"42000");
     /// Maps to GQLSTATUS 42001 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const SYNTAX_ERROR: Self = Self(*b"42001");
     /// Maps to GQLSTATUS 42N01, a selene-db implementation-defined subclass
@@ -107,6 +124,8 @@ impl GqlStatus {
     pub const INVALID_DURATION_FORMAT: Self = Self(*b"22G0H");
     /// Maps to GQLSTATUS 22G10 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const PATH_DATA_RIGHT_TRUNCATION: Self = Self(*b"22G10");
+    /// Access to the referent of a deleted reference (ISO section 4.4.4).
+    pub const INVALID_REFERENCE_VALUE: Self = Self(*b"22G11");
     /// Maps to GQLSTATUS 22G14 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INCOMPATIBLE_TEMPORAL_INSTANT_UNIT_GROUPS: Self = Self(*b"22G14");
     /// Maps to GQLSTATUS 22G0M per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -137,6 +156,8 @@ impl GqlStatus {
     pub const INVALID_TRANSACTION_STATE_MIXING: Self = Self(*b"25G02");
     /// Maps to GQLSTATUS 25G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const READ_ONLY_TRANSACTION_VIOLATION: Self = Self(*b"25G03");
+    /// ISO §9.1 GR1d: accessing multiple graphs is not supported (GT03).
+    pub const MULTIPLE_GRAPHS_NOT_SUPPORTED: Self = Self(*b"25G04");
     /// Maps to GQLSTATUS 25N02, a selene-db implementation-defined subclass
     /// under standard class 25 per ISO/IEC 39075:2024 section 23.1.
     pub const IN_FAILED_TRANSACTION: Self = Self(*b"25N02");
@@ -164,6 +185,12 @@ impl GqlStatus {
     /// ISO/IEC 39075:2024 section 23.1. Specific executor diagnostics carry
     /// detail tags under this single public class.
     pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"5GQL0");
+    /// Maps to GQLSTATUS G1000 per ISO/IEC 39075:2024 section 23.1 Table 8:
+    /// the class-level "dependent object error". selene-db reports it when a
+    /// RESTRICT drop finds live contents or dependents (a nonempty graph or
+    /// schema, or a referenced graph type). It is deliberately not `G1001`,
+    /// whose subclass names "edges still exist".
+    pub const DEPENDENT_OBJECT_ERROR: Self = Self(*b"G1000");
     /// Maps to GQLSTATUS G1001 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const DEPENDENT_OBJECT_STILL_EXISTS: Self = Self(*b"G1001");
     /// Maps to GQLSTATUS G2000 per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -309,7 +336,8 @@ pub enum ParserError {
     /// Source parsed at the grammar level, but no AST builder is implemented yet.
     ///
     /// Distinct from [`Self::SyntaxError`] (parse failed) and
-    /// [`Self::UnsupportedFeature`] (specific ISO feature not in the claim list).
+    /// [`Self::UnsupportedFeature`] (specific capability rejected by the
+    /// generated Flagger disposition).
     /// This variant covers grammar surfaces selene-db will support but whose
     /// builders land in a later brief.
     #[error("not implemented: {message}")]
@@ -400,6 +428,17 @@ mod tests {
     #[test]
     fn gqlstatus_codes_match_iso_table_8_remap() {
         let cases = [
+            (
+                GqlStatus::SUCCESSFUL_COMPLETION_OMITTED_RESULT,
+                "00001",
+                *b"00",
+            ),
+            (GqlStatus::GRAPH_DOES_NOT_EXIST, "01G03", *b"01"),
+            (
+                GqlStatus::SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION,
+                "42000",
+                *b"42",
+            ),
             (GqlStatus::SYNTAX_ERROR, "42001", *b"42"),
             (GqlStatus::FEATURE_NOT_SUPPORTED, "42N01", *b"42"),
             (GqlStatus::PROGRAM_LIMIT_EXCEEDED, "5GQL1", *b"5G"),
@@ -531,6 +570,7 @@ mod tests {
             (GqlStatus::INVALID_PROCEDURE_ARGUMENT, "22G03", *b"22"),
             (GqlStatus::CAPABILITY_VIOLATION, "42N28", *b"42"),
             (GqlStatus::IMPLEMENTATION_DEFINED_ERROR, "5GQL0", *b"5G"),
+            (GqlStatus::DEPENDENT_OBJECT_ERROR, "G1000", *b"G1"),
             (GqlStatus::DEPENDENT_OBJECT_STILL_EXISTS, "G1001", *b"G1"),
             (GqlStatus::GRAPH_TYPE_VIOLATION, "G2000", *b"G2"),
         ];

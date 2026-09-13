@@ -8,35 +8,46 @@ use crate::{
     DdlStatement, ExistsBody, ForStatement, GqlType, IsCheckKind, LimitValue, MatchClause,
     MutationPipeline, MutationStatement, MutationTerminator, PatternElement, PipelineStatement,
     ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
-    TypePropertyConstraint, ValueExpr, analyze::error::AnalysisError,
+    TypePropertyConstraint, ValueExpr,
+    analyze::{ParameterUse, error::AnalysisError},
 };
 
-pub(super) type DeclarationMap = BTreeMap<DbString, (GqlType, SourceSpan)>;
+pub(super) type DeclarationMap = BTreeMap<DbString, (selene_core::StructuralType, SourceSpan)>;
 
-pub(crate) fn apply_statement_parameter_declarations(
-    statement: &mut Statement,
-) -> Result<(), AnalysisError> {
-    let mut declarations = BTreeMap::new();
-    collect_statement_parameter_declarations(statement, &mut declarations)?;
-    if !declarations.is_empty() {
-        super::parameter_inheritance::inherit_statement_parameter_declarations(
-            statement,
-            &declarations,
-        );
+#[derive(Default)]
+struct ParameterCollector {
+    declarations: DeclarationMap,
+    uses: Vec<ParameterUse>,
+}
+
+pub(crate) fn collect_statement_parameters(
+    statement: &Statement,
+) -> Result<Vec<ParameterUse>, AnalysisError> {
+    let mut collector = ParameterCollector::default();
+    collect_statement_parameter_declarations(statement, &mut collector)?;
+    let ParameterCollector {
+        declarations,
+        mut uses,
+    } = collector;
+    for parameter in &mut uses {
+        parameter.declared_type = declarations
+            .get(&parameter.name)
+            .map(|(declared_type, _)| crate::lower_value_type(declared_type));
     }
-    Ok(())
+    uses.sort_by_key(|parameter| (parameter.span.byte_offset, parameter.span.byte_len));
+    Ok(uses)
 }
 
 pub(crate) fn validate_parameter_declarations(
     pipeline: &QueryPipeline,
 ) -> Result<(), AnalysisError> {
-    let mut declarations = BTreeMap::new();
-    collect_pipeline_parameter_declarations(pipeline, &mut declarations)
+    let mut collector = ParameterCollector::default();
+    collect_pipeline_parameter_declarations(pipeline, &mut collector)
 }
 
 fn collect_statement_parameter_declarations(
     statement: &Statement,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     match statement {
         Statement::Query(pipeline) => {
@@ -63,10 +74,12 @@ fn collect_statement_parameter_declarations(
         Statement::Explain { inner, .. } => {
             collect_statement_parameter_declarations(inner, declarations)
         }
+        Statement::SessionSetValue { value, .. } => {
+            collect_value_parameter_declarations(value, declarations)
+        }
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. }
-        | Statement::SessionSetValue { .. }
         | Statement::SessionSetTimeZone { .. }
         | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
@@ -76,7 +89,7 @@ fn collect_statement_parameter_declarations(
 
 fn collect_pipeline_parameter_declarations(
     pipeline: &QueryPipeline,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     for statement in &pipeline.statements {
         match statement {
@@ -127,7 +140,7 @@ fn collect_pipeline_parameter_declarations(
 
 fn collect_mutation_parameter_declarations(
     pipeline: &MutationPipeline,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     for statement in &pipeline.statements {
         match statement {
@@ -168,11 +181,12 @@ fn collect_mutation_parameter_declarations(
 
 fn collect_ddl_parameter_declarations(
     statement: &DdlStatement,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     match statement {
         DdlStatement::CreateNodeType { properties, .. }
         | DdlStatement::CreateEdgeType { properties, .. }
+        | DdlStatement::AlterNodeType { properties, .. }
         | DdlStatement::AlterEdgeType { properties, .. } => {
             for property in properties {
                 for constraint in &property.constraints {
@@ -182,8 +196,12 @@ fn collect_ddl_parameter_declarations(
                 }
             }
         }
-        DdlStatement::CreateGraph { .. }
+        DdlStatement::CreateSchema { .. }
+        | DdlStatement::DropSchema { .. }
+        | DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }
+        | DdlStatement::CreateGraphType { .. }
+        | DdlStatement::DropGraphType { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
         | DdlStatement::TruncateNodeType { .. }
@@ -200,7 +218,7 @@ fn collect_ddl_parameter_declarations(
 
 fn collect_return_parameter_declarations(
     clause: &ReturnClause,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     collect_projection_parameter_declarations(
         &clause.items,
@@ -214,7 +232,7 @@ fn collect_projection_parameter_declarations(
     items: &[ReturnItem],
     group_by: Option<&[ValueExpr]>,
     having: Option<&ValueExpr>,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     for item in items {
         collect_value_parameter_declarations(&item.expr, declarations)?;
@@ -232,7 +250,7 @@ fn collect_projection_parameter_declarations(
 
 fn collect_call_parameter_declarations(
     call: &ProcedureCall,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     for arg in &call.args {
         collect_value_parameter_declarations(arg, declarations)?;
@@ -242,7 +260,7 @@ fn collect_call_parameter_declarations(
 
 fn collect_match_clause_parameter_declarations(
     clause: &MatchClause,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     for pattern in &clause.patterns {
         collect_graph_pattern_parameter_declarations(pattern, declarations)?;
@@ -255,7 +273,7 @@ fn collect_match_clause_parameter_declarations(
 
 fn collect_graph_pattern_parameter_declarations(
     pattern: &crate::GraphPattern,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     for element in &pattern.elements {
         match element {
@@ -282,32 +300,56 @@ fn collect_graph_pattern_parameter_declarations(
 
 fn collect_limit_parameter_declarations(
     value: &LimitValue,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     if let LimitValue::Parameter {
         name,
-        declared_type: Some(declared_type),
+        declared_type,
         span,
     } = value
     {
-        record_parameter_declaration(declarations, name.clone(), declared_type, *span)?;
+        if let Some(declared_type) = declared_type {
+            record_parameter_declaration(
+                &mut declarations.declarations,
+                name.clone(),
+                declared_type,
+                *span,
+            )?;
+        }
+        declarations.uses.push(ParameterUse {
+            name: name.clone(),
+            span: *span,
+            declared_type: declared_type.clone(),
+        });
     }
     Ok(())
 }
 
 fn collect_value_parameter_declarations(
     value: &ValueExpr,
-    declarations: &mut DeclarationMap,
+    declarations: &mut ParameterCollector,
 ) -> Result<(), AnalysisError> {
     let mut stack = vec![value];
     while let Some(value) = stack.pop() {
         match value {
             ValueExpr::Parameter {
                 name,
-                declared_type: Some(declared_type),
+                declared_type,
                 span,
             } => {
-                record_parameter_declaration(declarations, name.clone(), declared_type, *span)?;
+                if let Some(declared_type) = declared_type {
+                    record_parameter_declaration(
+                        &mut declarations.declarations,
+                        name.clone(),
+                        declared_type,
+                        *span,
+                    )?;
+                }
+                declarations.uses.push(ParameterUse {
+                    name: name.clone(),
+                    span: *span,
+                    declared_type: declared_type.clone(),
+                });
             }
             ValueExpr::PropertyAccess { target, .. }
             | ValueExpr::UnaryOp {
@@ -388,7 +430,7 @@ fn collect_value_parameter_declarations(
             ValueExpr::ValueSubquery { body, .. } => {
                 collect_pipeline_parameter_declarations(body, declarations)?;
             }
-            ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => {}
+            ValueExpr::Literal(_) | ValueExpr::Variable { .. } => {}
         }
     }
     Ok(())
@@ -400,18 +442,20 @@ fn record_parameter_declaration(
     declared_type: &GqlType,
     span: SourceSpan,
 ) -> Result<(), AnalysisError> {
+    let semantic = crate::normalize_value_type(declared_type)
+        .map_err(|source| AnalysisError::StructuralType { source, span })?;
     if let Some((prior_type, prior_span)) = declarations.get(&name) {
-        if prior_type != declared_type {
+        if prior_type != &semantic {
             return Err(AnalysisError::ConflictingParameterTypes {
                 name,
                 declarations: vec![
-                    (prior_type.clone(), *prior_span),
+                    (crate::lower_value_type(prior_type), *prior_span),
                     (declared_type.clone(), span),
                 ],
             });
         }
     } else {
-        declarations.insert(name, (declared_type.clone(), span));
+        declarations.insert(name, (semantic, span));
     }
     Ok(())
 }

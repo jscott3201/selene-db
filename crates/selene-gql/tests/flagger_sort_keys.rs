@@ -2,8 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::feature_register::{FeatureId, SUPPORTED_FEATURES};
 use selene_gql::{feature_walk, parse};
+use selene_profile::{CapabilityStatus, FeatureId, capability};
 
 fn observed_features(source: &str) -> BTreeSet<FeatureId> {
     feature_walk(&parse(source).expect(source))
@@ -13,11 +13,11 @@ fn observed_features(source: &str) -> BTreeSet<FeatureId> {
 }
 
 #[test]
-fn sort_key_optional_features_are_claimed_supported() {
+fn sort_key_optional_features_are_runtime_supported() {
     for feature in [FeatureId::GQ14, FeatureId::GQ16, FeatureId::GF20] {
         assert!(
-            SUPPORTED_FEATURES.contains(&feature),
-            "{feature} must be claimed supported"
+            capability(feature).is_some_and(|record| record.status == CapabilityStatus::Supported),
+            "{feature} must be runtime-supported"
         );
     }
 }

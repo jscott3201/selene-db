@@ -1,60 +1,43 @@
-//! Maintained graph-derived candidate sets.
-//!
-//! This module owns small, policy-neutral maintained node sets for graph/vector
-//! retrieval. A set can require node labels, require incoming/outgoing edge
-//! evidence, and exclude nodes that have disqualifying incoming/outgoing edges.
-//! That is enough to model active/current/unresolved memory subsets without
-//! hard-coding those application labels into the engine.
+//! Policy-neutral, maintained in-memory graph candidate sets.
+//! Provider-owned members are rebuildable; the facade persists only catalog rules.
 
+use crate::{
+    CandidateSet, IndexProvider, Node, ProviderError, ProviderTag, SeleneGraph, VectorCandidateSet,
+    VectorCandidateStateInfo,
+};
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
-
 use selene_core::{Change, DbString, NodeId};
 #[cfg(test)]
 use selene_core::{EdgeId, LabelSet};
-
-use crate::index_provider::{
-    IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
-};
-use crate::store::RowIndex;
-use crate::{SeleneGraph, VectorCandidateSet};
-
-#[path = "candidate_state/state.rs"]
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 mod state;
-
 use state::{
-    CandidateState, CandidateStateSnapshot, TrackedEdge, canonicalize_labels, ensure_state_subtag,
-    inconsistent, insert_sorted_unique, invalid_payload, validate_unique_specs, watches_label,
+    CandidateState, TrackedEdge, canonicalize_labels, inconsistent, insert_sorted_unique,
+    validate_unique_specs, watches_label,
 };
 
-/// Provider tag for maintained graph candidate-state sections.
+/// Fixed registration tag for the maintained candidate-state observer.
 pub const CANDIDATE_STATE_PROVIDER_TAG: [u8; 4] = *b"CSET";
 
-/// Provider-owned snapshot section for maintained candidate-state data.
-pub const CANDIDATE_STATE_SUB: [u8; 4] = *b"STAT";
-
-const SNAPSHOT_VERSION: u8 = 1;
-const SUB_TAGS: &[SubTag] = &[SubTag(CANDIDATE_STATE_SUB)];
-
-/// Declarative rule for one maintained candidate set.
+/// Declarative rule for one maintained in-memory candidate set.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CandidateStateSpec {
-    /// Stable set name used by callers to retrieve candidates.
+    /// Stable set name.
     pub name: DbString,
-    /// Optional node label required for membership.
+    /// Required node label.
     pub required_label: Option<DbString>,
-    /// Outgoing edge labels required on the source node.
+    /// Required outgoing labels.
     pub require_outgoing: Vec<DbString>,
-    /// Incoming edge labels required on the target node.
+    /// Required incoming labels.
     pub require_incoming: Vec<DbString>,
-    /// Outgoing edge labels that disqualify the source node.
+    /// Disqualifying outgoing labels.
     pub exclude_outgoing: Vec<DbString>,
-    /// Incoming edge labels that disqualify the target node.
+    /// Disqualifying incoming labels.
     pub exclude_incoming: Vec<DbString>,
 }
-
 impl CandidateStateSpec {
-    /// Construct an unconstrained named candidate set.
+    /// Construct an unconstrained named set.
     #[must_use]
     pub fn new(name: DbString) -> Self {
         Self {
@@ -66,36 +49,31 @@ impl CandidateStateSpec {
             exclude_incoming: Vec::new(),
         }
     }
-
-    /// Require `label` for candidate membership.
+    /// Require a node label.
     #[must_use]
     pub fn require_label(mut self, label: DbString) -> Self {
         self.required_label = Some(label);
         self
     }
-
-    /// Require an outgoing edge carrying `label`.
+    /// Require an outgoing directed-edge label.
     #[must_use]
     pub fn require_outgoing(mut self, label: DbString) -> Self {
         insert_sorted_unique(&mut self.require_outgoing, label);
         self
     }
-
-    /// Require an incoming edge carrying `label`.
+    /// Require an incoming directed-edge label.
     #[must_use]
     pub fn require_incoming(mut self, label: DbString) -> Self {
         insert_sorted_unique(&mut self.require_incoming, label);
         self
     }
-
-    /// Exclude nodes with an outgoing edge carrying `label`.
+    /// Exclude an outgoing directed-edge label.
     #[must_use]
     pub fn exclude_outgoing(mut self, label: DbString) -> Self {
         insert_sorted_unique(&mut self.exclude_outgoing, label);
         self
     }
-
-    /// Exclude nodes with an incoming edge carrying `label`.
+    /// Exclude an incoming directed-edge label.
     #[must_use]
     pub fn exclude_incoming(mut self, label: DbString) -> Self {
         insert_sorted_unique(&mut self.exclude_incoming, label);
@@ -103,20 +81,20 @@ impl CandidateStateSpec {
     }
 }
 
-/// First-party provider maintaining named graph-derived candidate sets.
+/// First-party observer maintaining named graph-derived candidate sets.
 pub struct MaintainedCandidateStateProvider {
     specs: Vec<CandidateStateSpec>,
-    state: Mutex<CandidateState>,
+    runtime: Mutex<CandidateStateRuntime>,
 }
-
+struct CandidateStateRuntime {
+    graph: Option<selene_core::GraphId>,
+    live: CandidateState,
+    live_typed: BTreeMap<DbString, CandidateSet<Node>>,
+}
 impl MaintainedCandidateStateProvider {
-    /// Construct an empty provider for `specs`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProviderError`] when two specs use the same name.
+    /// Construct an empty observer, rejecting duplicate names.
     pub fn new(specs: impl IntoIterator<Item = CandidateStateSpec>) -> Result<Self, ProviderError> {
-        let mut specs = specs.into_iter().collect::<Vec<_>>();
+        let mut specs: Vec<_> = specs.into_iter().collect();
         for spec in &mut specs {
             canonicalize_labels(&mut spec.require_outgoing);
             canonicalize_labels(&mut spec.require_incoming);
@@ -125,17 +103,15 @@ impl MaintainedCandidateStateProvider {
         }
         validate_unique_specs(&specs)?;
         Ok(Self {
-            state: Mutex::new(CandidateState::new(&specs)),
+            runtime: Mutex::new(CandidateStateRuntime {
+                graph: None,
+                live: CandidateState::new(&specs),
+                live_typed: BTreeMap::new(),
+            }),
             specs,
         })
     }
-
-    /// Construct a provider and initialize it from a graph snapshot.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProviderError`] when specs are invalid or the graph snapshot is
-    /// internally inconsistent.
+    /// Construct and initialize against a pinned graph snapshot.
     pub fn from_graph(
         specs: impl IntoIterator<Item = CandidateStateSpec>,
         graph: &SeleneGraph,
@@ -144,36 +120,30 @@ impl MaintainedCandidateStateProvider {
         provider.rebuild_from_graph(graph)?;
         Ok(provider)
     }
-
-    /// Rebuild all maintained state from `graph`.
-    ///
-    /// This is the safe attachment path when a provider is registered against an
-    /// already-populated graph instead of observing mutations from graph birth.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProviderError`] if live row-to-id mappings are inconsistent.
+    /// Rebuild completely before replacing live state; reject inconsistent identity maps.
     pub fn rebuild_from_graph(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
         let mut rebuilt = CandidateState::new(&self.specs);
-        for row in graph.live_nodes() {
-            let row = RowIndex::new(row);
-            let id = graph.node_id_for_row(row).ok_or_else(|| {
-                inconsistent(format!("live node row {} has no external id", row.get()))
-            })?;
+        for id in graph
+            .live_node_candidates()
+            .map_err(provider_graph_error)?
+            .iter()
+        {
             let labels = graph
                 .node_labels(id)
                 .ok_or_else(|| inconsistent(format!("live node {id} has no label column entry")))?;
             rebuilt.node_labels.insert(id, labels.clone());
         }
-        for row in graph.live_edges() {
-            let row = RowIndex::new(row);
-            let id = graph.edge_id_for_row(row).ok_or_else(|| {
-                inconsistent(format!("live edge row {} has no external id", row.get()))
-            })?;
+        for id in graph
+            .live_edge_candidates()
+            .map_err(provider_graph_error)?
+            .iter()
+        {
             let label = graph
                 .edge_label(id)
                 .ok_or_else(|| inconsistent(format!("live edge {id} has no label")))?;
-            if !watches_label(&self.specs, label) {
+            if graph.edge_directionality(id) != Some(selene_core::EdgeDirectionality::Directed)
+                || !watches_label(&self.specs, label)
+            {
                 continue;
             }
             let (source, target) = graph
@@ -190,80 +160,61 @@ impl MaintainedCandidateStateProvider {
         }
         rebuilt.rebuild_derived(&self.specs);
         rebuilt.generation = graph.meta.generation;
-        *self.state.lock() = rebuilt;
+        let mut runtime = self.runtime.lock();
+        runtime.graph = Some(graph.graph_id());
+        runtime.live = rebuilt;
+        runtime.live_typed.clear();
         Ok(())
     }
-
-    /// Return the configured spec named `name`.
+    /// Look up a configured rule.
     #[must_use]
     pub fn spec(&self, name: &DbString) -> Option<&CandidateStateSpec> {
         self.specs.iter().find(|spec| &spec.name == name)
     }
-
-    /// Return the current candidate set for `name`.
+    /// Return current raw vector candidates.
     #[must_use]
     pub fn candidate_set(&self, name: &DbString) -> Option<VectorCandidateSet> {
-        let mut state = self.state.lock();
-        state
+        self.runtime
+            .lock()
+            .live
             .members
             .get_mut(name)
             .map(|members| VectorCandidateSet::from_canonical_nodes(members.candidate_nodes()))
     }
-
-    /// Return the provider generation watermark.
+    /// Applied generation watermark.
     #[must_use]
     pub fn generation(&self) -> u64 {
-        self.state.lock().generation
+        self.runtime.lock().live.generation
     }
-
-    /// Return the current candidate set for `name` if it matches `generation`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProviderError`] when this provider has not applied every
-    /// mutation through `generation`.
+    /// Return candidates only when every mutation through the generation was applied.
     pub fn candidate_set_at_generation(
         &self,
         name: &DbString,
         generation: u64,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
-        let mut state = self.state.lock();
-        if state.generation != generation {
-            return Err(inconsistent(format!(
-                "candidate-state generation {} does not match graph generation {generation}",
-                state.generation
-            )));
-        }
-        Ok(state
+        let mut runtime = self.runtime.lock();
+        check_generation(&runtime, generation)?;
+        Ok(runtime
+            .live
             .members
             .get_mut(name)
             .map(|members| VectorCandidateSet::from_canonical_nodes(members.candidate_nodes())))
     }
-
-    /// Return generation-checked metadata for every configured candidate set.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProviderError`] when this provider has not applied every
-    /// mutation through `generation`.
+    /// Discover configured sets only at a matching generation.
     pub fn candidate_state_infos_at_generation(
         &self,
         generation: u64,
     ) -> Result<Vec<VectorCandidateStateInfo>, ProviderError> {
-        let state = self.state.lock();
-        if state.generation != generation {
-            return Err(inconsistent(format!(
-                "candidate-state generation {} does not match graph generation {generation}",
-                state.generation
-            )));
-        }
+        let runtime = self.runtime.lock();
+        check_generation(&runtime, generation)?;
         Ok(self
             .specs
             .iter()
             .map(|spec| VectorCandidateStateInfo {
                 name: spec.name.clone(),
                 generation,
-                candidate_count: state
+                candidate_count: runtime
+                    .live
                     .members
                     .get(&spec.name)
                     .map_or(0, |members| members.len()),
@@ -275,12 +226,12 @@ impl MaintainedCandidateStateProvider {
             })
             .collect())
     }
-
-    /// Return true when `node` is currently a member of the named set.
+    /// Whether a node is currently a member.
     #[must_use]
     pub fn contains(&self, name: &DbString, node: NodeId) -> bool {
-        self.state
+        self.runtime
             .lock()
+            .live
             .members
             .get(name)
             .is_some_and(|members| members.contains(node))
@@ -291,105 +242,70 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     fn provider_tag(&self) -> ProviderTag {
         ProviderTag(CANDIDATE_STATE_PROVIDER_TAG)
     }
-
-    fn read_section(&self, sub_tag: SubTag, bytes: &[u8]) -> Result<(), ProviderError> {
-        ensure_state_subtag(sub_tag)?;
-        let snapshot: CandidateStateSnapshot = postcard::from_bytes(bytes).map_err(|error| {
-            invalid_payload(format!("CSET/STAT postcard decode failed: {error}"))
-        })?;
-        if snapshot.version != SNAPSHOT_VERSION {
-            return Err(invalid_payload(format!(
-                "unsupported CSET/STAT version {}",
-                snapshot.version
-            )));
-        }
-        if snapshot.specs != self.specs {
-            return Err(invalid_payload(
-                "CSET/STAT specs differ from provider configuration".to_owned(),
-            ));
-        }
-        let mut state = CandidateState::new(&self.specs);
-        state.generation = snapshot.generation;
-        for (id, labels) in snapshot.node_labels {
-            if state.node_labels.insert(id, labels).is_some() {
-                return Err(invalid_payload(format!(
-                    "duplicate node id {id} in CSET/STAT"
-                )));
-            }
-        }
-        for (id, edge) in snapshot.edges {
-            if !watches_label(&self.specs, &edge.label) {
-                return Err(invalid_payload(format!(
-                    "unwatched edge label {} in CSET/STAT",
-                    edge.label.as_str()
-                )));
-            }
-            if !state.node_labels.contains_key(&edge.source)
-                || !state.node_labels.contains_key(&edge.target)
-            {
-                return Err(invalid_payload(format!(
-                    "tracked edge {id} references missing endpoint in CSET/STAT"
-                )));
-            }
-            if state.edges.insert(id, edge).is_some() {
-                return Err(invalid_payload(format!(
-                    "duplicate edge id {id} in CSET/STAT"
-                )));
-            }
-        }
-        state.rebuild_derived(&self.specs);
-        *self.state.lock() = state;
-        Ok(())
-    }
-
-    fn write_section(&self, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
-        ensure_state_subtag(sub_tag)?;
-        let state = self.state.lock();
-        let snapshot = CandidateStateSnapshot {
-            version: SNAPSHOT_VERSION,
-            generation: state.generation,
-            specs: self.specs.clone(),
-            node_labels: state
-                .node_labels
-                .iter()
-                .map(|(id, labels)| (*id, labels.clone()))
-                .collect(),
-            edges: state
-                .edges
-                .iter()
-                .map(|(id, edge)| (*id, edge.clone()))
-                .collect(),
-        };
-        postcard::to_stdvec(&snapshot).map_err(|error| ProviderError::SerializationFailed {
-            reason: format!("CSET/STAT postcard encode failed: {error}"),
-        })
-    }
-
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
-        self.state.lock().apply_change(&self.specs, change)
+        let mut runtime = self.runtime.lock();
+        runtime.live_typed.clear();
+        runtime.live.apply_change(&self.specs, change)
     }
-
     fn handles_change_batches(&self) -> bool {
         true
     }
-
     fn on_changes(&self, changes: &[Change]) -> Result<(), ProviderError> {
-        let mut state = self.state.lock();
+        let mut runtime = self.runtime.lock();
+        runtime.live_typed.clear();
         for change in changes {
-            state.apply_change(&self.specs, change)?;
+            runtime.live.apply_change(&self.specs, change)?;
         }
         Ok(())
     }
-
     fn rebuild_from_graph(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
-        MaintainedCandidateStateProvider::rebuild_from_graph(self, graph)
+        Self::rebuild_from_graph(self, graph)
     }
-
     fn on_commit_applied(&self, generation: u64) -> Result<(), ProviderError> {
-        self.state.lock().generation = generation;
+        let mut runtime = self.runtime.lock();
+        runtime.live_typed.clear();
+        runtime.live.generation = generation;
         Ok(())
     }
-
+    fn node_candidate_set(
+        &self,
+        name: &DbString,
+        graph: &SeleneGraph,
+    ) -> Result<Option<CandidateSet<Node>>, ProviderError> {
+        let mut runtime = self.runtime.lock();
+        check_generation(&runtime, graph.meta.generation)?;
+        if runtime.graph.is_some_and(|id| id != graph.graph_id()) {
+            return Err(inconsistent(
+                "candidate-state belongs to another graph".into(),
+            ));
+        }
+        if runtime
+            .live_typed
+            .get(name)
+            .is_some_and(|set| set.validate_identity_for(graph).is_ok())
+        {
+            return Ok(runtime.live_typed.get(name).cloned());
+        }
+        runtime.live_typed.remove(name);
+        let Some(nodes) = runtime
+            .live
+            .members
+            .get_mut(name)
+            .map(|members| members.candidate_nodes())
+        else {
+            return Ok(None);
+        };
+        let candidates = graph
+            .bind_node_candidates(nodes.iter().copied())
+            .map_err(provider_graph_error)?;
+        if candidates.len() != nodes.len() {
+            return Err(inconsistent(format!(
+                "candidate set {name} contains nodes not live in the supplied graph snapshot"
+            )));
+        }
+        runtime.live_typed.insert(name.clone(), candidates.clone());
+        Ok(Some(candidates))
+    }
     fn vector_candidate_set(
         &self,
         name: &DbString,
@@ -397,19 +313,24 @@ impl IndexProvider for MaintainedCandidateStateProvider {
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
         self.candidate_set_at_generation(name, generation)
     }
-
     fn vector_candidate_state_infos(
         &self,
         generation: u64,
     ) -> Result<Vec<VectorCandidateStateInfo>, ProviderError> {
         self.candidate_state_infos_at_generation(generation)
     }
-
-    fn declared_sub_tags(&self) -> &[SubTag] {
-        SUB_TAGS
-    }
 }
-
+fn check_generation(runtime: &CandidateStateRuntime, generation: u64) -> Result<(), ProviderError> {
+    if runtime.live.generation != generation {
+        return Err(inconsistent(format!(
+            "candidate-state generation {} does not match graph generation {generation}",
+            runtime.live.generation
+        )));
+    }
+    Ok(())
+}
+fn provider_graph_error(error: crate::GraphError) -> ProviderError {
+    inconsistent(format!("graph candidate binding failed: {error}"))
+}
 #[cfg(test)]
-#[path = "candidate_state/tests.rs"]
 mod tests;

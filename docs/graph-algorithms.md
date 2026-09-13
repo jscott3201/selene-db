@@ -34,6 +34,13 @@ Algorithms have very different access patterns from row-at-a-time GQL execution:
 
 A projection answers all four needs. It pins a `meta.generation` value, applies the node-label / edge-label / scope filter once, and pre-computes both directions of CSR adjacency. Algorithm code then walks `out_neighbors(node)` and `in_neighbors(node)` as cheap slice reads.
 
+Intrinsic undirected edges appear in both traversal directions with the same
+`EdgeId`; `edge_count()` counts logical identities once, not reciprocal arcs.
+Directed algorithms interpret these edges as reciprocal connectivity. Community
+algorithms count each logical incidence once (including loops), preserving
+distinct parallel edges. See the [mixed-edge contract](gql/mixed-edge-orientation.md)
+for predicates, orientation unions, and the directed-algorithm interpretation.
+
 ### 2.2 Building a projection in Rust
 
 ```rust
@@ -475,7 +482,7 @@ Complexity: `O(V · d²)` worst case where `d` is the max undirected degree. Sui
 | `algo.louvain`             | `(projection_name: STRING, max_iter: INTEGER?)`                                                          | `node_id, community, level`                          |
 | `algo.triangle_count`      | `(projection_name: STRING, parallelism: INTEGER?)`                                                       | `node_id, triangle_count`                            |
 
-The table above is the canonical list of all 19 `algo.*` names; the live registry enumerates them (alongside the 49 `selene.*` platform built-ins, 68 total) through `BuiltinProcedureRegistry::iter_handles`, which backs `SHOW PROCEDURES`.
+The table above is the canonical list of all 19 `algo.*` names; the live registry enumerates them (alongside the 50 `selene.*` platform built-ins, 69 total) through `BuiltinProcedureRegistry::iter_handles`, which backs `SHOW PROCEDURES`.
 
 ### 7.1 Nullable arguments and defaults
 

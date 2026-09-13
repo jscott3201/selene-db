@@ -7,6 +7,7 @@ mod keywords;
 mod preflight;
 mod trim;
 mod type_name;
+mod working_scope;
 
 use std::fmt::{self, Write as _};
 
@@ -26,6 +27,12 @@ use preflight::validate_formattable;
 use type_name::fmt_type;
 
 pub(crate) use type_name::fmt_type as format_gql_type;
+
+pub(crate) fn format_value_expr(value: &ValueExpr) -> String {
+    let mut out = String::new();
+    fmt_expr(&mut out, value).expect("formatting an expression into String cannot fail");
+    out
+}
 
 /// Format a read-side statement as GQL source.
 ///
@@ -131,6 +138,7 @@ pub enum FormatError {
 }
 
 pub(super) fn fmt_pipeline(out: &mut String, pipeline: &QueryPipeline) -> fmt::Result {
+    let braces = working_scope::prefixes(out, &pipeline.working_scopes)?;
     for (index, statement) in pipeline.statements.iter().enumerate() {
         if index > 0 {
             out.push('\n');
@@ -189,6 +197,9 @@ pub(super) fn fmt_pipeline(out: &mut String, pipeline: &QueryPipeline) -> fmt::R
             crate::PipelineStatement::Call(value) => fmt_call(out, value)?,
             crate::PipelineStatement::CallSubquery(value) => fmt_inline_call(out, value)?,
         }
+    }
+    for _ in 0..braces {
+        out.push_str(" }");
     }
     Ok(())
 }
@@ -279,9 +290,23 @@ fn fmt_node_pattern(out: &mut String, node: &NodePattern) -> fmt::Result {
 }
 
 fn fmt_edge_pattern(out: &mut String, edge: &EdgePattern) -> fmt::Result {
+    if edge.abbreviated {
+        out.push_str(match edge.direction {
+            EdgeDirection::Right => "->",
+            EdgeDirection::Left => "<-",
+            EdgeDirection::Undirected => "~",
+            EdgeDirection::LeftOrUndirected => "<~",
+            EdgeDirection::UndirectedOrRight => "~>",
+            EdgeDirection::LeftOrRight => "<->",
+            EdgeDirection::Any => "-",
+        });
+        return Ok(());
+    }
     match edge.direction {
-        EdgeDirection::Right | EdgeDirection::Undirected => out.push_str("-["),
-        EdgeDirection::Left => out.push_str("<-["),
+        EdgeDirection::Right | EdgeDirection::Any => out.push_str("-["),
+        EdgeDirection::Left | EdgeDirection::LeftOrRight => out.push_str("<-["),
+        EdgeDirection::Undirected | EdgeDirection::UndirectedOrRight => out.push_str("~["),
+        EdgeDirection::LeftOrUndirected => out.push_str("<~["),
     }
     if let Some(binding) = &edge.binding {
         out.push_str(&fmt_ident(binding.clone()));
@@ -309,8 +334,10 @@ fn fmt_edge_pattern(out: &mut String, edge: &EdgePattern) -> fmt::Result {
         fmt_expr(out, where_clause)?;
     }
     match edge.direction {
-        EdgeDirection::Right => out.push_str("]->"),
-        EdgeDirection::Left | EdgeDirection::Undirected => out.push_str("]-"),
+        EdgeDirection::Right | EdgeDirection::LeftOrRight => out.push_str("]->"),
+        EdgeDirection::Left | EdgeDirection::Any => out.push_str("]-"),
+        EdgeDirection::Undirected | EdgeDirection::LeftOrUndirected => out.push_str("]~"),
+        EdgeDirection::UndirectedOrRight => out.push_str("]~>"),
     }
     Ok(())
 }

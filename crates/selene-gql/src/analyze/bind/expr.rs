@@ -48,8 +48,15 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let binding = ctx.resolve(name.clone(), *span, BindingUseKind::Variable)?;
                 ctx.binding_type(binding)
             }
-            ValueExpr::Parameter { declared_type, .. } => declared_type
-                .clone()
+            ValueExpr::Parameter {
+                name,
+                declared_type,
+                ..
+            } => ctx
+                .expr_ids
+                .parameter_type(name)
+                .or(declared_type.as_ref())
+                .cloned()
                 .map_or(AnalyzedType::Dynamic, AnalyzedType::Resolved),
             ValueExpr::PropertyAccess { target, .. } => {
                 bind_value_expr(ctx, target)?;
@@ -60,19 +67,18 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 infer::list_literal(&item_types)?
             }
             ValueExpr::RecordLiteral { fields, .. } => {
-                for (_, value) in fields {
-                    bind_value_expr(ctx, value)?;
+                let mut field_types = Vec::with_capacity(fields.len());
+                for (name, value) in fields {
+                    let id = bind_value_expr(ctx, value)?;
+                    let ty = match ctx.expr_type(id) {
+                        AnalyzedType::Resolved(ty) => ty.clone(),
+                        AnalyzedType::Dynamic => crate::GqlType::Any,
+                    };
+                    field_types.push((name.clone(), ty));
                 }
-                // An open `RECORD{...}` value literal resolves to the open
-                // record type. `RecordType::Open` carries no per-field types, so
-                // this is a pure tag (no field inference). Resolving it (vs
-                // `Dynamic`) routes closed-graph (GG02) RECORD property writes
-                // through the declared property-type compatibility check instead
-                // of bypassing it via the `Dynamic` fast-path. The value form is
-                // ISO feature GV45 (`<record constructor>`, clause 20.18);
-                // typed/closed RECORD *type* expressions (GV46-GV48) stay
-                // deferred to the typed-RECORD brief.
-                AnalyzedType::Resolved(crate::GqlType::Record(crate::RecordType::Open))
+                AnalyzedType::Resolved(crate::GqlType::Record(crate::RecordType::Closed(
+                    field_types,
+                )))
             }
             ValueExpr::PathConstructor { elements, span } => {
                 bind_path_constructor(ctx, elements, *span)?;
@@ -202,7 +208,7 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 infer::cast(target_type)?
             }
         };
-        Ok(ctx.allocate_expr(expr, ty))
+        ctx.allocate_expr(expr, ty)
     })
 }
 
@@ -213,10 +219,7 @@ fn bind_exists_body(
 ) -> Result<(), AnalysisError> {
     ctx.with_child_scope(ScopeKind::Subquery, span, false, |ctx| match body {
         ExistsBody::Match(clause) => pattern::bind_match_clause(ctx, clause),
-        ExistsBody::Query(pipeline) => {
-            let mut pipeline = pipeline.as_ref().clone();
-            query::bind_query_pipeline(ctx, &mut pipeline).map(|_| ())
-        }
+        ExistsBody::Query(pipeline) => query::bind_query_pipeline(ctx, pipeline),
     })
 }
 
@@ -226,9 +229,8 @@ fn bind_value_subquery(
     span: crate::SourceSpan,
 ) -> Result<AnalyzedType, AnalysisError> {
     validate_value_subquery_shape(body, span)?;
-    let mut body = body.clone();
     ctx.with_child_scope(ScopeKind::Subquery, span, false, |ctx| {
-        query::bind_query_pipeline(ctx, &mut body)
+        query::bind_query_pipeline(ctx, body)
     })?;
     Ok(AnalyzedType::DYNAMIC)
 }

@@ -21,7 +21,7 @@ use super::{expr, match_clause, sequential_match, visible_after_pattern};
 pub(crate) fn lower_mutation(
     pipeline: &MutationPipeline,
     analyzed: &AnalyzedStatement,
-    max_quantifier: u32,
+    max_quantifier: super::PathLowering<'_>,
 ) -> Result<ExecutionPlan, PlannerError> {
     let write_set = analyzed
         .write_set
@@ -100,7 +100,19 @@ pub(crate) fn lower_mutation(
     if let Some(terminator) = &pipeline.terminator {
         match terminator {
             MutationTerminator::Return(clause) => {
-                super::lower_return(clause, analyzed, &mut ops, &mut visible)?;
+                // A data-modifying statement's RETURN has no ordering-and-page
+                // statement after it, so there is never a sort carrier here.
+                // No sort terms here, so no carrier is ever allocated; the
+                // counter is a formality.
+                let mut next_expr_id = super::next_expr_id(analyzed);
+                super::lower_return(
+                    clause,
+                    analyzed,
+                    &mut ops,
+                    &mut visible,
+                    None,
+                    &mut next_expr_id,
+                )?;
             }
             MutationTerminator::Finish(_) => visible.clear(),
         }
@@ -128,7 +140,7 @@ use helpers::*;
 fn lower_read_prefix(
     statements: &[MutationStatement],
     analyzed: &AnalyzedStatement,
-    max_quantifier: u32,
+    max_quantifier: super::PathLowering<'_>,
 ) -> Result<
     (
         Option<crate::plan::PatternPlan>,
@@ -501,11 +513,11 @@ mod defensive_tests {
             None,
         )
         .expect("analyzes");
-        let mut broken = AnalyzedStatement {
-            write_set: None,
-            ..analyzed
-        };
-        broken.category = StatementCategory::DataModifying;
+        let mut broken = analyzed;
+        broken.corrupt_for_test(|_, semantic| {
+            semantic.write_set = None;
+            semantic.category = StatementCategory::DataModifying;
+        });
         let err = plan(&broken, &EmptyProcedureRegistry).expect_err("missing write set");
         assert!(matches!(err, PlannerError::WriteSetMissing { .. }));
     }
@@ -518,13 +530,13 @@ mod defensive_tests {
             None,
         )
         .expect("analyzes");
-        let mut broken = AnalyzedStatement {
-            write_set: Some(MutationWriteSet {
+        let mut broken = analyzed;
+        broken.corrupt_for_test(|_, semantic| {
+            semantic.write_set = Some(MutationWriteSet {
                 entries: Vec::new(),
-            }),
-            ..analyzed
-        };
-        broken.span = SourceSpan::new(0, 10);
+            });
+            semantic.span = SourceSpan::new(0, 10);
+        });
         let err = plan(&broken, &EmptyProcedureRegistry).expect_err("mismatch");
         assert!(matches!(err, PlannerError::WriteSetPatternMismatch { .. }));
     }

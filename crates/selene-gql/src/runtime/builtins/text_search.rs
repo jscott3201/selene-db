@@ -10,19 +10,19 @@
 //! values.
 
 use selene_core::{DbString, Value};
-use selene_graph::{GraphError, TextSearchError};
+mod support;
+use support::{query_arg, query_list_arg, score_nodes, state_candidates, text_search_error};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use super::retrieval_filter::{
-    append_edge_filter_parameters, append_node_filter_parameters, node_ids_for_rows,
-    optional_filter_rows,
+    append_edge_filter_parameters, append_node_filter_parameters, optional_filter_candidates,
 };
 use super::vector_candidate_state_common::{
     CandidateStateOperation, candidate_state_error, operation_arg,
 };
 use super::vector_common::{
     BatchMismatch, candidate_set_arg, candidate_sets_arg, cardinality_arg, expansion_direction_arg,
-    invalid_arg, node_list_arg, node_list_sets_arg, query_index_too_large, string_arg,
+    invalid_arg, live_node_list_arg, live_node_list_sets_arg, query_index_too_large, string_arg,
     vector_search_error,
 };
 use crate::procedure_registry::ProcedureError;
@@ -206,23 +206,21 @@ pub(super) fn execute(
     let k = cardinality_arg(PROC_NAME, &args[3], "k")?;
 
     let snapshot = ctx.snapshot();
-    let filter_rows = if args.len() >= 6 {
+    let filter_candidates = if args.len() >= 6 {
         let edge_filter = if args.len() == 10 {
             Some((&args[6], &args[7], &args[8], &args[9]))
         } else {
             None
         };
-        optional_filter_rows(PROC_NAME, snapshot, &label, &args[4], &args[5], edge_filter)?
+        optional_filter_candidates(PROC_NAME, snapshot, &label, &args[4], &args[5], edge_filter)?
     } else {
         None
     };
     let hits = match snapshot.text_index_for(&label, &property) {
         Some(index) => {
-            if let Some(rows) = &filter_rows {
-                let nodes = node_ids_for_rows(PROC_NAME, snapshot, rows)?;
-                index
-                    .search_candidates_checked(query, &nodes, k, ctx.cancellation_checker())
-                    .map_err(text_search_error)?
+            if let Some(candidates) = &filter_candidates {
+                let nodes: Vec<_> = candidates.iter().collect();
+                score_nodes(ctx, &index, query, &nodes, k)?
             } else {
                 index
                     .search_checked(query, k, ctx.cancellation_checker())
@@ -230,14 +228,14 @@ pub(super) fn execute(
             }
         }
         None => {
-            if let Some(rows) = &filter_rows {
+            if let Some(candidates) = &filter_candidates {
                 snapshot
-                    .exact_text_search_nodes_in_rows_checked(
+                    .exact_text_search_nodes_in_candidates_checked(
                         &label,
                         &property,
                         query,
                         k,
-                        rows,
+                        candidates,
                         ctx.cancellation_checker(),
                     )
                     .map_err(text_search_error)?
@@ -275,7 +273,7 @@ pub(super) fn execute_score(
     let label = string_arg(SCORE_PROC_NAME, &args[0], "label")?;
     let property = string_arg(SCORE_PROC_NAME, &args[1], "property")?;
     let query = query_arg(SCORE_PROC_NAME, &args[2])?;
-    let nodes = node_list_arg(SCORE_PROC_NAME, &args[3], "nodes")?;
+    let nodes = live_node_list_arg(ctx.snapshot(), SCORE_PROC_NAME, &args[3], "nodes")?;
     let k = cardinality_arg(SCORE_PROC_NAME, &args[4], "k")?;
 
     let snapshot = ctx.snapshot();
@@ -286,9 +284,7 @@ pub(super) fn execute_score(
             property.as_str()
         )));
     };
-    let hits = index
-        .search_candidates_checked(query, &nodes, k, ctx.cancellation_checker())
-        .map_err(text_search_error)?;
+    let hits = score_nodes(ctx, &index, query, &nodes, k)?;
 
     Ok(ProcedureResult {
         rows: hits
@@ -311,7 +307,8 @@ pub(super) fn execute_score_batch(
     let label = string_arg(SCORE_BATCH_PROC_NAME, &args[0], "label")?;
     let property = string_arg(SCORE_BATCH_PROC_NAME, &args[1], "property")?;
     let queries = query_list_arg(SCORE_BATCH_PROC_NAME, &args[2])?;
-    let node_sets = node_list_sets_arg(SCORE_BATCH_PROC_NAME, &args[3], "nodes")?;
+    let node_sets =
+        live_node_list_sets_arg(ctx.snapshot(), SCORE_BATCH_PROC_NAME, &args[3], "nodes")?;
     if queries.len() != node_sets.len() {
         return Err(invalid_arg(format!(
             "{SCORE_BATCH_PROC_NAME} queries and nodes must have the same length"
@@ -332,9 +329,7 @@ pub(super) fn execute_score_batch(
     for (query_index, (query, nodes)) in queries.iter().zip(node_sets.iter()).enumerate() {
         let query_index = u64::try_from(query_index)
             .map_err(|err| query_index_too_large(SCORE_BATCH_PROC_NAME, err))?;
-        let hits = index
-            .search_candidates_checked(query.as_str(), nodes, k, ctx.cancellation_checker())
-            .map_err(text_search_error)?;
+        let hits = score_nodes(ctx, &index, query.as_str(), nodes, k)?;
         rows.reserve(hits.len());
         for hit in hits {
             rows.push(vec![
@@ -363,8 +358,7 @@ pub(super) fn execute_score_state(
     let state_name = string_arg(SCORE_STATE_PROC_NAME, &args[3], "state_name")?;
     let k = cardinality_arg(SCORE_STATE_PROC_NAME, &args[4], "k")?;
 
-    let candidates = ctx
-        .vector_candidate_set(&state_name)
+    let candidates = state_candidates(ctx, &state_name)
         .map_err(|error| candidate_state_error(SCORE_STATE_PROC_NAME, error))?
         .ok_or_else(|| {
             invalid_arg(format!(
@@ -372,9 +366,8 @@ pub(super) fn execute_score_state(
                 state_name.as_str()
             ))
         })?;
-    let hits = text_index_for_score(ctx, SCORE_STATE_PROC_NAME, &label, &property)?
-        .search_candidates_checked(query, candidates.as_nodes(), k, ctx.cancellation_checker())
-        .map_err(text_search_error)?;
+    let index = text_index_for_score(ctx, SCORE_STATE_PROC_NAME, &label, &property)?;
+    let hits = score_nodes(ctx, &index, query, candidates.as_nodes(), k)?;
 
     Ok(ProcedureResult {
         rows: hits
@@ -398,7 +391,12 @@ pub(super) fn execute_score_state_nodes(
     let property = string_arg(SCORE_STATE_NODES_PROC_NAME, &args[1], "property")?;
     let query = query_arg(SCORE_STATE_NODES_PROC_NAME, &args[2])?;
     let state_name = string_arg(SCORE_STATE_NODES_PROC_NAME, &args[3], "state_name")?;
-    let nodes = candidate_set_arg(SCORE_STATE_NODES_PROC_NAME, &args[4], "nodes")?;
+    let nodes = candidate_set_arg(
+        ctx.snapshot(),
+        SCORE_STATE_NODES_PROC_NAME,
+        &args[4],
+        "nodes",
+    )?;
     let k = cardinality_arg(SCORE_STATE_NODES_PROC_NAME, &args[5], "k")?;
     let operation = args
         .get(6)
@@ -406,8 +404,7 @@ pub(super) fn execute_score_state_nodes(
         .transpose()?
         .unwrap_or(CandidateStateOperation::Intersection);
 
-    let state = ctx
-        .vector_candidate_set(&state_name)
+    let state = state_candidates(ctx, &state_name)
         .map_err(|error| candidate_state_error(SCORE_STATE_NODES_PROC_NAME, error))?
         .ok_or_else(|| {
             invalid_arg(format!(
@@ -416,9 +413,8 @@ pub(super) fn execute_score_state_nodes(
             ))
         })?;
     let candidates = operation.compose(&state, &nodes);
-    let hits = text_index_for_score(ctx, SCORE_STATE_NODES_PROC_NAME, &label, &property)?
-        .search_candidates_checked(query, candidates.as_nodes(), k, ctx.cancellation_checker())
-        .map_err(text_search_error)?;
+    let index = text_index_for_score(ctx, SCORE_STATE_NODES_PROC_NAME, &label, &property)?;
+    let hits = score_nodes(ctx, &index, query, candidates.as_nodes(), k)?;
 
     Ok(ProcedureResult {
         rows: hits
@@ -442,7 +438,12 @@ pub(super) fn execute_score_state_expanded_batch(
     let property = string_arg(SCORE_STATE_EXPANDED_BATCH_PROC_NAME, &args[1], "property")?;
     let queries = query_list_arg(SCORE_STATE_EXPANDED_BATCH_PROC_NAME, &args[2])?;
     let state_name = string_arg(SCORE_STATE_EXPANDED_BATCH_PROC_NAME, &args[3], "state_name")?;
-    let root_sets = candidate_sets_arg(SCORE_STATE_EXPANDED_BATCH_PROC_NAME, &args[4], "roots")?;
+    let root_sets = candidate_sets_arg(
+        ctx.snapshot(),
+        SCORE_STATE_EXPANDED_BATCH_PROC_NAME,
+        &args[4],
+        "roots",
+    )?;
     if queries.len() != root_sets.len() {
         return Err(invalid_arg(format!(
             "{SCORE_STATE_EXPANDED_BATCH_PROC_NAME} queries and roots must have the same length"
@@ -461,8 +462,7 @@ pub(super) fn execute_score_state_expanded_batch(
         .transpose()?
         .unwrap_or(selene_graph::VectorNeighborDirection::Outgoing);
 
-    let state = ctx
-        .vector_candidate_set(&state_name)
+    let state = state_candidates(ctx, &state_name)
         .map_err(|error| candidate_state_error(SCORE_STATE_EXPANDED_BATCH_PROC_NAME, error))?
         .ok_or_else(|| {
             invalid_arg(format!(
@@ -504,14 +504,7 @@ pub(super) fn execute_score_state_expanded_batch(
         let query_index = u64::try_from(query_index)
             .map_err(|err| query_index_too_large(SCORE_STATE_EXPANDED_BATCH_PROC_NAME, err))?;
         let candidates = operation.compose(&state, expanded);
-        let hits = index
-            .search_candidates_checked(
-                query.as_str(),
-                candidates.as_nodes(),
-                k,
-                ctx.cancellation_checker(),
-            )
-            .map_err(text_search_error)?;
+        let hits = score_nodes(ctx, &index, query.as_str(), candidates.as_nodes(), k)?;
         rows.reserve(hits.len());
         for hit in hits {
             rows.push(vec![
@@ -539,45 +532,4 @@ fn text_index_for_score(
                 property.as_str()
             ))
         })
-}
-
-fn query_arg<'a>(proc_name: &'static str, value: &'a Value) -> Result<&'a str, ProcedureError> {
-    let Value::String(value) = value else {
-        return Err(invalid_arg(format!("{proc_name} query must be a STRING")));
-    };
-    Ok(value.as_str())
-}
-
-fn query_list_arg(proc_name: &'static str, value: &Value) -> Result<Vec<DbString>, ProcedureError> {
-    let Value::List(values) = value else {
-        return Err(invalid_arg(format!(
-            "{proc_name} queries must be a LIST<STRING>"
-        )));
-    };
-    let mut queries = Vec::with_capacity(values.len());
-    for (index, value) in values.iter().enumerate() {
-        let Value::String(query) = value else {
-            return Err(invalid_arg(format!(
-                "{proc_name} queries[{index}] must be a STRING"
-            )));
-        };
-        queries.push(query.clone());
-    }
-    Ok(queries)
-}
-
-fn text_search_error(error: TextSearchError) -> ProcedureError {
-    match error {
-        TextSearchError::Cancelled => ProcedureError::Cancelled,
-        TextSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
-        TextSearchError::NodeScanBudgetExceeded { limit, scanned } => {
-            ProcedureError::NodeScanBudgetExceeded { limit, scanned }
-        }
-        TextSearchError::Graph(GraphError::Inconsistent { reason }) => ProcedureError::Internal {
-            detail: format!("graph inconsistency during text search: {reason}"),
-        },
-        TextSearchError::Graph(other) => ProcedureError::Internal {
-            detail: format!("unexpected graph error during text search: {other}"),
-        },
-    }
 }

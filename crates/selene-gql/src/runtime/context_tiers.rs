@@ -1,6 +1,6 @@
 //! Procedure execution context tiers.
 
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use selene_core::{BindingTableId, CancellationChecker, DbString};
 use selene_graph::{
@@ -9,7 +9,7 @@ use selene_graph::{
     VectorCandidateStateInfo, VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
 };
 
-use crate::{BindingTable, BindingTableRegistry, ImplDefinedCaps, ProcedureTier};
+use crate::{BindingTable, BindingTableRegistry, ImplDefinedCaps, ProcedureError, ProcedureTier};
 
 /// Read-tier procedure context.
 pub struct GraphContext<'a> {
@@ -17,7 +17,7 @@ pub struct GraphContext<'a> {
     caps: &'a ImplDefinedCaps,
     providers: &'a [Arc<dyn IndexProvider>],
     cancellation: CancellationChecker<'a>,
-    binding_tables: Rc<BindingTableRegistry>,
+    binding_tables: Arc<BindingTableRegistry>,
 }
 
 impl<'a> GraphContext<'a> {
@@ -26,7 +26,7 @@ impl<'a> GraphContext<'a> {
         caps: &'a ImplDefinedCaps,
         providers: &'a [Arc<dyn IndexProvider>],
         cancellation: CancellationChecker<'a>,
-        binding_tables: Rc<BindingTableRegistry>,
+        binding_tables: Arc<BindingTableRegistry>,
     ) -> Self {
         Self {
             snapshot,
@@ -75,6 +75,20 @@ impl<'a> GraphContext<'a> {
         provider.vector_candidate_set(name, self.snapshot.meta.generation)
     }
 
+    /// Resolve maintained candidates against this exact pinned graph snapshot.
+    /// Unavailable names return `None`; stale provider or candidate identity is an error.
+    pub fn node_candidate_set(
+        &self,
+        name: &DbString,
+    ) -> Result<Option<selene_graph::CandidateSet<selene_graph::Node>>, ProviderError> {
+        let Some(provider) = self.index_provider_by_tag(ProviderTag(CANDIDATE_STATE_PROVIDER_TAG))
+        else {
+            return Ok(None);
+        };
+        self.snapshot
+            .maintained_node_candidates(provider.as_ref(), name)
+    }
+
     /// List maintained vector candidate-state descriptors for this snapshot generation.
     ///
     /// # Errors
@@ -98,8 +112,13 @@ impl<'a> GraphContext<'a> {
     }
 
     /// Register a binding table for this procedure call's statement.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
-        self.binding_tables.register(table)
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ProcedureError> {
+        self.binding_tables
+            .register(table)
+            .map_err(ProcedureError::from)
     }
 }
 
@@ -108,7 +127,7 @@ pub struct MutationContext<'a, 'g> {
     mutator: Mutator<'a, 'g>,
     caps: &'a ImplDefinedCaps,
     cancellation: CancellationChecker<'a>,
-    binding_tables: Rc<BindingTableRegistry>,
+    binding_tables: Arc<BindingTableRegistry>,
 }
 
 impl<'a, 'g> MutationContext<'a, 'g> {
@@ -116,7 +135,7 @@ impl<'a, 'g> MutationContext<'a, 'g> {
         mutator: Mutator<'a, 'g>,
         caps: &'a ImplDefinedCaps,
         cancellation: CancellationChecker<'a>,
-        binding_tables: Rc<BindingTableRegistry>,
+        binding_tables: Arc<BindingTableRegistry>,
     ) -> Self {
         Self {
             mutator,
@@ -134,7 +153,7 @@ impl<'a, 'g> MutationContext<'a, 'g> {
             mutator,
             caps,
             CancellationChecker::disabled(),
-            Rc::new(BindingTableRegistry::new()),
+            Arc::new(BindingTableRegistry::new()),
         )
     }
 
@@ -168,8 +187,13 @@ impl<'a, 'g> MutationContext<'a, 'g> {
     }
 
     /// Register a binding table for this procedure call's statement.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
-        self.binding_tables.register(table)
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ProcedureError> {
+        self.binding_tables
+            .register(table)
+            .map_err(ProcedureError::from)
     }
 }
 
@@ -178,7 +202,7 @@ pub struct MaintenanceContext<'a, 'g> {
     graph: &'g SharedGraph,
     caps: &'a ImplDefinedCaps,
     cancellation: CancellationChecker<'a>,
-    binding_tables: Rc<BindingTableRegistry>,
+    binding_tables: Arc<BindingTableRegistry>,
 }
 
 impl<'a, 'g> MaintenanceContext<'a, 'g> {
@@ -186,7 +210,7 @@ impl<'a, 'g> MaintenanceContext<'a, 'g> {
         graph: &'g SharedGraph,
         caps: &'a ImplDefinedCaps,
         cancellation: CancellationChecker<'a>,
-        binding_tables: Rc<BindingTableRegistry>,
+        binding_tables: Arc<BindingTableRegistry>,
     ) -> Self {
         Self {
             graph,
@@ -254,8 +278,13 @@ impl<'a, 'g> MaintenanceContext<'a, 'g> {
     }
 
     /// Register a binding table for this procedure call's statement.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
-        self.binding_tables.register(table)
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ProcedureError> {
+        self.binding_tables
+            .register(table)
+            .map_err(ProcedureError::from)
     }
 }
 
@@ -282,7 +311,10 @@ impl ProcedureContext<'_, '_> {
     }
 
     /// Register a binding table for the currently executing procedure call.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ProcedureError> {
         match self {
             Self::Graph(ctx) => ctx.register_binding_table(table),
             Self::Mutation(ctx) => ctx.register_binding_table(table),

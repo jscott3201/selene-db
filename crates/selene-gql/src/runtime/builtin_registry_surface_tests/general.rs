@@ -1,13 +1,13 @@
 use super::*;
 
 #[test]
-fn registers_all_sixty_eight_procedures() {
+fn registers_all_sixty_nine_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        68,
-        "expected 19 algo procedures + 49 platform built-ins"
+        69,
+        "expected 19 algo procedures + 50 platform built-ins"
     );
 }
 

@@ -1,10 +1,8 @@
 //! Candidate-scoped exact JSON search over graph node properties.
 
-use std::borrow::Cow;
+use selene_core::{CancellationChecker, DbString, JsonPathSelector, JsonValue, NodeId};
 
-use selene_core::{CancellationChecker, DbString, JsonPathSelector, JsonValue, NodeId, Value};
-
-use crate::error::GraphResult;
+use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::json_search::{
     JSON_SEARCH_CANCEL_STRIDE, JsonContainmentHit, JsonPathContainmentHit, JsonPathHit,
@@ -230,24 +228,32 @@ impl SeleneGraph {
         if k == 0 || candidates.is_empty() {
             return Ok(Vec::new());
         }
-        let candidates = sorted_unique_candidates(candidates);
+        let candidates = self.bind_node_candidates(candidates.iter().copied())?;
+        let validated = self
+            .validate_node_candidates(&candidates)
+            .map_err(|error| GraphError::Inconsistent {
+                reason: format!("fresh JSON candidates failed validation: {error}"),
+            })?;
         let mut hits = Vec::new();
-        let hit_capacity = k.min(candidates.len()).min(JSON_SEARCH_CANCEL_STRIDE);
+        let hit_capacity = k.min(validated.len()).min(JSON_SEARCH_CANCEL_STRIDE);
         let mut candidates_since_check = 0usize;
-        for &node_id in candidates.iter() {
+        for &candidate in validated.as_slice() {
             candidates_since_check += 1;
             if candidates_since_check >= JSON_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(candidates_since_check)?;
                 candidates_since_check = 0;
             }
-            let Some(value) = self.json_candidate_value(label, property, node_id) else {
+            if !candidate.has_label(label)? {
+                continue;
+            }
+            let Some(value) = candidate.json_property(property)? else {
                 continue;
             };
             if let Some(selected) = predicate(value) {
                 if hits.is_empty() {
                     hits.reserve(hit_capacity);
                 }
-                hits.push((node_id, selected));
+                hits.push((candidate.node_id(), selected));
                 if hits.len() == k {
                     break;
                 }
@@ -257,23 +263,6 @@ impl SeleneGraph {
             checker.note_nodes_scanned(candidates_since_check)?;
         }
         Ok(hits)
-    }
-
-    fn json_candidate_value(
-        &self,
-        label: &DbString,
-        property: &DbString,
-        node_id: NodeId,
-    ) -> Option<&JsonValue> {
-        let labels = self.node_labels(node_id)?;
-        if !labels.contains(label) {
-            return None;
-        }
-        let properties = self.node_properties(node_id)?;
-        match properties.get(property) {
-            Some(Value::Json(value)) => Some(value),
-            _ => None,
-        }
     }
 }
 
@@ -384,25 +373,4 @@ impl SharedGraph {
             label, property, path, candidates, k, checker,
         )
     }
-}
-
-fn sorted_unique_candidates(candidates: &[NodeId]) -> Cow<'_, [NodeId]> {
-    if candidates.len() <= 1 || node_ids_strictly_ascending(candidates) {
-        return Cow::Borrowed(candidates);
-    }
-    let mut candidates = candidates.to_vec();
-    candidates.sort_unstable();
-    candidates.dedup();
-    Cow::Owned(candidates)
-}
-
-fn node_ids_strictly_ascending(nodes: &[NodeId]) -> bool {
-    let mut previous = nodes[0];
-    for &node in &nodes[1..] {
-        if previous >= node {
-            return false;
-        }
-        previous = node;
-    }
-    true
 }

@@ -2,7 +2,7 @@
 
 use selene_core::DbString;
 
-use crate::{GqlStatus, SourceSpan, analyze::BindingId};
+use crate::{GqlStatus, MatchMode, PathMode, PathSelector, SourceSpan, analyze::BindingId};
 
 /// Query-planning failure.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -177,6 +177,58 @@ pub enum PlannerError {
         #[label("separate implied label set not supported")]
         span: SourceSpan,
     },
+
+    /// One statement carries both catalog and data effects.
+    ///
+    /// The selected GP18 policy forbids catalog/data mixing. This error keeps
+    /// the mix from being silently split into separate commits.
+    #[error("catalog and data effects cannot be mixed in one statement: {detail}")]
+    #[diagnostic(code(SLENE_P_022))]
+    EffectMixing {
+        /// Stable mixing detail tag asserted by tests.
+        detail: &'static str,
+        /// Source span of the mixed statement.
+        #[label("mixed catalog/data effects")]
+        span: SourceSpan,
+    },
+
+    /// A lowered plan's metadata-resolved effects disagree with its category.
+    ///
+    /// A read-only plan carrying data, catalog, or maintenance effects is a
+    /// registry drift between analysis and planning or a lowering bug.
+    /// Execution must not proceed with query authority.
+    #[error("plan effect mismatch: {detail}")]
+    #[diagnostic(code(SLENE_P_023))]
+    EffectMismatch {
+        /// Stable mismatch detail tag asserted by tests.
+        detail: &'static str,
+        /// Source span of the mismatched plan.
+        #[label("effect mismatch")]
+        span: SourceSpan,
+    },
+
+    /// An unbounded quantifier reached path lowering without an ISO §16.4
+    /// finite-result gate (restrictive path mode, selective path selector, or
+    /// `DIFFERENT EDGES` match mode).
+    ///
+    /// The analyzer rejects the same shape during binding; this is the
+    /// lowering backstop for a semantic tree that bypassed that gate. The
+    /// lowerer never assigns an arbitrary runtime hop cap in its place.
+    #[error(
+        "unbounded variable-length edge pattern requires a restrictive path mode, selective path selector, or DIFFERENT EDGES match mode"
+    )]
+    #[diagnostic(code(SLENE_P_024))]
+    UnboundedPathRequiresGate {
+        /// Path mode in scope for the offending pattern.
+        mode: PathMode,
+        /// Path selector in scope for the offending pattern.
+        selector: Option<PathSelector>,
+        /// Match mode in scope for the offending pattern.
+        match_mode: Option<MatchMode>,
+        /// Source span of the unbounded quantifier.
+        #[label("unbounded quantifier requires an ISO 16.4 gate")]
+        span: SourceSpan,
+    },
 }
 
 impl PlannerError {
@@ -203,6 +255,16 @@ impl PlannerError {
             Self::KeyLabelSetCardinality { status, .. } => *status,
             // The separate-implied-label-set shape is a deferred feature.
             Self::SeparateImpliedLabelSet { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
+            // GP18 mixing and plan/semantic effect disagreement are
+            // transaction-state violations, matching the analyzer's
+            // MutatingProcedureInReadPipeline precedent (25G02).
+            Self::EffectMixing { .. } | Self::EffectMismatch { .. } => {
+                GqlStatus::INVALID_TRANSACTION_STATE_MIXING
+            }
+            // ISO §16.4 SR: an unbounded quantifier without a restrictive or
+            // selective gate is a syntax-rule violation, matching the
+            // analyzer's `UnboundedRequiresGate` precedent.
+            Self::UnboundedPathRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
         }
     }
 }

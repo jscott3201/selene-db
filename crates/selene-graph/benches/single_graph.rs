@@ -12,6 +12,7 @@ mod edge;
 mod json;
 mod single_graph_ann_recall;
 mod single_graph_candidate_set;
+mod single_graph_physical_candidate_set;
 mod single_graph_vector_batch;
 #[path = "single_graph/vector.rs"]
 mod vector;
@@ -59,8 +60,10 @@ fn bench_label_index(c: &mut Criterion) {
             &fixture,
             |b, fixture| {
                 b.iter(|| {
-                    let rows = fixture.graph().nodes_with_label(&fixture.sensor_label());
-                    std::hint::black_box(rows.map(roaring::RoaringBitmap::len));
+                    let count = fixture
+                        .graph()
+                        .node_label_cardinality(&fixture.sensor_label());
+                    std::hint::black_box(count);
                 });
             },
         );
@@ -76,12 +79,12 @@ fn bench_typed_index_point(c: &mut Criterion) {
             &fixture,
             |b, fixture| {
                 b.iter(|| {
-                    let rows = fixture.graph().nodes_with_property_eq(
+                    let count = fixture.graph().node_property_eq_cardinality(
                         &fixture.person_label(),
                         &fixture.age_key(),
                         &Value::Int(fixture.sample_age_value()),
                     );
-                    std::hint::black_box(rows.map(|rows| rows.len()));
+                    std::hint::black_box(count);
                 });
             },
         );
@@ -99,12 +102,12 @@ fn bench_typed_index_range(c: &mut Criterion) {
                 b.iter(|| {
                     let start = Value::Int(fixture.sample_age_value());
                     let end = Value::Int(fixture.sample_age_value() + 20);
-                    let rows = fixture.graph().nodes_with_property_range(
+                    let count = fixture.graph().node_property_range_cardinality(
                         &fixture.person_label(),
                         &fixture.age_key(),
                         start..end,
                     );
-                    std::hint::black_box(rows.map(|rows| rows.len()));
+                    std::hint::black_box(count);
                 });
             },
         );
@@ -120,26 +123,31 @@ fn bench_composite_index_proxy(c: &mut Criterion) {
             &fixture,
             |b, fixture| {
                 b.iter(|| {
-                    let age_rows = fixture
-                        .graph()
-                        .nodes_with_property_eq(
+                    let g = fixture.graph();
+                    let age_candidates = g
+                        .node_candidates_with_property_eq(
                             &fixture.person_label(),
                             &fixture.age_key(),
                             &Value::Int(fixture.sample_age_value()),
                         )
-                        .map(std::borrow::Cow::into_owned)
-                        .unwrap_or_default();
-                    let mut name_rows = fixture
-                        .graph()
-                        .nodes_with_property_eq(
+                        .ok()
+                        .flatten();
+                    let name_candidates = g
+                        .node_candidates_with_property_eq(
                             &fixture.person_label(),
                             &fixture.name_key(),
                             &Value::String(fixture.sample_name_value()),
                         )
-                        .map(std::borrow::Cow::into_owned)
-                        .unwrap_or_default();
-                    name_rows &= age_rows;
-                    std::hint::black_box(name_rows.len());
+                        .ok()
+                        .flatten();
+                    let count = match (age_candidates, name_candidates) {
+                        (Some(age), Some(name)) => g
+                            .intersect_candidates(&age, &name)
+                            .map(|s| s.len())
+                            .unwrap_or(0),
+                        _ => 0,
+                    };
+                    std::hint::black_box(count);
                 });
             },
         );
@@ -199,6 +207,7 @@ criterion_group! {
         bench_exact_json_contains_scan, bench_exact_json_path_exists_scan,
         bench_exact_json_path_contains_scan, bench_exact_json_path_value_scan,
         single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall,
-        bench_ann_property_filter
+        bench_ann_property_filter,
+        single_graph_physical_candidate_set::bench_physical_candidate_set
 }
 criterion_main!(graph_reads);

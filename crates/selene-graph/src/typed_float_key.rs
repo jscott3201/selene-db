@@ -9,11 +9,14 @@ use std::hash::{Hash, Hasher};
 pub struct NotNanError;
 
 /// `f32` wrapper with total ordering via [`f32::total_cmp`].
+///
+/// See [`NotNanF64`] for the signed-zero and NaN admission rules, which are
+/// identical here.
 #[derive(Clone, Copy, Debug)]
 pub struct NotNanF32(f32);
 
 impl NotNanF32 {
-    /// Construct an ordered f32 key.
+    /// Construct an ordered f32 key, collapsing `-0.0` onto `+0.0`.
     ///
     /// # Errors
     ///
@@ -21,12 +24,14 @@ impl NotNanF32 {
     pub fn new(value: f32) -> Result<Self, NotNanError> {
         if value.is_nan() {
             Err(NotNanError)
+        } else if value == 0.0 {
+            Ok(Self(0.0))
         } else {
             Ok(Self(value))
         }
     }
 
-    /// Return the underlying `f32`.
+    /// Return the key's `f32`, which is `+0.0` for either signed zero.
     #[must_use]
     pub const fn get(self) -> f32 {
         self.0
@@ -62,13 +67,23 @@ impl Hash for NotNanF32 {
 /// `f64` wrapper with total ordering via [`f64::total_cmp`].
 ///
 /// The constructor rejects NaN because NaN has no useful equality or range
-/// semantics for a graph property index. `+0.0` and `-0.0` remain distinct
-/// keys because equality and hashing use the underlying bit pattern.
+/// semantics for a graph property index.
+///
+/// It collapses `-0.0` onto `+0.0` because GQL compares the two zeros equal.
+/// `total_cmp` does not: it orders `-0.0` strictly below `+0.0`, and the bit
+/// patterns differ, so keying on the raw value would file the two zeros under
+/// separate keys. An indexed `= 0.0` would then answer with only the rows that
+/// happened to store the same sign, disagreeing with the identical unindexed
+/// read while every row remained keyable and the index looked healthy.
+///
+/// Collapsing at construction covers range bounds too: `> -0.0` becomes
+/// `> +0.0` and correctly excludes a `0.0` row, matching the scan.
 #[derive(Clone, Copy, Debug)]
 pub struct NotNanF64(f64);
 
 impl NotNanF64 {
-    /// Construct a finite-or-infinite ordered f64 key.
+    /// Construct a finite-or-infinite ordered f64 key, collapsing `-0.0` onto
+    /// `+0.0`.
     ///
     /// # Errors
     ///
@@ -76,12 +91,14 @@ impl NotNanF64 {
     pub fn new(value: f64) -> Result<Self, NotNanError> {
         if value.is_nan() {
             Err(NotNanError)
+        } else if value == 0.0 {
+            Ok(Self(0.0))
         } else {
             Ok(Self(value))
         }
     }
 
-    /// Return the underlying `f64`.
+    /// Return the key's `f64`, which is `+0.0` for either signed zero.
     #[must_use]
     pub const fn get(self) -> f64 {
         self.0

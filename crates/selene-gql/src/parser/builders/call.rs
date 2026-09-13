@@ -2,7 +2,8 @@
 
 use pest::iterators::Pair;
 
-use selene_core::{DbString, feature_register::FeatureId};
+use selene_core::DbString;
+use selene_profile::FeatureId;
 
 use crate::{
     ast::{
@@ -13,8 +14,7 @@ use crate::{
 };
 
 use super::{
-    Rule, build_qualified_name, build_query_pipeline, db_string_pair, expr, span, unexpected_pair,
-    unsupported_feature,
+    Rule, build_qualified_name, db_string_pair, expr, span, unexpected_pair, unsupported_feature,
 };
 
 pub(super) fn build_top_level_call(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -24,6 +24,7 @@ pub(super) fn build_top_level_call(pair: Pair<'_, Rule>) -> Result<Statement, Pa
         BuiltCall::Inline(call) => Ok(Statement::Query(QueryPipeline {
             statements: vec![PipelineStatement::CallSubquery(call)],
             span: source_span,
+            ..QueryPipeline::default()
         })),
     }
 }
@@ -80,7 +81,7 @@ fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, Parser
             Rule::variable_scope_clause => {
                 variable_scope = Some(build_variable_scope(child)?);
             }
-            Rule::query_pipeline => body = Some(build_query_pipeline(child)?),
+            Rule::query_specification => body = Some(super::scopes::build_specification(child)?),
             Rule::yield_clause => yield_items = build_yield_items(child)?,
             _ => return Err(unexpected_pair(child, "unexpected CALL subquery child")),
         }
@@ -138,18 +139,10 @@ fn build_procedure_args(pair: Pair<'_, Rule>) -> Result<Vec<crate::ast::ValueExp
         match child.as_rule() {
             Rule::expr => args.push(expr::build_value_expr(child)?),
             Rule::procedure_binding_table_arg => {
-                return Err(unsupported_feature(
-                    &child,
-                    FeatureId::GP14,
-                    "binding-table procedure arguments are outside the current procedure claim",
-                ));
+                return Err(unsupported_feature(&child, FeatureId::GP14));
             }
             Rule::procedure_graph_arg => {
-                return Err(unsupported_feature(
-                    &child,
-                    FeatureId::GP15,
-                    "graph procedure arguments are outside the current procedure claim",
-                ));
+                return Err(unsupported_feature(&child, FeatureId::GP15));
             }
             _ => return Err(unexpected_pair(child, "unexpected procedure argument")),
         }

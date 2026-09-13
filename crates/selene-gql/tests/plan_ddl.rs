@@ -69,6 +69,25 @@ fn create_edge_type_preserves_endpoints() {
 }
 
 #[test]
+fn alter_node_type_lowers_property_defaults() {
+    let plan = plan_one("ALTER NODE TYPE :Person (active BOOLEAN DEFAULT true)");
+    let CatalogOp::AlterNodeType {
+        label, properties, ..
+    } = catalog_op(&plan)
+    else {
+        panic!("expected alter node type");
+    };
+    assert_eq!(label.as_str(), "Person");
+    assert_eq!(properties.len(), 1);
+    assert_eq!(properties[0].gql_type, GqlType::Boolean);
+    assert!(matches!(
+        properties[0].constraints.as_slice(),
+        [PlannedTypePropertyConstraint::Default(project, _)]
+            if project.ty == AnalyzedType::Resolved(GqlType::Boolean)
+    ));
+}
+
+#[test]
 fn drop_type_and_show_type_plans() {
     let plan = plan_one("DROP EDGE TYPE IF EXISTS :KNOWS");
     assert!(matches!(
@@ -152,31 +171,38 @@ fn all_property_constraints_lower() {
 }
 
 #[test]
-fn ddl_ast_or_replace_path_still_lowers_for_forward_compat() {
-    let name = selene_core::db_string("g").expect("test string fits DB string cap");
-    let analyzed = selene_gql::AnalyzedStatement {
-        statement: selene_gql::AnalyzedStatementKind::Ddl(DdlStatement::CreateGraph {
-            name,
+fn database_catalog_ddl_lowers_to_its_storage_neutral_command() {
+    let reference = selene_gql::CatalogObjectReference {
+        absolute: false,
+        segments: vec![selene_gql::CatalogPathSegment {
+            name: selene_core::db_string("g").expect("test string fits DB string cap"),
+            form: selene_gql::IdentifierForm::Regular,
+        }],
+        span: selene_gql::SourceSpan::new(0, 1),
+    };
+    let analyzed = selene_gql::analyze(
+        selene_gql::Statement::Ddl(DdlStatement::CreateGraph {
+            reference: reference.clone(),
             or_replace: true,
-            if_not_exists: false,
+            if_not_exists: true,
+            graph_type: None,
             span: selene_gql::SourceSpan::new(0, 1),
         }),
-        scopes: selene_gql::BindingScopeTree::new(selene_gql::SourceSpan::new(0, 1)),
-        references: Vec::new(),
-        expr_types: selene_gql::ExprTypeTable::default(),
-        expr_ids: selene_gql::ExprIdLookup::default(),
-        span: selene_gql::SourceSpan::new(0, 1),
-        category: selene_gql::StatementCategory::CatalogModifying,
-        write_set: None,
-    };
+        &EmptyProcedureRegistry,
+        None,
+    )
+    .expect("DDL analyzes");
     let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("plans");
-    assert!(matches!(
+    assert_eq!(
         catalog_op(&plan),
-        CatalogOp::CreateGraph {
+        &CatalogOp::DatabaseCatalog(selene_gql::DatabaseCatalogCommand::CreateGraph {
+            reference,
             or_replace: true,
-            ..
-        }
-    ));
+            if_not_exists: true,
+            graph_type: None,
+            span: selene_gql::SourceSpan::new(0, 1),
+        })
+    );
 }
 
 #[test]

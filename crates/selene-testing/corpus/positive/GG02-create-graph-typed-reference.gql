@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GG02
+// also-covers: GC04
+// expects: parse-ok
+CREATE GRAPH demo TYPED socialNetworkGraphType

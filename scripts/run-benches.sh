@@ -61,10 +61,20 @@ set -euo pipefail
 # bin if the feature is absent, so those entries are marked needs_test_harness=1.
 # ---------------------------------------------------------------------------
 REGISTRY="
+selene-db-catalog|catalog_descriptors|0
+selene-db|catalog_lifecycle|0
+selene-db|scalar_expression|0
+selene-db|facade_read_write|0
+selene-db|durable_commit|1
+selene-db|durable_checkpoint|0
 selene-db-core|value_clone|0
 selene-db-core|vector_wgpu|0
 selene-db-graph|single_graph|0
+selene-db-graph|read_write_guard|0
+selene-db-graph|mixed_edge_storage|0
+selene-db-graph|logical_wal|0
 selene-db-graph|vector_index_rebuild|0
+selene-db-graph|vector_native|0
 selene-db-graph|vector_pq|0
 selene-db-graph|vector_ivf_pq|0
 selene-db-graph|vector_turbo_projection|0
@@ -81,20 +91,21 @@ selene-db-graph|bound_type_validation|0
 selene-db-graph|concurrent_writers|0
 selene-db-graph|graph_hub_delete|0
 selene-db-graph|graph_delete_reclamation|0
-selene-db-graph|graph_snapshot_roundtrip|0
 selene-db-graph|graph_read_under_write|0
 selene-db-graph|graph_mixed_workload|0
 selene-db-graph|text_search_bm25|0
-selene-db-persist|wal|0
-selene-db-persist|snapshot|0
+selene-db-persist|store_control|0
 selene-db-gql|parse|1
 selene-db-gql|analyze|1
 selene-db-gql|plan_optimize|1
+selene-db-gql|mixed_orientation|1
 selene-db-gql|write_e2e|1
 selene-db-gql|expression_eval|0
-selene-db-gql|procedure_call_repeat|0
+selene-db-gql|procedure_call_repeat|1
 selene-db-gql|correlated_subquery|0
 selene-db-gql|read_pipeline|0
+selene-db-gql|execution_context|0
+selene-db-gql|bounded_paths|0
 selene-db-algorithms|algo_bench|0
 selene-db-algorithms|projection|0
 selene-db-algorithms|vector_graph_retrieval|0
@@ -106,8 +117,9 @@ selene-db-algorithms|vector_graph_retrieval|0
 SMOKE="
 selene-db-graph|single_graph|node_fetch
 selene-db-graph|single_graph|label_index
+selene-db-graph|read_write_guard|typed_index_point|checked_candidates_x8|mixed_r60w40
 selene-db-graph|bulk_mutation|commit_batch
-selene-db-persist|wal|append_batch_1000
+selene-db-persist|store_control|anchor
 selene-db-gql|plan_optimize|
 selene-db-gql|expression_eval|
 selene-db-algorithms|projection|projection_build

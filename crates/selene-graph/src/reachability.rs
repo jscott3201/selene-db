@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use selene_core::{CancellationCause, CancellationChecker, DbString, NodeId};
 
+use crate::error::GraphError;
 use crate::graph::SeleneGraph;
 
 const REACHABILITY_CANCEL_STRIDE: usize = 1024;
@@ -40,6 +41,9 @@ struct ReachabilityVisit<'a> {
 /// Error returned by checked reachability APIs.
 #[derive(Debug, thiserror::Error)]
 pub enum ReachabilityError {
+    /// Graph storage or stable-ID consistency failure.
+    #[error(transparent)]
+    Graph(#[from] GraphError),
     /// Caller requested cooperative cancellation.
     #[error("reachability traversal cancelled")]
     Cancelled,
@@ -80,8 +84,8 @@ impl SeleneGraph {
     ///
     /// # Errors
     ///
-    /// Returns [`ReachabilityError`] when cooperative cancellation, statement
-    /// timeout, or the deterministic node-scan budget trips.
+    /// Returns [`ReachabilityError`] when stable-ID binding fails, cooperative
+    /// cancellation or timeout occurs, or the deterministic scan budget trips.
     pub fn reachable_nodes_checked(
         &self,
         roots: &[NodeId],
@@ -96,17 +100,15 @@ impl SeleneGraph {
             return Ok(Vec::new());
         }
 
+        let roots = self.bind_node_candidates(roots.iter().copied())?;
         let mut depths = BTreeMap::<NodeId, usize>::new();
         let mut frontier = VecDeque::<(NodeId, usize)>::new();
-        for root in roots {
+        for root in roots.iter() {
             if depths.len() >= k {
                 break;
             }
-            if self.row_for_node_id(*root).is_none() {
-                continue;
-            }
-            if depths.insert(*root, 0).is_none() {
-                frontier.push_back((*root, 0));
+            if depths.insert(root, 0).is_none() {
+                frontier.push_back((root, 0));
             }
         }
 
@@ -343,5 +345,42 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(root, 0)]
         );
+    }
+
+    #[test]
+    fn reachable_nodes_propagates_live_root_mapping_inconsistency() {
+        let shared = SharedGraph::new(GraphId::new(41_004));
+        let edge_label = db_string("LINK").unwrap();
+        let root = {
+            let mut txn = shared.begin_write();
+            let root = txn
+                .mutator()
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .unwrap();
+            txn.commit().unwrap();
+            root
+        };
+        let mut graph = shared.read().as_ref().clone();
+        let row = graph.node_row_for_id(root).unwrap();
+        graph
+            .node_store
+            .row_to_id
+            .set(row.index(), selene_core::NodeId::new(9_999));
+
+        let error = graph
+            .reachable_nodes_checked(
+                &[root],
+                &edge_label,
+                ReachabilityDirection::Outgoing,
+                Some(0),
+                1,
+                selene_core::CancellationChecker::disabled(),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::ReachabilityError::Graph(crate::GraphError::Inconsistent { .. })
+        ));
     }
 }

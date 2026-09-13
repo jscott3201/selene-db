@@ -81,6 +81,7 @@ pub(crate) fn build_composite_property_index(
     kinds: SmallVec<[TypedIndexKind; 4]>,
 ) -> GraphResult<CompositeTypedIndex> {
     build_composite_property_index_inner(graph, label, properties, kinds, BuildPolicy::Strict)
+        .map(|built| built.index)
 }
 
 /// Build a composite property index leniently.
@@ -89,7 +90,7 @@ pub(crate) fn build_composite_property_index_lenient(
     label: DbString,
     properties: SmallVec<[DbString; 4]>,
     kinds: SmallVec<[TypedIndexKind; 4]>,
-) -> GraphResult<CompositeTypedIndex> {
+) -> GraphResult<LenientCompositeBuild> {
     build_composite_property_index_inner(graph, label, properties, kinds, BuildPolicy::Lenient)
 }
 
@@ -112,7 +113,7 @@ pub(crate) fn rebuild_composite_property_indexes(
     graph.composite_property_index.clear();
     for (label, properties, kinds, name) in registrations {
         let key = composite_property_key(&properties);
-        let index = build_composite_property_index_lenient(
+        let built = build_composite_property_index_lenient(
             graph,
             label.clone(),
             properties.clone(),
@@ -120,7 +121,12 @@ pub(crate) fn rebuild_composite_property_indexes(
         )?;
         graph.composite_property_index.insert(
             (label, key),
-            CompositePropertyIndexEntry::new(index, properties, name),
+            CompositePropertyIndexEntry::new_with_drift(
+                built.index,
+                properties,
+                name,
+                built.drifted_rows,
+            ),
         );
     }
     Ok(())
@@ -132,14 +138,46 @@ enum BuildPolicy {
     Lenient,
 }
 
+/// A built composite index plus the number of live rows it could not key.
+pub(crate) struct LenientCompositeBuild {
+    /// The index over every row whose components all matched their kinds.
+    pub(crate) index: CompositeTypedIndex,
+    /// Rows skipped because the index could not key them.
+    pub(crate) drifted_rows: u64,
+}
+
+/// Whether a skipped tuple leaves the index an incomplete view of its columns.
+///
+/// A composite tuple is all-or-nothing, so one unusable component drops the
+/// whole row. NaN is excluded for the same reason as the single-key path: it
+/// satisfies no equality or range predicate, so a scan omits the row too. See
+/// [`crate::property_index`]'s `counts_as_drift` for why this stays an
+/// over-approximation over the remaining cases.
+///
+/// `ArityMismatch` counts, because a row the index cannot key is a row the
+/// index is missing.
+///
+/// The match is exhaustive so a future [`CompositeIndexValueError`] variant is
+/// a compile error here rather than defaulting into either answer. Before
+/// `ComponentNaN` existed this read `observed != "NaN"`, recovering the
+/// distinction from a diagnostic string that nothing held stable.
+fn counts_as_drift(err: &CompositeIndexValueError) -> bool {
+    match err {
+        CompositeIndexValueError::Component { .. }
+        | CompositeIndexValueError::ArityMismatch { .. } => true,
+        CompositeIndexValueError::ComponentNaN { .. } => false,
+    }
+}
+
 fn build_composite_property_index_inner(
     graph: &crate::SeleneGraph,
     label: DbString,
     properties: SmallVec<[DbString; 4]>,
     kinds: SmallVec<[TypedIndexKind; 4]>,
     policy: BuildPolicy,
-) -> GraphResult<CompositeTypedIndex> {
+) -> GraphResult<LenientCompositeBuild> {
     let mut index = CompositeTypedIndex::new(kinds);
+    let mut drifted_rows = 0_u64;
     for row_index in 0..graph.node_store.labels.len() {
         let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
             reason: format!(
@@ -169,12 +207,18 @@ fn build_composite_property_index_inner(
                     return Err(index_rejection(label.clone(), &properties, err));
                 }
                 BuildPolicy::Lenient => {
+                    if counts_as_drift(&err) {
+                        drifted_rows = drifted_rows.saturating_add(1);
+                    }
                     warn_rejected("rebuild", label.clone(), &properties, row, &err);
                 }
             },
         }
     }
-    Ok(index)
+    Ok(LenientCompositeBuild {
+        index,
+        drifted_rows,
+    })
 }
 
 fn indexes_for_labels<'a>(
@@ -196,6 +240,14 @@ fn indexable_values<'a>(
         .collect()
 }
 
+/// Whether an update can skip index maintenance entirely.
+///
+/// Deliberately does not reuse [`CompositeTypedIndex::values_share_key`], which
+/// treats any two unkeyable tuples as sharing a key. That is true of the
+/// bitmaps — neither tuple is in the index either way — but it is not true of
+/// the drift tally. A row moving between a NaN tuple and a kind-mismatched one
+/// changes whether it counts, and skipping would strand the count: the index
+/// would answer while still missing the row.
 fn values_share_key(
     entry: &CompositePropertyIndexEntry,
     old_values: Option<&SmallVec<[&Value; 4]>>,
@@ -204,7 +256,16 @@ fn values_share_key(
     match (old_values, new_values) {
         (None, None) => true,
         (Some(old_values), Some(new_values)) => {
-            entry.index.values_share_key(old_values, new_values)
+            match (
+                entry.index.key_from_values(old_values),
+                entry.index.key_from_values(new_values),
+            ) {
+                (Ok(old_key), Ok(new_key)) => old_key == new_key,
+                (Err(old_err), Err(new_err)) => {
+                    counts_as_drift(&old_err) == counts_as_drift(&new_err)
+                }
+                _ => false,
+            }
         }
         _ => false,
     }
@@ -216,10 +277,13 @@ fn insert_commit(
     values: &[&Value],
     row: u32,
 ) -> GraphResult<()> {
-    if let Err(err) = std::sync::Arc::make_mut(&mut entry.index).insert(values, row) {
-        return demote_or_promote(label, &entry.declared_properties, row, "insert", err);
+    let Err(err) = std::sync::Arc::make_mut(&mut entry.index).insert(values, row) else {
+        return Ok(());
+    };
+    if counts_as_drift(&err) {
+        entry.drifted_rows = entry.drifted_rows.saturating_add(1);
     }
-    Ok(())
+    demote_or_promote(label, &entry.declared_properties, row, "insert", err)
 }
 
 fn remove_commit(
@@ -228,15 +292,18 @@ fn remove_commit(
     values: &[&Value],
     row: u32,
 ) -> GraphResult<()> {
-    if let Err(err) = std::sync::Arc::make_mut(&mut entry.index).remove(values, row) {
-        return demote_or_promote(label, &entry.declared_properties, row, "remove", err);
+    let Err(err) = std::sync::Arc::make_mut(&mut entry.index).remove(values, row) else {
+        return Ok(());
+    };
+    if counts_as_drift(&err) {
+        entry.drifted_rows = entry.drifted_rows.saturating_sub(1);
     }
-    Ok(())
+    demote_or_promote(label, &entry.declared_properties, row, "remove", err)
 }
 
 /// Commit-path branching for [`CompositeIndexValueError`]: parallel to the
-/// single-key helper in [`crate::property_index`]. `Component` (kind
-/// mismatch) AND `ArityMismatch` retain the commit-path semantics of
+/// single-key helper in [`crate::property_index`]. Every variant — kind
+/// mismatch, NaN, and `ArityMismatch` — retains the commit-path semantics of
 /// `warn_rejected` lenient skip. Build paths handle `ArityMismatch`
 /// separately via [`index_rejection`] under the strict policy.
 fn demote_or_promote(
@@ -248,6 +315,7 @@ fn demote_or_promote(
 ) -> GraphResult<()> {
     match err {
         CompositeIndexValueError::Component { .. }
+        | CompositeIndexValueError::ComponentNaN { .. }
         | CompositeIndexValueError::ArityMismatch { .. } => {
             warn_rejected(op, label, properties, row, &err);
             Ok(())
@@ -272,15 +340,39 @@ fn index_rejection(
             index,
             expected_kind,
             observed,
-        } => GraphError::IndexValueRejected {
-            property: properties
-                .get(index)
-                .cloned()
-                .unwrap_or_else(|| properties.first().cloned().unwrap_or_else(|| label.clone())),
-            label,
+        } => component_rejection(label, properties, index, expected_kind, observed),
+        CompositeIndexValueError::ComponentNaN {
+            index,
             expected_kind,
-            observed,
-        },
+        } => component_rejection(
+            label,
+            properties,
+            index,
+            expected_kind,
+            crate::typed_index::NAN_OBSERVED,
+        ),
+    }
+}
+
+/// Name the offending component and raise the shared rejection error.
+///
+/// Falls back to the first declared property, then the label, when `index` is
+/// out of range: a rejection must still name something a user can act on.
+fn component_rejection(
+    label: DbString,
+    properties: &[DbString],
+    index: usize,
+    expected_kind: TypedIndexKind,
+    observed: &'static str,
+) -> GraphError {
+    GraphError::IndexValueRejected {
+        property: properties
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| properties.first().cloned().unwrap_or_else(|| label.clone())),
+        label,
+        expected_kind,
+        observed,
     }
 }
 

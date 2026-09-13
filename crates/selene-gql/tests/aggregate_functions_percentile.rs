@@ -2,12 +2,13 @@
 
 use std::sync::{Arc, Mutex};
 
-use selene_core::{DbString, GraphId, Value, feature_register::FeatureId};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorWarning, GqlStatus, Session, StatementOutput, WarningSink,
     analyze, feature_walk, parse,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 
 fn db_string(value: &str) -> DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")

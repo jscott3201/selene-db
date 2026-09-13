@@ -1,12 +1,13 @@
 //! Conformance coverage for ISO binary exact numeric type-name synonyms.
 
-use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_core::{GraphId, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ParserError, Session, StatementOutput,
     ast::{format_read_statement, structurally_eq},
     feature_walk, parse,
 };
 use selene_graph::SharedGraph;
+use selene_profile::FeatureId;
 
 fn first_value(source: &str) -> Value {
     let graph = SharedGraph::new(GraphId::new(13_722));

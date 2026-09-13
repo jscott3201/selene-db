@@ -11,15 +11,15 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, BinaryHeap};
 use std::time::Duration;
 
-use roaring::RoaringBitmap;
-use selene_core::{CancellationCause, CancellationChecker, DbString, NodeId, Value};
+use selene_core::{CancellationCause, CancellationChecker, DbString, NodeId};
 use smallvec::SmallVec;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
-use crate::parallel_scan::{should_parallelize_scan, try_reduce_bitmap_chunks};
+use crate::parallel_scan::{should_parallelize_scan, try_reduce_chunks};
 use crate::shared::SharedGraph;
-use crate::store::RowIndex;
+use crate::validated_candidates::ValidatedCandidateNode;
+use crate::{CandidateSet, Node};
 
 pub(crate) const TEXT_SEARCH_CANCEL_STRIDE: usize = 1024;
 #[cfg(not(test))]
@@ -132,40 +132,33 @@ impl SeleneGraph {
         self.exact_text_search_nodes_filtered_checked(label, property, query, k, None, checker)
     }
 
-    /// Exhaustively rank text documents while admitting only `allowed_rows`.
-    ///
-    /// BM25 corpus statistics are still computed over every string document for
-    /// `(label, property)`, so scores and ordering match an unfiltered search
-    /// whose full ranking is filtered by this row set before `k` truncation.
-    pub fn exact_text_search_nodes_in_rows_checked(
+    /// Exhaustively rank text documents while admitting only `candidates`.
+    pub fn exact_text_search_nodes_in_candidates_checked(
         &self,
         label: &DbString,
         property: &DbString,
         query: &str,
         k: usize,
-        allowed_rows: &RoaringBitmap,
+        candidates: &CandidateSet<Node>,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<TextSearchHit>, TextSearchError> {
-        if allowed_rows.is_empty() {
-            return Ok(Vec::new());
-        }
         self.exact_text_search_nodes_filtered_checked(
             label,
             property,
             query,
             k,
-            Some(allowed_rows),
+            Some(candidates),
             checker,
         )
     }
 
-    fn exact_text_search_nodes_filtered_checked(
+    pub(crate) fn exact_text_search_nodes_filtered_checked(
         &self,
         label: &DbString,
         property: &DbString,
         query: &str,
         k: usize,
-        allowed_rows: Option<&RoaringBitmap>,
+        allowed: Option<&CandidateSet<Node>>,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<TextSearchHit>, TextSearchError> {
         checker.check()?;
@@ -176,15 +169,27 @@ impl SeleneGraph {
         if query_terms.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(label_rows) = self.nodes_with_label(label) else {
+        if let Some(allowed) = allowed {
+            self.validate_node_candidates(allowed)
+                .map_err(|error| GraphError::Inconsistent {
+                    reason: format!("allowed text-search candidates failed validation: {error}"),
+                })?;
+        }
+        let candidates = self.node_candidates_with_label(label)?;
+        let validated = self
+            .validate_node_candidates(&candidates)
+            .map_err(|error| GraphError::Inconsistent {
+                reason: format!("fresh text-search candidates failed validation: {error}"),
+            })?;
+        if validated.is_empty() {
             return Ok(Vec::new());
-        };
+        }
 
-        let scan = TextScan::new(self, label, property, &query_terms, allowed_rows);
-        let chunk = if should_parallelize_text_scan(label_rows, k) {
-            exact_text_scan_parallel(scan, label_rows, checker)?
+        let scan = TextScan::new(property, &query_terms, allowed);
+        let chunk = if should_parallelize_text_scan(validated.len(), k) {
+            exact_text_scan_parallel(scan, validated.as_slice(), checker)?
         } else {
-            exact_text_scan_serial(scan, label_rows, checker)?
+            exact_text_scan_serial(scan, validated.as_slice(), checker)?
         };
         Ok(rank_text_docs(chunk, k))
     }
@@ -219,64 +224,37 @@ impl SharedGraph {
 
 #[derive(Clone, Copy)]
 struct TextScan<'a> {
-    graph: &'a SeleneGraph,
-    label: &'a DbString,
     property: &'a DbString,
     query_terms: &'a [String],
-    allowed_rows: Option<&'a RoaringBitmap>,
+    allowed: Option<&'a CandidateSet<Node>>,
 }
 
 impl<'a> TextScan<'a> {
     fn new(
-        graph: &'a SeleneGraph,
-        label: &'a DbString,
         property: &'a DbString,
         query_terms: &'a [String],
-        allowed_rows: Option<&'a RoaringBitmap>,
+        allowed: Option<&'a CandidateSet<Node>>,
     ) -> Self {
         Self {
-            graph,
-            label,
             property,
             query_terms,
-            allowed_rows,
+            allowed,
         }
     }
 
-    fn document_for_row(self, raw_row: u32) -> Result<Option<DocumentStats>, TextSearchError> {
-        if !self.graph.node_store.is_alive(raw_row) {
-            return Ok(None);
-        }
-        let row = RowIndex::new(raw_row);
-        let node_id = self
-            .graph
-            .node_id_for_row(row)
-            .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!(
-                    "label index row {raw_row} for {} has no node id",
-                    self.label.as_str()
-                ),
-            })?;
-        let properties = self
-            .graph
-            .node_store
-            .properties
-            .get(raw_row as usize)
-            .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!(
-                    "text search row {raw_row} for {} has no property row",
-                    self.label.as_str()
-                ),
-            })?;
-        let Some(Value::String(text)) = properties.get(self.property) else {
+    fn document_for_candidate(
+        self,
+        candidate: ValidatedCandidateNode<'_>,
+    ) -> Result<Option<DocumentStats>, TextSearchError> {
+        let Some(text) = candidate.string_property(self.property)? else {
             return Ok(None);
         };
         Ok(document_stats(
-            node_id,
+            candidate.node_id(),
             text.as_str(),
             self.query_terms,
-            self.allowed_rows
-                .is_none_or(|allowed_rows| allowed_rows.contains(raw_row)),
+            self.allowed
+                .is_none_or(|allowed| allowed.contains(candidate.node_id())),
         ))
     }
 }
@@ -308,17 +286,17 @@ impl TextScanChunk {
     }
 }
 
-fn should_parallelize_text_scan(rows: &RoaringBitmap, k: usize) -> bool {
-    should_parallelize_scan(rows.len(), k, TEXT_SEARCH_PARALLEL_MIN_ROWS)
+fn should_parallelize_text_scan(row_count: usize, k: usize) -> bool {
+    should_parallelize_scan(row_count as u64, k, TEXT_SEARCH_PARALLEL_MIN_ROWS)
 }
 
 fn exact_text_scan_parallel(
     scan: TextScan<'_>,
-    rows: &RoaringBitmap,
+    candidates: &[ValidatedCandidateNode<'_>],
     checker: CancellationChecker<'_>,
 ) -> Result<TextScanChunk, TextSearchError> {
-    try_reduce_bitmap_chunks(
-        rows,
+    try_reduce_chunks(
+        candidates,
         TEXT_SEARCH_PARALLEL_CHUNK_ROWS,
         checker,
         || TextScanChunk::empty(scan.query_terms.len()),
@@ -329,18 +307,18 @@ fn exact_text_scan_parallel(
 
 fn exact_text_scan_serial(
     scan: TextScan<'_>,
-    rows: &RoaringBitmap,
+    candidates: &[ValidatedCandidateNode<'_>],
     checker: CancellationChecker<'_>,
 ) -> Result<TextScanChunk, TextSearchError> {
     let mut chunk = TextScanChunk::empty(scan.query_terms.len());
     let mut rows_since_check = 0usize;
-    for raw_row in rows.iter() {
+    for &candidate in candidates {
         rows_since_check += 1;
         if rows_since_check >= TEXT_SEARCH_CANCEL_STRIDE {
             checker.note_nodes_scanned(rows_since_check)?;
             rows_since_check = 0;
         }
-        if let Some(doc) = scan.document_for_row(raw_row)? {
+        if let Some(doc) = scan.document_for_candidate(candidate)? {
             chunk.push(doc);
         }
     }
@@ -352,11 +330,11 @@ fn exact_text_scan_serial(
 
 fn exact_text_scan_chunk(
     scan: TextScan<'_>,
-    rows: &[u32],
+    candidates: &[ValidatedCandidateNode<'_>],
 ) -> Result<TextScanChunk, TextSearchError> {
     let mut chunk = TextScanChunk::empty(scan.query_terms.len());
-    for &raw_row in rows {
-        if let Some(doc) = scan.document_for_row(raw_row)? {
+    for &candidate in candidates {
+        if let Some(doc) = scan.document_for_candidate(candidate)? {
             chunk.push(doc);
         }
     }

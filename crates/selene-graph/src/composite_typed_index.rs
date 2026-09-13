@@ -260,14 +260,29 @@ pub enum CompositeIndexValueError {
         /// Observed value count.
         observed: usize,
     },
-    /// A component value was not admissible for its registered kind.
+    /// A component value's variant did not match its registered kind.
     Component {
         /// Zero-based component index.
         index: usize,
         /// Registered component kind.
         expected_kind: TypedIndexKind,
-        /// Observed value kind or `"NaN"`.
+        /// Observed value kind.
         observed: &'static str,
+    },
+    /// A component value was a NaN float for a float-kinded component.
+    ///
+    /// Split from [`CompositeIndexValueError::Component`] because the two are
+    /// classified differently — a NaN row is one a scan omits as well, a
+    /// kind-mismatched row is not — and the distinction used to be recovered by
+    /// comparing `observed` against the literal `"NaN"`. Nothing enforced that
+    /// spelling, so renaming one string constant could silently invert a
+    /// correctness classifier; the discriminant cannot be renamed by accident.
+    ComponentNaN {
+        /// Zero-based component index.
+        index: usize,
+        /// Registered component kind, always [`TypedIndexKind::F32`] or
+        /// [`TypedIndexKind::F64`].
+        expected_kind: TypedIndexKind,
     },
 }
 
@@ -292,12 +307,21 @@ pub(crate) fn composite_key_from_values(
         .zip(values)
         .enumerate()
         .map(|(index, (kind, value))| {
-            component_from_value(*kind, value).map_err(|source| {
-                CompositeIndexValueError::Component {
-                    index,
-                    expected_kind: source.expected_kind(),
-                    observed: source.observed(),
+            component_from_value(*kind, value).map_err(|source| match source {
+                TypedIndexValueError::NaN { expected_kind } => {
+                    CompositeIndexValueError::ComponentNaN {
+                        index,
+                        expected_kind,
+                    }
                 }
+                TypedIndexValueError::KindMismatch {
+                    expected_kind,
+                    observed,
+                } => CompositeIndexValueError::Component {
+                    index,
+                    expected_kind,
+                    observed,
+                },
             })
         })
         .collect()
@@ -527,6 +551,94 @@ mod tests {
         index.remove(&[&one, &v_k1], 1).unwrap();
         assert_eq!(index.cardinality(), 1);
         assert_eq!(index.distinct_keys(), 1);
+    }
+
+    /// Composite components coerce through `NotNanF32`/`NotNanF64` directly
+    /// rather than through `typed_key`, so signed-zero collapsing has to live in
+    /// the key constructors to reach tuples at all.
+    #[test]
+    fn float_components_collapse_signed_zero() {
+        assert_eq!(
+            component_from_value(TypedIndexKind::F64, &Value::Float(-0.0))
+                .expect("f64 component coerces"),
+            component_from_value(TypedIndexKind::F64, &Value::Float(0.0))
+                .expect("f64 component coerces")
+        );
+        assert_eq!(
+            component_from_value(TypedIndexKind::F32, &Value::Float32(-0.0))
+                .expect("f32 component coerces"),
+            component_from_value(TypedIndexKind::F32, &Value::Float32(0.0))
+                .expect("f32 component coerces")
+        );
+
+        let mut index =
+            CompositeTypedIndex::new(smallvec![TypedIndexKind::String, TypedIndexKind::F64]);
+        let site = Value::String(db_string("composite.signed-zero.site").unwrap());
+        let negative = Value::Float(-0.0);
+        let positive = Value::Float(0.0);
+
+        index.insert(&[&site, &negative], 0).unwrap();
+        index.insert(&[&site, &positive], 1).unwrap();
+        assert_eq!(
+            index.distinct_keys(),
+            1,
+            "both signed zeros share one composite bucket"
+        );
+
+        let stored: Vec<&Value> = vec![&site, &negative];
+        let probe: Vec<&Value> = vec![&site, &positive];
+        assert!(
+            index.values_share_key(&stored, &probe),
+            "flipping the sign of a zero component does not move the tuple's key"
+        );
+    }
+
+    /// A rejected NaN and a rejected wrong variant must be told apart by the
+    /// error's discriminant, not by its `observed` text.
+    ///
+    /// Drift classification acts on the difference — a NaN row is one a scan
+    /// omits as well, a kind-mismatched row is not — and used to recover it by
+    /// comparing `observed` against the literal `"NaN"`. Nothing held that
+    /// spelling stable, so a diagnostic reword could silently invert a
+    /// correctness decision and disable indexes that need no disabling.
+    #[test]
+    fn nan_and_kind_mismatch_are_distinct_variants() {
+        let index = CompositeTypedIndex::new(smallvec![TypedIndexKind::F64, TypedIndexKind::I64]);
+        let nan = Value::Float(f64::NAN);
+        let wrong_variant = Value::String(db_string("composite.nan.discriminant").unwrap());
+        let second = Value::Int(1);
+
+        let nan_err = index
+            .key_from_values(&[&nan, &second])
+            .expect_err("NaN is not keyable");
+        assert!(
+            matches!(
+                nan_err,
+                CompositeIndexValueError::ComponentNaN {
+                    index: 0,
+                    expected_kind: TypedIndexKind::F64,
+                }
+            ),
+            "expected ComponentNaN, got {nan_err:?}",
+        );
+
+        let mismatch_err = index
+            .key_from_values(&[&wrong_variant, &second])
+            .expect_err("a String is not an F64");
+        let CompositeIndexValueError::Component {
+            index: component,
+            expected_kind,
+            observed,
+        } = mismatch_err
+        else {
+            panic!("expected Component, got {mismatch_err:?}");
+        };
+        assert_eq!((component, expected_kind), (0, TypedIndexKind::F64));
+        assert_ne!(
+            observed,
+            crate::typed_index::NAN_OBSERVED,
+            "a kind mismatch must never be spelled as the NaN rejection",
+        );
     }
 
     #[test]

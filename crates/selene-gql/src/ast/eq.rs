@@ -67,9 +67,15 @@ fn scrub_statement(statement: &mut Statement) {
             *span = SourceSpan::default();
             *zone_source_kind = CharacterStringLiteralKind::Escaped;
         }
-        Statement::SessionSetGraph { span, .. }
-        | Statement::SessionReset { span, .. }
-        | Statement::SessionClose { span } => {
+        Statement::SessionSetGraph { target, span } => {
+            *span = SourceSpan::default();
+            if let crate::SessionSetGraphTarget::CatalogReference(reference)
+            | crate::SessionSetGraphTarget::SchemaReference(reference) = target
+            {
+                reference.span = SourceSpan::default();
+            }
+        }
+        Statement::SessionReset { span, .. } | Statement::SessionClose { span } => {
             *span = SourceSpan::default();
         }
     }
@@ -77,6 +83,26 @@ fn scrub_statement(statement: &mut Statement) {
 
 fn scrub_query_pipeline(pipeline: &mut QueryPipeline) {
     pipeline.span = SourceSpan::default();
+    pipeline.select_origin = None;
+    for scope in &mut pipeline.working_scopes {
+        match scope {
+            crate::WorkingScopeClause::At { reference, span } => {
+                reference.span = SourceSpan::default();
+                *span = SourceSpan::default();
+            }
+            crate::WorkingScopeClause::Use { expression, span } => {
+                *span = SourceSpan::default();
+                match expression {
+                    crate::GraphExpression::Reference { reference, .. } => {
+                        reference.span = SourceSpan::default()
+                    }
+                    crate::GraphExpression::Variable { span, .. }
+                    | crate::GraphExpression::Current { span, .. } => *span = SourceSpan::default(),
+                }
+            }
+            crate::WorkingScopeClause::Nested(span) => *span = SourceSpan::default(),
+        }
+    }
     for statement in &mut pipeline.statements {
         match statement {
             crate::PipelineStatement::Match(value) => scrub_match(value),
@@ -287,9 +313,47 @@ fn scrub_mutation_pipeline(pipeline: &mut MutationPipeline) {
 
 fn scrub_ddl(statement: &mut DdlStatement) {
     match statement {
-        DdlStatement::CreateGraph { span, .. }
-        | DdlStatement::DropGraph { span, .. }
-        | DdlStatement::DropNodeType { span, .. }
+        DdlStatement::CreateSchema {
+            reference, span, ..
+        }
+        | DdlStatement::DropSchema {
+            reference, span, ..
+        }
+        | DdlStatement::DropGraph {
+            reference, span, ..
+        }
+        | DdlStatement::DropGraphType {
+            reference, span, ..
+        } => {
+            *span = SourceSpan::default();
+            reference.span = SourceSpan::default();
+        }
+        DdlStatement::CreateGraph {
+            reference,
+            graph_type,
+            span,
+            ..
+        } => {
+            *span = SourceSpan::default();
+            reference.span = SourceSpan::default();
+            if let Some(graph_type) = graph_type {
+                graph_type.span = SourceSpan::default();
+            }
+        }
+        DdlStatement::CreateGraphType {
+            reference,
+            definition,
+            span,
+            ..
+        } => {
+            *span = SourceSpan::default();
+            reference.span = SourceSpan::default();
+            definition.span = SourceSpan::default();
+            for node_type in &mut definition.node_types {
+                node_type.span = SourceSpan::default();
+            }
+        }
+        DdlStatement::DropNodeType { span, .. }
         | DdlStatement::DropEdgeType { span, .. }
         | DdlStatement::TruncateNodeType { span, .. }
         | DdlStatement::TruncateEdgeType { span, .. }
@@ -318,7 +382,10 @@ fn scrub_ddl(statement: &mut DdlStatement) {
                 scrub_property_def(property);
             }
         }
-        DdlStatement::AlterEdgeType {
+        DdlStatement::AlterNodeType {
+            properties, span, ..
+        }
+        | DdlStatement::AlterEdgeType {
             properties, span, ..
         } => {
             *span = SourceSpan::default();

@@ -1,0 +1,6586 @@
+{
+  "format_version": 3,
+  "generator_version": 3,
+  "profile_id": "selene-gql-core-2.0",
+  "selected_features": [
+    "G002",
+    "G003",
+    "G010",
+    "G011",
+    "G012",
+    "G013",
+    "G014",
+    "G015",
+    "G016",
+    "G017",
+    "G018",
+    "G019",
+    "G020",
+    "G036",
+    "G037",
+    "G043",
+    "G044",
+    "G045",
+    "G060",
+    "G061",
+    "G100",
+    "G110",
+    "G111",
+    "G112",
+    "G113",
+    "G114",
+    "G115",
+    "GA01",
+    "GA05",
+    "GA06",
+    "GA07",
+    "GC01",
+    "GC02",
+    "GC03",
+    "GC04",
+    "GC05",
+    "GD01",
+    "GE04",
+    "GE05",
+    "GE06",
+    "GE07",
+    "GF01",
+    "GF02",
+    "GF03",
+    "GF04",
+    "GF05",
+    "GF06",
+    "GF07",
+    "GF10",
+    "GF11",
+    "GF12",
+    "GF13",
+    "GF20",
+    "GG01",
+    "GG02",
+    "GG20",
+    "GG21",
+    "GH02",
+    "GL01",
+    "GL02",
+    "GL03",
+    "GL04",
+    "GL05",
+    "GL06",
+    "GL07",
+    "GL08",
+    "GL09",
+    "GL10",
+    "GL11",
+    "GP01",
+    "GP02",
+    "GP03",
+    "GP04",
+    "GP16",
+    "GQ01",
+    "GQ02",
+    "GQ03",
+    "GQ04",
+    "GQ05",
+    "GQ06",
+    "GQ07",
+    "GQ08",
+    "GQ09",
+    "GQ10",
+    "GQ11",
+    "GQ12",
+    "GQ13",
+    "GQ14",
+    "GQ15",
+    "GQ16",
+    "GQ18",
+    "GQ20",
+    "GQ24",
+    "GS03",
+    "GS04",
+    "GS05",
+    "GS06",
+    "GS07",
+    "GS08",
+    "GS15",
+    "GS16",
+    "GT01",
+    "GV01",
+    "GV02",
+    "GV03",
+    "GV04",
+    "GV05",
+    "GV06",
+    "GV07",
+    "GV08",
+    "GV09",
+    "GV10",
+    "GV11",
+    "GV12",
+    "GV13",
+    "GV14",
+    "GV17",
+    "GV18",
+    "GV19",
+    "GV21",
+    "GV22",
+    "GV23",
+    "GV24",
+    "GV30",
+    "GV31",
+    "GV32",
+    "GV35",
+    "GV36",
+    "GV37",
+    "GV38",
+    "GV39",
+    "GV40",
+    "GV41",
+    "GV45",
+    "GV46",
+    "GV47",
+    "GV48",
+    "GV50",
+    "GV55",
+    "GV66",
+    "GV67",
+    "GV68",
+    "GV90"
+  ],
+  "release_claimable": false,
+  "clause_anchors": [
+    {
+      "id": "CLAUSE-16.1",
+      "citation": "ISO/IEC 39075:2024, Clause 16.1, working schema scope"
+    },
+    {
+      "id": "CLAUSE-16.2",
+      "citation": "ISO/IEC 39075:2024, Clause 16.2, working graph scope"
+    },
+    {
+      "id": "CLAUSE-16.7",
+      "citation": "ISO/IEC 39075:2024, Clause 16.7, SR14 and CR11–13; Clause 22.3, GR3f2C–D"
+    },
+    {
+      "id": "CLAUSE-24.2",
+      "citation": "ISO/IEC 39075:2024, Clause 24.2"
+    },
+    {
+      "id": "CLAUSE-24.3",
+      "citation": "ISO/IEC 39075:2024, Clause 24.3"
+    },
+    {
+      "id": "CLAUSE-24.5",
+      "citation": "ISO/IEC 39075:2024, Clause 24.5"
+    },
+    {
+      "id": "CLAUSE-24.6",
+      "citation": "ISO/IEC 39075:2024, Clause 24.6"
+    },
+    {
+      "id": "CLAUSE-24.7",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7"
+    },
+    {
+      "id": "CLAUSE-24.7-TABLE10-P517",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 517"
+    },
+    {
+      "id": "CLAUSE-24.7-TABLE10-P518",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 518"
+    },
+    {
+      "id": "CLAUSE-24.7-TABLE10-P519",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 519"
+    },
+    {
+      "id": "CLAUSE-24.7-TABLE10-P520",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 520"
+    },
+    {
+      "id": "CLAUSE-24.7-TABLE10-P521",
+      "citation": "ISO/IEC 39075:2024, Clause 24.7, Table 10, p. 521"
+    },
+    {
+      "id": "CLAUSE-9.2",
+      "citation": "ISO/IEC 39075:2024, Clause 9.2, procedure-body AT schema host"
+    },
+    {
+      "id": "CLAUSE-ANNEX-B",
+      "citation": "ISO/IEC 39075:2024, Annex B implementation-defined ID inventory"
+    }
+  ],
+  "features": [
+    {
+      "id": "G002",
+      "name": "Different-edges match mode",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 47,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G003",
+      "name": "Explicit REPEATABLE ELEMENTS keyword",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 48,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G010",
+      "name": "Explicit WALK keyword",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 49,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G011",
+      "name": "Advanced path modes: TRAIL",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 50,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G012",
+      "name": "Advanced path modes: SIMPLE",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 51,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G013",
+      "name": "Advanced path modes: ACYCLIC",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 52,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G014",
+      "name": "Explicit PATH/PATHS keywords",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 53,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G015",
+      "name": "All path search: explicit ALL keyword",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 54,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G016",
+      "name": "Any path search",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 55,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G017",
+      "name": "All shortest path search",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 56,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G018",
+      "name": "Any shortest path search",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 57,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G019",
+      "name": "Counted shortest path search",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 58,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G020",
+      "name": "Counted shortest group search",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 59,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G030",
+      "name": "Null predicates",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 234,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G031",
+      "name": "Non-nullable value types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 235,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G032",
+      "name": "Truth value operations",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 236,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G033",
+      "name": "Extended truth value operations",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 237,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G036",
+      "name": "Quantified edges",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 60,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G037",
+      "name": "Questioned paths",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 61,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G038",
+      "name": "Regular value specification",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 238,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G039",
+      "name": "Extended value specification",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 239,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G041",
+      "name": "Basic binding table expressions",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 240,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G043",
+      "name": "Complete full edge patterns",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 300,
+      "clause_anchors": [
+        "CLAUSE-16.7"
+      ],
+      "evidence": [
+        "EVID-MIXED-ORIENTATION"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G044",
+      "name": "Basic abbreviated edge patterns",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 241,
+      "clause_anchors": [
+        "CLAUSE-16.7"
+      ],
+      "evidence": [
+        "EVID-MIXED-ORIENTATION"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G045",
+      "name": "Complete abbreviated edge patterns",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 242,
+      "clause_anchors": [
+        "CLAUSE-16.7"
+      ],
+      "evidence": [
+        "EVID-MIXED-ORIENTATION"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G048",
+      "name": "Path value constructors",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 243,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G049",
+      "name": "Record value constructors",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 244,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G050",
+      "name": "Field references",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 245,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G051",
+      "name": "Field dereferences",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 246,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G060",
+      "name": "Bounded graph pattern quantifiers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 62,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G061",
+      "name": "Unbounded graph pattern quantifiers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 63,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-PATH-BATCHES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G080",
+      "name": "Let value variable statement",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 247,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G081",
+      "name": "Let value variable statement: value expression",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 248,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G082",
+      "name": "Let value variable statement: initializer",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 249,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G100",
+      "name": "ELEMENT_ID function",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 64,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G110",
+      "name": "IS DIRECTED predicate",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 65,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G111",
+      "name": "IS LABELED predicate",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 66,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G112",
+      "name": "IS SOURCE and IS DESTINATION predicate",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 67,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G113",
+      "name": "ALL_DIFFERENT predicate",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 68,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G114",
+      "name": "SAME predicate",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 69,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "G115",
+      "name": "PROPERTY_EXISTS predicate",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 70,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GA01",
+      "name": "IEEE 754 floating point operations",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 71,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GA04",
+      "name": "Universal comparison",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 250,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GA05",
+      "name": "Cast specification",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 94,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GA06",
+      "name": "Value type predicate",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 95,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GA07",
+      "name": "Ordering by discarded binding variables",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 72,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GA09",
+      "name": "Comparison of paths",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 251,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GC01",
+      "name": "Graph schema management",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 252,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GC02",
+      "name": "Graph schema management: IF [ NOT ] EXISTS",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 73,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GC03",
+      "name": "Graph type: IF [ NOT ] EXISTS",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Conditional graph-type lifecycle executes for the property-free named-node subset, but complete GC03 behavior remains absent for properties, edges, explicit key labels, and COPY OF/LIKE/external sources.",
+      "runtime_order": 74,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GC04",
+      "name": "Graph management",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 75,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GC05",
+      "name": "Graph management: IF [ NOT ] EXISTS",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 76,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GD01",
+      "name": "Updatable graphs",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 77,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GD03",
+      "name": "Insert and replace statements",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 253,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GD04",
+      "name": "Insert statement",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 254,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GE04",
+      "name": "Graph parameters",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Parameter syntax is observed, but graph reference values (GV60) are not implemented.",
+      "runtime_order": 78,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GE05",
+      "name": "Binding table parameters",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Parameter syntax is observed, but binding table reference values (GV61) are not implemented.",
+      "runtime_order": 79,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GE06",
+      "name": "Path value construction",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 80,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GE07",
+      "name": "Boolean XOR",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 81,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GE08",
+      "name": "Reference parameters",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 93,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF01",
+      "name": "Enhanced numeric functions",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 96,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF02",
+      "name": "Trigonometric functions",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 97,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF03",
+      "name": "Logarithmic functions",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 98,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF04",
+      "name": "Enhanced path functions",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 99,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF05",
+      "name": "Multi-character TRIM function",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 100,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF06",
+      "name": "Explicit TRIM function",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 101,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF07",
+      "name": "Byte string TRIM function",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 102,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF10",
+      "name": "Advanced aggregate functions: general set functions",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 103,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF11",
+      "name": "Advanced aggregate functions: binary set functions",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 104,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF12",
+      "name": "CARDINALITY function",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 105,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF13",
+      "name": "SIZE function",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 106,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GF20",
+      "name": "Aggregate functions in sort keys",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 107,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG01",
+      "name": "Graph with an open graph type",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 131,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG02",
+      "name": "Graph with a closed graph type",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Named closed graphs execute for property-free node-only graph types, but complete GG02 behavior remains absent for properties, edges and endpoints, explicit key labels, and the other graph-type sources.",
+      "runtime_order": 132,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG03",
+      "name": "Graph type inline specification",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 255,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG04",
+      "name": "Graph type like a graph",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 256,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG05",
+      "name": "Graph from a graph source",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 257,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG20",
+      "name": "Explicit element type names",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Named property-free node types execute in the bounded catalog subset, but named edge types and complete element declarations are not implemented.",
+      "runtime_order": 133,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG21",
+      "name": "Explicit element type key label sets",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Explicit element key-label-set forms are rejected; the executable node-only subset derives one key label from each node type name.",
+      "runtime_order": 134,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG22",
+      "name": "Non-abstract element types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 258,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GG23",
+      "name": "Abstract element types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 259,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GH02",
+      "name": "Undirected edge patterns",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 130,
+      "clause_anchors": [
+        "CLAUSE-16.7"
+      ],
+      "evidence": [
+        "EVID-MIXED-ORIENTATION"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL01",
+      "name": "Hexadecimal literals",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 108,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL02",
+      "name": "Octal literals",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 109,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL03",
+      "name": "Binary literals",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 110,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL04",
+      "name": "Exact number in common notation without suffix",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 111,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL05",
+      "name": "Exact number in common notation or as decimal integer with suffix",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 112,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL06",
+      "name": "Exact number in scientific notation with suffix",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 113,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL07",
+      "name": "Approximate number in common notation or as decimal integer with suffix",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 114,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL08",
+      "name": "Approximate number in scientific notation with suffix",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 115,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL09",
+      "name": "Optional float number suffix",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 116,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL10",
+      "name": "Optional double number suffix",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 117,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GL11",
+      "name": "Opt-out character escaping",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 118,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP01",
+      "name": "Inline procedure",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 135,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP02",
+      "name": "Inline procedure with implicit nested variable scope",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 136,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP03",
+      "name": "Inline procedure with explicit nested variable scope",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 137,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP04",
+      "name": "Named procedure calls",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 138,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP05",
+      "name": "Procedure-local value variable definitions",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 139,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP06",
+      "name": "Procedure-local value variable definitions: value variables based on simple expressions",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 140,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP07",
+      "name": "Procedure-local value variable definitions: value variable based on subqueries",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 141,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP08",
+      "name": "Procedure-local binding table variable definitions",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 142,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP09",
+      "name": "Procedure-local binding table variable definitions: binding table variables based on simple expressions or references",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 143,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP10",
+      "name": "Procedure-local binding table variable definitions: binding table variables based on subqueries",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 144,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP11",
+      "name": "Procedure-local graph variable definitions",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 145,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP12",
+      "name": "Procedure-local graph variable definitions: graph variables based on simple expressions or references",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 146,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP13",
+      "name": "Procedure-local graph variable definitions: graph variables based on subqueries",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 147,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP14",
+      "name": "Binding tables as procedure arguments",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 148,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP15",
+      "name": "Graphs as procedure arguments",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "procedure-local definitions require the procedure body parser; not yet supported",
+      "runtime_order": 149,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP16",
+      "name": "AT schema clause",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "bounded absolute schema references at read-procedure heads execute; other schema-reference forms, composed nested bodies, and non-query procedure bodies remain unsupported",
+      "runtime_order": 266,
+      "clause_anchors": [
+        "CLAUSE-16.1",
+        "CLAUSE-9.2"
+      ],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP17",
+      "name": "Return statement",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 260,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GP18",
+      "name": "Catalog and data statement mixing",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "mixed catalog/data transaction behavior remains forbidden",
+      "runtime_order": 150,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ01",
+      "name": "USE graph clause",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "bounded catalog-backed focused read queries and single-linear-body nesting execute; focused mutations, multiple focused parts, and graph-valued bindings remain unsupported; GT03 remains unsupported",
+      "runtime_order": 261,
+      "clause_anchors": [
+        "CLAUSE-16.2"
+      ],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ02",
+      "name": "Composite query: OTHERWISE",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 151,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ03",
+      "name": "Composite query: UNION",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 152,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ04",
+      "name": "Composite query: EXCEPT DISTINCT",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 153,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ05",
+      "name": "Composite query: EXCEPT ALL",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 154,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ06",
+      "name": "Composite query: INTERSECT DISTINCT",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 155,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ07",
+      "name": "Composite query: INTERSECT ALL",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 156,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ08",
+      "name": "FILTER statement",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 157,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ09",
+      "name": "LET statement",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 158,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ10",
+      "name": "FOR statement: list value support",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 159,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ11",
+      "name": "FOR statement: WITH ORDINALITY",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 160,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ12",
+      "name": "ORDER BY and page statement: OFFSET clause",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 161,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ13",
+      "name": "ORDER BY and page statement: LIMIT clause",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 162,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ14",
+      "name": "Complex expressions in sort keys",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 163,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ15",
+      "name": "GROUP BY clause",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 164,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ16",
+      "name": "Pre-projection aliases in sort keys",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 165,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ18",
+      "name": "Scalar subqueries",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 166,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ20",
+      "name": "Advanced linear composition with NEXT",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 167,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GQ24",
+      "name": "FOR statement: WITH OFFSET",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 168,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS01",
+      "name": "SESSION SET command: session-local graph parameters",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "SESSION SET <name> GRAPH binds a session-local graph parameter; D1 single-graph embeddable has one graph and no graph-parameter catalog/value slot to bind",
+      "runtime_order": 169,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS02",
+      "name": "SESSION SET command: session-local binding table parameters",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "SESSION SET <name> BINDING TABLE binds a typed binding-table reference value (GV61); the reference-type surface is deferred, so D1 has no spelling to bind",
+      "runtime_order": 170,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS03",
+      "name": "SESSION SET command: session-local value parameters",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 171,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS04",
+      "name": "SESSION RESET command: reset all characteristics",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 172,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS05",
+      "name": "SESSION RESET command: reset session schema",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 173,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS06",
+      "name": "SESSION RESET command: reset session graph",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 174,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS07",
+      "name": "SESSION RESET command: reset time zone displacement",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 175,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS08",
+      "name": "SESSION RESET command: reset all session parameters",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 176,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS10",
+      "name": "SESSION SET command: session-local binding table parameters based on subqueries",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "session-local binding table parameters from subqueries depend on GS02 (binding-table parameters) and a procedure body; both deferred under D1",
+      "runtime_order": 177,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS11",
+      "name": "SESSION SET command: session-local value parameters based on subqueries",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "session-local value parameters from subqueries depend on procedure-body support; SESSION SET VALUE restricts the RHS to a value expression with no row context",
+      "runtime_order": 178,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS12",
+      "name": "SESSION SET command: session-local graph parameters based on simple expressions or references",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "session-local graph parameters from simple graph expressions/references depend on GS01 (graph parameters); D1-blocked",
+      "runtime_order": 179,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS13",
+      "name": "SESSION SET command: session-local binding table parameters based on simple expressions or references",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "session-local binding table parameters from simple expressions/references depend on GS02 (binding-table parameters); deferred",
+      "runtime_order": 180,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS14",
+      "name": "SESSION SET command: session-local value parameters based on simple expressions",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "selene-db evaluates SESSION SET VALUE against an empty binding so the RHS is restricted to a <value specification> (literal/parameter); the full <value expression> form (GS14) remains runtime-unsupported",
+      "runtime_order": 181,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS15",
+      "name": "SESSION SET command: set time zone displacement",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 182,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GS16",
+      "name": "SESSION RESET command: reset individual session parameters",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 183,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GT01",
+      "name": "Explicit transaction commands",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 184,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GT03",
+      "name": "Use of multiple graphs in a transaction",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "multi-graph transactions are out of scope under the D1 single-graph embeddable model",
+      "runtime_order": 185,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV01",
+      "name": "8 bit unsigned integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 186,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV02",
+      "name": "8 bit signed integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 187,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV03",
+      "name": "16 bit unsigned integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 188,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV04",
+      "name": "16 bit signed integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 189,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV05",
+      "name": "Small unsigned integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 190,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV06",
+      "name": "32 bit unsigned integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 191,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV07",
+      "name": "32 bit signed integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 192,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV08",
+      "name": "Regular unsigned integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 193,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV09",
+      "name": "Specified integer number precision",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 194,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV10",
+      "name": "Big unsigned integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 195,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV11",
+      "name": "64 bit unsigned integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 196,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV12",
+      "name": "64 bit signed integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 197,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV13",
+      "name": "128 bit unsigned integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 198,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV14",
+      "name": "128 bit signed integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 199,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV15",
+      "name": "256 bit unsigned integer numbers",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "256-bit unsigned integers are not represented in Value v1",
+      "runtime_order": 200,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV16",
+      "name": "256 bit signed integer numbers",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "256-bit signed integers are not represented in Value v1",
+      "runtime_order": 201,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV17",
+      "name": "Decimal numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 202,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV18",
+      "name": "Small signed integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 203,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV19",
+      "name": "Big signed integer numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 204,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV20",
+      "name": "16 bit floating point numbers",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "FLOAT16 remains deferred",
+      "runtime_order": 205,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV21",
+      "name": "32 bit floating point numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 206,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV22",
+      "name": "Specified floating point number precision",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 207,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV23",
+      "name": "Floating point type name synonyms",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 208,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV24",
+      "name": "64 bit floating point numbers",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 209,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV25",
+      "name": "128 bit floating point numbers",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "FLOAT128 is deferred",
+      "runtime_order": 210,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV26",
+      "name": "256 bit floating point numbers",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "FLOAT256 is deferred",
+      "runtime_order": 211,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV30",
+      "name": "Specified character string minimum length",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 212,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV31",
+      "name": "Specified character string maximum length",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 213,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV32",
+      "name": "Specified character string fixed length",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 214,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV35",
+      "name": "Byte string types",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 215,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV36",
+      "name": "Specified byte string minimum length",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 216,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV37",
+      "name": "Specified byte string maximum length",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 217,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV38",
+      "name": "Specified byte string fixed length",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 218,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV39",
+      "name": "Temporal types: date, local datetime and local time support",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 219,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV40",
+      "name": "Temporal types: zoned datetime and zoned time support",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 220,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV41",
+      "name": "Temporal types: duration support",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 221,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV45",
+      "name": "Record types",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 222,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV46",
+      "name": "Closed record types",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 223,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV47",
+      "name": "Open record types",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 224,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV48",
+      "name": "Nested record types",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 225,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV50",
+      "name": "List value types",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 226,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV55",
+      "name": "Path value types",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 227,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV60",
+      "name": "Graph reference value types",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "GRAPH reference type spellings parse to the Flagger, but graph reference value semantics and closed graph constraints remain deferred",
+      "runtime_order": 228,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV61",
+      "name": "Binding table reference value types",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "binding table reference types require TABLE field-type descriptors and binding-table value semantics before runtime support can be added",
+      "runtime_order": 229,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV65",
+      "name": "Dynamic union types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 262,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV66",
+      "name": "Open dynamic union types",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Open dynamic union syntax is observed, but the underlying GV65 dynamic union type surface is not implemented.",
+      "runtime_order": 230,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV67",
+      "name": "Closed dynamic union types",
+      "runtime_support": "unsupported",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "Closed dynamic union syntax is observed, but the underlying GV65 dynamic union type surface is not implemented.",
+      "runtime_order": 231,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV68",
+      "name": "Dynamic property value types",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 232,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV70",
+      "name": "Immaterial value types",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 263,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV71",
+      "name": "Immaterial value types: null type support",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 264,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV72",
+      "name": "Immaterial value types: empty type support",
+      "runtime_support": "referenced",
+      "claim_state": "unsupported",
+      "unsupported_rationale": "",
+      "runtime_order": 265,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "GV90",
+      "name": "Explicit value type nullability",
+      "runtime_support": "supported",
+      "claim_state": "implemented_unclaimed",
+      "unsupported_rationale": "",
+      "runtime_order": 233,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    }
+  ],
+  "supported_feature_order": [
+    "G043",
+    "G044",
+    "G045",
+    "GH02",
+    "G002",
+    "G003",
+    "G010",
+    "G011",
+    "G012",
+    "G013",
+    "G014",
+    "G015",
+    "G016",
+    "G017",
+    "G018",
+    "G019",
+    "G020",
+    "G036",
+    "G037",
+    "G060",
+    "G061",
+    "G100",
+    "G110",
+    "G111",
+    "G112",
+    "G113",
+    "G114",
+    "G115",
+    "GA01",
+    "GA05",
+    "GA06",
+    "GA07",
+    "GC01",
+    "GC02",
+    "GC04",
+    "GC05",
+    "GD01",
+    "GE06",
+    "GE07",
+    "GF01",
+    "GF02",
+    "GF03",
+    "GF04",
+    "GF05",
+    "GF06",
+    "GF07",
+    "GF10",
+    "GF11",
+    "GF12",
+    "GF13",
+    "GF20",
+    "GL01",
+    "GL02",
+    "GL03",
+    "GL04",
+    "GL05",
+    "GL06",
+    "GL07",
+    "GL08",
+    "GL09",
+    "GL10",
+    "GL11",
+    "IM_UUID",
+    "IM_JSON",
+    "IM_VECTOR",
+    "IM_EXTENDS",
+    "IM_INDEX_DDL",
+    "IM_TYPED_PARAMS",
+    "IM_TRUNCATE",
+    "IM_DROP_CASCADE",
+    "IM_ALTER_NODE_TYPE",
+    "IM_ALTER_EDGE_TYPE",
+    "IM_COMPOSITE_CONSTRAINTS",
+    "GG01",
+    "GP01",
+    "GP02",
+    "GP03",
+    "GP04",
+    "GQ02",
+    "GQ03",
+    "GQ04",
+    "GQ05",
+    "GQ06",
+    "GQ07",
+    "GQ08",
+    "GQ09",
+    "GQ10",
+    "GQ11",
+    "GQ12",
+    "GQ13",
+    "GQ14",
+    "GQ15",
+    "GQ16",
+    "GQ18",
+    "GQ20",
+    "GQ24",
+    "GS03",
+    "GS04",
+    "GS05",
+    "GS06",
+    "GS07",
+    "GS08",
+    "GS15",
+    "GS16",
+    "GT01",
+    "GV01",
+    "GV02",
+    "GV03",
+    "GV04",
+    "GV05",
+    "GV06",
+    "GV07",
+    "GV08",
+    "GV09",
+    "GV10",
+    "GV11",
+    "GV12",
+    "GV13",
+    "GV14",
+    "GV17",
+    "GV18",
+    "GV19",
+    "GV21",
+    "GV22",
+    "GV23",
+    "GV24",
+    "GV30",
+    "GV31",
+    "GV32",
+    "GV35",
+    "GV36",
+    "GV37",
+    "GV38",
+    "GV39",
+    "GV40",
+    "GV41",
+    "GV45",
+    "GV46",
+    "GV47",
+    "GV48",
+    "GV50",
+    "GV55",
+    "GV68",
+    "GV90"
+  ],
+  "unsupported_feature_order": [
+    "GP05",
+    "GP06",
+    "GP07",
+    "GP08",
+    "GP09",
+    "GP10",
+    "GP11",
+    "GP12",
+    "GP13",
+    "GP14",
+    "GP15",
+    "GP18",
+    "GS01",
+    "GS02",
+    "GS10",
+    "GS11",
+    "GS12",
+    "GS13",
+    "GS14",
+    "GT03",
+    "GV15",
+    "GV16",
+    "GV20",
+    "GV25",
+    "GV26",
+    "GV60",
+    "GV61",
+    "GC03",
+    "GE04",
+    "GE05",
+    "GG02",
+    "GG20",
+    "GG21",
+    "GV66",
+    "GV67",
+    "GQ01",
+    "GP16"
+  ],
+  "implications": [
+    {
+      "id": "IMP-G031-G030",
+      "source": "G031",
+      "target": "G030",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G033-G032",
+      "source": "G033",
+      "target": "G032",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G039-G080",
+      "source": "G039",
+      "target": "G080",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G041-G051",
+      "source": "G041",
+      "target": "G051",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G045-G044",
+      "source": "G045",
+      "target": "G044",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G048-G038",
+      "source": "G048",
+      "target": "G038",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G049-G038",
+      "source": "G049",
+      "target": "G038",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G050-G038",
+      "source": "G050",
+      "target": "G038",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G051-G050",
+      "source": "G051",
+      "target": "G050",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G061-G060",
+      "source": "G061",
+      "target": "G060",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P517"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G081-G082",
+      "source": "G081",
+      "target": "G082",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-G082-G080",
+      "source": "G082",
+      "target": "G080",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GA04-GA09",
+      "source": "GA04",
+      "target": "GA09",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GC02-GC01",
+      "source": "GC02",
+      "target": "GC01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GC03-GG02",
+      "source": "GC03",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GC05-GC04",
+      "source": "GC05",
+      "target": "GC04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GD01-GT01",
+      "source": "GD01",
+      "target": "GT01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GD03-GD04",
+      "source": "GD03",
+      "target": "GD04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GE04-GV60",
+      "source": "GE04",
+      "target": "GV60",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GE05-GV61",
+      "source": "GE05",
+      "target": "GV61",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GE06-GV55",
+      "source": "GE06",
+      "target": "GV55",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GF04-GV55",
+      "source": "GF04",
+      "target": "GV55",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GF07-GV35",
+      "source": "GF07",
+      "target": "GV35",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG01-GC04",
+      "source": "GG01",
+      "target": "GC04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG02-GC04",
+      "source": "GG02",
+      "target": "GC04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG03-GG02",
+      "source": "GG03",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG04-GG02",
+      "source": "GG04",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG05-GC04",
+      "source": "GG05",
+      "target": "GC04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG20-GG02",
+      "source": "GG20",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG21-GG02",
+      "source": "GG21",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG22-GG02",
+      "source": "GG22",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GG23-GG02",
+      "source": "GG23",
+      "target": "GG02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP02-GP01",
+      "source": "GP02",
+      "target": "GP01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P518"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP03-GP01",
+      "source": "GP03",
+      "target": "GP01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP05-GP17",
+      "source": "GP05",
+      "target": "GP17",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP06-GP05",
+      "source": "GP06",
+      "target": "GP05",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP07-GP05",
+      "source": "GP07",
+      "target": "GP05",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP08-GP17",
+      "source": "GP08",
+      "target": "GP17",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP08-GV61",
+      "source": "GP08",
+      "target": "GV61",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP09-GP08",
+      "source": "GP09",
+      "target": "GP08",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP10-GP08",
+      "source": "GP10",
+      "target": "GP08",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP11-GP17",
+      "source": "GP11",
+      "target": "GP17",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP11-GV60",
+      "source": "GP11",
+      "target": "GV60",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP12-GP11",
+      "source": "GP12",
+      "target": "GP11",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GP13-GP11",
+      "source": "GP13",
+      "target": "GP11",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GQ05-GQ04",
+      "source": "GQ05",
+      "target": "GQ04",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GQ07-GQ06",
+      "source": "GQ07",
+      "target": "GQ06",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GQ11-GQ10",
+      "source": "GQ11",
+      "target": "GQ10",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS04-GS05",
+      "source": "GS04",
+      "target": "GS05",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P519"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS04-GS06",
+      "source": "GS04",
+      "target": "GS06",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS04-GS07",
+      "source": "GS04",
+      "target": "GS07",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS04-GS08",
+      "source": "GS04",
+      "target": "GS08",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS07-GV40",
+      "source": "GS07",
+      "target": "GV40",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS10-GS02",
+      "source": "GS10",
+      "target": "GS02",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS10-GS13",
+      "source": "GS10",
+      "target": "GS13",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS11-GS03",
+      "source": "GS11",
+      "target": "GS03",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS11-GS14",
+      "source": "GS11",
+      "target": "GS14",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GS15-GV40",
+      "source": "GS15",
+      "target": "GV40",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GT03-GQ01",
+      "source": "GT03",
+      "target": "GQ01",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV36-GV35",
+      "source": "GV36",
+      "target": "GV35",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV37-GV35",
+      "source": "GV37",
+      "target": "GV35",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV38-GV35",
+      "source": "GV38",
+      "target": "GV35",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV40-GV39",
+      "source": "GV40",
+      "target": "GV39",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV41-GV40",
+      "source": "GV41",
+      "target": "GV40",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV46-GV45",
+      "source": "GV46",
+      "target": "GV45",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV47-GV45",
+      "source": "GV47",
+      "target": "GV45",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P520"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV48-GV45",
+      "source": "GV48",
+      "target": "GV45",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV66-GV65",
+      "source": "GV66",
+      "target": "GV65",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV67-GV65",
+      "source": "GV67",
+      "target": "GV65",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV71-GV70",
+      "source": "GV71",
+      "target": "GV70",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "IMP-GV72-GV70",
+      "source": "GV72",
+      "target": "GV70",
+      "clause_anchors": [
+        "CLAUSE-24.7-TABLE10-P521"
+      ],
+      "evidence": []
+    }
+  ],
+  "implementation_defined_choices": [
+    {
+      "id": "IA001",
+      "topic": "Result declared-type exposure",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "boolean",
+          "value": true
+        },
+        "rationale": "Regular facade results expose analyzer-inferred column types through their public descriptor.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 0,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-RESULT-DESCRIPTORS"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IA002",
+      "topic": "Additional status chaining",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "string",
+          "value": "complete deterministic primary, all ordered additional, and every ordered nested-cause status without truncation"
+        },
+        "rationale": "Structured request outcomes expose the complete status chain produced for a request without truncation.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 1,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-STATUS-CHAINING"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IA003",
+      "topic": "Operations on unnormalized strings",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Normalization behavior is implemented per operation but has no reviewed profile-wide rule."
+      },
+      "runtime_order": 2,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "IA004",
+      "topic": "Approximate value interpretation",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "FLOAT32 uses IEEE 754 binary32",
+            "FLOAT and FLOAT64 use IEEE 754 binary64"
+          ]
+        },
+        "rationale": "Parsed and stored approximate values use Rust f32 and f64 representations.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 3,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NUMERIC-TYPES"
+      ],
+      "applicability": "APP-IEEE-FLOAT"
+    },
+    {
+      "id": "IA005",
+      "topic": "Assignment digit-loss rule",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "The type-system work item must unify assignment conversion and precision-loss rules."
+      },
+      "runtime_order": 4,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "IA006",
+      "topic": "Choice among numeric approximations",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Numeric coercion needs one reviewed rule across literals, operators, casts, and assignment."
+      },
+      "runtime_order": 5,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "IA007",
+      "topic": "Non-exact values with approximations",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "The structural type model will define which non-exact value families admit approximations."
+      },
+      "runtime_order": 6,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "IA010",
+      "topic": "Arithmetic operating bounds",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Arithmetic bounds are spread across native integer, decimal, and floating representations."
+      },
+      "runtime_order": 7,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "IA011",
+      "topic": "Approximate division digit loss",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Division conversion policy must be selected with the unified numeric type rules."
+      },
+      "runtime_order": 8,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-IEEE-FLOAT"
+    },
+    {
+      "id": "IA012",
+      "topic": "Flagger treatment of implementation-defined items",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "boolean",
+          "value": false
+        },
+        "rationale": "The current Flagger reports optional feature IDs and does not emit Annex B decisions.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 9,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-FLAGGER"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IA013",
+      "topic": "Selective-path exception termination",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "boolean",
+          "value": true
+        },
+        "rationale": "Selective path evaluation propagates an executor error instead of continuing with partial rows.",
+        "stability": "stable",
+        "visibility": "internal"
+      },
+      "runtime_order": 10,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PATH-ERRORS"
+      ],
+      "applicability": "APP-SELECTIVE-PATHS"
+    },
+    {
+      "id": "IA014",
+      "topic": "Context-free NULL type error",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "boolean",
+          "value": false
+        },
+        "rationale": "A context-free NULL expression retains the dedicated NULL type without raising an exception.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 11,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NULL-TYPE"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IA015",
+      "topic": "Character comparison padding",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "boolean",
+          "value": false
+        },
+        "rationale": "String comparison is lexicographic over the stored scalar sequence without right padding.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 12,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-VALUE-COMPARE"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "IA016",
+      "topic": "Byte comparison zero padding",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "boolean",
+          "value": false
+        },
+        "rationale": "Byte strings compare as exact byte slices without ignoring trailing zero bytes.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 13,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-VALUE-COMPARE"
+      ],
+      "applicability": "APP-BYTE-STRINGS"
+    },
+    {
+      "id": "IA017",
+      "topic": "Repeated property assignments",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M06-PR05",
+        "reason": "The batch mutation operator will select and test one rule for repeated assignments."
+      },
+      "runtime_order": 14,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M06-PR05"
+      ],
+      "applicability": "APP-UPDATES"
+    },
+    {
+      "id": "IA019",
+      "topic": "Bidirectional controls in literals",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR01",
+        "reason": "The source-syntax boundary needs an explicit security rule for bidirectional controls."
+      },
+      "runtime_order": 15,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR01"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "IA020",
+      "topic": "Private-use characters in identifiers",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "boolean",
+          "value": false
+        },
+        "rationale": "Catalog name validation rejects every General Category Co scalar in regular and delimited identifiers.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 16,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CATALOG-DOCS",
+        "EVID-CATALOG-NAME-SOURCE",
+        "EVID-CATALOG-TESTS",
+        "EVID-PLAN-M02-PR02"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IA021",
+      "topic": "Numeric assignment overflow handling",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "The structural type model must align assignment overflow across every numeric family."
+      },
+      "runtime_order": 17,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "IA023",
+      "topic": "Source newline code",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "U+000A"
+        },
+        "rationale": "The parser and source spans use line feed as the source newline separator.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 18,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PARSER-SOURCE"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IA025",
+      "topic": "IEEE additional-value processing",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "unordered_nan_predicates_total_sort_order"
+        },
+        "rationale": "Predicate comparison preserves IEEE NaN unorderedness while deterministic sorting uses total order.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 19,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-VALUE-COMPARE"
+      ],
+      "applicability": "APP-IEEE-FLOAT"
+    },
+    {
+      "id": "IA026",
+      "topic": "Leap-second and calendar discontinuity support",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "boolean",
+          "value": false
+        },
+        "rationale": "Temporal parsing accepts the jiff civil-time range and does not admit leap-second images.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 20,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TEMPORAL-PARSE"
+      ],
+      "applicability": "APP-TEMPORAL"
+    },
+    {
+      "id": "ID001",
+      "topic": "Principal representation",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "embedder_supplied_opaque_bytes"
+        },
+        "rationale": "The embedder may attach opaque audit bytes to a principal for forwarding to commits; these bytes are separate from string authorization and principal identifiers.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 21,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-PRINCIPAL"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID002",
+      "topic": "Principal home schema and graph",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "provider-supplied optional home schema and graph paths"
+        },
+        "rationale": "Session creation resolves provider-declared home paths to stable catalog identities and rejects missing or incoherent homes.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 22,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-PRINCIPAL"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID003",
+      "topic": "Authorization privileges",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "embedded AuthorizationPolicy hook with local allow-all default"
+        },
+        "rationale": "An embedder policy authorizes session creation through facade-only descriptors; Selene supplies no privilege language, role catalog, or authentication service.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 23,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-API"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID004",
+      "topic": "Constructed-value empty element types",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Structural type descriptors will define element types when no concrete element is present."
+      },
+      "runtime_order": 24,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-CONSTRUCTED"
+    },
+    {
+      "id": "ID005",
+      "topic": "Elements-function declared type",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Function result descriptors must be derived from the structural type model."
+      },
+      "runtime_order": 25,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-CONSTRUCTED"
+    },
+    {
+      "id": "ID006",
+      "topic": "Default transaction characteristics",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "READ_WRITE",
+            "SERIALIZABLE"
+          ]
+        },
+        "rationale": "The engine uses serialized writes and immutable read snapshots; no weaker isolation mode is exposed.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 26,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TRANSACTIONS"
+      ],
+      "applicability": "APP-TRANSACTIONS"
+    },
+    {
+      "id": "ID016",
+      "topic": "Condition-text language",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "English source messages"
+        },
+        "rationale": "Typed errors carry checked-in English messages and no localization service.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 27,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-DIAGNOSTICS"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID017",
+      "topic": "Diagnostic information map",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "GQLSTATUS",
+            "source_span",
+            "typed_error_fields"
+          ]
+        },
+        "rationale": "Errors expose GQLSTATUS plus typed fields and source spans where available.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 28,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-DIAGNOSTICS"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID022",
+      "topic": "Default collation",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "unicode_scalar_lexicographic"
+        },
+        "rationale": "Character strings compare lexicographically by their stored Rust string scalar sequence.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 29,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-VALUE-COMPARE"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "ID023",
+      "topic": "Preferred string type names",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "STRING",
+            "BYTES"
+          ]
+        },
+        "rationale": "Formatting uses STRING for character strings and BYTES for byte strings.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 30,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TYPE-NAMES"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "ID028",
+      "topic": "Integer effective binary precision",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "INT8 and UINT8: 8",
+            "INT16, SMALLINT, UINT16, and USMALLINT: 16",
+            "INT32 and UINT: 32",
+            "INTEGER, INT64, BIGINT, UINT64, and UBIGINT: 64",
+            "INT128 and UINT128: 128"
+          ]
+        },
+        "rationale": "The analyzer maps supported integer names to fixed Rust integer widths.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 31,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NUMERIC-TYPES"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "ID034",
+      "topic": "Decimal effective precision",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "unsigned_integer",
+          "value": 29
+        },
+        "rationale": "Decimal type metadata rejects precision above MAX_DECIMAL_PRECISION 29.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 32,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-DECIMAL-LIMITS"
+      ],
+      "applicability": "APP-DECIMAL"
+    },
+    {
+      "id": "ID037",
+      "topic": "Approximate numeric precision and scale",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "FLOAT32 and REAL: binary precision 24, variable scale",
+            "FLOAT, FLOAT64, and DOUBLE: binary precision 53, variable scale"
+          ]
+        },
+        "rationale": "Approximate types map to IEEE binary32 or binary64 storage; this is the relocated float-width policy.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 33,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NUMERIC-TYPES"
+      ],
+      "applicability": "APP-IEEE-FLOAT"
+    },
+    {
+      "id": "ID048",
+      "topic": "Default time-zone displacement",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "UTC+00:00"
+        },
+        "rationale": "A session without an override evaluates temporal functions in UTC and reset restores UTC.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 34,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-DEFAULTS"
+      ],
+      "applicability": "APP-TEMPORAL"
+    },
+    {
+      "id": "ID049",
+      "topic": "Default session parameters",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "unsigned_integer",
+          "value": 0
+        },
+        "rationale": "New sessions start with empty graph, table, and scalar parameter maps.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 35,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-DEFAULTS"
+      ],
+      "applicability": "APP-SESSION-PARAMETERS"
+    },
+    {
+      "id": "ID057",
+      "topic": "List ordinality result type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "INTEGER"
+        },
+        "rationale": "FOR ordinality values are represented as non-negative Value::Int entries.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 36,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-ORDINALITY"
+      ],
+      "applicability": "APP-LISTS"
+    },
+    {
+      "id": "ID058",
+      "topic": "List offset result type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "INTEGER"
+        },
+        "rationale": "FOR offset values are represented as non-negative Value::Int entries.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 37,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-ORDINALITY"
+      ],
+      "applicability": "APP-LISTS"
+    },
+    {
+      "id": "ID059",
+      "topic": "COUNT result type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "INTEGER"
+        },
+        "rationale": "The analyzer assigns INTEGER to COUNT expressions and the runtime returns Value::Int.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 38,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-AGGREGATES"
+      ],
+      "applicability": "APP-AGGREGATES"
+    },
+    {
+      "id": "ID061",
+      "topic": "SESSION_USER declared type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "STRING"
+        },
+        "rationale": "PrincipalId uses database-string semantics. This selects the declared type without claiming runtime support for the SESSION_USER expression.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 39,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-PRINCIPAL"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID062",
+      "topic": "Non-negative integer specification type",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Syntax fields use several host widths and need one structural declared type."
+      },
+      "runtime_order": 40,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "ID063",
+      "topic": "Mixed approximate arithmetic result type",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Current promotion is implemented but needs review against every approximate operand pairing."
+      },
+      "runtime_order": 41,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-IEEE-FLOAT"
+    },
+    {
+      "id": "ID064",
+      "topic": "Exact arithmetic result type",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Exact integer and decimal promotion needs one descriptor-level rule."
+      },
+      "runtime_order": 42,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "ID065",
+      "topic": "Exact addition and subtraction precision",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Precision derivation will be fixed with structural numeric descriptors."
+      },
+      "runtime_order": 43,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "ID066",
+      "topic": "Exact multiplication precision",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Precision derivation will be fixed with structural numeric descriptors."
+      },
+      "runtime_order": 44,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "ID067",
+      "topic": "Exact division precision and scale",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Division precision and scale need one checked descriptor rule."
+      },
+      "runtime_order": 45,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "ID068",
+      "topic": "Length-expression result type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "INTEGER"
+        },
+        "rationale": "Character, byte, and path length functions produce non-negative Value::Int results.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 46,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-LENGTH-FUNCTIONS"
+      ],
+      "applicability": "APP-CONSTRUCTED"
+    },
+    {
+      "id": "ID069",
+      "topic": "Advanced numeric function result types",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "FLOAT"
+        },
+        "rationale": "Trigonometric, logarithmic, exponential, and power functions return binary64 Value::Float values.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 47,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NUMERIC-FUNCTIONS"
+      ],
+      "applicability": "APP-IEEE-FLOAT"
+    },
+    {
+      "id": "ID070",
+      "topic": "Cardinality result type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "INTEGER"
+        },
+        "rationale": "CARDINALITY and SIZE produce non-negative Value::Int results.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 48,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-LENGTH-FUNCTIONS"
+      ],
+      "applicability": "APP-CONSTRUCTED"
+    },
+    {
+      "id": "ID074",
+      "topic": "Exact expression result precision",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Expression-wide exact precision needs the structural numeric descriptor implementation."
+      },
+      "runtime_order": 49,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "ID075",
+      "topic": "Approximate expression result precision",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Expression-wide approximate precision needs the structural numeric descriptor implementation."
+      },
+      "runtime_order": 50,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-IEEE-FLOAT"
+    },
+    {
+      "id": "ID076",
+      "topic": "ELEMENT_ID result type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "STRING"
+        },
+        "rationale": "ELEMENT_ID converts stable element identifiers to database strings.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 51,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-ELEMENT-ID"
+      ],
+      "applicability": "APP-ELEMENT-ID"
+    },
+    {
+      "id": "ID079",
+      "topic": "Approximate literal declared type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "FLOAT"
+        },
+        "rationale": "Unsuffixed approximate literals are parsed as binary64 FLOAT values.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 52,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NUMERIC-LITERALS"
+      ],
+      "applicability": "APP-IEEE-FLOAT"
+    },
+    {
+      "id": "ID085",
+      "topic": "Context-free NULL declared type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "NULL"
+        },
+        "rationale": "The analyzer retains GqlType::Null when no surrounding context supplies another type.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 53,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NULL-TYPE"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID086",
+      "topic": "Default graph pattern match mode",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "REPEATABLE ELEMENTS"
+        },
+        "rationale": "A MATCH without a mode installs no edge-uniqueness filter and matches explicit REPEATABLE ELEMENTS.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 54,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-MATCH-MODE"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID089",
+      "topic": "Preferred graph type name",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "GRAPH"
+        },
+        "rationale": "The formatter and type vocabulary use GRAPH rather than PROPERTY GRAPH as the preferred form.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 55,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TYPE-NAMES"
+      ],
+      "applicability": "APP-GRAPH-TYPES"
+    },
+    {
+      "id": "ID090",
+      "topic": "Preferred node type name",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "NODE"
+        },
+        "rationale": "The public type vocabulary and value variants use NODE terminology.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 56,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TYPE-NAMES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID091",
+      "topic": "Preferred edge type name",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "EDGE"
+        },
+        "rationale": "The public type vocabulary and value variants use EDGE terminology.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 57,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TYPE-NAMES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "ID095",
+      "topic": "Exact SUM result type",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Aggregate exact-result descriptors need the unified numeric promotion contract."
+      },
+      "runtime_order": 58,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-AGGREGATES"
+    },
+    {
+      "id": "ID096",
+      "topic": "Exact AVG result type",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Aggregate exact-result descriptors need the unified numeric promotion contract."
+      },
+      "runtime_order": 59,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-AGGREGATES"
+    },
+    {
+      "id": "ID097",
+      "topic": "Approximate SUM and AVG result types",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Aggregate approximate-result descriptors need the unified numeric promotion contract."
+      },
+      "runtime_order": 60,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-AGGREGATES"
+    },
+    {
+      "id": "ID098",
+      "topic": "Standard-deviation result types",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Statistical aggregate descriptors need the unified numeric promotion contract."
+      },
+      "runtime_order": 61,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-AGGREGATES"
+    },
+    {
+      "id": "ID099",
+      "topic": "Binary aggregate result types",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "Binary aggregate descriptors need the unified numeric promotion contract."
+      },
+      "runtime_order": 62,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-AGGREGATES"
+    },
+    {
+      "id": "IE001",
+      "topic": "URI and URL resource mapping",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M02-PR01",
+        "reason": "The embedded facade has not selected a catalog resource mapping for URI or URL values."
+      },
+      "runtime_order": 63,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M02-PR01"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IE002",
+      "topic": "Transaction isolation selection",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "SERIALIZABLE"
+          ]
+        },
+        "rationale": "No isolation selector is exposed; writes serialize and readers observe immutable snapshots.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 64,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TRANSACTIONS"
+      ],
+      "applicability": "APP-TRANSACTIONS"
+    },
+    {
+      "id": "IE003",
+      "topic": "Unicode identifier profile",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "Unicode data version 17.0.0",
+            "UAX #31 R1-2 profile of R1-1: XID_Start/XID_Continue plus U+005F LOW LINE at start and continuation",
+            "delimited identifiers use decoded spelling outside the XID repertoire"
+          ]
+        },
+        "rationale": "Pinned unicode-ident and unicode-normalization data define the catalog identifier and normalization boundary.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 65,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CATALOG-DOCS",
+        "EVID-CATALOG-NAME-SOURCE",
+        "EVID-CATALOG-TESTS",
+        "EVID-PLAN-M02-PR02"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IE004",
+      "topic": "Serializable behavior relaxations",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "boolean",
+          "value": false
+        },
+        "rationale": "The current transaction API documents no relaxation from serialized writes and snapshot reads.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 66,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TRANSACTIONS"
+      ],
+      "applicability": "APP-TRANSACTIONS"
+    },
+    {
+      "id": "IE005",
+      "topic": "Nonconforming source treatment",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "reject_with_typed_syntax_error"
+        },
+        "rationale": "Source outside the grammar is rejected by the parser with a typed diagnostic.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 67,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PARSER-SOURCE"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IE006",
+      "topic": "Mixed-mode transaction restrictions",
+      "decision": {
+        "disposition": "not_applicable",
+        "reason": "GP18 is absent from the selected closure, so catalog-and-data statement mixing is not in this profile."
+      },
+      "runtime_order": 68,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PROFILE-GP18"
+      ],
+      "applicability": "APP-MIXED-TRANSACTIONS"
+    },
+    {
+      "id": "IE007",
+      "topic": "Mixed-mode violation conditions",
+      "decision": {
+        "disposition": "not_applicable",
+        "reason": "GP18 is absent from the selected closure, so no mixed-mode violation condition is selected."
+      },
+      "runtime_order": 69,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PROFILE-GP18"
+      ],
+      "applicability": "APP-MIXED-TRANSACTIONS"
+    },
+    {
+      "id": "IE008",
+      "topic": "Commit-preventing errors with proven transaction rollback",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "40N01 for local commit failure with proven cancellation"
+        },
+        "rationale": "Section 8.4 GR1(b) requires class 40 with an implementation-defined subclass when commitment is prevented and the entire transaction is canceled. Semantic statement errors retain their own status; failed cleanup is not proven rollback.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 70,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TRANSACTIONS"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IE009",
+      "topic": "Additional informational conditions",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR06",
+        "reason": "Unified diagnostics will define any implementation-added informational conditions."
+      },
+      "runtime_order": 71,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR06"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IE010",
+      "topic": "Successful informational subclasses",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR06",
+        "reason": "The status registry must select successful informational subclasses as one closed set."
+      },
+      "runtime_order": 72,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR06"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IL001",
+      "topic": "Graph-element label-set cardinality",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "nodes: minimum 0, no fixed profile maximum",
+            "edges: minimum 1, maximum 1"
+          ]
+        },
+        "rationale": "Node LabelSet accepts empty or multiple labels; EdgeTypeDef has exactly one discriminator label.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 73,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-LABEL-SETS"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IL002",
+      "topic": "Graph-element property-set maximum",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "unsigned_integer",
+          "value": 4294967295
+        },
+        "rationale": "PropertyMap rejects entry counts above the u32 maximum for node and edge properties.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 74,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PROPERTY-LIMIT"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IL003",
+      "topic": "Key label-set cardinality",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "node key labels: minimum 1, maximum 1",
+            "edge key labels: minimum 1, maximum 1"
+          ]
+        },
+        "rationale": "Current key-label lowering and storage admit singleton key label sets only.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 75,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CAPS"
+      ],
+      "applicability": "APP-KEY-LABELS"
+    },
+    {
+      "id": "IL009",
+      "topic": "Variable string-concatenation minimum",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "unsigned_integer",
+          "value": 0
+        },
+        "rationale": "Concatenating two empty variable-length strings yields an empty string.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 76,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-STRING-CONCAT"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "IL010",
+      "topic": "Unsigned integer literal digit maximum",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "unsigned_integer",
+          "value": 19
+        },
+        "rationale": "Production int_lit parsing delegates to parse_i64, so the largest accepted unsigned decimal image is i64::MAX, which has 19 digits.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 77,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NUMERIC-LITERALS"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "IL011",
+      "topic": "Numeric precision and scale maxima",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "binary integer precision: 128",
+            "decimal precision: 29",
+            "decimal scale: 28",
+            "approximate binary precision: 53"
+          ]
+        },
+        "rationale": "These bounds are enforced by the supported native integer, decimal, and float representations.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 78,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-DECIMAL-LIMITS",
+        "EVID-NUMERIC-TYPES"
+      ],
+      "applicability": "APP-NUMERIC"
+    },
+    {
+      "id": "IL013",
+      "topic": "String value length maxima",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "stored STRING bytes: 4294967295",
+            "default STRING concatenation characters: 4294967295",
+            "default BYTES concatenation bytes: 4294967295"
+          ]
+        },
+        "rationale": "DbString and the default concatenation caps use the u32 maximum.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 79,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CAPS",
+        "EVID-STRING-LIMIT"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "IL015",
+      "topic": "Constructed value cardinality maxima",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "property maps: 4294967295 entries",
+            "constructed lists: 1000000 entries by default",
+            "paths: 32 edges by default"
+          ]
+        },
+        "rationale": "PropertyMap and session implementation-defined caps enforce these current bounds.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 80,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CAPS",
+        "EVID-PROPERTY-LIMIT"
+      ],
+      "applicability": "APP-CONSTRUCTED"
+    },
+    {
+      "id": "IL018",
+      "topic": "General quantifier upper bound",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "unsigned_integer",
+          "value": 100
+        },
+        "rationale": "The default planner cap rejects larger variable-length quantifier upper bounds.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 81,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CAPS"
+      ],
+      "applicability": "APP-PATHS"
+    },
+    {
+      "id": "IL020",
+      "topic": "Directory nesting depth",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "unsigned_integer",
+          "value": 0
+        },
+        "rationale": "The finalized 2.0 catalog decision selects one synthetic root with schemas and no child directories.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 82,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CATALOG-DECISION"
+      ],
+      "applicability": "APP-CATALOG"
+    },
+    {
+      "id": "IL023",
+      "topic": "Approximate exponent bounds",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "The structural numeric model must state normal and subnormal exponent bounds consistently."
+      },
+      "runtime_order": 83,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-IEEE-FLOAT"
+    },
+    {
+      "id": "IL024",
+      "topic": "Fractional-seconds precision maximum",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "unsigned_integer",
+          "value": 9
+        },
+        "rationale": "Temporal values and parsing use nanosecond fractional precision.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 84,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TEMPORAL-PARSE"
+      ],
+      "applicability": "APP-TEMPORAL"
+    },
+    {
+      "id": "IS001",
+      "topic": "Implicit NULL ordering",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "NULLS HIGH"
+        },
+        "rationale": "Omitted NULLS ordering puts NULL last for ascending order and first for descending order.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 85,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NULL-SORT"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IV001",
+      "topic": "GQL source character repertoire",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "Unicode scalar values in UTF-8"
+        },
+        "rationale": "Rust source strings are valid UTF-8; this selection does not claim an exact Unicode data version.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 86,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PARSER-SOURCE"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IV002",
+      "topic": "Otherwise-unspecified essential inequality",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "lexicographic_structural_and_stable_reference_order"
+        },
+        "rationale": "Comparable lists use lexicographic element order; record values use canonical exact field-name order; same-domain references use stable IDs. Paths compare path-element lists. Nested sort nulls are high; NaNs follow IA025. Three-valued predicates and grouping not-distinct are separate.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 87,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-STRUCTURAL-OPERATIONS",
+        "EVID-STRUCTURAL-TYPES",
+        "EVID-VALUE-COMPARE"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IV003",
+      "topic": "GQL object normal forms",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "catalog_descriptor",
+            "directory_descriptor",
+            "schema_descriptor",
+            "graph_descriptor",
+            "graph_type_descriptor",
+            "binding_table_descriptor",
+            "procedure_descriptor",
+            "index_descriptor",
+            "constraint_descriptor"
+          ]
+        },
+        "rationale": "Each supported catalog object has one immutable kind-tagged descriptor with typed identity, name, parent, generation, creation metadata, and a storage-neutral payload.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 88,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CATALOG-DESCRIPTOR-SOURCE",
+        "EVID-CATALOG-DOCS",
+        "EVID-CATALOG-TESTS",
+        "EVID-PLAN-M02-PR02"
+      ],
+      "applicability": "APP-CATALOG"
+    },
+    {
+      "id": "IV008",
+      "topic": "Value type normal forms",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "owned_normalized_structural_type"
+        },
+        "rationale": "StructuralType normalizes nullability, scalar envelopes, list elements and bounds, sorted exact record field names, and flattened deduplicated closed unions. Descriptors own their data and share record fields without global interning or durable arena IDs. Unsupported source types fail closed.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 89,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-STRUCTURAL-INVENTORY",
+        "EVID-STRUCTURAL-TYPES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IV010",
+      "topic": "Universal comparison result",
+      "decision": {
+        "disposition": "not_applicable",
+        "reason": "Universal comparison GA04 is unsupported. Non-essentially-comparable value families raise 22G04 rather than selecting a cross-family total order."
+      },
+      "runtime_order": 90,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-STRUCTURAL-OPERATIONS"
+      ],
+      "applicability": "APP-UNIVERSAL-COMPARISON"
+    },
+    {
+      "id": "IV011",
+      "topic": "Dynamic property value type",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "NULL",
+            "BOOLEAN",
+            "INTEGER",
+            "UNSIGNED INTEGER",
+            "DECIMAL",
+            "FLOAT32",
+            "FLOAT64",
+            "STRING",
+            "BYTES",
+            "DATE",
+            "TIME",
+            "DATETIME",
+            "DURATION",
+            "LIST",
+            "RECORD",
+            "UUID",
+            "JSON",
+            "VECTOR"
+          ]
+        },
+        "rationale": "Owner-selected query-only references and paths are rejected recursively in properties and defaults. Scalars, native JSON/vectors, lists and named records remain storable. RecordTypeId is not a stored descriptor. StoredValue defines semantic admission; F02-PR03 owns bytes.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 91,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-STORED-VALUES",
+        "EVID-VALUE-TYPES"
+      ],
+      "applicability": "APP-DYNAMIC-UNION"
+    },
+    {
+      "id": "IV012",
+      "topic": "Open dynamic union components",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "The target selects open unions but the current analyzer marks their ISO feature unsupported."
+      },
+      "runtime_order": 92,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-DYNAMIC-UNION"
+    },
+    {
+      "id": "IV014",
+      "topic": "Static-type covering set",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "ANY"
+          ]
+        },
+        "rationale": "GqlType::Any is the broad static value supertype used by unconstrained procedure surfaces.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 93,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-VALUE-TYPES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IV015",
+      "topic": "Authorization identifier syntax",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "non-empty UTF-8 database string subject to IL013"
+        },
+        "rationale": "AuthorizationId and PrincipalId accept non-empty UTF-8 text up to the database-string byte limit and remain distinct from optional audit bytes.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 94,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-PRINCIPAL",
+        "EVID-STRING-LIMIT"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IV016",
+      "topic": "Additional condition text",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "typed English diagnostic message"
+        },
+        "rationale": "Each typed error supplies concise implementation text in addition to its status and fields.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 95,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-DIAGNOSTICS"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IV023",
+      "topic": "Truncating whitespace set",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "U+0020"
+          ]
+        },
+        "rationale": "Shared string coercion and concatenation discard only trailing space when truncation is permitted.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 96,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TRUNCATING-WHITESPACE"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "IW001",
+      "topic": "Embedded session and request mechanism",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "Database::session",
+            "Database::session_with_options",
+            "Session::context",
+            "Session::execute",
+            "Session::execute_request"
+          ]
+        },
+        "rationale": "The stable facade creates database-owned sessions, exposes controlled context inspection, and submits an explicit Request through Session::execute_request; Session::execute remains the source-compatible adapter.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 97,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-API"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IW002",
+      "topic": "Authorization identifier lifecycle",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "embedder maps authorization strings to principals; optional audit bytes are separate"
+        },
+        "rationale": "PrincipalProvider performs the embedder-owned string identifier mapping. Selene stores no user directory, and Principal audit bytes remain an independent optional commit field.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 98,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-PRINCIPAL"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IW003",
+      "topic": "Last-request determination",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "SESSION CLOSE or Session drop"
+        },
+        "rationale": "The caller ends the in-process session explicitly or by dropping its Session value.",
+        "stability": "provisional",
+        "visibility": "embedder"
+      },
+      "runtime_order": 99,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-SESSION-API"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IW004",
+      "topic": "Alternative transaction control mechanism",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "SharedGraph::begin_write",
+            "WriteTxn::commit",
+            "WriteTxn drop rollback"
+          ]
+        },
+        "rationale": "Rust embedders can control graph write transactions without issuing transaction statements.",
+        "stability": "provisional",
+        "visibility": "embedder"
+      },
+      "runtime_order": 100,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-TRANSACTIONS"
+      ],
+      "applicability": "APP-TRANSACTIONS"
+    },
+    {
+      "id": "IW005",
+      "topic": "Termination status delivery",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "typed RequestOutcome success or error with Rust Result compatibility adapter"
+        },
+        "rationale": "RequestOutcome/Result retain diagnostics. MutationIndeterminate means in-memory publication. DurableCommitOutcome reports phase, visibility and recovery: 40N01 for proven cancellation; 40003 for unresolved local termination or synchronized-but-unacknowledged completion. No 08007 or automatic retry.",
+        "stability": "stable",
+        "visibility": "embedder"
+      },
+      "runtime_order": 101,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-DIAGNOSTICS",
+        "EVID-SESSION-API",
+        "EVID-TRANSACTIONS"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IW006",
+      "topic": "Request parameter dictionary",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "deterministic typed session snapshot plus exact-name request bindings"
+        },
+        "rationale": "Session owns a controlled typed dictionary; each request snapshots it and shadows exact names with its deterministic typed request dictionary.",
+        "stability": "provisional",
+        "visibility": "embedder"
+      },
+      "runtime_order": 102,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-REQUEST-PARAMETERS",
+        "EVID-SESSION-DEFAULTS"
+      ],
+      "applicability": "APP-SESSION-PARAMETERS"
+    },
+    {
+      "id": "IW007",
+      "topic": "Status presentation",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_identifier_list",
+          "value": [
+            "typed Rust error",
+            "GQLSTATUS",
+            "miette source diagnostic"
+          ]
+        },
+        "rationale": "Callers receive typed errors and can render source-aware diagnostics without parsing display text.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 103,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-DIAGNOSTICS"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IW010",
+      "topic": "External procedure provisioning",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "native BuiltinProcedureRegistry"
+        },
+        "rationale": "Production uses the frozen in-tree registry; there is no loadable extension mechanism.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 104,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PROCEDURE-REGISTRY"
+      ],
+      "applicability": "APP-NAMED-PROCEDURES"
+    },
+    {
+      "id": "IW011",
+      "topic": "Pattern element reference type resolution",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "analyzer binding and graph schema"
+        },
+        "rationale": "Pattern binding types are inferred from node or edge roles and available graph schema metadata.",
+        "stability": "provisional",
+        "visibility": "internal"
+      },
+      "runtime_order": 105,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PATTERN-TYPES"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IW012",
+      "topic": "Inserted-node reference type resolution",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "analyzer binding and graph schema"
+        },
+        "rationale": "Insert-node bindings derive their reference type from the analyzed insert pattern and schema.",
+        "stability": "provisional",
+        "visibility": "internal"
+      },
+      "runtime_order": 106,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PATTERN-TYPES"
+      ],
+      "applicability": "APP-UPDATES"
+    },
+    {
+      "id": "IW014",
+      "topic": "Visual-confusable string detection",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "none"
+        },
+        "rationale": "The engine performs exact scalar comparison and does not classify visual confusability.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 107,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-VALUE-COMPARE"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "IW015",
+      "topic": "Automatic directory creation",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "none"
+        },
+        "rationale": "The selected flat catalog has one synthetic root and does not auto-create child directories.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 108,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CATALOG-DECISION"
+      ],
+      "applicability": "APP-CATALOG"
+    },
+    {
+      "id": "IW016",
+      "topic": "Automatic schema population",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "none"
+        },
+        "rationale": "Schema objects are created explicitly; the catalog plan selects no automatic population.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 109,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CATALOG-DECISION"
+      ],
+      "applicability": "APP-CATALOG"
+    },
+    {
+      "id": "IW017",
+      "topic": "Concatenation of non-normalized strings",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "concatenate unchanged unless both operands are NFC"
+        },
+        "rationale": "Concatenation normalizes the boundary to NFC only when both inputs are already NFC.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 110,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-STRING-CONCAT"
+      ],
+      "applicability": "APP-STRING"
+    },
+    {
+      "id": "IW018",
+      "topic": "Lax-cast generation",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "The structural cast matrix must define lax-cast generation and companion type tests together."
+      },
+      "runtime_order": 111,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-CASTS"
+    },
+    {
+      "id": "IW019",
+      "topic": "Common-supertype selection",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "analyzer numeric promotion and structural family matching"
+        },
+        "rationale": "The analyzer computes common numeric types with a closed promotion function.",
+        "stability": "provisional",
+        "visibility": "internal"
+      },
+      "runtime_order": 112,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NUMERIC-PROMOTION"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IW021",
+      "topic": "Type-precedence permutation",
+      "decision": {
+        "disposition": "pending",
+        "owner": "M05-PR03",
+        "reason": "The structural type system must publish one complete precedence order for common-type selection."
+      },
+      "runtime_order": 113,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-PLAN-M05-PR03"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IW022",
+      "topic": "Non-null assignment proof",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "runtime value validation before mutation publication"
+        },
+        "rationale": "Assignments validate nullability against the target type before a transaction can commit.",
+        "stability": "stable",
+        "visibility": "internal"
+      },
+      "runtime_order": 114,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-NULLABILITY"
+      ],
+      "applicability": "APP-UPDATES"
+    },
+    {
+      "id": "IW023",
+      "topic": "Canonical identifier name",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "ordered_string_list",
+          "value": [
+            "NFC of decoded spelling",
+            "case-sensitive without case folding",
+            "Unicode scalar value lexicographic ordering"
+          ]
+        },
+        "rationale": "Catalog dictionaries compare NFC spellings by Unicode scalar value while descriptors retain decoded display spelling.",
+        "stability": "stable",
+        "visibility": "public"
+      },
+      "runtime_order": 115,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CATALOG-DOCS",
+        "EVID-CATALOG-NAME-SOURCE",
+        "EVID-CATALOG-TESTS",
+        "EVID-PLAN-M02-PR02"
+      ],
+      "applicability": "APP-CATALOG"
+    },
+    {
+      "id": "IW025",
+      "topic": "Catalog procedure transaction control",
+      "decision": {
+        "disposition": "selected",
+        "value": {
+          "type": "identifier",
+          "value": "one graph write transaction per current catalog statement"
+        },
+        "rationale": "Current catalog operations execute through the write transaction and publish only at commit.",
+        "stability": "provisional",
+        "visibility": "public"
+      },
+      "runtime_order": 116,
+      "clause_anchors": [
+        "CLAUSE-ANNEX-B"
+      ],
+      "evidence": [
+        "EVID-CATALOG-TRANSACTIONS"
+      ],
+      "applicability": "APP-CATALOG"
+    }
+  ],
+  "implementation_dependent_notes": [],
+  "implementation_extensions": [
+    {
+      "id": "IM_ALTER_EDGE_TYPE",
+      "name": "selene-db additive ALTER EDGE TYPE extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 129,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_ALTER_NODE_TYPE",
+      "name": "selene-db additive ALTER NODE TYPE extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 128,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_COMPOSITE_CONSTRAINTS",
+      "name": "selene-db named Rust catalog UNIQUE/key constraints (not GQL grammar)",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 301,
+      "clause_anchors": [],
+      "evidence": [
+        "EVID-COMPOSITE-CONSTRAINTS"
+      ],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_DROP_CASCADE",
+      "name": "selene-db cascading DROP TYPE extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 126,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_DROP_GRAPH",
+      "name": "selene-db DROP GRAPH factory-reset extension",
+      "runtime_support": "unsupported",
+      "unsupported_rationale": "DROP GRAPH removes catalog-owned graphs through the database facade and is no longer reinterpreted as a lower-engine factory reset.",
+      "runtime_order": 127,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_EXTENDS",
+      "name": "selene-db EXTENDS type composition extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 122,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_INDEX_DDL",
+      "name": "selene-db named index DDL and analyzed scalar-expression index extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 123,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_JSON",
+      "name": "selene-db JSON extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 120,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_TRUNCATE",
+      "name": "selene-db bulk truncate extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 125,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_TYPED_PARAMS",
+      "name": "selene-db inline typed parameter declaration extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 124,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_UUID",
+      "name": "selene-db UUID extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 119,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    },
+    {
+      "id": "IM_VECTOR",
+      "name": "selene-db VECTOR extension",
+      "runtime_support": "supported",
+      "unsupported_rationale": "",
+      "runtime_order": 121,
+      "clause_anchors": [],
+      "evidence": [],
+      "applicability": "APP-ALWAYS"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "EVID-AGGREGATES",
+      "reference": "crates/selene-gql/src/analyze/infer.rs",
+      "description": "Analyzer and aggregate runtime result types."
+    },
+    {
+      "id": "EVID-CAPS",
+      "reference": "crates/selene-gql/src/plan/ir/caps.rs",
+      "description": "Current implementation-defined planner and value caps."
+    },
+    {
+      "id": "EVID-CATALOG-DECISION",
+      "reference": "docs/v2/decisions/finalized.md",
+      "description": "Finalized flat synthetic-root catalog decision."
+    },
+    {
+      "id": "EVID-CATALOG-DESCRIPTOR-SOURCE",
+      "reference": "crates/selene-catalog/src/descriptor.rs",
+      "description": "Immutable kind-tagged descriptor and typed core-schema bridge source."
+    },
+    {
+      "id": "EVID-CATALOG-DOCS",
+      "reference": "docs/v2/catalog.md",
+      "description": "Catalog identity, Unicode name, hierarchy, descriptor, and snapshot contracts."
+    },
+    {
+      "id": "EVID-CATALOG-NAME-SOURCE",
+      "reference": "crates/selene-catalog/src/name.rs",
+      "description": "Unicode 17.0.0 identifier validation and NFC comparison implementation."
+    },
+    {
+      "id": "EVID-CATALOG-TESTS",
+      "reference": "crates/selene-catalog/tests/catalog_model.rs",
+      "description": "Executable catalog ID, Unicode name, descriptor, hierarchy, and snapshot evidence."
+    },
+    {
+      "id": "EVID-CATALOG-TRANSACTIONS",
+      "reference": "crates/selene-gql/src/runtime/statement.rs",
+      "description": "Catalog statements execute through the current write transaction path."
+    },
+    {
+      "id": "EVID-COMPOSITE-CONSTRAINTS",
+      "reference": "docs/v2/composite-constraints.md",
+      "description": "Named catalog tuple constraints, null/missing policy, complete backing and incremental final-state enforcement."
+    },
+    {
+      "id": "EVID-CONFORMANCE-G010-POSITIVE",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m01-pr06",
+      "description": "Planned positive explicit WALK evidence; M01-PR06 owns execution."
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-NEGATIVE",
+      "reference": "crates/selene-testing/src/conformance/mod.rs",
+      "description": "Executable negative graph-management evidence: the AS COPY OF graph source is rejected before planning with feature GG05; M02-PR04 owns execution."
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-POSITIVE",
+      "reference": "crates/selene-testing/src/conformance/mod.rs",
+      "description": "Executable positive graph-management evidence: CREATE GRAPH IF NOT EXISTS with an open graph type completes through the database facade with 00001; M02-PR04 owns execution."
+    },
+    {
+      "id": "EVID-CONFORMANCE-GC04-STATUS",
+      "reference": "crates/selene-testing/src/conformance/mod.rs",
+      "description": "Executable exact-status graph-management evidence: a strict duplicate CREATE GRAPH through the database facade reports 42N10 without publishing state; M02-PR04 owns execution."
+    },
+    {
+      "id": "EVID-CONFORMANCE-INVENTORY-PENDING",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m01-pr06",
+      "description": "Pending incomplete-inventory evidence; M01-PR06 owns harness registration."
+    },
+    {
+      "id": "EVID-DECIMAL-LIMITS",
+      "reference": "crates/selene-core/src/decimal_type.rs",
+      "description": "Decimal precision and scale constants and validation."
+    },
+    {
+      "id": "EVID-DIAGNOSTICS",
+      "reference": "crates/selene-gql/src/diagnostic.rs",
+      "description": "Typed source diagnostics and GQLSTATUS-bearing errors."
+    },
+    {
+      "id": "EVID-ELEMENT-ID",
+      "reference": "crates/selene-gql/src/runtime/evaluator/identity_length_fns.rs",
+      "description": "ELEMENT_ID runtime result construction."
+    },
+    {
+      "id": "EVID-FLAGGER",
+      "reference": "crates/selene-gql/src/flagger/query.rs",
+      "description": "Current Flagger records optional feature IDs only."
+    },
+    {
+      "id": "EVID-LABEL-SETS",
+      "reference": "crates/selene-core/src/label_set.rs",
+      "description": "Node LabelSet and singleton edge label representation."
+    },
+    {
+      "id": "EVID-LENGTH-FUNCTIONS",
+      "reference": "crates/selene-gql/src/runtime/evaluator/identity_length_fns.rs",
+      "description": "Length and cardinality runtime result values."
+    },
+    {
+      "id": "EVID-MATCH-MODE",
+      "reference": "docs/gql/path-batches.md",
+      "description": "ID086 default and explicit REPEATABLE ELEMENTS equivalence through the independent product-path oracle and statement batch execution."
+    },
+    {
+      "id": "EVID-MIXED-ORIENTATION",
+      "reference": "docs/gql/mixed-edge-orientation.md",
+      "description": "Independent seven-form orientation vectors, indexed/adjacency execution, facade undirected INSERT and predicates; no formal conformance claim."
+    },
+    {
+      "id": "EVID-NULL-SORT",
+      "reference": "crates/selene-gql/src/runtime/pipeline/order_by.rs",
+      "description": "Default ascending and descending NULL placement."
+    },
+    {
+      "id": "EVID-NULL-TYPE",
+      "reference": "crates/selene-gql/src/analyze/infer.rs",
+      "description": "Analyzer NULL type inference."
+    },
+    {
+      "id": "EVID-NULLABILITY",
+      "reference": "crates/selene-graph/src/type_validator.rs",
+      "description": "Graph value nullability validation before publication."
+    },
+    {
+      "id": "EVID-NUMERIC-FUNCTIONS",
+      "reference": "crates/selene-gql/src/runtime/evaluator/scalar_fns.rs",
+      "description": "Native numeric function result representations."
+    },
+    {
+      "id": "EVID-NUMERIC-LITERALS",
+      "reference": "crates/selene-gql/src/parser/builders/expr/literal.rs",
+      "description": "Approximate and integer literal parsing targets."
+    },
+    {
+      "id": "EVID-NUMERIC-PROMOTION",
+      "reference": "crates/selene-gql/src/analyze/infer/numeric.rs",
+      "description": "Closed analyzer numeric promotion table."
+    },
+    {
+      "id": "EVID-NUMERIC-TYPES",
+      "reference": "crates/selene-gql/src/ast/types.rs",
+      "description": "Supported integer and floating type representations."
+    },
+    {
+      "id": "EVID-ORDINALITY",
+      "reference": "crates/selene-gql/src/runtime/pipeline/unwind.rs",
+      "description": "FOR ordinality and offset value production."
+    },
+    {
+      "id": "EVID-PARSER-SOURCE",
+      "reference": "crates/selene-gql/src/parser/mod.rs",
+      "description": "UTF-8 Rust source and typed parser rejection boundary."
+    },
+    {
+      "id": "EVID-PATH-BATCHES",
+      "reference": "docs/gql/path-batches.md",
+      "description": "F05-PR04 independent selected-path differentials and facade witnesses for binding degree, correlation, modes, selectors and explicit resource failure; implemented without a formal conformance claim."
+    },
+    {
+      "id": "EVID-PATH-ERRORS",
+      "reference": "crates/selene-gql/src/runtime/product_path/differentials.rs",
+      "description": "Selective path evaluation propagates errors without partial success."
+    },
+    {
+      "id": "EVID-PATTERN-TYPES",
+      "reference": "crates/selene-gql/src/analyze/bind/pattern.rs",
+      "description": "Pattern element binding type analysis."
+    },
+    {
+      "id": "EVID-PLAN-M02-PR01",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m02-pr01",
+      "description": "Owner for the embedded facade and catalog root."
+    },
+    {
+      "id": "EVID-PLAN-M02-PR02",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m02-pr02",
+      "description": "Owner for canonical catalog names and flat descriptors."
+    },
+    {
+      "id": "EVID-PLAN-M03-PR01",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m03-pr01",
+      "description": "Owner for principal and session defaults."
+    },
+    {
+      "id": "EVID-PLAN-M03-PR03",
+      "reference": "docs/v2/roadmap/work-items-00-04.md#m03-pr03",
+      "description": "Owner for structured request outcomes and status bundles."
+    },
+    {
+      "id": "EVID-PLAN-M05-PR01",
+      "reference": "docs/v2/roadmap/work-items-05-10.md#m05-pr01",
+      "description": "Owner for the source syntax boundary."
+    },
+    {
+      "id": "EVID-PLAN-M05-PR03",
+      "reference": "docs/v2/roadmap/work-items-05-10.md#m05-pr03",
+      "description": "Owner for structural type descriptors and comparison rules."
+    },
+    {
+      "id": "EVID-PLAN-M05-PR06",
+      "reference": "docs/v2/roadmap/work-items-05-10.md#m05-pr06",
+      "description": "Owner for unified compiler diagnostics."
+    },
+    {
+      "id": "EVID-PLAN-M06-PR05",
+      "reference": "docs/v2/roadmap/work-items-05-10.md#m06-pr05",
+      "description": "Owner for batch mutation and transaction operators."
+    },
+    {
+      "id": "EVID-PROCEDURE-REGISTRY",
+      "reference": "crates/selene-gql/src/procedure_registry.rs",
+      "description": "Native BuiltinProcedureRegistry production boundary."
+    },
+    {
+      "id": "EVID-PROFILE-GP18",
+      "reference": "docs/gql/conformance/features.md",
+      "description": "Generated selected-feature closure excludes GP18."
+    },
+    {
+      "id": "EVID-PROPERTY-LIMIT",
+      "reference": "crates/selene-core/src/property_map.rs",
+      "description": "Property map u32 entry-count bound."
+    },
+    {
+      "id": "EVID-REQUEST-PARAMETERS",
+      "reference": "crates/selene-db/src/params.rs",
+      "description": "Facade typed parameter construction, exact-name dictionaries, and deterministic session/request overlay."
+    },
+    {
+      "id": "EVID-RESULT-DESCRIPTORS",
+      "reference": "crates/selene-db/src/outcome.rs",
+      "description": "Facade regular results expose analyzer-inferred field types while omitted results carry no fabricated descriptor."
+    },
+    {
+      "id": "EVID-SESSION-API",
+      "reference": "crates/selene-db/src/session.rs",
+      "description": "Stable facade session context inspection and one-statement execution boundary."
+    },
+    {
+      "id": "EVID-SESSION-DEFAULTS",
+      "reference": "crates/selene-db/src/session_context.rs",
+      "description": "Generated profile identity, UTC displacement, and initial empty-parameter and vacant-slot defaults copied at session creation."
+    },
+    {
+      "id": "EVID-SESSION-PRINCIPAL",
+      "reference": "crates/selene-db/src/auth.rs",
+      "description": "Facade authorization and principal string types, local provider and policy hooks, declared homes, and optional audit bytes."
+    },
+    {
+      "id": "EVID-STATUS-CHAINING",
+      "reference": "crates/selene-db/src/diagnostic.rs",
+      "description": "Facade diagnostic bundles preserve the primary status, every ordered additional status, and recursive ordered causes without truncation."
+    },
+    {
+      "id": "EVID-STORED-VALUES",
+      "reference": "crates/selene-core/src/stored_value.rs",
+      "description": "Recursive semantic storage admission with query-only references and named records."
+    },
+    {
+      "id": "EVID-STRING-CONCAT",
+      "reference": "crates/selene-gql/src/runtime/evaluator/concat_ops.rs",
+      "description": "String concatenation normalization and truncation behavior."
+    },
+    {
+      "id": "EVID-STRING-LIMIT",
+      "reference": "crates/selene-core/src/db_string.rs",
+      "description": "Stored database-string byte limit."
+    },
+    {
+      "id": "EVID-STRUCTURAL-INVENTORY",
+      "reference": "crates/selene-gql/tests/structural_type_inventory.rs",
+      "description": "Source and selected-profile type-family admission inventory."
+    },
+    {
+      "id": "EVID-STRUCTURAL-OPERATIONS",
+      "reference": "crates/selene-db/tests/value_operations.rs",
+      "description": "Operation-specific predicate, grouping, distinctness, and ordering regressions."
+    },
+    {
+      "id": "EVID-STRUCTURAL-TYPES",
+      "reference": "crates/selene-core/src/structural_type.rs",
+      "description": "Owned normalized semantic descriptor authority."
+    },
+    {
+      "id": "EVID-TEMPORAL-PARSE",
+      "reference": "crates/selene-gql/src/temporal_parse.rs",
+      "description": "Temporal parsing and nanosecond representation."
+    },
+    {
+      "id": "EVID-TRANSACTIONS",
+      "reference": "crates/selene-graph/src/shared.rs",
+      "description": "Single-writer transaction and immutable-snapshot architecture."
+    },
+    {
+      "id": "EVID-TRUNCATING-WHITESPACE",
+      "reference": "crates/selene-core/src/character_string_type.rs",
+      "description": "Shared truncating-whitespace predicate used by coercion."
+    },
+    {
+      "id": "EVID-TYPE-NAMES",
+      "reference": "crates/selene-gql/src/ast/format/type_name.rs",
+      "description": "Preferred formatted type names."
+    },
+    {
+      "id": "EVID-VALUE-COMPARE",
+      "reference": "crates/selene-gql/src/runtime/value_compare.rs",
+      "description": "String, byte, float, and cross-value comparison rules."
+    },
+    {
+      "id": "EVID-VALUE-TYPES",
+      "reference": "crates/selene-core/src/value.rs",
+      "description": "Closed native Value family."
+    }
+  ],
+  "applicability": [
+    {
+      "id": "APP-AGGREGATES",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GF10"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GF11"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-ALWAYS",
+      "expression": {
+        "kind": "always"
+      }
+    },
+    {
+      "id": "APP-BYTE-STRINGS",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GV35"
+      }
+    },
+    {
+      "id": "APP-CASTS",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GA05"
+      }
+    },
+    {
+      "id": "APP-CATALOG",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GC03"
+          },
+          {
+            "kind": "extension",
+            "extension_id": "IM_INDEX_DDL"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-CONSTRUCTED",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GV45"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GV50"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GV55"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-DECIMAL",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GV17"
+      }
+    },
+    {
+      "id": "APP-DYNAMIC-UNION",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GV66"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GV67"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GV68"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-ELEMENT-ID",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "G100"
+      }
+    },
+    {
+      "id": "APP-GRAPH-TYPES",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GG01"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GG02"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-IEEE-FLOAT",
+      "expression": {
+        "kind": "all",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GA01"
+          },
+          {
+            "kind": "any",
+            "items": [
+              {
+                "kind": "feature",
+                "feature_id": "GV21"
+              },
+              {
+                "kind": "feature",
+                "feature_id": "GV24"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-KEY-LABELS",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GG21"
+      }
+    },
+    {
+      "id": "APP-LISTS",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GV50"
+      }
+    },
+    {
+      "id": "APP-MIXED-TRANSACTIONS",
+      "expression": {
+        "kind": "all",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GP18"
+          },
+          {
+            "kind": "not",
+            "item": {
+              "kind": "applicability",
+              "applicability_id": "APP-NO-MIXED-TRANSACTIONS"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-NAMED-PROCEDURES",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GP04"
+      }
+    },
+    {
+      "id": "APP-NO-MIXED-TRANSACTIONS",
+      "expression": {
+        "kind": "not",
+        "item": {
+          "kind": "feature",
+          "feature_id": "GP18"
+        }
+      }
+    },
+    {
+      "id": "APP-NUMERIC",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GV12"
+          },
+          {
+            "kind": "applicability",
+            "applicability_id": "APP-DECIMAL"
+          },
+          {
+            "kind": "applicability",
+            "applicability_id": "APP-IEEE-FLOAT"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-PATHS",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GV55"
+      }
+    },
+    {
+      "id": "APP-SELECTIVE-PATHS",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "G016"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "G017"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "G018"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "G019"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "G020"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-SESSION-PARAMETERS",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GS01"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GS02"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GS03"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-STRING",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GV30"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GV31"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GV32"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-TEMPORAL",
+      "expression": {
+        "kind": "any",
+        "items": [
+          {
+            "kind": "feature",
+            "feature_id": "GV39"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GV40"
+          },
+          {
+            "kind": "feature",
+            "feature_id": "GV41"
+          }
+        ]
+      }
+    },
+    {
+      "id": "APP-TRANSACTIONS",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GT01"
+      }
+    },
+    {
+      "id": "APP-UNIVERSAL-COMPARISON",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GA04"
+      }
+    },
+    {
+      "id": "APP-UPDATES",
+      "expression": {
+        "kind": "feature",
+        "feature_id": "GD01"
+      }
+    }
+  ]
+}

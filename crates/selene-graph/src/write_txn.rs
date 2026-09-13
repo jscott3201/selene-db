@@ -18,10 +18,7 @@ use crate::type_validator::TypeWarning;
 
 mod pipeline;
 
-pub(crate) use pipeline::{AppendedCommit, append_sealed, flush_durables, publish_appended};
-
-#[cfg(test)]
-pub(crate) use pipeline::publish_panic_inject;
+pub(crate) use pipeline::publish_sealed;
 
 /// Non-fatal graph commit warning.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,9 +34,11 @@ pub struct CommitOutcome {
     pub generation: u64,
     /// Changes produced by the mutation funnel.
     pub changes: Vec<Change>,
-    /// Opaque caller-supplied principal bytes for future WAL headers.
+    /// Opaque caller-supplied principal bytes carried with the commit.
     pub principal: Option<Arc<[u8]>>,
-    /// Highest durable sequence assigned by commit-critical providers.
+    /// Durable-sequence slot; always `None` from the in-graph publisher.
+    /// Sequence assignment below the graph layer is the owning database
+    /// handle's authority.
     pub durable_at: Option<u64>,
     /// Next node ID after commit.
     pub next_node_id: u64,
@@ -49,6 +48,102 @@ pub struct CommitOutcome {
     pub warnings: Vec<CommitWarning>,
 }
 
+/// Owned graph snapshot and commit metadata prepared without publication.
+///
+/// This bundle is the graph-owned staging boundary used by the database facade:
+/// it contains the immutable next [`SeleneGraph`] plus the metadata required to
+/// shape the existing write outcome, but no lock guard, borrow, [`WriteTxn`],
+/// [`crate::SharedGraph`], committer, WAL handle, or provider state. Preparing
+/// it does not allocate a graph-local publish sequence, append or flush durable
+/// state, store a graph snapshot, bump a live schema epoch, or notify providers.
+/// The transaction's rollback remains armed, so its scratch graph is restored
+/// when preparation returns while this owned snapshot remains valid.
+#[doc(hidden)]
+pub struct PreparedGraphCommit {
+    next_snapshot: Arc<SeleneGraph>,
+    changes: Vec<Change>,
+    principal: Option<Arc<[u8]>>,
+    schema_changed: bool,
+    generation: u64,
+    next_node_id: u64,
+    next_edge_id: u64,
+    warnings: Vec<CommitWarning>,
+}
+
+impl PreparedGraphCommit {
+    /// Admit the catalog's named type against this complete prepared delta.
+    #[doc(hidden)]
+    pub fn admit_named_constraints(
+        &mut self,
+        before: &SeleneGraph,
+        named: Arc<crate::GraphTypeDef>,
+    ) -> GraphResult<()> {
+        Arc::make_mut(&mut self.next_snapshot).admit_named_constraints(
+            Some(before),
+            named,
+            &self.changes,
+        )
+    }
+    /// Retain the complete, immutable result of transaction validation.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn validated_snapshot(&self) -> crate::ValidatedGraphSnapshot {
+        crate::ValidatedGraphSnapshot(Arc::clone(&self.next_snapshot))
+    }
+    /// Install validated catalog bindings before the facade's sole publication.
+    #[doc(hidden)]
+    pub fn bind_catalog(
+        &mut self,
+        catalog: &selene_catalog::CatalogSnapshot,
+    ) -> selene_catalog::CatalogResult<()> {
+        Arc::make_mut(&mut self.next_snapshot).bind_catalog(catalog)
+    }
+
+    /// Borrow the trusted logical changes validated by the graph mutation funnel.
+    #[must_use]
+    pub fn changes(&self) -> &[Change] {
+        &self.changes
+    }
+
+    /// Borrow the immutable graph snapshot that would become visible.
+    #[must_use]
+    pub fn snapshot(&self) -> &SeleneGraph {
+        &self.next_snapshot
+    }
+
+    /// Return the existing in-memory write metadata without publishing.
+    #[must_use]
+    pub fn outcome(&self) -> CommitOutcome {
+        CommitOutcome {
+            generation: self.generation,
+            changes: self.changes.clone(),
+            principal: self.principal.clone(),
+            durable_at: None,
+            next_node_id: self.next_node_id,
+            next_edge_id: self.next_edge_id,
+            warnings: self.warnings.clone(),
+        }
+    }
+
+    /// Return whether the prepared changes alter graph schema.
+    #[must_use]
+    pub const fn schema_changed(&self) -> bool {
+        self.schema_changed
+    }
+
+    /// Consume the bundle and return its next graph snapshot.
+    #[must_use]
+    pub fn into_snapshot(self) -> SeleneGraph {
+        Arc::try_unwrap(self.next_snapshot).unwrap_or_else(|snapshot| snapshot.as_ref().clone())
+    }
+}
+
+/// Compile-time proof that facade-owned prepared graph state is lifetime-free.
+const _: fn() = || {
+    fn assert_send_static<T: Send + 'static>() {}
+    assert_send_static::<PreparedGraphCommit>();
+};
+
 /// A frozen, owned, `Send + 'static` commit bundle handed from a session thread
 /// to the single committer thread (v1.2 multi-writer, BRIEF 1).
 ///
@@ -56,10 +151,11 @@ pub struct CommitOutcome {
 /// validation have run under the write lock on the session thread (so error
 /// timing is unchanged), and after the lock + allocator guards have been
 /// released. It contains the fully-built next snapshot plus everything the
-/// committer needs to run the durable+publish tail — **no guards, no graph
+/// committer needs to run the publish tail — **no guards, no graph
 /// reference, no borrow**. The committer never re-validates, re-allocates ids,
-/// or re-applies a change list; it just stamps the HLC, appends to the WAL,
-/// publishes the frozen snapshot, and bumps the schema epoch.
+/// or re-applies a change list; it just stamps the HLC, publishes the frozen
+/// snapshot, and bumps the schema epoch. Durability below this layer is the
+/// owning database handle's authority, not the committer's.
 ///
 /// The HLC timestamp is deliberately **not** stamped here: the committer stamps
 /// it per bundle in **seal-sequence** drain order so HLC is monotonic in commit
@@ -82,17 +178,19 @@ pub struct CommitOutcome {
 /// same counter under the same lock, so a compact can never be reordered ahead
 /// of an earlier-sealed commit.
 pub(crate) struct SealedCommit {
+    #[cfg(test)]
+    pub(crate) fail_publish: bool,
     /// Strictly-monotonic publish-order key, allocated under the write lock in
     /// [`WriteTxn::seal`]. The committer publishes in ascending `seal_seq`.
     pub(crate) seal_seq: u64,
     /// Fully-built next snapshot, frozen under the session's write lock.
     pub(crate) next_snapshot: Arc<SeleneGraph>,
-    /// Persisted change list (the WAL/changeset payload).
+    /// Validated change list carried for provider fan-out and outcome reporting.
     pub(crate) changes: Vec<Change>,
     /// Truncate-expanded fan-out view, built on the session thread, or `None`
     /// when no truncate/reset expansion is staged (the common path).
     pub(crate) fanout_changes: Option<Vec<Change>>,
-    /// Opaque caller-supplied principal bytes for the WAL entry header (D12).
+    /// Opaque caller-supplied principal bytes carried with the commit.
     pub(crate) principal: Option<Arc<[u8]>>,
     /// Whether the change list bumps the schema epoch.
     pub(crate) schema_changed: bool,
@@ -113,6 +211,11 @@ const _: fn() = || {
     fn assert_send_static<T: Send + 'static>() {}
     assert_send_static::<SealedCommit>();
 };
+
+struct PreparedCommitParts {
+    prepared: PreparedGraphCommit,
+    fanout_changes: Option<Vec<Change>>,
+}
 
 /// RAII owner of the single graph write lock.
 ///
@@ -188,15 +291,16 @@ impl<'g> WriteTxn<'g> {
         self.commit_with_principal(None)
     }
 
-    /// Commit with optional caller-owned principal bytes for D12 audit replay.
+    /// Commit with optional caller-owned principal bytes.
     ///
     /// Since v1.2 (BRIEF 1) commit is **seal-and-handover**: this method runs
     /// `seal` on the calling thread (generation/meta bump + GG02
     /// validation under the write lock, then **lock release**), then submits the
     /// resulting `SealedCommit` to the per-graph single committer thread and
-    /// blocks until it is durable + visible. The public contract is unchanged —
-    /// "`commit()` returns ⇒ durable + visible" — only the internal threading
-    /// model differs.
+    /// blocks until it is published + visible. The public contract is unchanged —
+    /// "`commit()` returns ⇒ published + visible" — only the internal threading
+    /// model differs. Durability below the graph layer is the owning database
+    /// handle's authority.
     ///
     /// GG02 closed-graph violations still abort here, on the calling thread,
     /// before any handoff, so error timing is identical to v1.0/v1.1.
@@ -212,9 +316,18 @@ impl<'g> WriteTxn<'g> {
     ///
     /// # Errors
     ///
-    /// Returns the GG02 / validation error from `seal`, or a
-    /// [`GraphError::Durable`] if the WAL append failed or the committer thread
-    /// is no longer running.
+    /// Returns the GG02 / validation error from `seal` — a definite rejection,
+    /// nothing was written — or, once the commit has been handed to the
+    /// committer, [`GraphError::IndeterminateOutcome`].
+    ///
+    /// **An `Err` from this method does not mean "the transition did not
+    /// happen."** Past `seal` the engine cannot promise ISO §8.4 GR 1)b)'s "any
+    /// changes ... are canceled": the snapshot may already be published.
+    /// Treat [`GraphError::IndeterminateOutcome`] as an outcome of unknown
+    /// publication — quiesce, drop the handle and reopen through the owning
+    /// database handle, read back to see whether it landed, and only then
+    /// decide whether to retry. Retrying blind double-applies. See that
+    /// variant for the full contract.
     #[tracing::instrument(
         name = "selene.graph.commit",
         skip(self, principal),
@@ -230,6 +343,29 @@ impl<'g> WriteTxn<'g> {
         let committer = self.committer.clone();
         let sealed = self.seal(principal, None)?;
         committer.submit_commit(sealed)
+    }
+
+    /// Validate and freeze this transaction without graph-local publication.
+    ///
+    /// This is intended for a closure-local, CORE-only scratch
+    /// [`crate::SharedGraph`] whose returned snapshot will be published by a
+    /// higher-level authority. It performs the same generation/next-ID update,
+    /// GG02 and unique validation, warning collection, and cancellation sample
+    /// as [`WriteTxn::seal`], but deliberately leaves rollback armed and does not
+    /// allocate a `seal_seq` or contact the committer or providers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::Cancelled`] when `cancel` is set at the preparation
+    /// cut-line, or the same graph-type validation errors as a normal commit.
+    #[doc(hidden)]
+    pub fn prepare_unpublished(
+        mut self,
+        principal: Option<Arc<[u8]>>,
+        cancel: Option<&AtomicBool>,
+    ) -> GraphResult<PreparedGraphCommit> {
+        let parts = self.prepare_commit_parts(principal, cancel)?;
+        Ok(parts.prepared)
     }
 
     /// Run the under-lock half of commit and hand back an owned, `Send`
@@ -282,6 +418,44 @@ impl<'g> WriteTxn<'g> {
             "pre_txn must be present at seal entry"
         );
 
+        let PreparedCommitParts {
+            prepared,
+            fanout_changes,
+        } = self.prepare_commit_parts(principal, cancel)?;
+
+        // Allocate the publish-order key under the lock so seal-seq order equals
+        // lock-acquisition order (the intended total order). Preparation has
+        // completed every fallible step, keeping aborted sequences gap-free.
+        let seal_seq = self.committer.next_seal_seq();
+
+        // Disarm Drop-rollback: from here the commit is handed to the committer
+        // and the in-place mutations become the published state.
+        self.pre_txn = None;
+
+        Ok(SealedCommit {
+            #[cfg(test)]
+            fail_publish: false,
+            seal_seq,
+            next_snapshot: prepared.next_snapshot,
+            changes: prepared.changes,
+            fanout_changes,
+            principal: prepared.principal,
+            schema_changed: prepared.schema_changed,
+            generation: prepared.generation,
+            next_node_id: prepared.next_node_id,
+            next_edge_id: prepared.next_edge_id,
+            warnings: prepared.warnings,
+        })
+    }
+
+    fn prepare_commit_parts(
+        &mut self,
+        principal: Option<Arc<[u8]>>,
+        cancel: Option<&AtomicBool>,
+    ) -> GraphResult<PreparedCommitParts> {
+        for change in &self.changes {
+            change.validate_stored_values()?;
+        }
         let schema_changed = self
             .changes
             .iter()
@@ -290,16 +464,22 @@ impl<'g> WriteTxn<'g> {
         let next_edge_id = self.allocator.peek_next_edge();
         {
             let graph = self.guard_mut();
-            graph.meta.generation = graph
-                .meta
-                .generation
-                .checked_add(1)
-                .expect("graph generation exhausted");
+            graph.meta.generation =
+                graph
+                    .meta
+                    .generation
+                    .checked_add(1)
+                    .ok_or(GraphError::CounterExhausted {
+                        kind: "graph generation",
+                    })?;
             graph.meta.next_node_id = next_node_id;
             graph.meta.next_edge_id = next_edge_id;
         }
 
         let generation = self.read().meta.generation;
+        // A predecessor's proof does not certify new primary values. Retained
+        // named obligations are re-admitted below through the same delta service.
+        self.guard_mut().named_constraints = None;
 
         let mut validation_warnings = Vec::new();
         if let Some(type_def) = self.read().meta.bound_type.as_deref() {
@@ -319,13 +499,29 @@ impl<'g> WriteTxn<'g> {
                         .into_iter()
                         .map(|warning| CommitWarning { warning }),
                 );
-            } else {
-                crate::type_validator::validate_unique_property_changes(
-                    &self.changes,
-                    self.read(),
-                    type_def,
-                )?;
             }
+        }
+        if schema_changed || self.read().meta.bound_type.is_none() {
+            self.guard_mut().rebuild_constraints()?;
+        } else {
+            let expanded =
+                pipeline::expand_truncates_for_fanout(&self.changes, &self.truncate_expansions);
+            let before = self.pre_txn.as_deref().expect("rollback snapshot");
+            let indexes = before.constraints.apply(
+                expanded.as_deref().unwrap_or(&self.changes),
+                before,
+                self.read(),
+            )?;
+            self.guard_mut().constraints = indexes;
+        }
+        if let Some(before) = self.pre_txn.clone()
+            && let Some((named, _)) = &before.named_constraints
+        {
+            Arc::make_mut(&mut *self.guard).admit_named_constraints(
+                Some(&before),
+                Arc::clone(named),
+                &self.changes,
+            )?;
         }
         for warning in validation_warnings {
             if !self.warnings.contains(&warning) {
@@ -345,17 +541,8 @@ impl<'g> WriteTxn<'g> {
             return Err(GraphError::Cancelled);
         }
 
-        // Allocate the publish-order key under the lock so seal-seq order equals
-        // lock-acquisition order (the intended total order). Done after every
-        // fallible step so an aborted seal consumes no sequence number, keeping
-        // the committer's reorder sequence gap-free.
-        let seal_seq = self.committer.next_seal_seq();
-
-        // Disarm Drop-rollback: from here the commit is handed to the committer
-        // and the in-place mutations become the published state.
-        self.pre_txn = None;
-        // Freeze the next snapshot under the lock. The committer publishes this
-        // exact Arc and never rebuilds it.
+        // Freeze the next snapshot under the lock. Unpublished preparation keeps
+        // this Arc while Drop restores the scratch guard's prior Arc.
         let next_snapshot = Arc::clone(&*self.guard);
 
         let changes = std::mem::take(&mut self.changes);
@@ -367,17 +554,18 @@ impl<'g> WriteTxn<'g> {
         // bundle. `None` on the common (non-truncate) path → zero allocation.
         let fanout_changes = pipeline::expand_truncates_for_fanout(&changes, &truncate_expansions);
 
-        Ok(SealedCommit {
-            seal_seq,
-            next_snapshot,
-            changes,
+        Ok(PreparedCommitParts {
+            prepared: PreparedGraphCommit {
+                next_snapshot,
+                changes,
+                principal,
+                schema_changed,
+                generation,
+                next_node_id,
+                next_edge_id,
+                warnings,
+            },
             fanout_changes,
-            principal,
-            schema_changed,
-            generation,
-            next_node_id,
-            next_edge_id,
-            warnings,
         })
     }
 

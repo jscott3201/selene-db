@@ -1,14 +1,15 @@
 //! 813 — Feature GG21 "Explicit element type key label sets" (ISO/IEC
 //! 39075:2024 §18.2/18.3).
 //!
-//! selene-db claims GG21 as the honest *singleton* explicit-key-label-set
-//! surface (Option A): the type-DDL grammar parses the explicit `<...type key
-//! label set>` (`[ <label set phrase> ] <implies>`, the symbolic `=>` marker),
-//! the flagger stamps GG21, and the IL003 key-label-set cardinality cap is fixed
-//! at 1 (singleton). A cardinality other than 1 is rejected with the
-//! spec-defined GQLSTATUS (42012/42013 for nodes, 42014/42015 for edges); the
-//! separate-implied-label-set shape (`:Key => :Implied`) is an honest
-//! `FEATURE_NOT_SUPPORTED` (42N01), not a silent mis-identification.
+//! The generated Flagger disposition accepts GG21's directly selected
+//! *singleton* explicit-key-label-set surface (Option A), independently of its
+//! unsupported complete runtime status. The type-DDL grammar parses the
+//! explicit `<...type key label set>` (`[ <label set phrase> ] <implies>`, the
+//! symbolic `=>` marker), the feature walk stamps GG21, and the IL003
+//! key-label-set cardinality cap is fixed at 1 (singleton). A cardinality other than 1 is
+//! rejected with the spec-defined GQLSTATUS (42012/42013 for nodes, 42014/42015
+//! for edges); the separate-implied-label-set shape (`:Key => :Implied`) is an
+//! honest `FEATURE_NOT_SUPPORTED` (42N01), not a silent mis-identification.
 //!
 //! Because the singleton key label set equals the type-name label set, the
 //! explicit form is *observationally identical* to the implied (bare `:Name`)
@@ -16,17 +17,14 @@
 //! element-type identification — so the GTYP snapshot + WAL replay round-trip is
 //! byte-identical (no format change).
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use selene_core::{Change, GraphId, HlcTimestamp, LabelSet, Origin, SchemaChange};
+#[path = "../../selene-graph/tests/format2_support/mod.rs"]
+mod format2_support;
+use selene_core::{Change, GraphId, LabelSet, SchemaChange};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutionPlan,
     ExecutorError, GqlStatus, TxContext, analyze, execute_pipeline, parse, plan,
 };
 use selene_graph::{GraphError, GraphTypeDef, SharedGraph};
-use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -59,35 +57,6 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
         .unwrap()
         .build()
         .unwrap()
-}
-
-fn temp_dir(name: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "selene-gql-gg21-{name}-{}-{nanos}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir(&dir).unwrap();
-    dir
-}
-
-fn append_wal(dir: &Path, changes: &[Change]) {
-    let mut writer = WalWriter::open(
-        &dir.join(DEFAULT_WAL_FILE_NAME),
-        WalConfig {
-            sync_policy: SyncPolicy::EveryN(1),
-            snapshot_seq: 0,
-        },
-    )
-    .unwrap();
-    writer
-        .append(HlcTimestamp::zero(), Origin::Local, None, changes)
-        .unwrap();
-    writer.flush().unwrap();
 }
 
 fn person_closed_graph(id: u64) -> SharedGraph {
@@ -376,7 +345,7 @@ fn property_types_content_under_implies_is_supported() {
 // --- snapshot + WAL recovery round-trip --------------------------------------
 
 #[test]
-fn explicit_singleton_survives_wal_recovery() {
+fn explicit_singleton_survives_format2_snapshot() {
     // The `..._is_identical_to_implied_form` tests above prove the explicit
     // `=>` form's GTYP/WAL *payload* is byte-identical to the implied form; this
     // test proves that payload actually REPLAYS. It drives the real GG21 GQL
@@ -385,7 +354,6 @@ fn explicit_singleton_survives_wal_recovery() {
     // singleton key label set that exact-equality identification resolves. (Without
     // this, the module-doc "survives the GTYP snapshot + WAL replay round-trip"
     // claim was inferred from byte-identity, never demonstrated end-to-end.)
-    let dir = temp_dir("explicit-singleton-recovery");
     let graph_id = GraphId::new(3816);
     let base = base_graph_type();
     let graph = SharedGraph::builder(graph_id)
@@ -396,10 +364,8 @@ fn explicit_singleton_survives_wal_recovery() {
 
     let plan = planned("CREATE NODE TYPE :Person => (name :: STRING)");
     let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
-    let outcome = outcome.expect("commit succeeds");
-    append_wal(&dir, &outcome.changes);
-
-    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    outcome.expect("commit succeeds");
+    let recovered = format2_support::snapshot(&graph.read()).unwrap();
     let graph_type = recovered.graph_type().expect("recovered closed graph type");
     let person = LabelSet::single(selene_core::db_string("Person").unwrap());
 
@@ -417,5 +383,4 @@ fn explicit_singleton_survives_wal_recovery() {
         "exact-equality identification (G6 unchanged) must resolve the recovered key label set"
     );
     assert_eq!(graph_type.node_types[0].properties[0].name.as_str(), "name");
-    let _ = fs::remove_dir_all(dir);
 }

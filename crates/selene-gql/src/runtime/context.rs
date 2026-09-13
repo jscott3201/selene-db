@@ -5,7 +5,6 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     fmt,
-    rc::Rc,
     sync::Arc,
     time::Instant,
 };
@@ -17,14 +16,16 @@ use selene_core::{
 };
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, SharedGraph, WriteTxn};
 
+use super::batch::budget::BatchCancel;
 use crate::{
     GqlStatus, ProcedureRegistry, SourceSpan,
     analyze::{ExprId, ExprIdLookup},
     plan::SubqueryRegistry,
     plan::{ImplDefinedCaps, PipelineOpId},
     runtime::{
-        BindingTable, BindingTableRegistry, BindingTableSchema, ExecutorError, ExecutorWarning,
-        WarningSink,
+        BindingTable, BindingTableLookupError, BindingTableRegistry, BindingTableSchema,
+        ExecutorError, ExecutorWarning, GqlStatusObject, WarningSink,
+        request_runtime::RequestRuntime,
     },
 };
 
@@ -52,7 +53,7 @@ pub struct TxContext<'a, 'g> {
     registry: &'a dyn ProcedureRegistry,
     providers: &'a [Arc<dyn IndexProvider>],
     parameters: Cow<'a, BTreeMap<DbString, Value>>,
-    binding_tables: Rc<BindingTableRegistry>,
+    request_runtime: Arc<RequestRuntime>,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     plan_expr_ids: Option<&'a ExprIdLookup>,
     plan_subqueries: Option<&'a SubqueryRegistry>,
@@ -82,7 +83,9 @@ pub struct TxContext<'a, 'g> {
 /// Expression subqueries are planned into side tables on the execution plan.
 /// The evaluator borrows those side tables through this wrapper while all
 /// graph, parameter, and procedure access continues to flow through
-/// [`TxContext`].
+/// [`TxContext`]. Reference-only, so batch operator trees share one value per
+/// execution.
+#[derive(Clone, Copy)]
 pub struct EvalCtx<'a, 'ctx, 'g, 'plan> {
     /// Transaction context for graph and parameter access.
     pub tx: &'a TxContext<'ctx, 'g>,
@@ -197,6 +200,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
 
     /// Emit one runtime warning if the session opted into warning collection.
     pub(crate) fn emit_warning(&self, warning: ExecutorWarning) {
+        self.request_runtime
+            .record_status(GqlStatusObject::new(warning.code, warning.message.clone()));
         if let Some(sink) = self.warning_sink {
             sink.borrow_mut().emit(warning);
         }
@@ -261,6 +266,17 @@ impl<'a, 'g> TxContext<'a, 'g> {
             self.deadline,
             self.node_scan_budget,
         )
+    }
+
+    /// Build the cooperative batch-execution checkpoint for this statement.
+    ///
+    /// Batch operators observe the same cancellation token, deadline, and
+    /// deterministic node-scan budget as the row executor, with the identical
+    /// GQLSTATUS mapping (`5GQL2` cancel, `5GQL3` timeout, `5GQL1`
+    /// scan-budget exhaustion).
+    #[must_use]
+    pub(crate) fn batch_cancel(&self) -> BatchCancel<'_> {
+        BatchCancel::new(self.cancellation, self.deadline, self.node_scan_budget)
     }
 
     /// Return the configured absolute deadline for this statement, if any.
@@ -412,21 +428,29 @@ impl<'a, 'g> TxContext<'a, 'g> {
         self.parameters.as_ref()
     }
 
-    /// Clone the per-statement binding-table registry handle.
+    /// Clone the request-owned binding-table registry handle.
     #[must_use]
-    pub(crate) fn binding_table_registry(&self) -> Rc<BindingTableRegistry> {
-        Rc::clone(&self.binding_tables)
+    pub(crate) fn binding_table_registry(&self) -> Arc<BindingTableRegistry> {
+        self.request_runtime.binding_tables()
     }
 
     /// Register a binding table in this statement's request-scoped registry.
-    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
-        self.binding_tables.register(table)
+    pub fn register_binding_table(
+        &self,
+        table: Arc<BindingTable>,
+    ) -> Result<BindingTableId, ExecutorError> {
+        self.request_runtime
+            .binding_tables()
+            .register(table)
+            .map_err(ExecutorError::from)
     }
 
     /// Look up a binding table from this statement's request-scoped registry.
-    #[must_use]
-    pub fn binding_table_for(&self, id: BindingTableId) -> Option<Arc<BindingTable>> {
-        self.binding_tables.lookup(id)
+    pub fn binding_table_for(
+        &self,
+        id: BindingTableId,
+    ) -> Result<Arc<BindingTable>, BindingTableLookupError> {
+        self.request_runtime.binding_tables().resolve(id)
     }
 
     /// Borrow the adaptive optimizer hook, when one was supplied.

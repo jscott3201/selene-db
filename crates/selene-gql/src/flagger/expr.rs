@@ -1,6 +1,7 @@
 //! Expression Flagger walk.
 
-use selene_core::{DbString, feature_register::FeatureId};
+use selene_core::DbString;
+use selene_profile::FeatureId;
 
 use crate::{
     ExistsBody, NonEmpty, ValueExpr,
@@ -515,13 +516,21 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
                 }
             }
         }
-        GqlType::NodeRef | GqlType::EdgeRef | GqlType::Null | GqlType::Nothing => {}
+        GqlType::Null => {
+            record_feature(uses, FeatureId::GV70, span);
+            record_feature(uses, FeatureId::GV71, span);
+        }
+        GqlType::Nothing => {
+            record_feature(uses, FeatureId::GV70, span);
+            record_feature(uses, FeatureId::GV72, span);
+        }
+        GqlType::NodeRef | GqlType::EdgeRef => {}
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use selene_core::feature_register::FeatureId;
+    use selene_profile::FeatureId;
 
     use crate::ast::expr::{BinaryOp, IsCheckKind, Literal};
     use crate::ast::{CharacterStringLiteralKind, ValueExpr};

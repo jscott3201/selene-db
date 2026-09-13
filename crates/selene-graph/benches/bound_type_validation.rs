@@ -97,13 +97,10 @@ fn bench_schema_change_case(
                 let mut txn = shared.begin_write();
                 {
                     let mut mutator = txn.mutator();
-                    mutator.schema_change(
-                        GraphId::new(1),
-                        SchemaChange::NodeTypeDropped {
-                            graph_type: GraphTypeId::new(1).expect("non-zero graph type id"),
-                            name: label("NoopDroppedType"),
-                        },
-                    );
+                    mutator.schema_change(SchemaChange::NodeTypeDropped {
+                        graph_type: GraphTypeId::new(1).expect("non-zero graph type id"),
+                        name: label("NoopDroppedType"),
+                    });
                 }
                 let changes = txn.commit().expect("schema commit succeeds").changes.len();
                 std::hint::black_box((shared, changes))

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 mod keying;
 mod lookup;
 
-pub(crate) use keying::{TypedIndexValueError, observed_value_kind};
+pub(crate) use keying::{NAN_OBSERVED, TypedIndexValueError, observed_value_kind};
 use keying::{TypedKey, typed_key};
 
 pub use crate::typed_float_key::{NotNanError, NotNanF32, NotNanF64};
@@ -69,6 +69,39 @@ pub enum TypedIndexKind {
     Duration,
     /// UUID. Backs [`Value::Uuid`].
     Uuid,
+}
+
+impl TypedIndexKind {
+    /// Whether this kind indexes a *number* in the ISO sense.
+    ///
+    /// The companion of [`Value::is_number`], which carries the ISO grounding:
+    /// §4.16.5.2 makes the numeric types the one family whose values compare
+    /// across distinct variants, so an index of a numeric kind is the only one
+    /// whose keys can be reached by a probe of a different variant.
+    ///
+    /// Written out rather than as a `matches!` of the numeric arms so a future
+    /// kind is a compile error and gets classified deliberately.
+    #[must_use]
+    pub const fn is_numeric(self) -> bool {
+        match self {
+            Self::I64
+            | Self::U64
+            | Self::I128
+            | Self::U128
+            | Self::Decimal
+            | Self::F32
+            | Self::F64 => true,
+            Self::Bool
+            | Self::String
+            | Self::Date
+            | Self::LocalDateTime
+            | Self::ZonedDateTime
+            | Self::LocalTime
+            | Self::ZonedTime
+            | Self::Duration
+            | Self::Uuid => false,
+        }
+    }
 }
 
 /// Built-in per-`(label, property)` node value index.

@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GC01
+// expects: parse-ok
+CREATE SCHEMA /memory

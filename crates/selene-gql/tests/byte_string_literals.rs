@@ -2,17 +2,15 @@
 
 use std::sync::Arc;
 
-use selene_core::{
-    ByteStringType, DbString, GraphId, PropertyValueType, Record, Value,
-    feature_register::FeatureId,
-};
+use selene_core::{ByteStringType, DbString, GraphId, PropertyValueType, Record, Value};
 use selene_gql::{
-    AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry, GqlType,
-    ImplDefinedCaps, ParserError, PipelineStatement, Session, StatementOutput,
+    AnalyzedStatement, AnalyzedType, EmptyProcedureRegistry, GqlType, ImplDefinedCaps, ParserError,
+    PipelineStatement, Session, Statement, StatementOutput,
     ast::{format_read_statement, structurally_eq},
     feature_walk, parse,
 };
 use selene_graph::{GraphTypeDef, PropertyElementType, RecordFieldType, SharedGraph};
+use selene_profile::FeatureId;
 use smallvec::smallvec;
 
 fn first_value(source: &str) -> Value {
@@ -124,7 +122,7 @@ fn assert_feature_recorded(source: &str, expected: FeatureId) {
 }
 
 fn projection_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
-    let AnalyzedStatementKind::Query(query) = &analyzed.statement else {
+    let Statement::Query(query) = analyzed.source() else {
         panic!("expected query statement");
     };
     let item = query

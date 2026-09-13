@@ -5,18 +5,20 @@
 //! functions, SET GRAPH to current-graph expressions (section 7.1), RESET
 //! targets (GS04/GS07/GS08/GS16), SESSION CLOSE (section 7.3) with its
 //! termination guard, IF NOT EXISTS (section 7.4), the flagger feature stamps,
-//! and the D1-deferred schema / graph-parameter forms failing cleanly.
+//! and facade-owned schema/graph reference forms lowering transportably.
 
 use selene_core::GraphId;
-use selene_core::feature_register::{
-    ANNEX_B_REGISTER, FeatureId, NOT_SUPPORTED_RATIONALE, SUPPORTED_FEATURES,
-};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlStatus, GqlType, ParserError, Session,
     SessionSetGraphTarget, Statement, StatementOutput, Value, analyze, execute_statement,
     feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
+use selene_profile::{CapabilityStatus, FeatureId, FlaggerStatus, annex_b_by_id, capability};
+
+fn supported(id: FeatureId) -> bool {
+    capability(id).is_some_and(|record| record.status == CapabilityStatus::Supported)
+}
 
 fn graph(id: u64) -> SharedGraph {
     SharedGraph::new(GraphId::new(id))

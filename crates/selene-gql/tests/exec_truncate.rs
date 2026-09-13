@@ -9,12 +9,13 @@
 
 mod exec_common;
 
-use selene_core::{Change, GraphId, LabelSet, NodeId, PropertyMap, feature_register::FeatureId};
+use selene_core::{Change, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ExecutorError, TxContext, analyze, execute_pattern,
     execute_pipeline, feature_walk, parse, plan,
 };
 use selene_graph::{CommitOutcome, SeleneGraph, SharedGraph};
+use selene_profile::FeatureId;
 
 use exec_common::db_string;
 
@@ -131,7 +132,7 @@ fn truncate_node_type_equals_detach_delete_end_to_end() {
 
     // No :L nodes survive and no dangling edges remain.
     let g = truncated.read();
-    assert!(g.nodes_with_label(&db_string("L")).is_none());
+    assert_eq!(g.node_label_cardinality(&db_string("L")), 0);
     for row in g.edge_store.alive.iter() {
         let row = row as usize;
         let source = *g.edge_store.source.get(row).unwrap();

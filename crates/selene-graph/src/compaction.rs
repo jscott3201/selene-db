@@ -1,40 +1,38 @@
 //! CORE graph compaction mechanism (BRIEF-Item-4b / 4c).
 //!
-//! [`compact_core`] is a pure transform: given a [`SeleneGraph`], it builds a
-//! fresh graph whose rows are dense (every dead / aborted-tx hole row dropped),
-//! preserving external `NodeId` / `EdgeId` and the monotonic allocator
-//! high-water marks, then rebuilds all derived state from the compacted columns
-//! via the existing recovery-path rebuilders. It performs NO publication and NO
-//! snapshot I/O — the snapshot writer wiring is BRIEF-Item-4c, the
-//! create-time row-allocation change (arith → append) and dropping the
-//! `rebuild_id_maps` identity bootstrap land when a compacted graph first goes
-//! live (also 4c). Database strings are plain owned values, so compaction has no
-//! string-pool reclamation work to perform.
+//! [`compact_core`] is the low-level pure transform: given a [`SeleneGraph`], it
+//! builds a fresh graph whose rows are dense (every dead or otherwise
+//! unoccupied hole row dropped), preserving external `NodeId` / `EdgeId` and
+//! the monotonic allocator high-water marks, then rebuilds all derived state
+//! from the compacted columns via the shared derived-state rebuilders. It
+//! performs no publication and no snapshot I/O. Live embedders normally call
+//! [`crate::SharedGraph::compact`], which serializes the transform with writers
+//! and atomically republishes the dense graph in the same total publication
+//! order as commits. Snapshot I/O remains a separate, caller-driven maintenance
+//! step owned by the database facade's checkpoint authority, so the newly
+//! dense layout can be published at a fresh snapshot sequence without
+//! requiring a dummy user mutation.
 //!
 //! Because 4a left edges + adjacency keyed by stable external `NodeId`, a row
 //! renumber does not touch edge endpoints or adjacency — only the row-keyed
 //! columns, the alive bitmaps, the row-indexed label/property indexes, and the
 //! id↔row maps move, and all of those are rebuilt from the compacted columns.
 //!
-//! **Cross-epoch WAL replay (BRIEF-Item-4e — RESOLVED, no new mechanism).**
-//! Compaction drops dead rows, so a *deleted* external id that gets compacted
-//! away resolves `NotFound` afterwards (was `NotAlive` under 4a's Option B). The
-//! concern was that a `Change::NodeDeleted` / `EdgeDeleted` written *before* a
-//! compaction, replayed *after* loading the compacted snapshot, would route
-//! through `require_live_*` (`recovery_state`) and hard-error on the reclaimed
-//! id. This cannot happen in the normal flow: a snapshot is published via
-//! `WalWriter::rotate_with_manifest`, which both advances the MANIFEST
-//! `live_snapshot_seq` WAL floor AND physically truncates the WAL (`set_len(0)`
-//! then a fresh header). Pre-compaction entries are therefore *gone* AND below
-//! the recovery floor (`recovery.rs` replays only `header.sequence > floor`) —
-//! they can never be replayed against a compacted snapshot. The only cross-epoch
+//! **Cross-epoch replay.** Compaction drops dead rows, so a *deleted* external
+//! id that gets compacted away resolves `NotFound` afterwards. A
+//! `Change::NodeDeleted` / `EdgeDeleted` written *before* a compaction must
+//! never replay *after* the compacted snapshot loads: it would route through
+//! the mutation funnel's `require_live_*` guards and hard-error on the
+//! reclaimed id. This cannot happen in the normal flow: snapshot publication
+//! is the facade-owned checkpoint authority, which advances the snapshot and
+//! its recovery floor together — pre-compaction entries stay below the floor
+//! and can never replay against a compacted snapshot. The only cross-epoch
 //! replay is of *post*-snapshot entries, which resolve against the dense rows:
-//! a post-compaction `NodeCreated` appends (BRIEF-Item-4c), and a post-compaction
-//! `NodeDeleted` of a survivor finds it in the compacted snapshot (proven by
-//! `recover_tests::nodeid_split_recovery`). The `require_live_*` hard-error is
-//! deliberately *retained* as genuine-corruption detection — a "no-op the
-//! reclaimed-id delete" alternative was rejected because it would mask a truly
-//! inconsistent WAL. The MANIFEST `compaction_epoch` field stays reserved (`0`).
+//! a post-compaction `NodeCreated` appends, and a post-compaction
+//! `NodeDeleted` of a survivor finds it in the compacted snapshot. The
+//! `require_live_*` hard-error is deliberately *retained* as
+//! genuine-corruption detection — a "no-op the reclaimed-id delete"
+//! alternative was rejected because it would mask a truly inconsistent log.
 
 use rustc_hash::FxHashSet;
 use selene_core::NodeId;
@@ -43,7 +41,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::{
     CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph, VectorIndexEntry,
 };
-use crate::store::{EdgeStore, NodeStore, RowIndex};
+use crate::store::{EdgeRow, EdgeStore, NodeRow, NodeStore};
 use crate::typed_index::TypedIndex;
 
 const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
@@ -176,15 +174,21 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
         graph.node_store.alive.len() as usize,
         Default::default(),
     );
-    for old_row in graph.node_store.alive.iter() {
-        let r = old_row as usize;
+    for old_row in graph.node_store.alive_rows() {
+        let r = old_row.index();
         let id = graph
-            .node_id_for_row(RowIndex::new(old_row))
+            .node_id_for_node_row(old_row)
             .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!("alive node row {old_row} has no external id during compaction"),
+                reason: format!(
+                    "alive node row {} has no external id during compaction",
+                    old_row.get()
+                ),
             })?;
         let column_missing = |col: &str| GraphError::Inconsistent {
-            reason: format!("node {col} column missing live row {old_row} during compaction"),
+            reason: format!(
+                "node {col} column missing live row {} during compaction",
+                old_row.get()
+            ),
         };
         // Strict (fail-loud) reads, symmetric with the edge columns below: a
         // misaligned column on an alive row is corruption, not an empty row.
@@ -211,19 +215,25 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     // B1: `alive_mut` is free here — the store is freshly built, so its Arc is
     // unique and `make_mut` never clones.
     for new_row in 0..node_len {
-        nodes.alive_mut().insert(new_row);
+        nodes.mark_alive(NodeRow::new(new_row));
     }
 
     let mut edges = EdgeStore::new();
-    for old_row in graph.edge_store.alive.iter() {
-        let r = old_row as usize;
+    for old_row in graph.edge_store.alive_rows() {
+        let r = old_row.index();
         let id = graph
-            .edge_id_for_row(RowIndex::new(old_row))
+            .edge_id_for_edge_row(old_row)
             .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!("alive edge row {old_row} has no external id during compaction"),
+                reason: format!(
+                    "alive edge row {} has no external id during compaction",
+                    old_row.get()
+                ),
             })?;
         let column_missing = |col: &str| GraphError::Inconsistent {
-            reason: format!("edge {col} column missing live row {old_row} during compaction"),
+            reason: format!(
+                "edge {col} column missing live row {} during compaction",
+                old_row.get()
+            ),
         };
         let source = graph
             .edge_store
@@ -257,6 +267,14 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
                 .ok_or_else(|| column_missing("label"))?,
         );
         edges.source.push(source);
+        edges.directionality.push(
+            graph
+                .edge_store
+                .directionality
+                .get(r)
+                .copied()
+                .ok_or_else(|| column_missing("directionality"))?,
+        );
         edges.target.push(target);
         edges.properties.push(
             graph
@@ -271,7 +289,7 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     let edge_len = edges.label.len() as u32;
     // B1: free `make_mut` on a freshly built store (see node loop above).
     for new_row in 0..edge_len {
-        edges.alive_mut().insert(new_row);
+        edges.mark_alive(EdgeRow::new(new_row));
     }
 
     let stats = CompactionStats::from_graph(graph);
@@ -340,13 +358,18 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     }
 
     // Rebuild every derived structure from the dense columns — the same chain
-    // SharedGraph::from_graph_parts_and_snapshot uses on the recovery path.
+    // the logical snapshot-apply path uses when materializing a graph.
     crate::shared::rebuild_derived_state(&mut dense)?;
     crate::property_index::rebuild_property_indexes(&mut dense)?;
     crate::property_index::rebuild_edge_property_indexes(&mut dense)?;
     crate::composite_property_index::rebuild_composite_property_indexes(&mut dense)?;
     crate::vector_index::rebuild_vector_indexes(&mut dense)?;
     crate::text_index::rebuild_text_indexes(&mut dense)?;
+    dense
+        .rebind_catalog_after_rebuild(graph)
+        .map_err(|error| GraphError::Inconsistent {
+            reason: format!("compacted catalog binding failed validation: {error}"),
+        })?;
 
     // Debug-only structural net (matches the snapshot-load publication seam):
     // re-derive every index from the compacted columns and confirm agreement.

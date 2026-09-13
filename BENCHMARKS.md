@@ -15,6 +15,1001 @@ iai-callgrind instruction-count layer — it needs valgrind, which never runs on
 the macOS dev machine, so it was dropped rather than left as a perpetually-TBD
 placeholder.
 
+## Balanced lookup-map decision and guards — F05-PR07 / #1137
+
+2026-09-12 native measurements over `72c885e2a10730776f8ca26bbb3fff8997ca3248`.
+Apple M5, 10 cores, 16 GiB, macOS 27.0 (26A5425a), rustc 1.97.1
+(`8bab26f4f`, LLVM 22.1.6), aarch64-apple-darwin. Cargo bench profile:
+opt-level 3, thin LTO, one codegen unit, debug information; default mimalloc,
+no new dependencies, features or CPU flags. All benchmark invocations were
+serialized, with compilation before measurement and correctness before A/B.
+
+**Decision: explicitly retain `MapM` (512-entry chunks) for the read-hot label
+and stable-ID maps and retain every candidate identity/liveness check.** Reject
+the tested `MapL` (1,024-entry chunks) inverse-map alternative. This is acceptance
+of the measured existing tradeoff, **not a performance improvement claim** or an
+assertion that these maps are optimal. The experiment changed only the private
+`node_rows`/`edge_rows` fields and their constructors/rebuild initialization;
+adjacency, label maps, typed indexes, candidates, fixtures and public APIs were
+unchanged. The experiment was removed; there is no alternate engine mode or
+compatibility bridge. In particular, no historical imbl rollback was attempted.
+
+### Baseline, attribution and limits
+
+Before any edits, the unchanged `single_graph` rows measured:
+
+| Row | 10k | 50k | 100k |
+|---|---:|---:|---:|
+| `graph_node_fetch` | 6.706 ns | 7.699 ns | 7.435 ns |
+| `graph_label_index_lookup` | 10.870 ns | 10.872 ns | 11.662 ns |
+| `graph_typed_index_point` | 15.151 ns | 15.242 ns | 15.235 ns |
+
+These are fresh costs, not a rerun across #1118. #1137's historical 8–81%
+regressions and write gains remain issue-reported boundary measurements; the
+F04-PR09 batch-executor numbers below are a **different comparison**. The original
+baseline invocation completed these nine rows but hit a 240-second command
+timeout during unrelated fixture setup before the physical-candidate rows; those
+unreached rows are not evidence. The dedicated guard avoids that broad setup.
+The original node-fetch throughput annotation counts fixture size, not fetches;
+use its time, not its Gelem/s display.
+
+Native `sample` profiles (1 ms interval, separate from timing evidence) exposed
+label-tree `get_gen`/`memcmp` and `node_entry_is_current` in checked candidate
+operations. For example, the sampled canonical repeated-candidate path had 3,188
+samples in `node_entry_is_current`. The facade trace had 5,661 parser samples
+under 6,324 `Session::execute` samples in one request path: full requests do not
+reduce to a map probe even with a reused session. These are path-local sample
+counts, not whole-workload CPU percentages. `xctrace` was unavailable because only
+Command Line Tools, not full Xcode, is installed. Cache misses and allocator-exact
+live bytes were not measured; layout/cache attribution remains a hypothesis,
+especially for unaffected typed-index rows. Integer tree descent is inlined into
+the candidate/fetch paths. Increasing its chunk size tests fewer tree levels
+against larger searches/COW copies without changing the validation work.
+
+The host was not exclusively reserved: a later native process check showed other
+OpenCode/desktop activity and load averages 6.32/6.57/7.07. No task-owned build or
+second benchmark overlapped measurement. A/B/A and a longer final A recheck expose
+the residual scheduling/thermal/code-layout uncertainty; do not interpret a
+Criterion p-value as eliminating host drift. No Linux, x86-64, other ARM CPU,
+system-allocator, durable-I/O, allocator-count or cache-counter qualification is
+claimed. Recheck this guard set at RC, particularly after batch/path/index changes.
+
+### Same-input representation experiment
+
+New registered targets: **`read_write_guard`** (graph) and **`facade_read_write`**
+(facade). Full graph scales are 10k/50k/100k. The canonical `BenchFixture` is
+unchanged: three labels, three directed edges per node and typed indexes. The
+additional sparse fixture starts stable node IDs at `2^40`, deletes every fifth
+node and incident edges, and uses 1,024 shared-prefix node/edge labels. Rows remain
+holes until compaction; the regression test also verifies compacted IDs. Quick
+uses 1k canonical nodes and a minimum 2,048 sparse nodes (the benchmark parameter
+is the requested profile scale). This high-ID case must not become an ID-indexed
+dense allocation.
+
+Fetches rotate through live IDs at stride 7,919 and consume property-map lengths;
+label and typed point probes consume returned cardinalities. Checked candidate
+rows bind at most 1,024 IDs once and repeatedly call public checked difference
+with an empty set, including all identity/forward/reverse/liveness validation,
+result allocation/copy and drop. They are not pure validation-only timers and
+never substitute unchecked row iteration. `x8` repeats that entire operation
+eight times. Clone rows include clone and drop. Mixed rows consume 60 reads and
+commit 20 property updates, 10 creates and 10 deletes in one batch. Reconstruction
+and final graph drop are outside timing, identical for A and B; this is not 40
+separate commits. Facade rows use a selected open graph, registered i64 index,
+reused session and full GQL parse/execute/result consumption; update toggles one
+non-indexed value without growing the graph. They are in-memory, not durable.
+
+A = baseline MapM; B = experimental MapL inverse maps only. Each cell is the
+Criterion point estimate with its 95% confidence interval. Delta is the ratio of
+the displayed point estimates, not Criterion's separate bootstrap change estimate.
+Initial runs used 30 samples, 100 ms warmup, 1.5 s measurement (Criterion extended
+slow mixed rows to collect 30 samples).
+
+| 100k graph guard | A (95% CI) | B (95% CI) | B/A |
+|---|---:|---:|---:|
+| canonical fetch | 26.176 [25.701–26.661] ns | 28.929 [26.557–32.294] ns | +10.5% |
+| canonical label | 10.531 [10.372–10.691] ns | 10.654 [10.515–10.812] ns | +1.2% |
+| canonical edge label | 7.635 [7.552–7.739] ns | 8.174 [8.058–8.294] ns | +7.1% |
+| canonical typed point (miss) | 15.910 [15.793–16.038] ns | 15.828 [15.630–16.046] ns | −0.5% |
+| canonical candidates x1 | 8.391 [8.301–8.481] µs | 8.005 [7.926–8.097] µs | −4.6% |
+| canonical candidates x8 | 67.216 [66.565–67.917] µs | 64.347 [63.720–65.054] µs | −4.3% |
+| canonical clone/drop | 25.353 [25.180–25.568] µs | 25.404 [25.195–25.749] µs | +0.2% |
+| canonical mixed | 332.89 [306.99–366.67] µs | 298.38 [285.65–313.71] µs | −10.4% |
+| sparse fetch | 27.287 [26.797–27.794] ns | 25.779 [25.487–26.098] ns | −5.5% |
+| sparse label | 42.420 [41.901–43.093] ns | 44.524 [44.072–45.164] ns | +5.0% |
+| sparse edge label | 41.290 [40.977–41.670] ns | 46.807 [46.365–47.418] ns | +13.4% |
+| sparse typed point | 15.113 [14.950–15.319] ns | 14.514 [14.338–14.712] ns | −4.0% |
+| sparse candidates x1 | 8.025 [7.942–8.114] µs | 8.435 [8.336–8.587] µs | +5.1% |
+| sparse candidates x8 | 63.686 [63.242–64.207] µs | 66.946 [65.833–68.321] µs | +5.1% |
+| sparse clone/drop | 10.787 [10.718–10.892] µs | 10.927 [10.768–11.172] µs | +1.3% |
+| sparse mixed | 259.72 [249.58–269.68] µs | 259.20 [254.79–264.23] µs | −0.2% |
+
+Smaller scales do not establish a consistent improvement either: sparse fetch
+at 10k was 10.285 → 11.754 ns (+14.3%), at 50k 16.772 → 17.767 ns (+5.9%);
+checked x8 at 10k was 53.369 → 55.870 µs (+4.7%), at 50k 58.676 → 63.898 µs
+(+8.9%). Canonical 50k mixed was 186.18 → 226.22 µs (+21.5%). The first canonical
+10k fetch was noisy (17.472 ns, CI 13.856–23.314); returning to A measured 11.520
+ns, so B's 11.582 ns is **not** a demonstrated improvement over that noisy row.
+
+Unchanged `write_txn_lifecycle` cross-check (100-node mutation batches):
+
+| Row | A | B | B/A |
+|---|---:|---:|---:|
+| graph clone 10k | 1.120 µs | 1.108 µs | −1.0% |
+| graph clone 100k | 25.098 µs | 26.500 µs | +5.6% |
+| indexed clone 10k | 252.43 ns | 274.04 ns | +8.6% |
+| indexed clone 100k | 5.345 µs | 5.683 µs | +6.3% |
+| create 10k | 151.76 µs | 134.79 µs | −11.2% |
+| create 100k | 255.86 µs | 218.30 µs | −14.7% |
+| delete 10k | 128.11 µs | 123.77 µs | −3.4% |
+| delete 100k | 159.76 µs | 156.64 µs | −2.0% |
+
+Create is noisy: 100k A CI 230.02–287.87 µs versus B 201.29–239.23 µs.
+100k delete CIs are 157.04–162.58 versus 153.69–159.81 µs. These write rows alone
+would not justify the change, just as write-only acceptance did not price #1137.
+
+### Return-to-A control and facade/memory evidence
+
+All 48 graph guards and four facade guards were rerun after removing B. That
+1.5-second pass encountered severe outliers: canonical 100k clone reached 49.726
+µs (CI 35.477–63.272), sparse fetch 53.736 ns (30.998–82.532), and facade 10k read
+114.50 µs (81.230–159.03). These are disclosed failed stability controls, **not
+engine regressions**. A final 4-second, 30-sample A recheck measured:
+
+| 100k graph guard | canonical A recheck | sparse A recheck |
+|---|---:|---:|
+| fetch | 26.470 [26.200–26.717] ns | 26.102 [25.288–27.268] ns |
+| label | 9.932 [9.861–10.012] ns | 41.263 [40.923–41.692] ns |
+| edge label | 7.547 [7.490–7.617] ns | 42.528 [42.243–42.873] ns |
+| typed point (canonical miss) | 15.217 [15.108–15.329] ns | 15.322 [14.884–16.080] ns |
+| checked x1 | 7.739 [7.698–7.778] µs | 8.140 [8.105–8.175] µs |
+| checked x8 | 60.475 [60.003–60.917] µs | 64.998 [64.658–65.381] µs |
+| clone/drop | 24.211 [24.160–24.284] µs | 10.050 [9.973–10.142] µs |
+| mixed | 309.25 [292.83–328.55] µs | 243.16 [237.64–248.81] µs |
+
+| Complete facade row | A | B | final A (95% CI) |
+|---|---:|---:|---:|
+| indexed read 1k | 81.953 µs | 60.909 µs | 61.415 [61.023–61.850] µs |
+| indexed read 10k | 82.507 µs | 60.842 µs | 62.483 [62.136–62.837] µs |
+| indexed update 1k | 145.03 µs | 113.82 µs | 115.88 [115.36–116.49] µs |
+| indexed update 10k | 186.92 µs | 151.80 µs | 153.35 [152.38–154.62] µs |
+
+The apparent B read gain (about 26%) also appears without B in final A (about
+24–25%); **do not attribute it to the map change**. This control is why the
+experiment is rejected rather than claiming an end-to-end win. The accepted
+MapM tradeoff is a logarithmic read/checked-pairing cost with structurally shared
+mutation snapshots, without evidence for paying a new representation's risks.
+Labels remain MapM despite the measured ~41 ns many-label cost: there is no
+measured whole-path benefit justifying another label-map implementation here.
+
+Memory uses three fresh child processes per scale, native `ps` RSS in bytes:
+empty process, after sparse construction/consistency checking, with 16 shallow
+graph clones, then with 16 retained mutation versions (update/create/delete).
+This includes allocator-retained arenas, construction/rebuild temporaries, code
+and thread costs; it is **not exact live graph heap** or peak RSS. No allocator
+purge or unsafe allocation counter is used. A's empty process was 2,686,976 bytes.
+
+| Sparse scale | A built / clones16 / versions16 | B built / clones16 / versions16 |
+|---|---:|---:|
+| 10k | 108,904,448 / 108,920,832 / 114,933,760 | 109,903,872 / 109,920,256 / 116,146,176 |
+| 50k | 406,700,032 / 406,749,184 / 408,698,880 | 410,255,360 / 410,304,512 / 411,254,784 |
+| 100k | 819,724,288 / 819,724,288 / 822,886,400 | 808,501,248 / 808,501,248 / 811,843,584 |
+
+Displayed representative observations; triplicate ranges differed by at most
+16,384 bytes in the initial A/B runs. Built RSS B/A is +0.9%, +0.9%, −1.4%:
+not a consistent memory saving. Returning to A reproduced the listed values
+(one intermediate 100k process differed by 32,768 bytes). A zero clone RSS delta
+does not mean allocation-free cloning: spare resident allocator pages can absorb
+the clone. The large built RSS includes the many-label fixture's construction
+and consistency re-derivation and must not be marketed as bytes per stored node.
+
+### Typed-hit correction and final guard qualification
+
+Final inspection caught that the new canonical typed probe initially used age
+18, below the canonical fixture's minimum age 20. The canonical typed rows above
+are therefore **misses**, not hits. Sparse probes and the unchanged original
+`single_graph` baseline were hits. The delivered guard uses age 20 and asserts a
+positive cardinality outside timing for both shapes. Corrected hit rows received
+their own same-input A/B/A comparison (`f05pr07-hit-mapm`, 30 samples, 1.5 seconds):
+
+| Hit row | A (95% CI), ns | B (95% CI), ns | B/A | restored A (95% CI), ns |
+|---|---:|---:|---:|---:|
+| canonical 10k | 14.804 [14.634–14.992] | 15.992 [15.832–16.157] | +8.0% | 17.152 [16.817–17.651] |
+| canonical 50k | 15.171 [14.995–15.360] | 16.217 [15.993–16.494] | +6.9% | 18.042 [17.694–18.515] |
+| canonical 100k | 14.604 [14.560–14.660] | 16.593 [16.394–16.802] | +13.6% | 17.037 [16.784–17.337] |
+| sparse 10k | 13.477 [13.399–13.551] | 14.688 [14.542–14.847] | +9.0% | 16.308 [15.513–17.358] |
+| sparse 50k | 14.237 [14.167–14.330] | 14.899 [14.737–15.101] | +4.6% | 16.620 [16.489–16.764] |
+| sparse 100k | 14.019 [13.934–14.105] | 15.345 [15.183–15.527] | +9.5% | 16.001 [15.770–16.258] |
+
+The A control again drifts, so this is not a causal typed-index regression claim.
+It supplies no evidence for accepting B. The complete delivered quick guard also
+ran successfully after restoring MapM (16 rows; 10 samples, 500 ms), including
+the smoke selection's six typed/candidate/mixed rows and all setup assertions.
+The old miss baselines must not be used to compare the corrected hit workload.
+
+### Reproduction and future regression contract
+
+Use both new targets for storage-layout acceptance, never writes alone. Smoke now
+also runs typed point, repeated checked-candidate and mixed guards alongside its
+existing node-fetch/label and mutation rows. No numeric CI speed threshold is
+invented. Keep full native A/B comparisons and RC rechecks as review evidence.
+
+```sh
+# Untouched current-engine cost reproduction (nine read rows completed).
+scripts/run-benches.sh --profile full --bench single_graph --filter 'graph_(node_fetch|typed_index_point|label_index_lookup|physical_candidate_set)' --save-baseline f05pr07-original
+# Run once on A, then --baseline f05pr07-original on the candidate.
+scripts/run-benches.sh --profile full --bench write_txn_lifecycle --filter '(graph_clone/(10000|100000)$|((create|delete)_only/n(10000|100000)/100$))' --save-baseline f05pr07-original
+# A, then B, then restored A with identical fixtures and command settings.
+scripts/run-benches.sh --profile full --bench read_write_guard --bench facade_read_write --save-baseline f05pr07-mapm
+scripts/run-benches.sh --profile full --bench read_write_guard --bench facade_read_write --baseline f05pr07-mapm
+# Longer final A stability controls, after the full A/B/A set.
+scripts/run-benches.sh --profile full --bench read_write_guard --filter '/100000$' --sample-size 30 --measurement-time 4 --baseline f05pr07-mapm
+scripts/run-benches.sh --profile full --bench facade_read_write --sample-size 30 --measurement-time 4 --baseline f05pr07-mapm
+# Corrected hit workload: A save, then B and restored A compare.
+scripts/run-benches.sh --profile full --bench read_write_guard --filter 'typed_index_point' --save-baseline f05pr07-hit-mapm
+scripts/run-benches.sh --profile full --bench read_write_guard --filter 'typed_index_point' --baseline f05pr07-hit-mapm
+scripts/run-benches.sh --profile quick --bench read_write_guard --save-baseline f05pr07-final-quick
+```
+
+Profiling used the same wrapper with graph filter
+`(node_fetch|label_lookup|checked_candidates_x8|mixed_r60w40)/100000$`, measurement
+time 5 seconds, and facade filter `/10000$`, measurement time 8 seconds, both saved
+as `f05pr07-profile-only`. Attach `sample <bench-process> 65 1 -wait -file <path>`
+(20 seconds for facade) separately; profiled timing is excluded from A/B tables.
+Criterion artifacts live under ignored `target/criterion`; the two native sample
+files are task-owned temporary evidence (`f05pr07-72c-{graph,facade}.sample`).
+
+#1137 closure evidence is the explicit MapM decision, same-input read **and**
+write/mixed/clone/RSS experiment with rejection and A controls, and retained
+consumed read guards. Existing candidate/mutation/recovery fixtures were not
+edited: 791 baseline graph tests passed, 1,092 graph+facade tests passed with B
+(two ignored facade tests), and 792 graph tests passed after removing B. The new
+sparse regression checks indexed values, repeated checked algebra, retained
+snapshot isolation, stale-generation rejection, deletion and compaction. No
+speedup, removal of the historical regression, or universal map winner is claimed.
+
+Full local validation also passed: 4,842 workspace nextest tests (five ignored),
+33 doctests, fmt, workspace check/clippy/docs, generated-profile freshness and
+repository policy/benchmark-runner checks. The prescribed advisory cache failed
+online initialization with the pre-existing non-empty-directory error; offline
+audit of that cache and a fresh online temporary-cache audit both passed (1,243
+advisories, 292 dependencies). No parser/decoder changes remain, so no new fuzz
+campaign was run.
+
+## Batch-only cutover — F04-PR09
+
+2026-09-12, working tree over `97facacb9c94a678d36e185fb8a37f5fb9483327`,
+Apple M5 / 16 GiB / macOS 27.0, Rust 1.97.1, optimized Cargo bench profile,
+mimalloc. Existing registered targets only. Baseline and candidate runs were
+serial; no competing test/build command was deliberately run during measurement.
+These are quick guard measurements, not publication-quality capacity claims.
+
+The initial unchanged baseline used `--save-baseline f04-pr09-before`; the final
+candidate used the identical commands with `--baseline f04-pr09-before`:
+
+```sh
+scripts/run-benches.sh --profile quick --bench read_pipeline --filter 'read_pipeline/(match_filter_project|match_expand_hashjoin|group_by_highcard|match_limit10|let_single_extend|for_expand_triple|call_subquery_yield)/1000$' --baseline f04-pr09-before
+scripts/run-benches.sh --profile quick --bench bounded_paths --filter gql_path_whole_query --baseline f04-pr09-before
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_native_call --baseline f04-pr09-before
+```
+
+Read rows use the existing deterministic 1,000-node fixture and warm plan cache.
+The small-query/native-call guards use their existing 8/64-node fixtures. Setup
+is excluded; execution, result construction and drop are included. Read/native
+rows use 10 samples, 100 ms warm-up and 500 ms collection. Paths use 10 samples,
+200 ms warm-up and 1 s requested collection. The path topology and exact result
+counts are described in the following section.
+
+Central estimates below use **arithmetic relative change of the displayed
+estimates**, not Criterion's separately bootstrapped change statistic:
+
+| Guard | Baseline | Final candidate | Absolute change | Relative |
+|---|---:|---:|---:|---:|
+| Small query, 8 nodes | 1.0543 µs | 1.0899 µs | +0.0356 µs | +3.4% |
+| Small query, 64 nodes | 1.1413 µs | 1.1385 µs | −0.0028 µs | −0.2% |
+| Scan/filter/project, 1k | 65.924 µs | 67.949 µs | +2.025 µs | +3.1% |
+| Expand/hash join, 1k | 2.0463 ms | 2.1031 ms | +0.0568 ms | +2.8% |
+| High-cardinality grouping, 1k | 175.97 µs | 188.73 µs | +12.76 µs | +7.3% |
+| LIMIT 10, 1k | 22.607 µs | 24.662 µs | +2.055 µs | +9.1% |
+| Inline table CALL, 1k | 155.28 µs | 380.69 µs | +225.41 µs | +145.2% |
+| Single LET extension, 1k | 102.98 µs | 159.76 µs | +56.78 µs | +55.1% |
+| Triple FOR expansion, 1k | 203.24 µs | 286.55 µs | +83.31 µs | +41.0% |
+| Whole path query, 64 | 825.25 µs | 1,030.4 µs | +205.15 µs | +24.9% |
+| Whole path query, 256 | 6.8808 ms | 8.0446 ms | +1.1638 ms | +16.9% |
+| Whole path query, 1,024 | 82.363 ms | 92.451 ms | +10.088 ms | +12.2% |
+| Native input-batch calls, 8 | 80.378 µs | 60.060 µs | −20.318 µs | −25.3% |
+| Native input-batch calls, 64 | 112.63 µs | 87.575 µs | −25.055 µs | −22.2% |
+
+Final candidate intervals: scan 67.222–68.455 µs; join 2.0774–2.1492 ms;
+group 185.96–193.57 µs; inline CALL 375.89–391.17 µs; LET 158.03–163.67 µs;
+FOR 281.83–292.90 µs; LIMIT 24.386–25.239 µs; paths 1.0034–1.0577 ms,
+7.6794–8.3186 ms and 89.700–94.978 ms. Criterion detected regression in each
+of these rows except the join. Earlier candidate path samples were substantially
+faster (822.71 µs / 6.3623 ms / 78.395 ms); host/run variability limits causal
+attribution. The table deliberately retains the final run, not the best sample.
+
+The newly physical LET/FOR/table-call families pay eager materialization,
+per-binding expression/schema work and nested batch assembly. These regressions
+are disclosed, not hidden behind a second executor. A late correctness guard also
+requires pipeline LIMIT to drain preceding fallible work, including LIMIT 0;
+only the separately proved pattern bound short-circuits. No optimizer/performance
+redesign from F05-PR07 is included.
+
+### Retrieval and memory cross-check
+
+A disposable, unmodified local clone verified at the exact baseline SHA supplied
+the additional baseline runs. Both checkouts precompiled the existing targets
+before `/usr/bin/time -l` measurement, so the measured invocation did not run rustc:
+
+```sh
+scripts/run-benches.sh --bench read_pipeline --compile-only
+scripts/run-benches.sh --bench procedure_call_repeat --compile-only
+/usr/bin/time -l scripts/run-benches.sh --profile quick --bench read_pipeline --filter 'read_pipeline/(call_subquery_yield|let_single_extend|for_expand_triple)/1000$'
+/usr/bin/time -l scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter 'procedure_vector_search/shared_cache_flat_index_batch_8x_dim128_k10_1000$'
+```
+
+The vector guard is the existing exact flat-index, eight-query, synthetic 128d,
+squared-Euclidean, k=10, n=1,000 workload (not a semantic-embedding quality claim).
+Baseline **210.21 µs** (209.64–210.93) → final **223.09 µs** (221.39–224.63):
+**+12.88 µs / +6.1%**. Repeated inline CALL/LET/FOR candidate timings were
+355.63/152.43/279.97 µs against clone baseline 157.94/101.54/207.67 µs:
+the same regression direction, with visible run variability.
+
+| Native memory observation | Baseline bytes | Candidate bytes | Change |
+|---|---:|---:|---:|
+| Whole extension-guard invocation maximum RSS | 93,650,944 | 100,417,536 | +6,766,592 / +7.2% |
+| Whole vector-guard invocation maximum RSS | 93,470,720 | 93,470,720 | 0 / 0% |
+| Path 64 retained-result RSS delta | 3,981,312 | 3,997,696 | +16,384 / +0.4% |
+| Path 256 retained-result RSS delta | 5,652,480 | 5,685,248 | +32,768 / +0.6% |
+| Path 1,024 retained-result RSS delta | 7,225,344 | 8,159,232 | +933,888 / +12.9% |
+
+The first two rows are coarse **whole runner/process-tree** maxima, including
+Cargo, Criterion, fixture construction and allocator retention; they are not
+per-query allocator measurements or per-operator peaks. Path memory uses the
+existing isolated child-process `ps` sampling before the first query and while
+retaining its result; its limits remain those documented below. No allocation
+count, Linux result, power-loss experiment or live-service benchmark is claimed.
+
+## Whole-query path batch integration — bounded_paths
+
+F05-PR04 working tree over `f2020f845c383b79d8ad808ff263667892ce04d0`,
+2026-09-12, Apple M5 / 16 GiB / macOS 27.0 (26A5425a), Rust 1.97.1,
+optimized Cargo bench profile, mimalloc. Added `path_queries.rs` rows to the
+existing registered `bounded_paths` target; **no new benchmark target**.
+
+```bash
+scripts/run-benches.sh --bench bounded_paths --compile-only
+scripts/run-benches.sh --profile quick --bench bounded_paths --filter gql_path_whole_query
+```
+
+Deterministic directed chain, N nodes and N−1 edges, one `Root` and N−1 `N`
+nodes. The full query joins `a:N` with `tag:Root`, filters, runs a correlated
+ALL SHORTEST path of 1–3 edges, joins another one-hop pattern, filters for path
+length ≥2, and projects node/group/typed-path results. It produces exactly
+`2*N - 9` rows. Timing includes the warm-plan-cache statement execution, all
+filter/join/selection/materialization work, and result allocation/drop; fixture
+creation and initial cache warming are outside timing. Ten Criterion samples,
+200 ms warm-up, 1 s requested collection (longer when needed).
+
+| N | Result rows | Whole-query central estimate | Reported interval |
+|---:|---:|---:|---:|
+| 64 | 119 | 833.89 µs | 827.69–842.36 µs |
+| 256 | 503 | 6.5385 ms | 6.4965–6.6018 ms |
+| 1,024 | 2,039 | 79.025 ms | 78.332–79.651 ms |
+
+Each memory row runs in a fresh child process. Native `ps` RSS is sampled after
+fixture creation and again while retaining the complete first-query result.
+The delta includes compiler/plan-cache initialization and allocator-retained
+query storage. It is **not peak RSS, allocator-exact ownership, or traversal-only
+memory**; it is separate from the engine's conservative reservation estimates.
+
+| N | Before query RSS, bytes | Retained-result RSS, bytes | Delta, bytes |
+|---:|---:|---:|---:|
+| 64 | 5,095,424 | 9,076,736 | 3,981,312 |
+| 256 | 6,340,608 | 11,993,088 | 5,652,480 |
+| 1,024 | 11,812,864 | 19,939,328 | 8,126,464 |
+
+These are absolute integration costs, **not a speedup over the legacy engine**.
+An earlier intermediate worktree measured 765.56 µs / 6.0070 ms / 76.504 ms;
+Criterion reported a regression against that local run after additional input
+accounting/validation and correctness repairs. That is not a controlled
+pre-cutover comparison. Correlated source enumeration and eager materialization
+remain visible scaling costs; this slice does not perform F05-PR07 optimization.
+
+## Native text/JSON boundary — text_search_bm25
+
+F04-PR08 working tree over `9cb338ba7116e25d958776b3e3892ea0503c87f2`,
+2026-09-12, Apple M5 / 16 GiB / macOS 27.0 (26A5425a), Rust 1.97.1,
+optimized Cargo bench profile, mimalloc. Added rows to the existing registered
+`text_search_bm25` target; **no new benchmark target**. Commands ran serially:
+
+```bash
+scripts/run-benches.sh --bench text_search_bm25 --compile-only
+scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_json_boundary
+```
+
+Deterministic 1,000-document corpus: two-token text, 10% current documents, JSON
+`current` boolean, k=1,000. Candidate filters are the first 10/100/1,000 stable IDs
+(1%/10%/100%); matches are 1/10/100. Text candidates retain global BM25 statistics.
+Fixture creation/filter binding and oracle assertions are outside timing; result
+allocation/drop and each API's validation are included. Text build/rebuild uses
+the same fresh full-postings build over authoritative values. Provider rebuild is
+one label-only maintained rule, not facade commit/open latency or edge-heavy work.
+
+10 Criterion samples, 100 ms warm-up, 500 ms collection. Central estimates and
+reported intervals (microseconds):
+
+| Operation | Estimate µs | Interval µs |
+|---|---:|---:|
+| Text full build/rebuild | 103.97 | 102.29–106.81 |
+| Candidate-provider rebuild | 78.030 | 76.730–80.570 |
+| Text full primary scan | 55.029 | 54.090–56.767 |
+| JSON full primary scan | 37.611 | 36.935–38.878 |
+| Text typed candidates, 1% | 0.13039 | 0.12772–0.13317 |
+| Text typed candidates, 10% | 0.70881 | 0.68687–0.73739 |
+| Text typed candidates, 100% | 4.2379 | 4.1584–4.3841 |
+| JSON candidate scan, 1% | 0.46079 | 0.45334–0.47401 |
+| JSON candidate scan, 10% | 4.2161 | 4.1455–4.3416 |
+| JSON candidate scan, 100% | 45.874 | 44.880–47.135 |
+
+Estimated reachable text-index bytes: **142,860** (`TextIndex::memory_usage`).
+JSON derived-index bytes: **0** (no JSON index exists); primary JSON values,
+temporary query buffers and provider maps still consume memory. These are not
+allocator/RSS or total database retained-memory measurements. Artifacts are under
+`target/criterion/graph_text_json_boundary/`. Small quick-run absolute costs are
+not before/after speedup claims. JSON still scans its entire selected population;
+unindexed filtered BM25 still scans all label documents for corpus statistics.
+
+## Native vector retrieval — vector_native
+
+F04-PR07 working tree over `0f389ccaff3de8653c7d88d638d3a3ed3e90f9ca`,
+2026-09-12, Apple M5 / 16 GiB / macOS 27.0 (26A5425a), Rust 1.97.1,
+optimized Cargo bench profile, mimalloc. New registered target `vector_native`;
+36 Criterion rows, 10 samples, 100 ms warm-up, 500 ms requested measurement.
+Slow construction rows extend collection. Compiles and measurements ran serially;
+Plotters artifacts are under `target/criterion/native_vector_cpu/`.
+
+```bash
+scripts/run-benches.sh --bench vector_native --compile-only
+scripts/run-benches.sh --profile quick --bench vector_native --vector-scales 1000
+```
+
+Deterministic dense finite vectors, cosine, n=1,000, eight independent queries per
+iteration, k=10, explicit width=64 for every ANN kind. Eligibility is every first,
+tenth or hundredth stable ID (100%, 10%, 1%). Full exact uses the unindexed label
+scan; selective exact uses explicit-ID scoring. ANN uses the same corpus with a
+registered accelerator. Timings include result allocation and each API's
+binding/validation, but exclude fixture/filter construction and recall comparison.
+All are CPU-only portable production paths: no GPU device, models or services.
+
+Central latency estimates below are **microseconds for all eight queries**.
+Parentheses on ANN rows give ID recall@10 against the exact eligible-set oracle.
+Both paths share metric kernels; independent arithmetic is covered separately by
+`native_vectors`. These are absolute workload costs, not before/after speedups.
+
+| Dimensions | Eligible | Exact µs | HNSW µs (recall) | IVF µs (recall) | TurboQuant µs (recall) |
+|---:|---:|---:|---:|---:|---:|
+| 128 | 1,000 | 400.48 | 181.99 (100%) | 166.65 (100%) | 165.04 (100%) |
+| 128 | 100 | 51.791 | 196.71 (55%) | 82.625 (100%) | 180.11 (100%) |
+| 128 | 10 | 6.1218 | 181.94 (5%) | 33.364 (100%) | 11.682 (100%) |
+| 768 | 1,000 | 1,394.1 | 871.98 (97.5%) | 869.57 (100%) | 666.83 (100%) |
+| 768 | 100 | 146.00 | 848.95 (63.75%) | 166.48 (100%) | 678.63 (100%) |
+| 768 | 10 | 16.347 | 837.41 (3.75%) | 63.973 (100%) | 21.261 (100%) |
+
+Representative reported intervals: full exact 128d 399.78–401.52 µs; full exact
+768d 1,387.0–1,411.1 µs; HNSW 768d full 857.07–893.66 µs; HNSW 768d/10
+eligible 832.11–846.77 µs. Complete intervals remain in Criterion artifacts.
+Selective HNSW returned 44/4 of 80 requested hits at 128d and 51/3 at 768d: its
+global beam is filtered before final top-k, **without refill**. This is not
+evidence that filtered ANN is complete. IVF width 64 covers this fixture's 32
+centroids; its 100% recall is not evidence for the default two-probe policy.
+TurboQuant's 10-eligible row uses the existing all-covered exact-rerank bypass.
+
+Build and clean (no-churn) rebuild use the same corpus. Measured intervals begin
+after graph clone/reattachment and include index construction and publication;
+fixture teardown is excluded. There is no WAL/fsync in these lower graph rows.
+
+| Kind | Dimensions | Build ms | Rebuild ms | Index-owned estimate bytes | Reachable estimate bytes |
+|---|---:|---:|---:|---:|---:|
+| HNSW | 128 | 232.12 | 231.98 | 235,212 | 747,212 |
+| HNSW | 768 | 1,340.7 | 1,313.7 | 235,212 | 3,307,212 |
+| IVF | 128 | 1.8390 | 1.8442 | 61,608 | 589,992 |
+| IVF | 768 | 9.9216 | 10.053 | 61,608 | 3,231,912 |
+| TurboQuant | 128 | 1.2225 | 1.2393 | 94,596 | 94,596 |
+| TurboQuant | 768 | 7.5145 | 7.3693 | 429,956 | 429,956 |
+
+Memory is the existing index accounting estimate, not RSS or peak build memory.
+Reachable includes shared vector/centroid buffers for HNSW/IVF; TurboQuant has no
+shadow vector buffer. All cases still retain primary graph vectors (512,000 /
+3,072,000 component bytes at 128d / 768d), plus unmeasured graph/allocator overhead.
+No Linux, GPU, live-embedding, larger-scale or peak-memory qualification is claimed.
+
+## Native call boundary — procedure_call_repeat
+
+F04-PR06 working tree over `d1ef2652ad57d11c67fe9970a2425ce5ebfe22e1`,
+2026-09-12, native Apple M5 / 16 GiB / macOS 27.0 (26A5425a), Rust 1.97.1,
+optimized Cargo bench profile, mimalloc, `test-harness`. No new bench target:
+`procedure_native_call` extends the existing `procedure_call_repeat` target.
+
+```bash
+scripts/run-benches.sh --bench procedure_call_repeat --compile-only
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_native_call
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_native_call/preplanned
+```
+
+Deterministic 8/64 isolated `N` nodes, no edges, WCC-count queries; 10 samples,
+100 ms warm-up, 500 ms requested measurement. Builds and measurements ran serially.
+The Plotters backend wrote `target/criterion/procedure_native_call/` artifacts.
+Values below are Criterion central estimates with reported intervals, not an A/B
+comparison or a throughput/capacity promise.
+
+| Operation | 8 nodes | 64 nodes |
+|---|---:|---:|
+| One warm cached statement | 1.095 µs (1.064–1.126) | 1.101 µs (1.089–1.121) |
+| N separate warm cached statements | 9.480 µs (8.574–10.792) | 72.392 µs (71.435–73.959) |
+| One N-input batch query | 104.56 µs (96.766–116.79) | 108.33 µs (106.99–110.76) |
+| Direct projection construction | 281.44 ns (232.53–357.46) | 1.231 µs (1.220–1.250) |
+| Validated projection resolve/reuse | 24.411 ns (23.555–25.536) | 22.317 ns (22.028–22.754) |
+| N preplanned statements (separate run) | 21.727 µs (16.979–24.143) | 235.90 µs (192.26–260.95) |
+| One preplanned N-input batch (separate run) | 16.500 µs (13.362–20.270) | 90.015 µs (74.299–106.38) |
+
+Each N-input query still invokes WCC N times. The statement rows include lower
+GQL session/executor/result overhead, not the facade's catalog request overhead.
+The multi-input query includes parsing/planning because the existing CALL cache
+does not cache embedded pipeline calls; the repeated top-level calls hit that
+cache. Thus these product costs **do not establish a batch speedup** or isolate
+physical dispatch amortization. In these tiny workloads planning dominates the
+multi-input query. The additional preplanned rows remove parsing/planning from
+both sides, use the same statement execution entry point, and include scan and
+result materialization for the batch. They measure per-statement versus per-input
+amortization, not row-executor versus batch-executor kernel speed. Their broad
+intervals and higher timings than the earlier cached run indicate host/run noise;
+no cross-run speedup or regression is inferred. The construction/reuse rows exclude query planning and run
+against a retained immutable snapshot. Larger graphs, edges, cold caches and
+Linux performance were not measured in this slice.
+
+## Format-2 checkpoint and reopen — durable_checkpoint
+
+F02-PR05 working-tree measurement over base `bd219118e8a22adbc4bbb0f4265cf91f8df6c37d`,
+**2026-09-11**, native Apple M5 / 16 GiB / macOS 27.0 (26A5425a), Rust 1.97.1,
+optimized Cargo bench profile, mimalloc. First public lifecycle baseline, not an
+A/B speedup, SLO, capacity or crash/power-loss claim.
+
+```bash
+scripts/run-benches.sh --bench durable_checkpoint --compile-only
+scripts/run-benches.sh --profile quick --bench durable_checkpoint
+```
+
+Eight Criterion rows, 10 samples, 50 ms warm-up and 100 ms requested measurement;
+some sample collections extended to 134–204 ms. Gnuplot was absent; the normal
+Plotters backend generated `target/criterion/format2_open/` artifacts. Builds and
+measurements were serial. Raw stdout, snapshot digests and native `time` output
+are retained in the task's `bench-compile.log`, initial `bench-run.log`, and
+`bench-final.log` (handoff gives
+the exact evidence directory). The final run below followed a timing-boundary
+correction to include temporary-image destruction inside the measured reservation.
+Criterion detected no significant reopen change across the two runs; this is
+not presented as an optimization comparison.
+
+The deterministic fixture source is `crates/selene-db/benches/durable_checkpoint/fixture.rs`:
+three named graphs, 32 or 256 rows **per graph**, integer identities, UNIQUE,
+defaults, text, two-component vectors and JSON. The indexed configuration adds
+12 registrations total—four per graph: scalar, composite, text and HNSW (M=8,
+construction effort=32). The comparison configuration still validates UNIQUE; it does not
+disable constraints. Suffixes contain 1 or 16 actual acknowledged updates.
+Every reopen checks all ordered IDs/values, the update total, durable position and
+reconstructed index count. Each independent first-open witness prints its exact
+snapshot BLAKE3 digest; live and reopened semantic results are checked rather than
+assuming a serialized-byte round trip is sufficient.
+
+| Rows/graph | Registered indexes | Suffix | Warm-reopen Criterion estimate / interval (ms) | Independent first-open range, 3 witnesses (ms) | Snapshot bytes |
+|---:|---:|---:|---:|---:|---:|
+| 32 | 0 | 1 | 1.235 / 1.227–1.252 | 1.571–1.896 | 74,259 |
+| 32 | 0 | 16 | 6.752 / 5.871–7.700 | 6.722–7.334 | 74,259 |
+| 32 | 12 | 1 | 1.763 / 1.743–1.813 | 2.245–2.511 | 76,491 |
+| 32 | 12 | 16 | 6.854 / 6.626–7.260 | 7.446–8.432 | 76,491 |
+| 256 | 0 | 1 | 3.416 / 3.250–3.705 | 3.552–3.753 | 166,587 |
+| 256 | 0 | 16 | 12.884 / 12.518–13.557 | 12.985–13.978 | 166,587 |
+| 256 | 12 | 1 | 8.532 / 8.302–8.921 | 8.601–12.830 | 168,819 |
+| 256 | 12 | 16 | 18.697 / 18.006–19.682 | 18.246–19.411 | 168,819 |
+
+"First open" is first facade open after dropping all owners, **not cold OS cache**.
+All opens verify the retained prefix: 8 records without indexes or 20 with them.
+At 256 rows/graph and 12 indexes, prefix verification plus semantic suffix replay
+took 0.783–0.883 ms for one suffix record and 10.346–11.167 ms for 16. Verified
+whole-log bytes were 20,137 / 28,747, not just suffix bytes. Eager native/runtime
+reconstruction took 5.728–6.427 ms with all indexes, versus 0.724–0.813 ms without
+registered indexes; both include required type/UNIQUE validation. This is not a
+claim that those timings isolate only index allocation. One first-open witness
+spent 3.681 ms in final synchronization; that observed outlier is retained above.
+
+Full checkpoint witness time was 19.876–26.407 ms; its measured serial write
+reservation, including temporary destruction, was 19.875–26.407 ms. No concurrent writes during checkpoint I/O are
+claimed. A separate 60-read/40-write workload held an immutable reader while
+three checkpoints ran. Actual foreground write p50/p95/max was
+4.730/5.225/48.912 ms at 32 rows/graph, and 8.630/9.624/55.746 ms at 256. These
+are end-to-end successful request latencies, not isolated lock wait or unconstrained
+arrival-rate measurements. Held-reader results and reopened totals were asserted.
+Retained storage after those checkpoints grew 151,368 → 228,260 → 305,726 bytes
+and 249,366 → 418,587 → 588,382 bytes respectively; no pruning is hidden.
+
+The same sanctioned target runs sequential isolated native child workloads under
+`/usr/bin/time -l` on macOS. Three complete text replacements/checkpoints retain
+or release an old reader, keeping the workload otherwise identical:
+
+| Rows/graph | Released-reader process peak RSS (bytes) | Held-reader process peak RSS (bytes) |
+|---:|---:|---:|
+| 32 | 19,087,360 | 19,185,664 |
+| 256 | 47,579,136 | 47,955,968 |
+
+These are **measured whole-process peak RSS**, including setup, preflight, graph
+copies, indexes and snapshot buffers—not logical allocation charges or a precise
+reader-only increment. One sample per configuration is not an allocator-regression
+statistical claim. The 256-row child retained 642,316 → 1,204,489 → 1,766,664
+artifact bytes across its three checkpoints. Larger databases, long suffixes,
+Linux performance and the PR07/F06 crash campaign remain unmeasured here.
+
+### PR06 rotating lifecycle and actual artifact-reader retention
+
+**2026-09-11**, working tree over `f2f72767650004b29eac6ffdfb15a8a1ddecf882`,
+same native Apple M5 / 16 GiB / macOS 27.0 (26A5425a), Rust 1.97.1,
+optimized bench profile and mimalloc. Commands remain:
+
+```bash
+scripts/run-benches.sh --bench durable_checkpoint --compile-only
+scripts/run-benches.sh --profile quick --bench durable_checkpoint
+```
+
+The existing target now also runs `durable_checkpoint/lifecycle.rs`: three
+independent fixtures per scale, each with three checkpoints and four acknowledged
+updates after each. A LogicalReader selects and pins actual immutable control
+before the first checkpoint; its delayed snapshot and 20 WAL records are consumed
+only after explicit prune. Twelve scalar/composite/text/HNSW registrations remain
+query-ready. Native file lengths are checked against successful prune accounting.
+A deliberate 19-byte unclassified orphan remains visible deferred debt, never
+selected or counted as reclaimed. These are new lifecycle baselines, not A/B
+speedup claims against PR05's different full-prefix recovery work.
+
+| Rows/graph (3 graphs) | Full write-reservation range, 9 checkpoints (ms) | Rotation stage range (ms) | Prune with lease, 3 runs (ms) | Extra reader-retained bytes | Reclaimed after release (bytes) | Release prune range (ms) | Reopen after repeated checkpoint/prune (ms) |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 32 | 26.893–34.870 | 20.015–26.088 | 24.639–32.691 | 73,994 | 73,994 | 13.895–17.773 | 5.991–6.430 |
+| 256 | 27.833–33.998 | 19.181–23.145 | 23.841–26.986 | 79,663 | 79,663 | 14.451–16.895 | 13.746–14.424 |
+
+Rotation stage measures old selected snapshot/WAL verification, old-segment
+seal/sync, new-file creation/sync and control publication, excluding new-snapshot
+encoding/I/O and reservation acquisition wait.
+Snapshot files were 76,491 / 168,819 bytes. While leased, total storage after prune
+was 233,063 / 423,388 bytes, becoming 159,069 / 343,725 after release. The first
+prune also reclaimed 79,818 / 172,148 unleased obsolete bytes. The final ten-file
+inventory contains CURRENT, permanent locks, two complete checkpoint roots and
+their data dependencies, plus the explicit 19-byte debt. Reopen verified **zero
+old-prefix records**, four suffix records / 2,296 WAL bytes, and rebuilt 12 indexes.
+
+The unchanged eight Criterion fixture shapes (10 samples, 50 ms warm-up, 100 ms
+requested measurement) now measure rotating selection; intervals are below.
+Some collections extended to 219 ms, with one or two high outliers per row;
+the 256-row/unindexed/16-suffix row also had a low mild outlier.
+
+| Rows/graph | Indexes | Suffix | Reopen estimate / interval (ms) |
+|---:|---:|---:|---:|
+| 32 | 0 | 1 | 1.249 / 1.229–1.275 |
+| 32 | 0 | 16 | 6.153 / 5.819–6.777 |
+| 32 | 12 | 1 | 1.763 / 1.745–1.792 |
+| 32 | 12 | 16 | 6.861 / 6.612–7.266 |
+| 256 | 0 | 1 | 3.382 / 3.236–3.635 |
+| 256 | 0 | 16 | 13.064 / 12.622–13.870 |
+| 256 | 12 | 1 | 8.909 / 8.356–9.653 |
+| 256 | 12 | 16 | 18.321 / 17.862–19.130 |
+
+The retained 60-read/40-write comparator with three concurrent serialized
+checkpoints reported successful write p50/p95/max of 4.630/5.165/63.835 ms (32)
+and 8.410/9.295/65.472 ms (256). That comparator's held reader is an **in-memory
+transaction**, distinct from the measured artifact lease above. Likewise the
+existing one-sample isolated RSS comparator remains an in-memory-reader workload:
+released/held peaks were 19,316,736/19,365,888 and 47,857,664/48,463,872 bytes.
+These are whole-process peaks, not lease-only memory or allocator charges.
+
+Serial raw stdout, digests, timing/RSS output and Criterion artifacts are retained
+under `f02-pr06-evidence-f2f72767` in the task evidence directory; files are
+`67-bench-compile-verified.log`, `68-bench-verified.log`, `24-environment.log` and
+`criterion-format2-open-verified.tar.gz`. Earlier measurements remain in logs
+18–19 and 49–50 plus their Criterion archives. The final run follows bounded
+enumeration and old-root integrity hardening; Criterion detected no significant
+reopen change against the preceding run. No concurrent Cargo/rustc process was found at
+measurement admission. No Linux, long-running retention stress or device
+power-loss measurement is inferred from these modest fixtures.
+
+### PR07 shared full-readiness verification and open
+
+**2026-09-11**, working tree over `232dd5929455c7bf0c178a483003c184d2824eb4`,
+native Apple M5 / 16 GiB / Darwin 27.0.0, Rust 1.97.1, optimized bench profile,
+mimalloc. Existing registered target, new opt-in measurement mode:
+
+```bash
+scripts/run-benches.sh --bench durable_checkpoint --compile-only
+SELENE_RECOVERY_BENCH=1 scripts/run-benches.sh --profile quick --bench durable_checkpoint
+```
+
+Fixtures contain 3 or 12 named graphs, 32 or 128 nodes per graph, UNIQUE/defaults,
+scalar/composite/text/HNSW registrations (4 per graph), JSON and vectors. Suffixes
+are 1/16/128 actual acknowledged updates distributed across graphs after SLRM
+checkpoint. Every open validates ordered IDs/values and the independent update
+total; verification asserts position, graph/node and all-index counts. Timing
+includes temporary-runtime destruction in Criterion for both operations. Three
+printed pre-Criterion pairs exclude Database destruction from open's printed
+duration. They are first API calls on recently written/read data, **not cold OS
+cache**, and verification precedes open. No historical A/B speedup is claimed.
+
+| Graphs × rows | Indexes | Suffix | Verify estimate / interval (ms) | Open estimate / interval (ms) |
+|---|---:|---:|---:|---:|
+| 3 × 32 | 12 | 1 | 1.816 / 1.768–1.886 | 2.457 / 2.272–2.879 |
+| 3 × 32 | 12 | 16 | 7.183 / 7.108–7.260 | 8.613 / 8.393–8.912 |
+| 3 × 32 | 12 | 128 | 46.582 / 45.925–47.246 | 56.807 / 55.006–58.917 |
+| 3 × 128 | 12 | 1 | 5.121 / 5.060–5.207 | 6.434 / 5.882–7.024 |
+| 3 × 128 | 12 | 16 | 12.309 / 12.158–12.473 | 15.680 / 14.533–16.877 |
+| 3 × 128 | 12 | 128 | 67.531 / 66.927–68.180 | 76.222 / 74.362–78.125 |
+| 12 × 128 | 48 | 1 | 19.540 / 19.001–20.065 | 20.893 / 20.144–21.567 |
+| 12 × 128 | 48 | 16 | 25.321 / 25.022–25.634 | 30.776 / 30.073–31.507 |
+| 12 × 128 | 48 | 128 | 88.561 / 87.921–89.171 | 96.723 / 95.318–98.129 |
+
+Ten Criterion samples, 50 ms warm-up, 100 ms requested measurement; expensive
+collections extended to about 1 second. Several open rows had high outliers.
+The three 12×128/128-suffix pre-Criterion verification observations were
+85.250–91.304 ms: selection 0.126–0.139 ms, snapshot 3.569–3.838 ms, framing
+0.414–0.425 ms, semantic replay 68.443–74.518 ms, eager rebuild 11.378–12.047 ms.
+Semantic retained-state validation dominates long suffixes. Scaling one fixed
+snapshot's suffix does not establish general linear replay as graphs grow;
+per-transaction checks can rescan retained state. No speculative rewrite or SLO.
+
+Snapshots were 76,491 / 115,827 / 283,975 bytes; captured active WAL extents were
+574 / 9,184 / 73,472 bytes. Complete snapshot-header corruption rejected in
+110–156 microseconds across these shapes, before semantic reconstruction. That
+is one rejection shape, not constant-time arbitrary-invalid-input handling.
+
+The same sanctioned run starts isolated `/usr/bin/time -l` children over the
+already-written 12×128/128-suffix fixture. Whole-process peak RSS was **20,889,600
+bytes for verify**, **21,020,672 for open** (one sample each, excluding fixture
+creation but including recovery, runtime/index reconstruction and destruction).
+This is measured native RSS, not logical budget charge or a production memory
+ceiling. The separate valid 17-graph/high-fanout HNSW fixture still fails the
+unchanged 256 MiB aggregate reconstruction accounting limit, for both APIs.
+
+Raw command/stdout/stderr and per-phase samples are in PR07 evidence log
+`35-final-source-benchmark.log`; earlier runs remain in logs 12 and 30. Criterion
+flagged several slower rows versus the preceding short run (up to about 19% in
+successful-readiness point estimates). These sequential runs are not a controlled
+revision A/B and the cause was not isolated; the variation is retained, not a
+regression-free or optimization claim. Criterion artifacts remain under
+`target/criterion/` and are archived with the evidence.
+No competing Cargo/rustc process was observed at benchmark admission. Linux,
+device power loss and broad RC-scale performance are not established here.
+
+After the final error-context-only enrichment, a frozen-source refresh used:
+
+```bash
+SELENE_RECOVERY_BENCH=1 scripts/run-benches.sh --profile quick --bench durable_checkpoint --filter g12_n128_suffix128
+```
+
+Log `39-frozen-source-benchmark.log` retains three new phase-timed witness pairs
+for **all nine** shapes; the filter selects only the largest shape's three
+Criterion rows. That final 12×128/128-suffix estimate/interval was verify
+90.073 / 89.148–91.066 ms, open 92.989 / 90.767–95.327 ms, and corrupt-snapshot
+rejection 109.20 / 108.13–110.83 microseconds. Isolated-process RSS was
+20,938,752 bytes (verify) and 21,069,824 bytes (open). The wide Criterion table
+above is the preceding complete matrix, not silently relabeled as this filtered
+refresh. Neither the slower comparisons above nor this run's improved open
+comparison establishes a controlled revision effect.
+
+The subsequent pre-delivery diagnostic completion attaches missing namespace/WAL
+error context and distinguishes exact-boundary required-prefix truncation. It
+changes no recovery algorithm or timing boundary. The benchmark was recompiled
+with `scripts/run-benches.sh --bench durable_checkpoint --compile-only` (log 47).
+The existing corrupt-rejection row fails at the snapshot header, before the changed
+EOF/writer-establishment branches and with no unknown namespace entry, so that
+measured rejection path is unchanged. No new latency/RSS run is attributed to this
+completion; the prior full matrix and filtered refresh retain their original
+measurement coordinates and qualifications rather than being relabeled.
+
+## Batch mutation phases — durable_commit
+
+F04-PR05 adds three rows to the existing `durable_commit` target (no new
+benchmark target): `batch_mutation_2049/stage_no_ack`, `durable_commit_ack`, and
+`rollback_cleanup`. Each uses the public facade over a real format-2 directory,
+2,049 seed nodes and a 2,049-node `MATCH ... INSERT` statement. The graph is
+unbound and has no secondary indexes. The mutation stage crosses three default
+batch boundaries but remains one explicit transaction.
+
+```bash
+scripts/run-benches.sh --bench durable_commit --compile-only
+scripts/run-benches.sh --profile quick --bench durable_commit --filter batch_mutation_2049
+```
+
+The staging timer includes selected-request execution but excludes transaction
+start and rollback; it is **not a durable acknowledgment**. The acknowledgment
+timer measures `COMMIT` after staging, including synchronization and publication.
+The cleanup timer measures `ROLLBACK` after staging. Fixture creation, correctness
+queries, and deletion after acknowledged commits are outside all timers. Caches
+are warm after the first iteration. These are absolute phase costs, not an
+in-memory-versus-durable speedup comparison or a power-loss experiment.
+
+Measured **2026-09-12**, native Apple M5 / 16 GiB / macOS 27.0 (26A5425a),
+Rust 1.97.1 aarch64-apple-darwin, optimized Cargo bench profile, mimalloc:
+
+| Phase (2,049 inserted nodes) | Criterion estimate | Confidence interval | Iterations |
+|---|---:|---:|---:|
+| Staging, no acknowledgment | 1.6719 ms | 1.6452–1.6990 ms | 275 |
+| Durable COMMIT acknowledgment, staging excluded | 9.7225 ms | 8.7061–10.813 ms | 30 |
+| Rollback cleanup, staging excluded | 327.67 µs | 293.22–349.36 µs | 220 |
+
+Each row used 10 samples, 100 ms warm-up and 500 ms requested measurement;
+rollback reported one high-mild outlier. No concurrent build/test/benchmark was
+launched during the run. Gnuplot was unavailable; Criterion used Plotters.
+These intervals are not per-request p95/p99 latency measurements. The existing
+target also prints its independent single-write/stream ACK samples even under
+this filter; those samples are not the multi-batch phase results above.
+
+## Format-2 durable commit — durable_commit
+
+F02-PR04, **2026-09-11**, native Apple M5 / 16 GiB / macOS 27.0 (26A5425a),
+Rust 1.97.1 aarch64-apple-darwin, optimized Cargo bench profile, mimalloc.
+New measurements, not a refresh of the historical north-star above:
+
+```bash
+scripts/run-benches.sh --bench durable_commit --compile-only
+scripts/run-benches.sh --profile quick --bench durable_commit
+```
+
+Nine Criterion rows: 10 samples, 100 ms warm-up, 500 ms requested measurement.
+Several rows extended to 0.55–1.00 seconds; stream/16 reported three outliers.
+No competing agent build/benchmark was launched. Gnuplot was unavailable; the
+normal Plotters fallback produced reports under `target/criterion/format2_commit/`.
+
+| Durable row | Criterion estimate / interval (ms) | Actual ack p50 / p95 / p99 (ms) | Ack/s | WAL bytes |
+|---|---:|---:|---:|---:|
+| Stream group 1 | 3.802 / 3.650–3.939 | 3.861 / 4.185 / 4.273 | 279.4 | 116,736 |
+| Stream group 4 | 3.630 / 3.514–3.701 | 3.831 / 4.172 / 4.242 | 1,141.8 | 466,944 |
+| Stream group 16 | 3.771 / 3.693–3.843 | 3.907 / 4.212 / 4.250 | 4,419.6 | 1,867,776 |
+| Stream group 32 | 3.973 / 3.919–4.011 | 3.978 / 4.352 / 5.050 | 8,294.1 | 3,735,552 |
+| Facade unbound, initial 64 | 4.369 / 4.079–4.638 | 4.912 / 5.192 / 5.923 | 215.8 | 99,722 |
+| Facade named, initial 64 | 3.923 / 3.744–4.102 | 4.862 / 5.232 / 5.840 | 219.2 | 110,968 |
+| Facade unbound, initial 1024 | 4.485 / 4.323–4.653 | 4.949 / 5.993 / 7.233 | 204.3 | 99,142 |
+| Facade named, initial 1024 | 4.593 / 4.291–4.887 | 4.971 / 5.772 / 6.012 | 206.9 | 110,380 |
+
+Tail measurements are a separate **256-group / 256-facade-request** sample, not
+percentiles of Criterion medians. Nearest-rank percentiles use each actual
+acknowledgment duration. Stream group members are admitted simultaneously, so
+each receives its group's elapsed time, not elapsed/group-size; groups contain
+256-byte numbered bodies, 456 bytes framed, with RAW compression. Sample counts
+are 256, 1024, 4096 and 8192 member acknowledgments. The callback tracks visible
+members and a fresh retained reader checks every numbered body and sequence.
+Observed stream min/max spans were 1.823–10.328, 1.912–4.255, 1.958–4.321 and
+2.779–10.049 ms respectively. This is a closed-loop controlled workload, not an
+arrival-rate/queueing model or a power-loss experiment.
+
+Facade timing includes real GQL insert staging, named admission where applicable,
+encoding, bounded semantic replay preflight, native append/sync, one outer store
+and acknowledgment. A `test-harness` scripted function privately constructs the
+database and exports no durable database/session. Each transaction inserts one
+property-free Base node. Criterion resets fixtures after at most 64 requests;
+the tail sample grows from initial 64/1024 to 320/1280 nodes. Setup and final
+live-count/semantic real-file replay assertions are outside individual timings.
+Facade WAL bytes include setup; compression explains why the larger initial
+insertion can yield a smaller total than the tiny RAW setup. Min/max spans for
+the four facade tail rows were 2.846–7.716, 2.739–6.179, 3.018–8.252 and
+3.701–6.032 ms. Their ordering/variance is **not** evidence that named validation
+is faster. Named admission scans affected graphs; preflight retains derived
+logical state and applies the bounded replay validator before append. No O(delta),
+exact allocation/RSS, SLO or comparative product-speedup claim is made.
+
+The ninth row, **buffered_prepare_only_no_append_or_ack**, measured 457.21 ns
+(456.92–457.48 ns) to prepare a single 256-byte RAW body. It asserts zero written
+records. It is **not durable latency or acknowledged throughput**. Likewise,
+controlled stream groups are not a facade group-commit implementation: the
+facade remains synchronous, single-writer and single-logical-transaction per call.
+
+## Format-2 logical transaction codec — logical_wal
+
+F02-PR03 measurement, **2026-09-10**, Apple M5 / 16 GiB / native macOS 27.0
+(26A5425a), pinned Rust 1.97.1, optimized Cargo bench profile, mimalloc. These
+are new codec measurements, not a refresh of the historical north-star above.
+
+```bash
+scripts/run-benches.sh --bench logical_wal --compile-only
+scripts/run-benches.sh --profile quick --bench logical_wal
+```
+
+The final run completed **80 Criterion rows**, 10 samples, 100 ms warm-up,
+500 ms requested measurement (the 256 MiB rejection row automatically extended
+to about 1.2 s for ten iterations). The host ran Cargo/fuzz/bench serially.
+Encode includes semantic body construction, framing, BLAKE3 and the selected
+compression policy; decode includes complete frame verification/decompression,
+semantic parsing/descriptor validation and output destruction. **No append,
+fsync, live publication, index rebuild or durable reopen is measured.** Isolated
+graph apply has separate correctness tests, not an end-to-end durability latency claim.
+
+Every transaction carries catalog creation plus **two graphs**, each with N nodes
+and N−1 mixed directed/undirected edges. Shapes are i64 scalar, 384-component
+finite vector, canonical JSON, 32-i64 list, named record with JSON/list/U128,
+and catalog-heavy (N inactive projection declarations plus scalar graph data).
+These deliberately repeat data, especially the shifted synthetic vectors; their
+compression ratios are **not real-embedding/corpus predictions**.
+
+Full frame bytes, **RAW / automatic Zstd**, including fixed 200-byte framing:
+
+| Shape | N=1 per graph | N=64 per graph | N=1024 per graph |
+|---|---:|---:|---:|
+| Scalar | 598 / 598 | 10,048 / 875 | 154,048 / 7,952 |
+| Vector | 3,662 / 3,662 | 206,144 / 11,087 | 3,291,584 / 25,572 |
+| JSON | 720 / 720 | 17,966 / 962 | 282,906 / 8,954 |
+| List | 1,166 / 1,166 | 46,400 / 2,707 | 735,680 / 44,640 |
+| Record | 860 / 860 | 26,926 / 1,135 | 426,266 / 10,600 |
+| Catalog-heavy | 787 / 787 | 22,254 / 1,342 | not selected |
+
+Selected final Criterion point estimates (µs per complete transaction; not a
+claim that the four columns have identical work):
+
+| Shape / N | RAW encode | Auto encode | RAW decode | Auto decode |
+|---|---:|---:|---:|---:|
+| Scalar / 1 | 0.826 | 0.843 | 1.165 | 1.158 |
+| Scalar / 64 | 10.620 | 18.256 | 27.528 | 27.962 |
+| Scalar / 1024 | 156.66 | 182.56 | 425.89 | 398.12 |
+| Vector / 1024 | 5,035.4 | 3,901.7 | 2,427.1 | 1,113.9 |
+| JSON / 1024 | 617.55 | 576.70 | 952.81 | 885.36 |
+| List / 1024 | 915.24 | 1,045.6 | 1,281.6 | 1,207.6 |
+| Record / 1024 | 821.83 | 768.39 | 1,406.2 | 1,308.7 |
+| Catalog-heavy / 64 | 22.760 | 26.957 | 52.059 | 49.586 |
+
+For example, scalar/1024 auto encode processes **803.69 MiB/s** of semantic body
+bytes; vector/1024 auto decode processes **2.752 GiB/s** (about 898 complete
+transactions/s). The latter's interval was 1.068–1.204 ms. Other selected intervals:
+scalar/1024 auto encode 178.82–190.20 µs; JSON/1024 auto decode 871.96–907.50 µs;
+catalog/64 auto decode 49.15–50.41 µs. Quick-run outliers and host variance remain.
+
+Threshold and rejection costs:
+
+| Row | Result bytes / codec | Encode / decode or rejection |
+|---|---|---|
+| Full body 4095 bytes, compressible | 4295 / RAW | auto encode 2.575 µs; decode 2.697 µs |
+| Full body 4096 bytes, compressible | 339 / Zstd | auto encode 3.943 µs; decode 3.013 µs |
+| Full body 8192 bytes, compressible | 340 / Zstd | auto encode 4.446 µs; decode 3.867 µs |
+| Framing-only 4096-byte entropy body | 4296 / RAW under both policies | RAW encode 2.275 µs; auto 4.373 µs |
+| Framing-only 65,536-byte entropy body | 65,736 / RAW under both policies | RAW encode 29.797 µs; auto 41.240 µs |
+| Complete 256 MiB frame with invalid semantic version | full encoded integrity scanned, then rejected | 115.15 ms (113.01–117.32 ms), 2.171 GiB/s |
+| Valid-checksum header with u64::MAX length | rejected before body allocation | 108.70 ns (106.78–111.70 ns) |
+
+Thus automatic level-1 compression at 4096 bytes avoids a size penalty for
+incompressible input but still pays attempt CPU. RAW is an explicit option. This
+is a correctness/space/default-policy result, not an fsync speedup.
+
+Memory evidence from fresh child processes, retaining the auto frame, expanded
+body and decoded transaction. Frame capacity and expanded bytes are exact buffer
+sizes. Charged bytes are **conservative enforced allocation accounting**, including
+large resident Change/catalog carriers and validation copies, **not allocator
+callback counts**. RSS delta includes allocator retention and process noise; it
+is not exact live heap size. RAW borrows its body rather than allocating expanded
+storage. The data below do not include an isolated graph materialization/rebuild.
+
+| Shape / N | Frame capacity | Expanded owned bytes | Allocation charge | RSS delta bytes |
+|---|---:|---:|---:|---:|
+| Scalar / 1024 | 7,952 | 153,848 | 26,911,072 | 851,968 |
+| Vector / 1024 | 25,572 | 3,291,384 | 39,493,984 | 6,979,584 |
+| JSON / 1024 | 8,954 | 282,706 | 45,549,872 | 2,457,600 |
+| List / 1024 | 44,640 | 735,480 | 52,076,896 | 1,572,864 |
+| Record / 1024 | 10,600 | 426,066 | 50,530,608 | 3,899,392 |
+| Catalog-heavy / 64 | 1,342 | 22,054 | 1,855,696 | 229,376 |
+
+An earlier exploratory codec draft lacked complete resident-type accounting and
+was faster: vector/1024 auto encode 2.087 ms versus final 3.902 ms; scalar/1024 auto
+encode 146.66 versus 182.56 µs. Criterion reported regressions against that local
+draft. It was not a correct/released baseline or controlled A/B/A experiment, and
+host drift is not separated from the extra checks. The required bounds are retained;
+no optimization or existing-product speedup is claimed. The checked scalar-write
+loop is a potential later measured optimization, not a reason to weaken admission.
+
+The [format/limits contract](docs/v2/format-2-logical-transactions.md) and independent
+goldens/atomic-apply tests define correctness. Long recovery campaigns and native
+cross-platform qualification remain with their owning work items.
+
 ## Running benchmarks
 
 `scripts/run-benches.sh` is the sanctioned entry point. Direct `cargo bench
@@ -29,10 +1024,10 @@ check one thing:
 run-benches.sh --list                          # enumerate registered benches + smoke subset
 run-benches.sh --smoke                          # curated <~60s tripwire subset (profile quick)
 run-benches.sh                                  # FULL run, every bench (the north-star sweep)
-run-benches.sh --bench wal                      # one bench bin (scoped compile + run)
+run-benches.sh --bench store_control              # one bench bin (scoped compile + run)
 run-benches.sh --bench vector_graph_retrieval --compile-only  # compile tripwire, no Criterion run
 run-benches.sh --crate selene-db-graph          # every bench in one package
-run-benches.sh --bench wal --filter body_size   # one criterion group within a bin
+run-benches.sh --bench logical_wal --filter encode   # one criterion group within a bin
 run-benches.sh --bench graph_hub_delete --sample-size 50 --measurement-time 5   # A/B fidelity knobs
 run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
@@ -123,6 +1118,491 @@ runner invocation, `scripts/criterion-summary.sh <criterion-id>` prints
 tab-separated sample count, median, mean, standard deviation, and sample p95 in
 milliseconds for quick variance checks.
 
+## §0 selene-catalog
+
+Bench bin: `catalog_descriptors`. It measures canonical-name lookup, typed-ID
+lookup, and `Arc` snapshot clone at 100 and 1,000 schema-owned objects in the
+quick profile. The full profile adds 10,000 objects.
+
+M02-PR02 quick evidence was recorded on 2026-08-23 with Apple M5 (10 cores,
+16 GiB), macOS 26.7 build 25G220, rustc 1.97.1, and the worktree based on
+`7bd53af3f112c4a912e894075ccc9c1ab80494fd`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_descriptors
+```
+
+Two consecutive quick runs produced the following median ranges. The profile's
+10 samples are a smoke envelope, so these rows are recorded evidence rather
+than regression thresholds.
+
+| Bench | 100 objects | 1,000 objects | Notes |
+|---|---:|---:|---|
+| `catalog_descriptor/canonical_name_lookup` | 30.341–30.623 ns | 90.714–109.02 ns | `BTreeMap<CatalogName, CatalogObjectId>` lookup with a pre-canonicalized query. |
+| `catalog_descriptor/snapshot/clone_arc` | 3.6660–4.1816 ns | 3.6604–3.8273 ns | Clone one immutable snapshot handle; descriptor count does not change the operation. |
+| `catalog_descriptor/snapshot/read_by_id` | 4.7855–5.7107 ns | 9.7319–11.730 ns | `BTreeMap` point lookup keyed by typed descriptor ID. |
+
+The bench also prints `CatalogSnapshot::memory_accounting`. This is a
+reproducible structural lower bound, not process resident memory: it sums inline
+descriptor/dictionary key-value sizes and owned string capacities, and excludes
+declaration payload heap allocations, allocator metadata, `BTreeMap` node slack,
+and `Arc` control blocks. The historical table below predates typed declarations;
+it is not current total-memory accounting.
+
+| Objects | Descriptors | Accounted bytes / descriptor | Dictionary entries | Accounted bytes / entry |
+|---:|---:|---:|---:|---:|
+| 100 | 103 | 197.40 B | 101 | 95.80 B |
+| 1,000 | 1,003 | 197.94 B | 1,001 | 95.98 B |
+
+### Scalar expression indexes — F05-PR06 / #1097
+
+The `scalar_expression` target isolates 1,000 JSON-valued `:Doc` nodes. The
+selective key matches one row; the nonselective key matches 999. `false`/`true`
+mean scan-only/no expression registration versus a maintained expression index.
+Each query checks its expected count before timing. Maintenance includes the same
+facade selection, one JSON replacement and publication on both paths. Rebuild
+measures complete expression-key construction/publication and database drop;
+fixture population is outside timing, with one fixture per iteration.
+
+```bash
+scripts/run-benches.sh --bench scalar_expression --compile-only
+scripts/run-benches.sh --profile quick --bench scalar_expression
+/usr/bin/time -l scripts/run-benches.sh --profile quick --bench scalar_expression --filter rebuild
+```
+
+The scan-budget regression separately proves exactly one visited candidate for a
+selective query over 128 nodes (budget zero fails, one succeeds); scan-only
+execution exceeds budget one. This is execution evidence, not an index-existence
+flag. Command-level RSS includes Cargo/runner processes and benchmark fixtures,
+not merely key allocations. On native arm64 macOS 27.0 (26A5425a), rustc 1.97.1,
+optimized bench profile/thin LTO/one codegen unit and mimalloc, the isolated target
+used 10 samples, 100 ms warmup and a requested 500 ms measurement window:
+
+| 1,000 nodes | Scan/no expression index | Expression index |
+|---|---:|---:|
+| Selective (1 match) | 371.53–459.84 µs | 91.397–95.024 µs |
+| Nonselective (999 matches) | 372.91–428.15 µs | 387.00–403.64 µs |
+| One JSON update, including selection/publication | 307.95–318.09 µs | 302.74–321.79 µs |
+| Complete rebuild/publication and database drop | — | 630.44–701.94 µs |
+
+Intervals are Criterion confidence intervals, not observed min/max. The subsequent
+rebuild-only command measured 598.60–655.22 µs, took 1.62 s and reported 93,093,888
+bytes maximum command RSS. This is not per-index retained heap or a
+power-loss/durable-write measurement. An earlier
+run in the broad `catalog_lifecycle` binary included unrelated fixture setup and
+reported 497,025,024 bytes command RSS; it is not used for memory attribution.
+Criterion automatically compared the same group names across earlier runs;
+those percentages are not a controlled before/after result and are not claimed.
+Absolute timings varied across runs, including the unchanged scan baseline;
+the nonselective and maintenance intervals do not establish a speed advantage.
+
+### Catalog lifecycle facade
+
+F05-PR05 adds the `composite_constraints` group to the existing
+`catalog_lifecycle` target (no new benchmark target). It measures 100 and 1,000
+nodes at key arities 1 and 2. Activation includes complete backing construction
+and publication; fixture population is outside that measurement. `one_update`
+uses an indexed equality selection. Mixed commit/rollback rows contain one
+delete, one key-reusing create and one update in an explicit transaction. These
+are absolute in-memory facade latencies, not isolated index probes, durable WAL
+latencies, or a baseline speedup claim. Each transaction preserves graph size.
+
+```bash
+scripts/run-benches.sh --bench catalog_lifecycle --compile-only
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter composite_constraints
+```
+
+Graph unit tests independently prove bounded old/new affected-entity work at 10
+and 10,000 nodes and arities 1 and 2; timing is not used as a complexity proof.
+
+Measured on native Apple M5 / 16 GiB, macOS 27.0 (26A5425a), rustc 1.97.1,
+optimized bench profile with thin LTO, one codegen unit and mimalloc. Serialized
+quick runs use 10 samples, 100 ms warmup and a requested 500 ms measurement
+window (Criterion extends slow rows). Reported intervals are confidence
+intervals, not observed min/max. No comparative baseline was measured.
+
+| Nodes / arity | Activation | One key update | Mixed commit | Mixed rollback |
+|---|---:|---:|---:|---:|
+| 100 / 1 | 262.56–269.61 µs | 112.12–117.39 µs | 0.9538–0.9697 ms | 0.9303–0.9847 ms |
+| 100 / 2 | 307.75–325.00 µs | 114.24–119.28 µs | 1.0467–1.0699 ms | 1.0058–1.0529 ms |
+| 1,000 / 1 | 2.6700–2.7430 ms | 142.55–149.11 µs | 6.0816–6.4663 ms | 6.0095–6.3386 ms |
+| 1,000 / 2 | 3.1331–3.2602 ms | 152.58–155.04 µs | 7.0460–7.6101 ms | 6.8274–7.2759 ms |
+
+The mixed rows retain ordinary facade request overhead and mutation planning,
+and commit rows accumulate tombstone churn; they are not an O(delta) claim for
+the whole database. The table records the final run. An earlier interim run had
+wider intervals; Criterion's automatic comparison to it is not a matched
+baseline experiment and is not used for a speedup claim.
+
+F02-PR02 adds `catalog_declaration/{lookup,clone_arc,draft_build}` to
+`catalog_descriptors` and `catalog_declaration/outer_publication` to
+`catalog_lifecycle`. These are additional groups in the existing registered
+targets, not new benchmark binaries.
+
+The following first table is the **pre-correction implementation**, before exact
+physical binding and end-to-end eligibility were corrected. Current-worktree
+measurements follow it. BTreeMap descriptor lookup is not runtime query overhead.
+
+Measured 2026-09-10 on Apple M5 (10 cores, 16 GiB), native arm64 macOS 27.0
+build 26A5425a, rustc 1.97.1, bench profile (opt-level 3, thin LTO, one codegen
+unit), mimalloc, worktree based on `099a7129436abbe9b35fb9df209b544641bcd03f`:
+
+```bash
+scripts/run-benches.sh --bench catalog_descriptors --compile-only
+scripts/run-benches.sh --bench catalog_lifecycle --compile-only
+scripts/run-benches.sh --profile quick --bench catalog_descriptors --filter catalog_declaration
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_declaration/outer_publication
+```
+
+Runs were serialized, with 10 samples, 100 ms warmup, and a requested 500 ms
+measurement window (Criterion extended the slowest rows). Intervals below are
+Criterion's reported time confidence intervals, not min/max observed samples.
+These are absolute characterization measurements, not a matched-baseline
+speedup claim or a release regression threshold.
+
+| Graph owners × declarations per owner | Owner/name lookup | Snapshot clone/drop | Detached catalog clone/validate/build/drop | Facade declaration create/publication |
+|---|---:|---:|---:|---:|
+| 100 × 4 | 17.031–17.221 ns | 3.2895–3.2967 ns | 131.37–131.82 µs | 303.05–317.31 µs |
+| 100 × 16 | 23.990–24.234 ns | 3.2946–3.3034 ns | 545.59–550.37 µs | Not measured |
+| 1,000 × 4 | 19.505–19.598 ns | 3.2945–3.3434 ns | 1.7608–1.7764 ms | Not measured |
+| 1,000 × 16 | 34.496–34.777 ns | 3.3005–3.3699 ns | 7.1263–7.2542 ms | 14.392–14.866 ms |
+
+Lower fixtures mix scalar, 384-dimensional flat-vector, text, and inactive
+arity-one constraint declarations. Only logical configurations are present, not
+accelerators. The draft row includes metadata cloning, complete validation,
+replacement construction and destruction; it is not an outer database store.
+Facade fixtures mix scalar/vector/text declarations across real empty graphs
+and include the frozen native inventory. The facade row times creation of one
+inactive projection declaration, including reservation, metadata validation,
+derived owner binding, outer publication and acknowledgement. Input cloning,
+initial fixtures, and the paired cleanup drop are outside the clock. Neither
+row measures filesystem durability. Snapshot clones share one `Arc`; draft and
+publication costs remain scale-dependent and are not claimed O(1).
+
+The facade rows were rebuilt and remeasured after the final descriptor-revision
+publication guard. An earlier intermediate-worktree run measured
+277.21–283.89 µs and 11.781–12.256 ms respectively. Criterion reported increases
+of approximately 10.7% and 21.8% against those saved intermediate samples. This
+is disclosed validation overhead, not a comparison against the supplied base
+revision; the correctness guard is retained. Larger catalog publication remains
+a measured follow-up, not grounds to weaken admission or claim a speedup.
+
+#### F02-PR02 pre-delivery correction: current measurements
+
+The same native host, toolchain, allocator, codegen, sample count, and clock
+boundaries above were used. Rebuilt, serialized reruns of the two existing
+catalog groups produced these current confidence intervals:
+
+| Graphs × declarations | Descriptor lookup | Snapshot clone/drop | Detached catalog build/drop | Facade declaration publication |
+|---|---:|---:|---:|---:|
+| 100 × 4 | 16.817–17.379 ns | 3.3506–3.5540 ns | 132.25–140.24 µs | 284.87–289.02 µs |
+| 100 × 16 | 25.210–26.189 ns | 3.3201–3.5222 ns | 550.90–588.50 µs | Not measured |
+| 1,000 × 4 | 19.633–20.873 ns | 3.3348–3.5450 ns | 1.7740–1.8942 ms | Not measured |
+| 1,000 × 16 | 34.286–36.352 ns | 3.3590–3.5607 ns | 6.9060–7.3854 ms | 11.946–12.247 ms |
+
+The added `catalog_runtime_binding` group in `catalog_lifecycle` measures the
+actual property/vector accessor and typed candidate-probe paths. Each fixture
+has **1,024 nodes and one physical index**; vector fixtures use 16-dimensional
+flat indexes. Bound/unbound variants share identical physical data and index
+allocations. Owner declaration counts are 1, 16, and 256: one ready registration
+named `zz_query`, sorted after the remaining inactive, non-backed declarations.
+All setup and key/value construction is outside the clock. Accessor rows include
+returned Arc clone/drop; candidate rows include the one-hit candidate result's
+construction/drop. These are access/probe costs, not ANN scoring or whole-query
+latency. No concurrent build/benchmark was launched during measurement.
+
+```bash
+scripts/run-benches.sh --bench catalog_lifecycle --compile-only
+# Before correcting the runtime implementation:
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_runtime_binding --save-baseline f02-pr02-pre-correction
+# After correction, against that saved same-fixture baseline:
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_runtime_binding --baseline f02-pr02-pre-correction
+scripts/run-benches.sh --bench catalog_descriptors --compile-only
+scripts/run-benches.sh --profile quick --bench catalog_descriptors --filter catalog_declaration
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_declaration/outer_publication
+```
+
+All intervals below are nanoseconds. Exact IDs are
+`catalog_runtime_binding/<operation>_<bound|unbound>/<declarations>`.
+
+| Operation | Declarations | Before, unbound | Before, bound | Corrected, unbound | Corrected, bound |
+|---|---:|---:|---:|---:|---:|
+| property_access | 1 | 9.1176–9.3897 | 39.276–40.577 | 9.7657–9.8719 | 28.007–29.453 |
+| property_access | 16 | 9.0791–9.3374 | 41.461–43.899 | 9.9713–10.339 | 27.877–29.257 |
+| property_access | 256 | 8.7615–9.1785 | 141.58–148.02 | 9.6340–10.084 | 27.700–28.608 |
+| vector_access | 1 | 9.1856–9.3963 | 40.690–41.476 | 9.7089–10.206 | 28.411–29.512 |
+| vector_access | 16 | 9.2243–9.4754 | 42.269–44.097 | 9.9783–10.621 | 28.291–29.796 |
+| vector_access | 256 | 9.0882–9.4875 | 143.05–151.40 | 10.004–10.511 | 28.350–28.946 |
+| candidate_probe | 1 | 44.986–46.638 | 44.475–45.877 | 44.512–45.899 | 62.287–65.714 |
+| candidate_probe | 16 | 42.009–42.707 | 42.872–45.213 | 44.986–46.993 | 61.152–64.196 |
+| candidate_probe | 256 | 42.764–44.055 | 42.027–43.989 | 43.285–44.514 | 62.143–64.046 |
+
+The original bound accessor cost grew with owner declarations. Admission now
+precompiles keyed metadata, with no whole-owner scan or String-to-DbString/Vec
+construction on scalar/vector probes. Current native names/configuration and
+drift remain checked. Bound access at 256 declarations improved by about 81% in
+this matched fixture. Unbound accessor controls rose roughly 0.6–1.2 ns, and are
+reported rather than hidden. The **candidate-probe increase is correctness
+overhead**: its original bound path bypassed eligibility entirely; it now pays
+the required check. This is not a claim that candidate queries became faster.
+Ten-sample results remain characterization, not general throughput guarantees.
+
+Bench bin: `catalog_lifecycle`. The quick profile measures absolute schema
+resolve, deterministic schema listing, outer snapshot clone, schema
+create/drop publication at 16 and 256 user schemas, and default/authenticated
+session-context creation at 4 and 32 registered graphs. The full profile adds
+1,024 schemas and 128 graphs. M03-PR04 Part 1 adds focused direct-reservation,
+selected graph staging/publication, and publish-then-read rows at one graph.
+The create and drop rows time only the named operation; the inverse operation
+restores the fixture outside the returned Criterion duration.
+
+M02-PR03 quick evidence was recorded on 2026-08-23 with Apple M5 (10 cores,
+16 GiB), macOS 26.7 build 25G220, rustc 1.97.1, and the worktree based on
+`69c95581f30a83c67502a61135ac17bc83862643`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle
+```
+
+These are 10-sample Criterion confidence intervals from one quick run. They are
+recorded baselines, not regression thresholds.
+
+| Bench | Small scale | Large scale |
+|---|---:|---:|
+| `catalog_lifecycle/read/resolve_schema` | 74.176–78.665 ns (16 schemas) | 143.43–151.37 ns (256 schemas) |
+| `catalog_lifecycle/read/list_schemas` | 820.21–908.02 ns (16 schemas) | 16.063–17.124 µs (256 schemas) |
+| `catalog_lifecycle/read/clone_outer_snapshot` | 3.8280–4.1036 ns (16 schemas) | 3.8296–3.8889 ns (256 schemas) |
+| `catalog_lifecycle/outer_snapshot_publication/create_schema` | 3.0397–3.1255 µs (16 schemas) | 68.633–71.906 µs (256 schemas) |
+| `catalog_lifecycle/outer_snapshot_publication/drop_schema` | 3.0956–3.3848 µs (16 schemas) | 67.853–70.335 µs (256 schemas) |
+| prior named graph-open row (removed) | 116.55–135.69 ns (4 graphs) | 141.25–151.78 ns (32 graphs) |
+
+M02-PR05 selected-session evidence was recorded on 2026-08-24 on the same
+Apple M5 host with the worktree based on
+`cc740b8ba3d3f4c4a70957c3b83e4fe4701f3532`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle
+```
+
+The renamed row resolves the graph and constructs its stable-ID facade session.
+This is one 10-sample quick run, not a regression threshold.
+
+| Bench | 4 graphs | 32 graphs |
+|---|---:|---:|
+| `catalog_lifecycle/session_creation/resolve_graph` | 133.50–135.44 ns | 158.60–160.89 ns |
+
+M03-PR01 session-context evidence was recorded on 2026-08-24 with Apple M5 (10
+cores, 16 GiB), macOS 26.7 build 25G220, rustc 1.97.1, and the worktree based on
+`002174a5ff2c5134467d4aa5bbbe8906f8c94a74`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter default_context
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter authenticated_allow_context
+```
+
+The default row resolves and copies the anonymous `SessionContext`. The
+authenticated row also invokes a local principal provider and the explicit
+allow-all policy. These are 10-sample Criterion confidence intervals from one
+quick run, not regression thresholds.
+
+| Bench | 4 graphs | 32 graphs |
+|---|---:|---:|
+| `catalog_lifecycle/session_creation/default_context` | 243.66–246.63 ns | 272.00–281.33 ns |
+| `catalog_lifecycle/session_creation/authenticated_allow_context` | 282.04–312.81 ns | 317.94–348.64 ns |
+
+#### M03-PR02 request setup evidence
+
+The request rows measure facade parse/analyze/preflight/plan/execute setup on a
+fresh empty graph. `minimal_execute` retains the compatibility
+`Session::execute("RETURN 1")` call. The parameter rows construct an explicit
+`Request` from a cloned `RequestParams`, merge it with the session dictionary,
+validate all supplied declarations, and execute `RETURN 1`; unused bindings are
+allowed by the request contract.
+
+Recorded on 2026-08-24 with Apple M5 (4 performance and 6 efficiency cores, 16
+GiB), macOS 26.7 build 25G220, rustc 1.97.1, and mimalloc. The baseline row was
+run before request lifecycle changes at
+`0071db54fc0360b6d14b65db4eae2eec21b76efa`. Current rows use the M03-PR02
+worktree based on that SHA:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/request/minimal_execute
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/request_setup
+```
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/request/minimal_execute` (base) | 8.1383–8.3502 µs |
+| `catalog_lifecycle/request/minimal_execute` (current, five repeats) | 17.695–18.865 µs; 38.052–39.029 µs; 37.151–37.882 µs; 29.840–30.434 µs; 37.182–38.677 µs |
+| `catalog_lifecycle/request_setup/0` (three repeats) | 29.854–30.338 µs; 36.303–39.293 µs; 28.723–29.008 µs |
+| `catalog_lifecycle/request_setup/10` (three repeats) | 30.931–34.076 µs; 37.855–39.264 µs; 18.247–19.338 µs |
+| `catalog_lifecycle/request_setup/100` (three repeats) | 43.875–44.334 µs; 50.982–51.597 µs; 31.325–31.812 µs |
+| `catalog_lifecycle/request_setup/1000` (three repeats) | 197.69–201.31 µs; 202.95–209.45 µs; 184.76–191.45 µs |
+
+The current rows varied substantially across repeated quick runs. These
+measurements do not support an improvement claim.
+
+#### M03-PR05 persistent session-control rows
+
+The `catalog_lifecycle/session_control` group measures a validated prepared-plan
+hit, reprepare after a session-characteristic dependency miss, SET/RESET graph
+resolution, and ten repeated short requests. The facade cache retains only the
+request-independent compiled plan and always binds fresh request values.
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/session_control
+```
+
+Recorded on 2026-08-29 on arm64 macOS 26.7 (25G220), rustc 1.97.1, with
+mimalloc. This is one 10-sample quick run; the rows are characterization, not
+regression thresholds or performance claims.
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/session_control/prepared_cache_hit` | 882.27–920.48 ns |
+| `catalog_lifecycle/session_control/characteristic_miss_reprepare` | 916.43–935.03 ns |
+| `catalog_lifecycle/session_control/set_reset_graph_resolve` | 15.000–15.854 µs |
+| `catalog_lifecycle/session_control/repeated_short_query_10` | 8.9000–9.0822 µs |
+
+#### M04-PR01 facade reference validation
+
+The `catalog_lifecycle/reference_validation` group measures successful runtime
+validation for one database-scoped graph, node, or edge handle. The fixture has
+one graph, two live nodes, and one live edge. Graph validation also resolves and
+copies its facade descriptor; node/edge rows cover the stable-ID liveness lookup
+under the selected graph lifecycle lease. These are characterization rows, not
+regression thresholds or an improvement claim.
+
+```bash
+scripts/run-benches.sh --bench catalog_lifecycle --compile-only
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/reference_validation
+```
+
+Recorded on 2026-08-31 on arm64 macOS 26.7 (25G220), rustc 1.97.1, with
+mimalloc and the M04-PR01 worktree based on
+`6de963c991c476a9853df13280fc46ae0e1192d8`. This is one 10-sample quick run.
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/reference_validation/graph` | 64.686–67.491 ns |
+| `catalog_lifecycle/reference_validation/node` | 50.063–53.285 ns |
+| `catalog_lifecycle/reference_validation/edge` | 50.252–55.794 ns |
+
+#### M03-PR03 execution-context microbenchmarks
+
+Bench bin: `execution_context`. The focused rows cover root construction,
+child push/drop cleanup, immutable record amendment, a two-row/two-column
+binding-table construction, and statement-result conversion including declared
+descriptor allocation. They are characterization rows, not regression claims.
+
+```bash
+scripts/run-benches.sh --profile quick --bench execution_context
+```
+
+#### M03-PR04 Part 1 publication-authority evidence
+
+The `catalog_lifecycle/transaction_authority` group characterizes the new
+in-memory authority without claiming an improvement. The direct row includes
+one common reservation and outer catalog publication. The selected insert row
+includes single-pass planning, CORE-only scratch construction, unpublished
+graph preparation, replacement construction, and one outer publication. The
+publish-then-read row adds a read-only request that must observe the complete
+new graph. Cleanup runs outside each returned Criterion duration.
+
+Recorded on 2026-08-26 with Apple M5 (10 cores, 16 GiB), macOS 26.7 build
+25G220, rustc 1.97.1, mimalloc, and the M03-PR04 Part 1 worktree based on
+`1b6d801e43d6d2ded02ba74edf28824f3b36db26`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/transaction_authority
+```
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/transaction_authority/direct_schema_reserve_publish` | 590.55–593.91 ns |
+| `catalog_lifecycle/transaction_authority/selected_insert_stage_publish` | 123.06–146.13 µs |
+| `catalog_lifecycle/transaction_authority/selected_publish_then_read` | 256.49–271.13 µs |
+
+#### M03-PR04 Part 2 transaction-demarcation characterization
+
+The existing `catalog_lifecycle/transaction_authority` group now also measures
+empty read-write start/commit and start/rollback, read-only snapshot acquisition
+plus rollback, implicit one-write staging/publication, and four explicit staged
+writes plus one commit. Cleanup is outside each returned Criterion duration.
+These are quick characterization numbers, not an improvement claim.
+
+Recorded on 2026-08-26 with Apple M5 (10 cores, 16 GiB), macOS 26.7 build
+25G220, rustc 1.97.1, and mimalloc on the M03-PR04 Part 2 worktree based on
+`4750e2efd799bfb95766b9687d8cdee14fb054fe`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter catalog_lifecycle/transaction_authority
+```
+
+| Bench | 10-sample quick interval |
+|---|---:|
+| `catalog_lifecycle/transaction_authority/empty_start_commit` | 310.53–312.20 ns |
+| `catalog_lifecycle/transaction_authority/empty_start_rollback` | 307.90–327.35 ns |
+| `catalog_lifecycle/transaction_authority/read_snapshot_start_rollback` | 307.25–320.63 ns |
+| `catalog_lifecycle/transaction_authority/selected_insert_stage_publish` | 179.61–226.71 µs |
+| `catalog_lifecycle/transaction_authority/explicit_four_write_stage_commit` | 1.2539–1.4208 ms |
+
+#### M02-PR04 part 1 quick evidence
+
+The `catalog_lifecycle/gql_ddl` group issues the same schema and graph
+lifecycle commands as GQL database-catalog statements through a selected
+facade `Session`, at the same schema scales as the Rust-API publication
+rows. Timed rows cover only the GQL statement; the inverse operation restores
+the fixture through the Rust API outside the returned duration. The
+`create_or_replace_graph_gql` row replaces the fixture graph on every
+iteration (drop admission plus create in one publication) and needs no
+cleanup. The `create_graph_if_not_exists_noop_gql` row publishes nothing and
+isolates the per-request parse/analyze/plan cost of the fresh lower session
+(there is no plan cache on this path), which is the constant difference
+between a GQL row and its Rust-API counterpart.
+
+The group also includes `create_graph_type_gql` and `create_bound_graph_gql`.
+The first times the bounded property-free node definition and removes it through
+the Rust API outside the timed interval. The second resolves that named type and
+constructs a closed graph; graph cleanup is outside the timed interval.
+
+Recorded on 2026-08-23 with Apple M5 (10 cores, 16 GiB), macOS 26.7 build
+25G220, rustc 1.97.1, and the worktree at `ac93178f` plus the
+`CREATE OR REPLACE GRAPH` repair:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle
+```
+
+10-sample Criterion confidence intervals from one quick run; recorded
+baselines, not regression thresholds. The Rust-API rows from the same run are
+listed for direct comparison. The `create_or_replace_graph_gql` 16-schema
+interval was wide in this run; the immediately preceding run of the same
+command measured it at 59.478–60.154 µs.
+
+| Bench | 16 schemas | 256 schemas |
+|---|---:|---:|
+| `catalog_lifecycle/outer_snapshot_publication/create_schema` (Rust API) | 2.8742–2.9183 µs | 61.384–62.220 µs |
+| `catalog_lifecycle/outer_snapshot_publication/drop_schema` (Rust API) | 2.7734–2.8207 µs | 63.339–69.788 µs |
+| `catalog_lifecycle/gql_ddl/create_schema_gql` | 32.367–32.958 µs | 89.828–91.754 µs |
+| `catalog_lifecycle/gql_ddl/create_graph_gql` | 43.711–44.740 µs | 101.50–103.25 µs |
+| `catalog_lifecycle/gql_ddl/drop_graph_gql` | 50.772–51.826 µs | 104.27–104.74 µs |
+| `catalog_lifecycle/gql_ddl/create_or_replace_graph_gql` | 62.227–84.952 µs | 113.69–115.11 µs |
+| `catalog_lifecycle/gql_ddl/create_graph_if_not_exists_noop_gql` | 30.446–31.413 µs | 29.980–30.527 µs |
+
+The graph-type rows were recorded on 2026-08-24 on the same host, from the
+M02-PR04 part 2 worktree based on `1fab61fadfa5dd14f8f14df0f5b0952c2dc2ecce`:
+
+```bash
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter create_graph_type_gql
+scripts/run-benches.sh --profile quick --bench catalog_lifecycle --filter create_bound_graph_gql
+```
+
+| Bench | 16 schemas | 256 schemas |
+|---|---:|---:|
+| `catalog_lifecycle/gql_ddl/create_graph_type_gql` | 41.415–70.516 µs | 111.64–147.30 µs |
+| `catalog_lifecycle/gql_ddl/create_bound_graph_gql` | 40.340–41.438 µs | 95.606–98.579 µs |
+
 ## §1 selene-core
 
 Bench bins: `value_clone`, `vector_wgpu`. `value_clone` measures `Value` /
@@ -178,6 +1658,88 @@ also registers the Rayon rows when WGPU adapter discovery fails, so local Metal
 availability issues do not hide the CPU-parallel baseline. It is not a
 production accelerator API.
 
+### Exact numeric grouping keys
+
+`value_clone` also registers `core_numeric_keys/{construct,lookup,compare_mixed}`
+at 1 and 1,024 values. The larger fixture cycles through all seven numeric
+representations; peers express the same independently known integer through a
+different representation. Setup checks equality before measurement. Construction
+discards inline keys; lookup copies retained keys; comparison includes construction
+of both operands. These are numeric-key rows, not structural descriptor or
+runtime-to-stored conversion measurements.
+
+Native aarch64 macOS, Rust 1.97.1, optimized bench profile, mimalloc, quick
+Criterion configuration (10 samples, 100 ms warmup, 500 ms measurement),
+2026-09-10:
+
+```bash
+scripts/run-benches.sh --profile quick --bench value_clone --filter core_numeric_keys
+scripts/run-benches.sh --profile quick --bench expression_eval --filter predicate/range
+```
+
+| Row | Reported timing interval |
+|---|---:|
+| `core_numeric_keys/construct/1` | 1.9473–2.0504 ns |
+| `core_numeric_keys/lookup/1` | 0.78745–0.81654 ns |
+| `core_numeric_keys/compare_mixed/1` | 5.4853–5.6161 ns |
+| `core_numeric_keys/construct/1024` | 2.1153–2.5707 µs |
+| `core_numeric_keys/lookup/1024` | 284.06–298.54 ns |
+| `core_numeric_keys/compare_mixed/1024` | 6.2225–6.4993 µs |
+
+The benchmark reports `Value = 32 B`, `NumericKey = 32 B`, and retained key
+vector capacity of 32/32,768 B. This is layout/capacity measurement, not an
+allocator event count or RSS measurement. Numeric keys own no heap storage;
+the vectors are fixture setup outside the timed operation.
+
+The unchanged timed scalar range fixture measured 441.18–445.17 ns before
+the numeric-kernel change and 434.35–453.30 ns afterward. The latter run adds
+an untimed `true` result guard. Criterion reported no significant change
+(`p = 0.31`); no speedup is claimed. A competing workspace Cargo invocation
+was observed between runs and had exited before the latter run. These short
+local observations are not an exclusive-host performance qualification.
+
+### F03-PR02 owned structural descriptors
+
+`expression_eval` registers `gql_structural_types/{normalize,lower}/{1,32}`
+for closed records whose fields are non-null integer lists, plus
+`gql_structural_types/borrowed_lookup` for an already analyzed expression.
+Conversion includes output allocation and destruction; borrowed lookup excludes
+parsing, analysis and construction. No global descriptor pool is used.
+
+Native aarch64 macOS, Rust 1.97.1, optimized bench profile, mimalloc, quick
+Criterion configuration (10 samples, 100 ms warmup, 500 ms measurement),
+2026-09-10:
+
+```bash
+scripts/run-benches.sh --bench expression_eval --compile-only
+scripts/run-benches.sh --profile quick --bench expression_eval --filter 'gql_structural_types|predicate/range'
+scripts/run-benches.sh --profile quick --bench expression_eval --filter 'predicate/range'
+```
+
+| Row | Reported timing interval |
+|---|---:|
+| `gql_structural_types/normalize/1` | 70.875–73.205 ns |
+| `gql_structural_types/lower/1` | 21.197–21.827 ns |
+| `gql_structural_types/normalize/32` | 1.4606–1.4988 µs |
+| `gql_structural_types/lower/32` | 404.23–408.89 ns |
+| `gql_structural_types/borrowed_lookup` | 404.42–418.43 ps |
+| `gql_expression_eval/predicate/range` | 471.44–494.43 ns |
+
+Retained descriptor payload lower bounds are 136 B for one field and 3,112 B for
+32 fields. They include the root, named-field slice and boxed list elements,
+excluding name storage, Arc headers, allocator metadata and source/planner
+carriers. These are structural layout measurements, not allocator event counts
+or RSS. The sub-nanosecond lookup measures a warm borrowed slot only.
+
+The final scalar range row includes runtime comparability validation shared with
+UNIQUE checks. Criterion found no significant change from the preceding
+same-PR sample (487.13–510.47 ns): estimated −2.00%, interval −4.49–+0.51%,
+`p = 0.16`. The preceding sample measured a 10.99% regression against the
+retained earlier same-host baseline (interval 7.81–14.29%, `p < 0.05`), so
+comparison overhead remains a known correctness cost. These are local quick
+runs without exclusive-host qualification. No build ran concurrently with the
+measurements.
+
 | Bench | Median | Notes |
 |---|---:|---|
 | `core_value_clone/vec_mixed_1024` | 4.41 µs | Clone a 1024-element mixed-variant `Vec<Value>`. Quick local A/B after `DbString` moved to shared storage: 4.63 µs → 4.41 µs. |
@@ -188,19 +1750,19 @@ production accelerator API.
 | `core_value_clone/json_parse_object64` | 8.7265 µs (quick) | Parse and validate a 64-field JSON object with nested scalar metadata values. Latest PR-local parse-validation A/B: 10.651 µs → 8.7265 µs with the same fused validation and single-lookup duplicate-key insertion. Earlier map-backed duplicate check: 13.320 µs → 10.944 µs. |
 | `core_value_clone/property_map_from_pairs_1` | 8.509 ns (quick) | Build a one-property standard `PropertyMap`. PR-local singleton fast path A/B: 20.617 ns → 8.509 ns by returning len 0/1 maps before sort/dedup work. |
 | `core_value_clone/property_map_compact_1` | 22.327 ns (quick) | Build a one-key compact `PropertyMap`. PR-local singleton fast path A/B: 50.580 ns → 22.327 ns by collecting keys/values inline and returning len 0/1 maps before sort/dedup work. |
-| `core_value_clone/property_map_compact_postcard_encode_1` | 22.413 ns (quick) | Encode a canonical one-key compact `PropertyMap` with postcard. Latest PR-local borrowed-serde A/B: 35.921 ns → 22.413 ns by serializing canonical key/value storage by reference instead of cloning it before encode. Earlier canonical fast path: 60.158 ns → 35.470 ns by reusing length-aligned sorted compact storage. |
+| `core_value_clone/property_map_compact_logical_encode_1` | ~110 ns (quick) | Encode a one-key compact `PropertyMap` as a format-2 logical `NodeCreated` change. F02-PR08 cutover row; prior postcard row retired with the generic serde encoding (was 22.413 ns quick — the logical delta envelope costs more than the bare postcard map). |
 | `core_value_clone/property_map_from_pairs_256_reverse` | 2.6387 µs (quick) | Build a 256-property map from reverse-sorted pairs. Quick local A/B after `DbString` moved to shared storage: 3.45 µs → 2.68 µs. Canonical-scan guard after the sorted-input fast path: 2.6488 µs → 2.6387 µs. |
 | `core_value_clone/property_map_from_pairs_256_sorted` | 1.6249 µs (quick) | Build a 256-property map from already-canonical pairs. PR-local canonical fast path A/B: 2.5746 µs → 1.6249 µs by reusing the collected sorted entries directly. |
-| `core_value_clone/property_map_standard_postcard_encode_256` | 2.2996 µs (quick) | Encode a canonical 256-entry standard `PropertyMap` with postcard. PR-local borrowed-serde A/B: 3.5841 µs → 2.2996 µs by avoiding clone/sort on already-canonical entries while preserving the non-canonical public-construction fallback. |
+| `core_value_clone/property_map_standard_logical_encode_256` | ~4.0 µs (quick) | Encode a 256-entry standard `PropertyMap` as a format-2 logical `NodeCreated` change. F02-PR08 cutover row; prior postcard row retired with the generic serde encoding (was 2.2996 µs quick). |
 | `core_value_clone/property_map_compact_256_reverse` | 4.7462 µs (quick) | Build a 256-key compact map from reverse-sorted schema keys. PR-local canonical-key guard: 4.7589 µs → 4.7462 µs, preserving the existing sort/dedup path for non-canonical input. |
 | `core_value_clone/property_map_compact_256_sorted` | 1.7334 µs (quick) | Build a 256-key compact map from already-canonical schema keys. PR-local canonical-key fast path A/B: 4.6719 µs → 1.7334 µs by reusing aligned keys/values directly. |
-| `core_value_clone/property_map_compact_postcard_encode_256` | 2.5201 µs (quick) | Encode a canonical 256-key compact `PropertyMap` with postcard. PR-local borrowed-serde A/B: 3.5046 µs → 2.5201 µs by borrowing aligned compact key/value slices instead of cloning them before encode. |
+| `core_value_clone/property_map_compact_logical_encode_256` | ~4.1 µs (quick) | Encode a 256-key compact `PropertyMap` as a format-2 logical `NodeCreated` change. F02-PR08 cutover row; prior postcard row retired with the generic serde encoding (was 2.5201 µs quick). |
 | `core_change_diff/property_diff_set_1` | 9.0227 ns (quick) | Build a `PropertyDiff` with one set property and no removals. PR-local A/B: 23.291 ns → 9.0227 ns (-61.3%) by collecting directly into inline `SmallVec` storage and skipping sort/dedup for len 0/1 set inputs. |
 | `core_change_diff/property_diff_set_256_reverse` | 2.6632 µs (quick) | Build a 256-property `PropertyDiff` from reverse-sorted set entries. PR-local canonical-set guard: 2.6779 µs → 2.6632 µs, preserving the existing stable sort/dedup path for non-canonical input. |
 | `core_change_diff/property_diff_set_256_sorted` | 1.6691 µs (quick) | Build a 256-property `PropertyDiff` from already-canonical set entries. PR-local canonical-set fast path A/B: 2.5985 µs → 1.6691 µs by skipping redundant sort/dedup work. |
 | `core_change_diff/property_diff_removed_256_sorted` | 719.80 ns (quick) | Build a removal-only `PropertyDiff` with 256 already-canonical removed keys; grounds removed-side constructor and overlap-check cost separately from set-side rows. |
 | `core_change_diff/property_diff_set_removed_128_each_sorted` | 1.3453 µs (quick) | Build a disjoint `PropertyDiff` with 128 canonical set entries and 128 canonical removed keys. PR-local merge-scan overlap A/B: 2.7893 µs → 1.3453 µs (-51.9%) by walking the two sorted key lists once instead of binary-searching every set key. |
-| `core_change_diff/property_diff_postcard_encode_256_sorted` | 2.0383 µs (quick) | Encode a canonical 256-property `PropertyDiff` with postcard. PR-local borrowed-serde A/B: 3.4432 µs → 2.0383 µs by serializing canonical set/removal slices by reference while preserving the public-field sort fallback. |
+| `core_change_diff/property_diff_logical_encode_256_sorted` | ~4.2 µs (quick) | Encode a 256-property `PropertyDiff` as a format-2 logical `NodeUpdated` change. F02-PR08 cutover row; prior postcard row retired with the generic serde encoding (was 2.0383 µs quick). |
 | `core_change_diff/label_diff_added_100_reverse` | 636.81 ns (quick) | Build a 100-label `LabelDiff` from reverse-sorted added labels. PR-local canonical-label guard: 636.46 ns → 636.81 ns, preserving the existing sort/dedup path for non-canonical input. |
 | `core_change_diff/label_diff_added_100_sorted` | 411.80 ns (quick) | Build a 100-label `LabelDiff` from already-canonical added labels. PR-local canonical-label fast path A/B: 625.95 ns → 411.80 ns by skipping redundant sort/dedup work. |
 | `core_change_diff/label_diff_removed_100_sorted` | 281.86 ns (quick) | Build a removal-only `LabelDiff` with 100 already-canonical removed labels; complements the existing add-only rows. |
@@ -210,7 +1772,7 @@ production accelerator API.
 | `core_label_set/from_iter_100_sorted` | 395.12 ns (quick) | Build a 100-label `LabelSet` from already-canonical labels. PR-local canonical fast path A/B: 2.6632 µs → 395.12 ns by reusing the collected sorted labels directly. |
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
 | `core_vector_value/clone_arc/128/768/1536` | 3.12 ns / 3.12 ns / 3.13 ns (quick) | Clone `VectorValue` shared component storage; intentionally dimension-independent. |
-| `core_vector_value/postcard_roundtrip/128/768/1536` | 240 ns / 1.04 µs / 2.07 µs (quick) | Serialize and deserialize `Value::Vector`, including deserialize-time invariant checks. |
+| `core_vector_value/logical_roundtrip/128/768/1536` | ~604 ns / 3.11 µs / 6.0 µs (quick) | Encode and decode `Value::Vector` through the format-2 logical value codec (`StoredValue`), including decode-time invariant checks. F02-PR08 cutover row; prior postcard row retired with the generic serde encoding (was 240 ns / 1.04 µs / 2.07 µs quick). |
 | `core_vector_distance/squared_euclidean/128/768/1536` | 19.0 ns / 116.3 ns / 224.2 ns (full B9) | Exact lower-is-better L2-squared metric, safe `f64x4` accumulation; B9 keeps the 128-dim single-chain path and improves the widest row. |
 | `core_vector_distance/cosine/128/768/1536` | 31.0 ns / 179.7 ns / 358.6 ns (full B9) | Exact cosine distance with zero-norm checks and clamped similarity; B9 keeps one-off cosine mostly noise-flat while accelerating bound-query ANN paths. |
 | `core_vector_distance/negative_inner_product/128/768/1536` | 15.6 ns / 90.0 ns / 179.7 ns (full B9) | Max-inner-product adapter (`-dot`) with lower-is-better ordering; B9 uses four independent dot accumulators for wider vectors. |
@@ -326,13 +1888,104 @@ object-map entry API so unique keys require one map lookup.
 
 ## §2 selene-graph — read hot paths
 
-Bench bins: `single_graph`, `vector_index_rebuild`, `vector_pq`,
+### F01-PR03 mixed-edge storage control (2026-09-09)
+
+Command: `scripts/run-benches.sh --profile full --bench mixed_edge_storage --sample-size 30 --measurement-time 2`.
+Native Apple M5, Darwin arm64, rustc 1.97.1, optimized bench profile, mimalloc;
+serialized execution. Each fixture has 1,024 nodes and 1k or 10k empty-property
+edges on the same ring, including parallel identities. The directed control has
+no undirected edges; the mixed fixture alternates directed/undirected identities.
+Both have exactly N edge identities and 2N incidences. Node setup is outside the
+mutation timing; creation includes one in-memory commit, not WAL durability.
+
+| Operation | Edges | Directed time estimate | Mixed time estimate |
+|---|---:|---:|---:|
+| Enumerate all endpoint incidences | 1,000 | 9.0995 µs | 12.349 µs |
+| Enumerate IDs and inspect directionality | 1,000 | 20.296 µs | 22.213 µs |
+| Create + commit batch | 1,000 | 253.89 µs | 256.58 µs |
+| Enumerate all endpoint incidences | 10,000 | 15.358 µs | 17.540 µs |
+| Enumerate IDs and inspect directionality | 10,000 | 147.21 µs | 144.82 µs |
+| Create + commit batch | 10,000 | 2.8538 ms | 2.8211 ms |
+
+The incidence comparison adds about 36% at 1k and 14% at 10k for this topology.
+The 10k creation confidence intervals overlap (directed 2.8039–2.9183 ms;
+mixed 2.8124–2.8341 ms); this is not evidence of a mutation speedup. This is a
+same-revision topology control, **not** a pre/post revision regression claim.
+
+Fresh-process native `ps` RSS deltas after edge creation/commit were 3,964,928 B
+for both 1k fixtures (3,964.93 B/edge), and 45,465,600 B directed versus
+45,383,680 B mixed at 10k (4,546.56 versus 4,538.37 B/edge). These single-sample
+RSS deltas include allocator retention and transient commit allocations; they
+are not exact retained graph ownership sizes or evidence of a memory saving.
+The intrinsic directionality column adds one byte of payload per allocated row;
+undirected edges retain one row and one identity rather than two directed rows.
+
+Bench bins: `single_graph`, `mixed_edge_storage`, `vector_index_rebuild`, `vector_pq`,
 `vector_ivf_pq`, `vector_turbo_projection`, `vector_turbo_churn`, `vector_ivf_pressure`, `vector_mixed_workload`,
-`bulk_mutation`, `concurrent_read`, `bfs`, `text_search_bm25`. The medians below predate CORE-06 (measured at the 128 B `Value`
-layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
-(`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten at
-the next full re-baseline. `graph_node_fetch` returns a column ref (no `Value`
-clone) and is unaffected. `graph_exact_vector_scan/*` is the native graph-level
+`bulk_mutation`, `concurrent_read`, `bfs`, `text_search_bm25`. Most medians below
+predate CORE-06 (measured at the 128 B `Value` layout). `graph_node_fetch`
+returns a column ref (no `Value` clone) and is unaffected.
+
+_Re-measured 2026-08-16 (same M5 box, rustc 1.97.1): the `bulk_mutation` rows via
+`--bench bulk_mutation`, and `graph_node_fetch` / `graph_label_index_lookup` /
+`graph_typed_index_point` via
+`--bench single_graph --filter 'graph_(node_fetch|typed_index_point|label_index_lookup)'`.
+Those rows are current; every other row in §2 still carries the file-level
+2026-06-01 stamp._
+
+**⚠ #1118 regressed every read hot path here — bisected, `p = 0.00`. See #1137.**
+
+Read the three rows above against 2026-06-01 and they look mixed:
+`graph_label_index_lookup` +43.6% at 10k / +36.7% at 100k, but
+`graph_node_fetch` −17.8% and `graph_typed_index_point` −21.9%. Those net
+figures are correct, and they are also **misleading** — which is the lesson
+worth keeping from this row.
+
+An A/B across the #1118 boundary — `cee7ef6c` (#1117, already rustc 1.97.1) vs
+`33e03cc2` (#1118), toolchain held constant, and #1118 touched no bench or
+fixture file — shows all nine comparisons regressing:
+
+| Bench | pre-#1118 | post-#1118 | change |
+|---|---:|---:|---:|
+| `graph_node_fetch` 10k/50k/100k | 4.37 / 4.87 / 5.10 ns | 6.62 / 7.54 / 7.94 ns | **+51.5 / +54.9 / +55.8%** |
+| `graph_label_index_lookup` | 6.28 / 8.48 / 6.68 ns | 11.25 / 11.42 / 12.10 ns | **+79.0 / +34.6 / +81.2%** |
+| `graph_typed_index_point` | 11.80 / 11.88 / 11.91 ns | 13.22 / 13.18 / 12.84 ns | **+12.1 / +10.9 / +7.8%** |
+
+Commands: `scripts/run-benches.sh --profile full --bench single_graph --filter 'graph_(node_fetch|typed_index_point|label_index_lookup)' --save-baseline pre1118`
+at `cee7ef6c`, then the matching `--baseline pre1118` at `33e03cc2`.
+
+**A stale baseline hid a 55% regression behind a −17.8% net.**
+`graph_node_fetch` went 8.22 → ~4.4 ns between 2026-06-01 and #1117, and #1118
+then gave back half that gain. Measured only against the old baseline the row
+reads as an improvement. This is the concrete argument for section-level
+re-stamping over one ageing file-level date: a net delta spanning many commits
+cannot distinguish "never regressed" from "regressed after improving more."
+
+Severity grades with how each map changed, which is partial mechanism:
+string-keyed `MapM` (`idx_label` — `DbString` comparisons down a **sorted**
+chunked tree, replacing a one-hash `imbl::HashMap` probe) +35–81%;
+integer-keyed `MapM` (`node_id_to_row`) +52–56%; `FxHashMap`, which #1118 never
+migrated (`property_index`, behind `graph_typed_index_point`) +8–12%. **That
+last row is unexplained** — it regressed without its map changing, so some of
+the cost is a secondary layout/cache effect rather than the probe itself.
+
+Not release-blocking at single-digit nanoseconds, and #1118's write wins are
+real and large (`delete_only/n100000/1000` −86%). The point is that the trade
+was never priced: #1118's recorded A/B measured write rows only, so a read cost
+on a ~60%-read engine landed unweighed.
+
+**The prediction this section made was half right, and the miss is the
+informative half.** It said the `PropertyMap`-clone-heavy rows
+(`graph_edge_create_cascade`, `graph_mutation_commit_batch`) would both tighten
+once `Value` shrank 128 B → 32 B. `graph_mutation_commit_batch` did, hard
+(−57% to −71%). `graph_edge_create_cascade` did **not** — it moved −0.1% /
++1.5% / −4.3% across 10k/50k/100k, which is no change of the predicted kind.
+So `Value` width was not that row's dominant term; adjacency insertion is, and
+it is unaffected by payload width. (These are point-estimate deltas against the
+2026-06-01 medians, not a Criterion `--baseline` comparison, so they carry no
+p-value.) Treat the
+remaining "will tighten at the next re-baseline" expectations in this file as
+hypotheses, not scheduled wins. `graph_exact_vector_scan/*` is the native graph-level
 exact-vector oracle: label-filtered row scan plus the core vector metric
 kernels, returning stable node ids. Large exact scans use threshold-gated Rayon
 for both unindexed label rows and flat-index row sets; cancellation/deadline
@@ -678,15 +2331,15 @@ and
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `graph_node_fetch` | 8.22 ns | 8.79 ns | 9.02 ns | Near-flat O(1) columnar fetch. |
-| `graph_label_index_lookup` | 7.83 ns | 7.88 ns | 8.09 ns | Flat; `DbString`-keyed hash lookup. |
-| `graph_typed_index_point` | 15.25 ns | 15.05 ns | 15.26 ns | Flat tri-state `lookup_eq`. |
+| `graph_node_fetch` | 6.18 ns | 7.17 ns | 7.42 ns | Near-flat O(1) columnar fetch. Re-measured 2026-08-16; 100k **−17.8%**. |
+| `graph_label_index_lookup` | 11.24 ns | 10.90 ns | 11.06 ns | Flat; `DbString`-keyed hash lookup. Re-measured 2026-08-16; **10k +43.6%, 100k +36.7% — a regression, see below**. |
+| `graph_typed_index_point` | 11.89 ns | 11.95 ns | 11.92 ns | Flat tri-state `lookup_eq`. Re-measured 2026-08-16; 100k **−21.9%**. |
 | `graph_typed_index_range` | 7.05 µs | 37.89 µs | 55.74 µs | Sub-linear range scan. |
 | `graph_composite_index_proxy` | 82.8 ns | 177.1 ns | 313.9 ns | Linear. |
-| `graph_edge_create_cascade` | 362.9 µs | 747.4 µs | 1.481 ms | Mutation + commit body; teardown excluded. |
-| `graph_mutation_commit_batch` (10) | 336.7 µs | 307.6 µs | 446.9 µs | Batched commit, 10 ops. |
-| `graph_mutation_commit_batch` (100) | 408.2 µs | 420.8 µs | 552.7 µs | Batched commit, 100 ops. |
-| `graph_mutation_commit_batch` (1000) | 952.4 µs | 1.053 ms | 1.226 ms | Batched commit, 1000 ops. |
+| `graph_edge_create_cascade` | 362.5 µs | 758.9 µs | 1.417 ms | Mutation + commit body; teardown excluded. Re-measured 2026-08-16; 100k −4.3% — see the CORE-06 note above. |
+| `graph_mutation_commit_batch` (10) | 84.01 µs | 104.5 µs | 127.8 µs | Batched commit, 10 ops. Re-measured 2026-08-16; **100k −71.4%**. |
+| `graph_mutation_commit_batch` (100) | 118.8 µs | 156.5 µs | 187.2 µs | Batched commit, 100 ops. Re-measured 2026-08-16; **100k −66.1%**. |
+| `graph_mutation_commit_batch` (1000) | 437.3 µs | 479.4 µs | 521.9 µs | Batched commit, 1000 ops. Re-measured 2026-08-16; **100k −57.4%**. |
 | `graph_concurrent_reads` | 74.6 µs | 71.7 µs | 71.8 µs | Legacy row: 10 scoped threads with one snapshot read each; dominated by spawn/join. |
 | `graph_snapshot_read_loops/single_thread` | 334.14 µs | 336.52 µs | 337.36 µs | 100k snapshot reads per sample, about 3.34-3.37 ns/read; scale-flat. |
 | `graph_snapshot_read_loops/parallel_threads8` | 15.508 ms | 11.209 ms | 10.955 ms | 8 threads x 20k reads per sample, about 69-97 ns/read including scoped thread setup and contention. |
@@ -1705,13 +3358,30 @@ Bench bins: `write_txn_lifecycle`, `provider_fanout`, `bound_type_validation`,
 
 ### §3a Write-pipeline microbenches
 
+_The `write_txn_lifecycle` rows in the table below were re-measured 2026-08-16
+(same M5 box, rustc 1.97.1) via `scripts/run-benches.sh --profile full --bench
+write_txn_lifecycle`. Every other row in §3a still carries the file-level
+2026-06-01 stamp._
+
 `write_txn_lifecycle` create/delete rows below show the **batch axis at the 100k
 fixture** (the headline scale); `empty_commit` shows the scale axis.
 
 The `graph_clone` / `begin_rollback` rows are commit-floor attribution
 instruments: the committer handoff has no direct row (`seal` is
 crate-private), so derive it as `empty_commit − graph_clone −
-begin_rollback`. Current B26 attribution was measured with
+begin_rollback`. From the 2026-08-16 same-run medians (12.25 / 35.14 / 50.12 µs
+`empty_commit`, 1.106 / 11.43 / 24.6 µs `graph_clone`, 14 ns `begin_rollback`),
+the derived handoff is **~11.1 / ~23.7 / ~25.5 µs**.
+
+**The E3 conclusion still holds, but only below 100k.** The handoff outweighs
+the snapshot clone 10:1 at 10k and 2:1 at 50k, so it remains the term to attack
+for the empty-commit floor. At 100k it no longer dominates: ~25.5 µs of handoff
+against 24.6 µs of clone is a near-even split, because #1118's chunked-tree
+clone costs slightly more at the largest scale (see the persistent-map A/B
+below) while the handoff barely moved. Any future B26-style work should state
+which scale it targets rather than citing one handoff figure.
+
+The prior attribution was measured with
 `scripts/run-benches.sh --profile full --bench write_txn_lifecycle --save-baseline pre`:
 same-run `empty_commit` medians were 12.10 / 37.99 / 47.53 µs, giving a
 derived handoff of ~11.0 / ~27.5 / ~23.9 µs. A local
@@ -1726,29 +3396,23 @@ already mostly Arc-backed and does not dominate the commit floor.
 
 | Bench | Variant | Median | Notes |
 |---|---|---:|---|
-| `write_txn_lifecycle/empty_commit` | 10k / 50k / 100k | 12.10 / 37.99 / 47.53 µs | Empty-transaction commit floor. |
-| `write_txn_lifecycle/graph_clone` | 10k / 50k / 100k | 1.10 / 10.52 / 23.58 µs | One full `SeleneGraph` clone + drop — the snapshot fork `seal`'s first `guard_mut` pays. |
-| `write_txn_lifecycle/indexed_empty_commit` | 10k / 50k / 100k | 21.86 / 32.71 / 38.91 µs | No-edge typed/composite/vector/text indexed fixture; measured with `--filter write_txn_lifecycle/indexed`. |
-| `write_txn_lifecycle/indexed_graph_clone` | 10k / 50k / 100k | 0.190 / 2.01 / 5.21 µs | Index-rich clone attribution row; populated indexes are Arc-backed enough that registry clone is not the dominant term. |
-| `write_txn_lifecycle/begin_rollback` | 10k / 50k / 100k | 15.8 ns (flat) | Write-lock + allocator + `WriteTxn` build, no snapshot fork, no handoff. |
-| `write_txn_lifecycle/create_only` @100k | batch 1 / 10 / 100 / 1000 | 342 µs / 360 µs / 469 µs / 1.18 ms | Isolated node create + commit. |
-| `write_txn_lifecycle/delete_only` @100k | batch 1 / 10 / 100 / 1000 | 224 / 232 / 312 / 745 µs | Fixture seed excluded from timed body. |
+| `write_txn_lifecycle/empty_commit` | 10k / 50k / 100k | 12.25 / 35.14 / 50.12 µs | Empty-transaction commit floor. Re-measured 2026-08-16; 100k +5.4%. |
+| `write_txn_lifecycle/graph_clone` | 10k / 50k / 100k | 1.11 / 11.43 / 24.60 µs | One full `SeleneGraph` clone + drop — the snapshot fork `seal`'s first `guard_mut` pays. Re-measured 2026-08-16; 100k +4.3%, the priced-in #1118 chunked-tree tradeoff. |
+| `write_txn_lifecycle/indexed_empty_commit` | 10k / 50k / 100k | 11.28 / 32.41 / 37.42 µs | No-edge typed/composite/vector/text indexed fixture; measured with `--filter write_txn_lifecycle/indexed`. Re-measured 2026-08-16; **10k −48.4%**. |
+| `write_txn_lifecycle/indexed_graph_clone` | 10k / 50k / 100k | 0.199 / 2.24 / 5.42 µs | Index-rich clone attribution row; populated indexes are Arc-backed enough that registry clone is not the dominant term. Re-measured 2026-08-16; flat. |
+| `write_txn_lifecycle/begin_rollback` | 10k / 50k / 100k | 14.0 ns (flat) | Write-lock + allocator + `WriteTxn` build, no snapshot fork, no handoff. Re-measured 2026-08-16; still flat across scales. |
+| `write_txn_lifecycle/create_only` @100k | batch 1 / 10 / 100 / 1000 | 140 / 144 / 180 / 356 µs | Isolated node create + commit. Re-measured 2026-08-16; **−59% / −60% / −62% / −70%**. |
+| `write_txn_lifecycle/delete_only` @100k | batch 1 / 10 / 100 / 1000 | 125 / 130 / 153 / 493 µs | Fixture seed excluded from timed body. Re-measured 2026-08-16; **−44% / −44% / −51% / −34%**. |
 | `provider_fanout/core_only` | providers=core | 258.7 µs | Commit-notification baseline. |
 | `provider_fanout/extra_k1` / `k4` / `k16` | extra providers | 223.8 / 225.6 / 227.6 µs | No-op provider fanout — flat (notification is cheap). |
 | `provider_fanout/extra_k4_with_error_one` | extra=4 + error | 227.4 µs | Error-path notification scaling. |
 | `provider_fanout/extra_k4_with_panic_one` | extra=4 + panic | n/a | Opt-in `SELENE_BENCH_INCLUDE_PANIC_PROVIDER=1`. |
 | `provider_fanout/active_set_edge_create_k40` | 40 edge creates + active-set provider | 283.2 µs | In-memory commit/provider path for `CONTRADICTS`-style active-set removal; no WAL. |
 | `provider_fanout/active_set_edge_delete_k40` | 40 edge deletes + active-set provider | 218.8 µs | Delete path uses provider-owned `edge_id -> source` state to reinsert active nodes; seed excluded from timed body. |
-| `provider_fanout/active_set_wal_edge_create_k40` | 40 edge creates + WAL + active-set provider | 4.75 ms | Core WAL durability plus provider removal; provider state itself remains in-memory. |
-| `provider_fanout/active_set_wal_edge_delete_k40` | 40 edge deletes + WAL + active-set provider | 4.21 ms | Core WAL durability plus provider reinsertion; seed excluded from timed body. |
 | `provider_fanout/active_hint_recent_edge_create_k40` | 40 `RECENT_IN` creates + active-hint provider | 242.5 µs | Maintains window→member state in provider memory; no WAL. |
 | `provider_fanout/active_hint_recent_edge_delete_k40` | 40 `RECENT_IN` deletes + active-hint provider | 199.4 µs | Delete path uses provider-owned edge provenance to remove window members. |
-| `provider_fanout/active_hint_wal_recent_edge_create_k40` | 40 `RECENT_IN` creates + WAL + active-hint provider | 4.78 ms | Core WAL durability dominates active-hint membership maintenance. |
-| `provider_fanout/active_hint_wal_recent_edge_delete_k40` | 40 `RECENT_IN` deletes + WAL + active-hint provider | 4.41 ms | WAL-backed delete path remains near the active-set WAL boundary. |
 | `provider_fanout/active_hint_dependency_edge_create_k40` | 40 `DEPENDS_ON` creates + active-hint provider | 300.3 µs | Maintains anchor→dependency state for one broad task anchor; no WAL. |
 | `provider_fanout/active_hint_dependency_edge_delete_k40` | 40 `DEPENDS_ON` deletes + active-hint provider | 199.4 µs | Delete path removes dependency targets through provider-owned edge provenance. |
-| `provider_fanout/active_hint_wal_dependency_edge_create_k40` | 40 `DEPENDS_ON` creates + WAL + active-hint provider | 4.57 ms | Core WAL durability dominates dependency maintenance. |
-| `provider_fanout/active_hint_wal_dependency_edge_delete_k40` | 40 `DEPENDS_ON` deletes + WAL + active-hint provider | 4.55 ms | WAL-backed dependency deletes stay in the same cost band as active-set deletes. |
 | `bound_type_validation/unbound_commit` | 10k / 50k / 100k | 291 / 246 / 320 µs | Commit without graph-type validation. |
 | `bound_type_validation/bound_commit_simple` | 10k / 50k / 100k | 304 / 250 / 350 µs | Typed-commit validation delta (small). |
 | `bound_type_validation/bound_commit_unique` | 1k quick | 108.11 µs | Unique declaration present, but the 100-write batch updates a non-unique property and stays on the delta gate. Command: `scripts/run-benches.sh --profile quick --bench bound_type_validation --filter bound_commit_unique/1000`. |
@@ -1757,6 +3421,27 @@ already mostly Arc-backed and does not dominate the commit floor.
 | `bound_type_validation/bound_schema_change` | 10k / 50k / 100k | 2.92 / 18.6 / 39.3 ms | Full graph-state revalidation; scales with N. |
 | `bound_type_validation/bound_commit_descriptor_insert` | 10k / 50k / 100k | 354 / 360 / 635 µs | 100 creates with bounded `STRING` and `BYTES` descriptors; post-B8 in-envelope coercion reuses shared storage. |
 | `bound_type_validation/bound_commit_descriptor_update` | 10k / 50k / 100k | 362 / 499 / 565 µs | 100 updates over bounded descriptor properties; post-B8 property diffs mutate values in place. |
+
+PR-local persistent-map migration A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench write_txn_lifecycle --filter 'write_txn_lifecycle/(graph_clone|create_only|delete_only)' --save-baseline imbl-retire-pre`
+and
+`scripts/run-benches.sh --profile full --bench write_txn_lifecycle --filter 'write_txn_lifecycle/(graph_clone|create_only|delete_only)' --baseline imbl-retire-pre`.
+The empty-commit control was repeated at 10k with
+`scripts/run-benches.sh --profile full --bench write_txn_lifecycle --filter 'write_txn_lifecycle/empty_commit/10000$' --save-baseline imbl-retire-empty-repeat`
+and the matching `--baseline imbl-retire-empty-repeat` invocation;
+its 16.22 / 16.41 µs medians were statistically unchanged.
+
+| Bench | Before | After | Median delta | Notes |
+|---|---:|---:|---:|---|
+| `write_txn_lifecycle/graph_clone/10000` | 1.093 µs | 1.066 µs | -2.40% | Small snapshot forks improve slightly. |
+| `write_txn_lifecycle/graph_clone/50000` | 10.336 µs | 11.497 µs | +11.23% | The chunked-tree clone microbenchmark pays a measurable mid-scale tradeoff. |
+| `write_txn_lifecycle/graph_clone/100000` | 23.614 µs | 24.746 µs | +4.79% | The large clone-only row regresses modestly while the empty-commit control stays flat. |
+| `write_txn_lifecycle/create_only/n100000/100` | 268.71 µs | 196.77 µs | -26.77% | Batched label and id-map mutations path-copy less state. |
+| `write_txn_lifecycle/create_only/n100000/1000` | 958.15 µs | 389.63 µs | -59.34% | The larger create batch amortizes chunked-tree updates. |
+| `write_txn_lifecycle/delete_only/n100000/100` | 509.75 µs | 155.21 µs | -69.55% | Batched persistent-map removals avoid repeated HAMT update overhead. |
+| `write_txn_lifecycle/delete_only/n100000/1000` | 3.600 ms | 487.13 µs | -86.47% | The largest delete batch is the strongest product-path gain. |
 
 PR-local B7 incident-edge revalidation A/B:
 
@@ -1790,7 +3475,6 @@ and
 | `graph_mixed_workload/point_read_indexed_update_r60w40` | 10k / 50k / 100k | 9.261 / 11.129 / 16.842 ms | Same scalar cycle, but the 40 writes update `Person.age`, a registered typed property index. The close delta to the non-indexed row keeps property-index maintenance below the dominant sequential commit cost at these scales. |
 | `graph_mixed_workload/candidate_state_edge_update_r60w40` | 10k / 50k / 100k | 3.196 / 5.310 / 11.826 ms | One maintained candidate-state cycle: 60 generation-checked `current` set reads plus 20 `SUPERSEDED_BY` edge deletes and 20 creates. Exercises provider reactivation and invalidation without WAL. |
 | `graph_mixed_workload/candidate_state_metadata_edge_update_r60w40` | 10k / 50k / 100k | 2.976 / 4.333 / 9.922 ms | Same provider write cycle, but the 60 reads fetch generation-checked candidate-state metadata rather than materializing the full `current` set. The widening delta against the full-set row isolates set materialization cost. |
-| `graph_mixed_workload/point_read_update_r60w40_wal` | 10k / 50k / 100k | 139.11 / 130.07 / 134.45 ms | Same scalar 60/40 cycle backed by a real per-iteration WAL tempdir with committer batching off. Setup/teardown excluded; the near scale-flat cost shows per-commit durability barriers dominate this sequential 40-write shape. |
 
 PR-local candidate-state member-cache A/B:
 
@@ -1811,10 +3495,10 @@ Commands:
 
 Deleting a node cascades over every incident edge. GRAPH-05 made adjacency
 removal **in place**: the deleted node's own `adjacency_out`/`adjacency_in`
-entries are dropped wholesale (O(1) each) and each incident edge clears only the
-neighbor side via `imbl::HashMap::get_mut` — no per-edge full-`SmallVec` clone.
-That turned a degree-`D` hub delete from O(D²) to O(D); the curve below is now
-linear (10× degree → ~9× time). This sweeps the **degree** axis (not node scale).
+entries are dropped wholesale and incident edges are grouped by neighbor for
+batched persistent-map updates. That avoids per-edge full-`SmallVec` clones and
+the old O(D²) cascade; the curve below is linear. This sweeps the **degree**
+axis (not node scale).
 
 | Bench | degree=100 | degree=1000 | degree=10000 | Notes |
 |---|---:|---:|---:|---|
@@ -1831,12 +3515,25 @@ and
 
 | Bench | Before | After | Notes |
 |---|---:|---:|---|
-| `graph_hub_delete/100` | 41.654 µs | 40.043 µs | Label and edge-label bitmap removals now mutate through `imbl::HashMap::get_mut` instead of cloning the whole bitmap per row. |
+| `graph_hub_delete/100` | 41.654 µs | 40.043 µs | At that historical baseline, label and edge-label bitmap removals began mutating through the persistent-map entry instead of cloning the whole bitmap per row. |
 | `graph_hub_delete/1000` | 323.69 µs | 292.50 µs | Degree-1000 hub delete improves about 9.6% in this same-run full A/B. |
 | `graph_hub_delete/10000` | 4.7949 ms | 3.5108 ms | The broad edge-label bitmap path is the main win: degree-10000 hub delete improves about 26.8%. |
 | `write_txn_lifecycle/delete_only/n10000/1` | 93.417 µs | 93.511 µs | Guard row: single labeled-node delete stays neutral. |
 | `write_txn_lifecycle/delete_only/n50000/100` | 381.39 µs | 342.29 µs | Mid-scale delete-only rows are historically noisy; this branch is modestly faster, not regressed. |
 | `write_txn_lifecycle/delete_only/n100000/1000` | 3.5656 ms | 3.4152 ms | Large batch delete-only guard improves about 4.2% in this run. |
+
+PR-local persistent-map adjacency A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench graph_hub_delete --save-baseline imbl-retire-pre`
+and
+`scripts/run-benches.sh --profile full --bench graph_hub_delete --baseline imbl-retire-pre`.
+
+| Bench | Before | After | Median delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_hub_delete/100` | 43.206 µs | 40.366 µs | -6.57% | Grouped neighbor cleanup offsets persistent-tree mutation overhead. |
+| `graph_hub_delete/1000` | 307.03 µs | 285.74 µs | -6.93% | The batched adjacency path stays linear at degree 1k. |
+| `graph_hub_delete/10000` | 3.655 ms | 3.105 ms | -15.05% | Sorted bulk key removal strengthens the high-degree path. |
 
 PR-local incident-edge collector A/B:
 
@@ -1879,368 +3576,333 @@ lock collapses this. Dual of `concurrent_writers` (which times the writers).
 ### §3e `concurrent_writers` — serialized writer queueing under contention
 
 Thread fan-in arms sweep `[1, 2, 4, 8, 16, 32]` (representative `1/8/32` shown).
-Two axes:
+One axis:
 
 - **In-memory** (`threads{N}`, `threads{N}_with_readers8`) — no WAL; pure
-  single-committer queueing + lock-free reads under contention. Group commit has
-  nothing to coalesce here (no `fsync`), so it is not run on this axis.
-- **WAL-backed** (`wal_threads{N}_batchOFF` vs `_batchON`) — a real on-disk WAL
-  (tempdir per iteration; the committer is the sole `fsync` caller in
-  `SyncPolicy::OnFlushOnly`). The only axis where group commit can win, because
-  the win is coalesced `fsync` syscalls. `batchOFF` = `CommitBatching::Off` (one
-  `fsync`/commit); `batchON` = `CommitBatching::DEFAULT_ON` (coalesce ≤64 commits
-  / 8 MiB per `fsync`).
+  single-committer queueing + lock-free reads under contention.
 
-On `full`/`stress`, each WAL-backed arm also prints an **untimed**
-`[concurrent_writers percentiles] … p50/p99/p999` line to stderr (the
-tail-latency story the mean sample can't show).
+Durable contention rows belong to the facade-owned commit path
+(`durable_commit`); the WAL-backed `wal_threads{N}_batchOFF/_batchON` arms and
+their untimed percentile dumps were retired in F02-PR08 with the format-1 WAL.
+
+_Re-measured 2026-08-16 (same M5 box, rustc 1.97.1) via
+`scripts/run-benches.sh --profile full --bench concurrent_writers`._
 
 | Bench | threads=1 | threads=8 | threads=32 | Notes |
 |---|---:|---:|---:|---|
-| `concurrent_writers/threads{N}` | 332 ms | 304 ms | 305 ms | In-memory; 1000 commits, 10 updates each. |
-| `concurrent_writers/threads{N}_with_readers8` | 726 ms | 641 ms | 651 ms | Same load + 8 snapshot readers. |
-| `concurrent_writers/wal_threads{N}_batchOFF` | 4.71 s | 3.86 s | 3.83 s | Real WAL, one `fsync`/commit. |
-| `concurrent_writers/wal_threads{N}_batchON` | 4.57 s | 953 ms | **269 ms** | Group commit — **14× over batchOFF at 32 threads**; ≈ batchOFF at 1 thread (nothing to coalesce). |
+| `concurrent_writers/threads{N}` | 102.8 ms | 389.3 ms | 372.2 ms | In-memory; 1000 commits, 10 updates each. **Shape changed — see below.** |
+| `concurrent_writers/threads{N}_with_readers8` | 171.3 ms | 319.3 ms | 305.5 ms | Same load + 8 snapshot readers. −76% / −50% / −53%. |
 
-## §4 selene-persist — WAL & snapshot
+**The in-memory row is no longer flat, and that is the headline.** It used to
+read 332 / 304 / 305 ms across 1 / 8 / 32 threads — near-flat, which said
+single-committer queueing cost about the same however many writers queued. It
+now reads 102.8 / 389.3 / 372.2 ms: the single-writer case got **3.2× faster**
+while 8 and 32 writers got **~25% slower**.
 
-Bench bins: `wal`, `snapshot`, plus `graph_snapshot_roundtrip` (lives in the
-`selene-graph` crate but exercises the persist/D14 path end to end).
+Both halves point at the same place. Per-commit work genuinely fell this cycle
+— `write_txn_lifecycle/create_only` is down 59–70% and `graph_mutation_commit_batch`
+down 57–71% over the same window — so the uncontended writer finishes far
+sooner. With the per-commit term that much cheaper, what remains at 8+ writers
+is contention on the single committer, and it is now the dominant cost rather
+than a rounding error on top of commit work. The crossover between "commit cost
+dominates" and "queueing dominates" has moved down; it now sits between 1 and 2
+writers on this fixture.
 
-### §4a WAL
+**Neither direction was bisected**, so treat the mechanism as the leading
+explanation rather than a measured attribution. The `_with_readers8` row
+improving 50–76% across the board while the writer-only row regresses is the
+part that most deserves a follow-up: it says lock-free reads under contention
+got cheaper at the same time writer queueing got more expensive.
 
-`scale` = WAL entries, not graph nodes. `_no_fsync` rows use
-`SyncPolicy::OnFlushOnly` (append/threshold/drop fsync suppressed; a caller
-`flush()` would still sync).
+## §4 selene-persist — empty-store control
 
-| Bench | 10k | 50k | 100k | Notes |
-|---|---:|---:|---:|---|
-| `persist_wal_append_single` | 65.2 ms | 322.4 ms | 630.9 ms | Single-entry loop, `EveryN(1000)`. |
-| `persist_wal_append_single_no_fsync` | 11.5 ms | 55.7 ms | 111.2 ms | Donor-parity diagnostic, no append fsync. |
-| `persist_wal_append_batch_1000` | 6.49 ms | 9.57 ms | 12.58 ms | 1000-change entries — **50× faster than per-entry at 100k**. |
-| `persist_wal_append_batch_1000_no_fsync` | 2.04 ms | 5.04 ms | 8.28 ms | Batched, no flush in timed body. |
-| `persist_wal_replay` | 4.23 ms | 18.67 ms | 32.27 ms | Fixed-layout header + xxh3 + BufReader. |
-| `persist_wal_open_scan` | 161.75 µs | 760.79 µs | 1.5317 ms | Writer reopen validation scan after B16 buffered open-scan. |
+Bench bin: `store_control` (format-2 empty-store directory/control overhead).
 
-#### `persist_wal_open_scan` — writer reopen validation (B16)
+### Empty-store directory/control overhead (F02-PR01)
 
-Measures `WalWriter::open` over an existing WAL with `scale` single-change
-entries. The timed body covers file open/lock, file header read, entry-header
-scan, payload checksum validation, and final committed-offset positioning; the
-WAL fixture is created outside the timed body.
+The `store_control` binary measures four `persist_store_control` rows over one
+empty store (no graph nodes, transactions, or format-2 data WAL):
 
-Commands:
+| Row | Inside the clock | Outside the clock |
+|---|---|---|
+| `anchor` | Ambient directory open, initial diagnostic canonicalization, metadata validation, handle drop | Empty directory creation/removal |
+| `open_empty` | Writer/epoch lock acquisition, bounded CURRENT/manifest validation, handle drop | Initial generation-1 creation and retained directory anchoring |
+| `create_empty` | Identity construction, locks, staging, encoding, file syncs, exclusive immutable/CURRENT publication and both directory barriers | Directory creation/anchoring and output/fixture destruction |
+| `publish_empty` | Generation-1 validation, locks, generation-2 publication with both file syncs and directory barriers | Generation-1 creation, directory anchoring and output/fixture destruction |
 
-```bash
-scripts/run-benches.sh --profile full --bench wal --filter persist_wal_open_scan --save-baseline b16_pre
-scripts/run-benches.sh --profile full --bench wal --filter persist_wal_open_scan --baseline b16_pre
-```
+Create/publication use Criterion `BatchSize::PerIteration`; returned handles and
+fixtures are destroyed outside the timed interval. No sync is suppressed. Open
+uses a warm generation-1 store; publication starts fresh at generation 1 for
+every iteration, so these rows do not claim deep-history open performance.
 
-| Bench | Before | After | Signal |
-|---|---:|---:|---|
-| `persist_wal_open_scan/10000` | 7.9089 ms | 161.75 µs | Buffered sequential scan avoids per-entry seek and reuses the payload buffer; Criterion reported −97.533%. |
-| `persist_wal_open_scan/50000` | 43.344 ms | 760.79 µs | Criterion reported −98.083%. |
-| `persist_wal_open_scan/100000` | 87.278 ms | 1.5317 ms | Criterion reported −98.083%. |
-
-#### `persist_wal_body_size_no_fsync` — entry-body packing (PERSIST-04)
-
-Fixed total changes (100k), swept changes-per-entry packing — isolates the
-per-byte serialize+write cost from the per-entry overhead the count sweeps
-cover. Per-entry overhead dominates at small bodies; the minimum is ~10k
-changes/entry, after which large-`Vec` build/alloc creeps back in. This was the
-PERSIST-04 measurement surface; the stable manual `write_vectored` candidate was
-measured-rejected on 2026-06-01 because it regressed the WAL append hot path, so
-the contiguous `Vec` + `write_all` path remains the baseline.
-
-| Bench | per-entry=100 | =1000 | =10000 | =50000 | Notes |
-|---|---:|---:|---:|---:|---|
-| `persist_wal_body_size_no_fsync` | 12.5 ms | 8.42 ms | 7.22 ms | 13.1 ms | Equal total work; U-shaped in packing; vectored write rejected. |
-
-PR-local quick WAL record-buffer reuse A/B:
-
-Commands:
-`scripts/run-benches.sh --profile quick --bench wal --filter persist_wal_append_single_no_fsync`;
-`scripts/run-benches.sh --profile quick --bench wal --filter persist_wal_body_size_no_fsync`.
-
-| Bench | Before | After | Signal |
-|---|---:|---:|---|
-| `persist_wal_append_single_no_fsync/1000` | 3.1835 ms | 1.8447 ms | Writer-owned record buffer keeps the contiguous `write_all` record shape while avoiding per-append `Vec` allocation; median is ~42% below the local pre-change baseline. |
-| `persist_wal_body_size_no_fsync/100` | 2.9168 ms | 1.9143 ms | Same allocation reuse on the 100-change packing; the 4 MiB retention cap keeps ordinary hot buffers reusable without pinning pathological max-entry allocations. |
-| `persist_wal_body_size_no_fsync/1000` | 2.4978 ms | 1.4411 ms | Same allocation reuse on the 1000-change packing; median is ~42% below the local pre-change baseline while preserving the contiguous `write_all` path. |
-
-#### `persist_wal_payload_shape_*` — scalar / JSON / vector payloads
-
-These rows keep the WAL format unchanged and isolate payload shape for the
-future WAL/compression overhaul. Quick profile writes/replays 1k changes as ten
-100-change entries with `SyncPolicy::OnFlushOnly`; setup is outside the replay
-timed body. The JSON fixture models an agent-memory metadata document, and the
-vector fixtures use 128-dim and 768-dim first-class `Value::Vector` payloads.
-
-Command:
+The companion `persist_store_control_history` group measures successful reopen
+at selected generations **1, 32 and 256**, first with every manifest retained,
+then with all unselected manifests removed. Each history is created with real
+file/directory syncs before measurement. Offline fixture removal holds writer
+ownership, occurs with no readers, and syncs the directory; this setup and final
+fixture destruction are outside the clock. Reopen includes writer/shared-epoch
+acquisition, directory scan/stat validation, the two selected payload reads,
+decode/checksum/identity validation and handle destruction. All rows are warm
+filesystem-cache measurements; no transaction data or queries are involved.
 
 ```bash
-scripts/run-benches.sh --profile quick --bench wal --filter payload_shape
+scripts/run-benches.sh --bench store_control --compile-only
+scripts/run-benches.sh --profile quick --bench store_control --sample-size 20 --measurement-time 1
 ```
 
-| Bench | scalar i64 | JSON metadata | vector128 | vector768 | Notes |
-|---|---:|---:|---:|---:|---|
-| `persist_wal_payload_shape_no_fsync` | 1.084 ms | 1.677 ms | 1.826 ms | 2.185 ms | Append path only; no fsync in timed body. |
-| `persist_wal_payload_shape_replay` | 1.433 ms | 2.870 ms | 2.514 ms | 2.908 ms | Reader open + checksum + optional decompression + postcard decode. |
+#### Pre-pivot measurements (historical)
 
-#### `persist_wal_payload_compression_sweep` — compression threshold pressure
+The following earlier numbers precede the owner-directed unified-writer and
+selected-state-only pivot; they are not current-contract performance evidence.
+Measured 2026-09-09 on Apple M5 (10 cores, 16 GiB), macOS 27.0 build 26A5425a,
+internal APFS Data volume, rustc 1.97.1, mimalloc, optimized bench profile with
+thin LTO. Candidate worktree base: `d0aaf40b`. Each row used 20 samples, a 100 ms
+warm-up and a 1 s requested measurement window; setup is excluded as above.
 
-Benchmark-only codec sweep for the future WAL rewrite. The fixture serializes
-`ChangeSet` payloads with `postcard` outside the timed body, then the timed body
-applies a candidate compression threshold, optionally runs zstd level 1, and
-computes the xxh3 checksum over the bytes that would be framed in the WAL. This
-does not write to disk and does not measure fsync.
+| Row | Criterion time estimate [95% interval] | Sample median | Sample p95 |
+|---|---:|---:|---:|
+| `anchor` | 15.477 µs [15.374, 15.577] | 0.015 ms | 0.016 ms |
+| `open_empty` | 67.734 µs [66.919, 68.770] | 0.069 ms | 0.073 ms |
+| `create_empty` | 14.997 ms [14.854, 15.141] | 14.983 ms | 15.451 ms |
+| `publish_empty` | 15.335 ms [15.069, 15.572] | 15.468 ms | 15.989 ms |
 
-Command:
+Sample medians/p95 were obtained with `scripts/criterion-summary.sh
+persist_store_control/anchor persist_store_control/open_empty
+persist_store_control/create_empty persist_store_control/publish_empty`.
+An earlier run estimated 15.600 µs, 79.482 µs, 14.157 ms and 14.423 ms respectively;
+its open row had four high-severe outliers. The final repeat reported create and
+publication approximately 5.93% and 6.32% slower than that run, while open was
+faster. This was not an isolated optimization A/B, so no cause or speedup is
+claimed. These are startup/control costs, not a regression threshold; neither
+run measures queries, cold-cache startup, long manifest history, or power loss.
 
-```bash
-scripts/run-benches.sh --profile quick --bench wal --filter persist_wal_payload_compression_sweep
-```
+#### Unified writer proof and selected-state-only reopen
 
-Quick profile on 2026-06-06 before the default threshold was raised to 4096
-bytes. `current128` was the production `COMPRESS_THRESHOLD` at measurement
-time; `never` is checksum-only. `always` mostly confirms the cost of
-compressing sub-threshold bodies, so the table keeps representative threshold
-rows and calls out sub-threshold compression in the notes.
+Re-run with the commands above on the same native M5/APFS host and Rust 1.97.1,
+after the owner-directed pivot. The optimized/mimalloc configuration, 20 samples,
+100 ms warm-up and requested 1 s measurement window are unchanged.
 
-| Payload | batch | current128 | 512 | 4096 | never | Notes |
-|---|---:|---:|---:|---:|---:|---|
-| scalar i64 | 1 | 2.23 ns | 2.23 ns | 2.23 ns | 2.23 ns | `always` compressed the tiny body at 1.19 us. |
-| scalar i64 | 10 | 1.19 us | 10.1 ns | 10.1 ns | 10.1 ns | 512 avoids compression that current128 takes. |
-| scalar i64 | 100 | 5.99 us | 6.01 us | 6.00 us | 96.4 ns | Crosses all swept thresholds below `never`. |
-| JSON metadata | 1 | 3.87 us | 6.63 ns | 6.63 ns | 6.62 ns | Single JSON record crosses current128 only. |
-| JSON metadata | 10 | 4.91 us | 4.91 us | 51.0 ns | 51.0 ns | 4096 avoids compression for this batch. |
-| JSON metadata | 100 | 15.1 us | 14.9 us | 14.8 us | 552 ns | Crosses all swept thresholds below `never`. |
-| vector128 | 1 | 4.92 us | 4.91 us | 11.3 ns | 11.3 ns | 4096 avoids single-vector compression. |
-| vector128 | 10 | 9.86 us | 9.87 us | 9.89 us | 113 ns | Crosses all swept thresholds below `never`. |
-| vector128 | 100 | 21.4 us | 21.4 us | 21.5 us | 1.18 us | Checksum-only cost rises with body size. |
-| vector768 | 1 | 7.48 us | 7.50 us | 62.3 ns | 62.3 ns | 4096 avoids single-vector compression. |
-| vector768 | 10 | 13.8 us | 13.8 us | 13.8 us | 654 ns | Crosses all swept thresholds below `never`. |
-| vector768 | 100 | 35.6 us | 35.7 us | 35.7 us | 6.59 us | Large vector batches dominate checksum too. |
+| Row | Criterion time estimate [95% interval] | Sample median | Sample p95 |
+|---|---:|---:|---:|
+| `anchor` | 16.567 µs [16.480, 16.636] | 0.017 ms | 0.017 ms |
+| `open_empty` | 76.368 µs [73.965, 79.226] | 0.073 ms | 0.085 ms |
+| `create_empty` | 13.129 ms [12.933, 13.321] | 13.201 ms | 13.626 ms |
+| `publish_empty` | 14.951 ms [14.272, 15.727] | 14.923 ms | 18.085 ms |
 
-Decision signal: the existing 128-byte threshold is aggressive for scalar,
-single JSON, and single-vector entries. Raising the threshold would avoid
-microsecond-scale zstd work on many small writes, but this benchmark is only a
-codec threshold surface; an actual WAL format or policy change still needs
-end-to-end append/replay and recovery evidence.
+| History row | Criterion time estimate [95% interval] | Sample median | Sample p95 |
+|---|---:|---:|---:|
+| `retained/1` | 74.696 µs [73.941, 75.346] | 0.074 ms | 0.076 ms |
+| `pruned/1` | 75.785 µs [74.970, 76.490] | 0.076 ms | 0.077 ms |
+| `retained/32` | 120.55 µs [115.52, 125.55] | 0.115 ms | 0.130 ms |
+| `pruned/32` | 77.301 µs [75.104, 80.164] | 0.078 ms | 0.084 ms |
+| `retained/256` | 371.02 µs [365.51, 378.01] | 0.373 ms | 0.396 ms |
+| `pruned/256` | 74.341 µs [72.850, 75.769] | 0.073 ms | 0.077 ms |
 
-#### `persist_wal_payload_compression_policy_*` — real writer policy sweep
+Per-capability unit instrumentation proves exactly two control payload opens at
+these generations, including after history removal and for ordinary publication
+base validation. **Overall reopen is not constant-time**: retained-history
+directory enumeration/stat work and its entry-name vector remain O(entries),
+as the retained rows demonstrate. Removing history leaves the same selected
+state and avoids those extra entry scans; no production history-prune API or
+epoch-reset protocol is introduced here.
 
-End-to-end companion to the codec threshold sweep. These rows use the real
-`WalWriter::open_with_compression` path added after the codec-only baseline.
-Append rows include postcard serialization, policy selection, optional zstd,
-header framing, checksum, and file writes with `SyncPolicy::OnFlushOnly`.
-Flush rows add one explicit `WalWriter::flush()` durability barrier at the end
-of the append cycle and include deterministic WAL file sizes in the row IDs.
-Replay rows build a WAL file with the selected policy in setup, then time
-reader iteration, checksum, optional decompression, and postcard decode.
+Criterion compared cached earlier results and reported anchor/open estimates
+about 6.51%/9.55% higher, create about 12.46% lower, and no significant publication
+change. These runs are not an isolated optimization A/B and no causal speedup
+is claimed. Publication had three high outliers. No sync barrier was removed to
+obtain these numbers. Native process/fault evidence is not power-loss proof.
 
-Command:
+### Retired format-1 WAL / snapshot rows (F02-PR08)
 
-```bash
-scripts/run-benches.sh --profile quick --bench wal --filter compression_policy
-scripts/run-benches.sh --profile quick --bench wal --filter compression_policy_flush
-```
-
-Quick profile on 2026-06-06 before the default threshold was raised to 4096
-bytes. `total=1000` changes. `batch` is changes per WAL entry. `current128`
-was the production default at measurement time, `threshold4096` avoids
-single-record JSON/vector compression, and `disabled` leaves every payload
-uncompressed.
-
-| Payload / batch | append current128 | append 4096 | append disabled | replay current128 | replay 4096 | replay disabled | Signal |
-|---|---:|---:|---:|---:|---:|---:|---|
-| scalar i64 / b10 | 1.70 ms | 1.33 ms | 1.51 ms | 1.36 ms | 1.21 ms | 1.17 ms | Raised threshold avoids compressing small scalar batches. |
-| JSON metadata / b1 | 6.53 ms | 2.77 ms | 2.59 ms | 3.17 ms | 1.51 ms | 1.35 ms | Single JSON records are over-compressed at current128. |
-| JSON metadata / b10 | 2.38 ms | 2.04 ms | 2.02 ms | 2.21 ms | 2.28 ms | 2.24 ms | Append improves; replay is noise-level. |
-| vector128 / b1 | 7.36 ms | 2.74 ms | 2.61 ms | 2.48 ms | 1.03 ms | 993 us | Single 128-dim vectors are over-compressed at current128. |
-| vector128 / b100 | 1.69 ms | 1.75 ms | 1.51 ms | 2.24 ms | 2.03 ms | 1.84 ms | Large vector batches need size/latency trade-off work. |
-| vector768 / b1 | 10.54 ms | 3.85 ms | 3.77 ms | 4.65 ms | 1.64 ms | 1.55 ms | Single 768-dim vectors strongly favor no compression. |
-| vector768 / b100 | 1.84 ms | 2.11 ms | 2.20 ms | 2.88 ms | 2.93 ms | 2.58 ms | Current compression can help large append bytes; replay still favors no decompression. |
-
-Flush-inclusive companion rows, with bytes-on-disk from the row IDs:
-
-| Payload / batch | file current128 | file 4096 | file disabled | flush current128 | flush 4096 | flush disabled | Signal |
-|---|---:|---:|---:|---:|---:|---:|---|
-| scalar i64 / b1 | 81,016 B | 81,016 B | 81,016 B | 7.01 ms | 7.61 ms | 7.27 ms | Tiny scalar rows do not cross either compression threshold. |
-| scalar i64 / b100 | 4,386 B | 4,386 B | 48,706 B | 5.20 ms | 5.22 ms | 5.23 ms | Large scalar batches compress heavily without a flush penalty. |
-| JSON metadata / b1 | 239,016 B | 293,016 B | 293,016 B | 11.02 ms | 7.99 ms | 7.97 ms | Current128 saves bytes but is slower for single JSON records. |
-| JSON metadata / b100 | 17,056 B | 17,056 B | 264,406 B | 6.03 ms | 6.47 ms | 6.53 ms | Large JSON batches keep the compression size win. |
-| vector128 / b1 | 439,016 B | 594,016 B | 594,016 B | 11.66 ms | 7.96 ms | 7.77 ms | Current128 saves bytes but is slower for single vectors. |
-| vector128 / b100 | 61,126 B | 61,126 B | 561,346 B | 6.03 ms | 6.10 ms | 5.72 ms | Compression gives a ~9x size win; latency is fsync/noise level. |
-| vector768 / b1 | 1,962,016 B | 3,154,016 B | 3,154,016 B | 14.98 ms | 9.03 ms | 8.56 ms | Current128 saves bytes but strongly hurts single large vectors. |
-| vector768 / b100 | 63,296 B | 63,296 B | 3,121,346 B | 6.41 ms | 6.94 ms | 7.36 ms | Compression gives a ~49x size win and remains competitive. |
-
-PR-local WAL zstd compressor-reuse A/B:
-
-Commands:
-`scripts/run-benches.sh --profile quick --bench wal --filter 'compression_policy_no_fsync/vector768/b1_threshold128|compression_policy_no_fsync/json_metadata/b1_threshold128|compression_policy_no_fsync/vector128/b1_threshold128'`;
-`scripts/run-benches.sh --profile quick --bench wal --filter 'compression_policy_no_fsync/vector768/b100_default4096|compression_policy_no_fsync/json_metadata/b100_default4096|compression_policy_no_fsync/vector128/b100_default4096'`.
-
-| Bench | Before | After | Signal |
-|---|---:|---:|---|
-| `persist_wal_payload_compression_policy_no_fsync/json_metadata/b1_threshold128` | 6.1906 ms | 5.1691 ms | Writer-owned zstd context avoids per-entry compressor setup for repeated compressed records; Criterion reported -17.542%, p=0.00. |
-| `persist_wal_payload_compression_policy_no_fsync/vector128/b1_threshold128` | 7.2361 ms | 5.9544 ms | Same repeated-compression path; Criterion reported -17.593%, p=0.00. |
-| `persist_wal_payload_compression_policy_no_fsync/vector768/b1_threshold128` | 11.197 ms | 9.8407 ms | Same repeated-compression path; Criterion reported -13.444%, p=0.00. |
-| `persist_wal_payload_compression_policy_no_fsync/json_metadata/b100_default4096` | 845.34 us | 783.59 us | Production default threshold sanity row; no statistically significant change detected. |
-| `persist_wal_payload_compression_policy_no_fsync/vector128/b100_default4096` | 592.36 us | 567.23 us | Production default threshold sanity row; no statistically significant change detected. |
-| `persist_wal_payload_compression_policy_no_fsync/vector768/b100_default4096` | 1.0910 ms | 991.21 us | Production default threshold row; Criterion reported -8.6144%, p=0.02. |
-
-Decision signal: the follow-up production policy raises the default threshold
-from 128 bytes to 4096 bytes. Disabling compression entirely is still not a
-clear global win because larger JSON/vector batches save substantial bytes with
-similar durability-inclusive latency. Future reruns compare the old policy as
-`threshold128` against the new default as `default4096`.
-
-#### `persist_wal_sync_sweep` — sync-policy sweep
-
-Append + explicit `flush()` across sync policies. The fsync-frequent policies
-(`every1`/`every10`/`every100`) are bound by `fsync` syscall latency, not
-selene-db code, and balloon to tens of seconds at 100k — they are **capped at
-≤10k** so a full sweep is not dominated by one durability cell.
-
-| Bench | 1k | 10k | 100k | Notes |
-|---|---:|---:|---:|---|
-| `persist_wal_sync_sweep/every1` | 3.74 s | 39.5 s | n/a (capped) | `EveryN(1)` — fsync per entry. |
-| `persist_wal_sync_sweep/every10` | 378 ms | 3.99 s | n/a (capped) | `EveryN(10)`. |
-| `persist_wal_sync_sweep/every100` | 47.5 ms | 479 ms | n/a (capped) | `EveryN(100)`. |
-| `persist_wal_sync_sweep/every1000` | 7.79 ms | 65.9 ms | 655 ms | `EveryN(1000)`. |
-| `persist_wal_sync_sweep/on_flush_only` | 7.60 ms | 15.8 ms | 113 ms | `OnFlushOnly` + caller flush. |
-
-### §4b Snapshot
-
-`persist_snapshot_*` measure the SLSN **container** (framing + per-section zstd +
-body hash) over synthetic byte payloads. The uncompressed companion rows isolate
-raw framing/body-hash cost with `SectionCompression::None`. `scale` drives section
-bytes.
-
-Write rows below were refreshed/added with
-`scripts/run-benches.sh --profile full --bench snapshot --filter 'persist_snapshot_(write|read|uncompressed_write|uncompressed_read)'`.
-Read rows were refreshed with
-`scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)'`.
-
-| Bench | 10k | 50k | 100k | Notes |
-|---|---:|---:|---:|---|
-| `persist_snapshot_write` | 379.1 µs | 524.4 µs | 717.5 µs | Five independently-compressed sections over highly-compressible synthetic bytes. |
-| `persist_snapshot_read` | 295.3 µs | 462.3 µs | 654.9 µs | Snapshot read-and-apply for compressed sections. |
-| `persist_snapshot_uncompressed_write` | 683.1 µs | 1.91 ms | 3.67 ms | Five uncompressed sections; exposes raw envelope write, body hash, and payload I/O cost. |
-| `persist_snapshot_uncompressed_read` | 412.4 µs | 1.72 ms | 3.41 ms | Snapshot read-and-apply for uncompressed sections. |
-| `persist_full_recovery` | 3.01 ms | 11.28 ms | 20.75 ms | Snapshot reconcile + WAL replay. |
-
-PR-local snapshot compression scheduling A/B:
-
-Commands:
-
-- `scripts/run-benches.sh --profile quick --bench snapshot --filter persist_snapshot_write --save-baseline snapshot-compression-scheduling-pre`
-- `scripts/run-benches.sh --profile quick --bench snapshot --filter persist_snapshot_write --baseline snapshot-compression-scheduling-pre`
-- `scripts/run-benches.sh --profile full --bench snapshot --filter persist_snapshot_write --sample-size 10 --measurement-time 1 --save-baseline snapshot-compression-scheduling-parallel-full`
-- `scripts/run-benches.sh --profile full --bench snapshot --filter persist_snapshot_write --sample-size 10 --measurement-time 1 --baseline snapshot-compression-scheduling-parallel-full`
-
-| Bench | Before | After | Change | Notes |
-|---|---:|---:|---:|---|
-| `persist_snapshot_write/1000` | 400.73 µs | 328.08 µs | -17.491%, p=0.00 | 64 KiB synthetic snapshot stays serial below the 1 MiB parallel-compression floor. |
-| `persist_snapshot_write/10000` | 402.28 µs | 358.67 µs | -10.946%, p=0.00 | 640 KiB synthetic snapshot also avoids Rayon setup. |
-| `persist_snapshot_write/50000` | 517.88 µs | 525.57 µs | no change, p=0.13 | 3.2 MiB synthetic snapshot keeps the existing parallel path. |
-| `persist_snapshot_write/100000` | 653.13 µs | 658.25 µs | within Criterion noise threshold | 6.4 MiB synthetic snapshot keeps the existing parallel path. |
-
-PR-local snapshot body-hash buffer A/B:
-
-Commands:
-
-- `scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)' --save-baseline snapshot-read-nozero-full-pre`
-- `scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)' --baseline snapshot-read-nozero-full-pre`
-
-| Bench | Before | After | Change | Notes |
-|---|---:|---:|---:|---|
-| `persist_snapshot_read/10000` | 291.80 µs | 295.27 µs | within Criterion noise threshold | Compressed sections are small after zstd, so the larger verification buffer does not materially move this row. |
-| `persist_snapshot_read/50000` | 473.47 µs | 462.28 µs | within Criterion noise threshold | Same compressed-read guard row. |
-| `persist_snapshot_read/100000` | 669.08 µs | 654.88 µs | within Criterion noise threshold | Same compressed-read guard row. |
-| `persist_snapshot_uncompressed_read/10000` | 574.66 µs | 412.43 µs | -27.114%, p=0.00 | Body-hash verification now streams payloads with a 64 KiB buffer instead of 8 KiB, reducing read calls over raw sections. |
-| `persist_snapshot_uncompressed_read/50000` | 2.4329 ms | 1.7219 ms | -28.537%, p=0.00 | Same large raw-section verification path. |
-| `persist_snapshot_uncompressed_read/100000` | 4.7570 ms | 3.4118 ms | -29.538%, p=0.00 | Same large raw-section verification path. |
-
-### §4c `graph_snapshot_roundtrip` — real rkyv graph encode/decode (D14)
-
-Unlike the synthetic-bytes snapshot bench above, this drives the **real**
-`CoreProvider` path over fixture rows: `IndexProvider::write_section` over every
-`CORE/*` sub-tag (rkyv archive of `CORE/NODE`+`CORE/EDGE` positional rows, D14),
-then a recovery-mode provider + `finish_recovery` (positional placement / id↔row
-rebuild). Self-validating: asserts node/edge counts survive the roundtrip once
-(untimed) before measuring. `scale` = fixture node count.
-
-| Bench | 10k | 50k | 100k | Notes |
-|---|---:|---:|---:|---|
-| `graph_snapshot_roundtrip/encode` | 2.13 ms | 15.05 ms | 31.64 ms | rkyv encode of all `CORE/*` sections. |
-| `graph_snapshot_roundtrip/decode` | 14.55 ms | 86.57 ms | 173.76 ms | Positional recovery + `finish_recovery`; duplicate-id validation is fused with row conversion. |
-| `graph_snapshot_roundtrip/roundtrip` | 18.66 ms | 104.85 ms | 219.89 ms | End-to-end (≈ encode + decode). |
-
-Encode/roundtrip rows above were refreshed with
-`scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip`.
-Decode rows were refreshed with
-`scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
-
-PR-local fused duplicate-id validation A/B:
-
-Commands:
-
-- `scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --save-baseline d14-decode-fuse-full-pre`
-- `scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --baseline d14-decode-fuse-full-pre`
-
-| Bench | Before | After | Delta | Notes |
-|---|---:|---:|---:|---|
-| `graph_snapshot_roundtrip/decode/10000` | 15.31 ms | 14.55 ms | -4.3014%, p=0.00 | `CORE/NODE` and `CORE/EDGE` now validate non-tombstone id uniqueness while converting archive rows into runtime rows, avoiding a separate full traversal. |
-| `graph_snapshot_roundtrip/decode/50000` | 88.63 ms | 86.57 ms | -2.3267%, p=0.00 | Same fused row-validation path. |
-| `graph_snapshot_roundtrip/decode/100000` | 181.54 ms | 173.76 ms | -4.2833%, p=0.00 | Same fused row-validation path. |
-
-PR-local snapshot row-position carrier A/B:
-
-Command:
-`scripts/run-benches.sh --profile quick --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
-
-| Bench | Before | After | Delta | Notes |
-|---|---:|---:|---:|---|
-| `graph_snapshot_roundtrip/decode/1000` | 1.1709 ms | 1.0824 ms | -7.7946% | Recovery now carries the decoded snapshot row position beside each recovered node/edge row instead of maintaining separate `id -> position` BTreeMaps and looking them up during materialization. Criterion reports p=0.00. |
-
-PR-local recovery row scratch-map A/B:
-
-Command:
-`scripts/run-benches.sh --profile quick --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
-
-| Bench | Before | After | Delta | Notes |
-|---|---:|---:|---:|---|
-| `graph_snapshot_roundtrip/decode/1000` | 1.0696 ms | 956.20 µs | -10.732% | Recovery stores decoded snapshot rows in hash maps and carries separate positional order vectors, avoiding per-row `BTreeMap` inserts while preserving compacted-snapshot row placement and WAL-created dense append order. Criterion reports p=0.00. |
-
-PR-local recovery bulk-liveness A/B:
-
-Commands:
-
-- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --save-baseline recovery-alive-bulk-pre`
-- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --baseline recovery-alive-bulk-pre`
-
-| Bench | Before | After | Delta | Notes |
-|---|---:|---:|---:|---|
-| `graph_snapshot_roundtrip/decode/1000` | 982.93 µs | 952.37 µs | -3.1446% | Recovery now builds node/edge liveness bitmaps locally and installs each `Arc<RoaringBitmap>` once after materialization instead of calling `Arc::make_mut` per recovered row. Criterion reports p=0.00. |
-
-PR-local direct archive-row encode A/B:
-
-Commands:
-
-- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/encode --save-baseline snapshot-encode-direct-pre`
-- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/encode --baseline snapshot-encode-direct-pre`
-
-| Bench | Before | After | Delta | Notes |
-|---|---:|---:|---:|---|
-| `graph_snapshot_roundtrip/encode/1000` | 336.17 µs | 270.58 µs | -19.184% | CORE/NODE and CORE/EDGE archive rows now encode borrowed row `PropertyMap`s directly instead of cloning them into temporary runtime rows before postcard serialization. Criterion reports p=0.00. |
+The format-1 `wal`, `snapshot`, and `graph_snapshot_roundtrip` bench bins
+were retired with the format-1 persistence cutover: the `/wal|snapshot/` criterion
+targets measured the deleted `WalWriter`/`SnapshotBuilder` APIs, and
+`graph_snapshot_roundtrip` measured the deleted rkyv `CoreProvider` section
+path. Their historical numbers are preserved in git history, not repeated here.
+Format-2 durable-cost evidence lives in the top-of-file sections
+(`durable_commit`, `durable_checkpoint`, `logical_wal`) and the
+`store_control` rows above.
 
 ## §5 selene-gql — parse / plan / execute
 
-Bench bins: `parse`, `analyze`, `plan_optimize`, `expression_eval`,
-`procedure_call_repeat`, `correlated_subquery`, `read_pipeline`, `write_e2e`.
+Bench bins: `parse`, `analyze`, `plan_optimize`, `expression_eval`, `mixed_orientation`,
+`procedure_call_repeat`, `correlated_subquery`, `read_pipeline`, `write_e2e`, `bounded_paths`.
 The first four are scale-independent (single-query CPU).
+
+### F05-PR02 bounded product-graph execution
+
+`bounded_paths` measures the native bounded automaton executor through the existing
+batch materializer, **not** the legacy statement path or endpoint reachability.
+Precompiled WALK `{0,3}` patterns produce named `(a, r, b)` bindings. Timing includes
+search, group-list allocation, batch/table construction and result drop; parsing,
+lowering, fixture creation and cardinality assertions stay outside timing. Debug
+observations are disabled. There is no cheapest-selector execution or speedup claim.
+
+Fixed scales are 64 and 256: sparse directed chains, directed cycles, parallel-edge
+chains (two edges per link), and two-layer fanout with width `scale / 8`. Fanout
+anchors at the root; other shapes start at every node. The binary prints product
+states, seed/edge candidates, hop-length counts, complete rows, estimated reservation
+events/peak bytes and cost-model projections separately from latency. Reservations
+are conservative storage estimates, **not allocator calls, actual heap bytes or RSS**.
+
+```bash
+scripts/run-benches.sh --bench bounded_paths --compile-only
+scripts/run-benches.sh --profile quick --bench bounded_paths
+```
+
+Measured 2026-09-12, Apple M5 / 16 GiB, macOS 27.0 (26A5425a), native aarch64,
+rustc 1.97.1 / LLVM 22.1.6. Workspace bench profile (opt-level 3, thin LTO,
+one codegen unit), mimalloc, no extra features, 10 samples, 200 ms warmup,
+1-second measurement. Compilation finished before this serialized run. These
+are absolute first-slice costs, not comparisons against the old executor.
+
+| Shape / scale | Complete rows | Product states | Seed/edge candidates | Time estimate (95% interval) | Estimated peak bytes | Reservation events | Projected edge-cost evaluations |
+|---|---:|---:|---:|---|---:|---:|---:|
+| sparse / 64 | 250 | 751 | 250 | 84.894 µs (83.816–85.693) | 1,285,120 | 1,003 | 370 |
+| cycle / 64 | 256 | 769 | 256 | 87.143 µs (86.586–87.688) | 1,315,840 | 1,027 | 384 |
+| fanout / 64 | 73 | 220 | 89 | 26.127 µs (25.834–26.671) | 378,880 | 295 | 136 |
+| parallel / 64 | 926 | 2,779 | 926 | 339.61 µs (338.86–341.15) | 4,746,240 | 3,707 | 2,086 |
+| sparse / 256 | 1,018 | 3,055 | 1,018 | 361.38 µs (358.03–365.34) | 5,217,280 | 4,075 | 1,522 |
+| cycle / 256 | 1,024 | 3,073 | 1,024 | 362.98 µs (361.38–365.16) | 5,248,000 | 4,099 | 1,536 |
+| fanout / 256 | 1,057 | 3,172 | 1,121 | 395.77 µs (393.02–399.27) | 5,416,960 | 4,231 | 2,080 |
+| parallel / 256 | 3,806 | 11,419 | 3,806 | 1.4897 ms (1.4815–1.4984) | 19,491,840 | 15,227 | 8,614 |
+
+The row-count increase in parallel chains is real output multiplicity, not search
+overhead. Product states include binding/test/accept positions as well as hops;
+the distinct candidate count prevents presenting output growth as an optimization.
+Allocator instrumentation and non-macOS performance remain unmeasured.
+
+### F05-PR03 selective paths and typed materialization
+
+The existing `bounded_paths` target additionally runs `gql_selected_paths`:
+128 parallel shortest ties, one 128-edge chain, and a rejected direct route with
+31 qualifying two-edge alternatives (33 nodes). All select `ALL SHORTEST` from
+`Root` to `Target` and materialize `p` plus the named element bindings. The
+statement quantifier cap is explicitly 128 for these rows. Parsing, lowering,
+fixture setup and cardinality guards are outside timing; execution, qualification,
+selection, native path construction, batch/table copies and drop are inside.
+No new target was added; no predecessor-sharing representation was introduced.
+
+```bash
+scripts/run-benches.sh --bench bounded_paths --compile-only
+scripts/run-benches.sh --profile quick --bench bounded_paths --filter gql_selected_paths
+```
+
+Measured 2026-09-12 on Apple M5, native aarch64 macOS 27.0 (26A5425a), rustc
+1.97.1; workspace optimized bench profile, thin LTO, one codegen unit, mimalloc,
+no extra features. Ten samples, 200 ms warmup, 1-second measurement, serialized
+after compilation. These are absolute measurements, **not speedup claims**;
+Criterion's incidental comparison against an earlier local run is not an A/B
+experiment and is deliberately not used.
+
+| Workload / scale | Rows | Product states | History clones | End-to-end estimate (95% interval) | Peak history estimate, bytes | Peak candidate estimate, bytes | Peak total estimate, bytes |
+|---|---:|---:|---:|---|---:|---:|---:|
+| many ties / 128 | 128 | 386 | 385 | 68.889 µs (68.062–69.519) | 589,824 | 589,824 | 599,040 |
+| long path / 128 | 1 | 259 | 258 | 88.584 µs (86.481–90.841) | 69,632 | 69,632 | 208,896 |
+| rejected shortest / 32 | 31 | 160 | 159 | 29.178 µs (28.825–29.557) | 163,840 | 158,720 | 174,080 |
+
+Separately instrumented, pre-Criterion **single sanity executions** reported
+discovery / selection / final path construction: many ties **45 / 14 / 2 µs**;
+long path **123 / <1 / <1 µs**; rejected shortest **128 / 1 / <1 µs**. These cold
+phase observations are not statistical estimates and do not sum to the warmed
+end-to-end estimate. Discovery includes history cloning and predicate evaluation;
+final construction excludes subsequent table copies. History/candidate byte
+estimates are conservative reservation envelopes, **not measured heap or RSS**,
+and their separate peaks need not coincide. Allocator profiling, open-WALK
+certificate scaling, Linux performance and larger campaigns remain unmeasured.
+
+### F03-PR01 immutable source/semantic separation
+
+The existing registered `analyze` binary now includes
+`gql_immutable_semantics/{parse,analyze}/{1,16,64}`. Both arms use the same
+fixture: `RETURN 0` followed by N additions of distinct `$pN :: INT` parameters.
+Parsing includes AST construction, admission, and result drop. Analysis starts
+from a pre-parsed shared source AST and includes one Arc clone, binding/type/tree
+allocation, and result drop; it excludes parsing, deep source cloning, planning,
+and execution. The corpus analysis row also now shares its pre-parsed ASTs;
+historical corpus numbers below used a different ownership/timing boundary.
+
+Measured 2026-09-10 on native Apple M5, 16 GiB, macOS 27.0 (26A5425a), rustc
+1.97.1. Workspace bench profile: opt-level 3, thin LTO, one codegen unit;
+mimalloc, `test-harness`, 100 ms warmup, 30 samples, 2-second measurement.
+The measurement command below was run sequentially twice on **unchanged code**,
+after the compile-only check. No competing Cargo/fuzz/benchmark command was launched.
+
+```bash
+scripts/run-benches.sh --bench analyze --compile-only
+scripts/run-benches.sh --profile quick --bench analyze --filter gql_immutable_semantics --sample-size 30 --measurement-time 2
+```
+
+| Phase / parameter count | Run 1 estimate (95% interval) | Run 2 estimate (95% interval) |
+|---|---:|---:|
+| parse / 1 | 36.546 µs (36.173–37.025) | 24.295 µs (24.227–24.377) |
+| analyze / 1 | 745.58 ns (743.71–747.62) | 702.57 ns (701.32–703.96) |
+| parse / 16 | 135.88 µs (134.25–137.15) | 117.02 µs (116.75–117.28) |
+| analyze / 16 | 28.535 µs (28.364–28.822) | 28.373 µs (28.314–28.459) |
+| parse / 64 | 435.33 µs (432.83–438.03) | 422.54 µs (418.58–426.11) |
+| analyze / 64 | 382.28 µs (380.27–385.56) | 384.35 µs (383.04–385.95) |
+
+The large same-code variation in the smallest parse row is a host/run limitation,
+**not an implementation speedup** despite Criterion's automatic comparison text.
+No baseline checkout was measured, and these are not throughput or facade-latency
+claims. Deep expression analysis still pays repeated structural-fingerprint walks
+in the temporary source-to-current-plan bridge; do not infer linear scaling.
+F03-PR04 owns deletion of that bridge. Catalog lookup and execution are not timed
+by these arithmetic fixtures.
+
+The binary separately reports retained structural accounting while holding both
+trees alive; these values were identical in both runs:
+
+| Parameters | Source text bytes | Source structural bytes | Semantic structural lower-bound bytes |
+|---:|---:|---:|---:|
+| 1 | 21 | 1,432 | 1,352 |
+| 16 | 222 | 3,352 | 9,464 |
+| 64 | 894 | 9,496 | 35,960 |
+
+The shared analysis handle is another 16 bytes. The source column counts the AST
+root, owned vector capacities, and expression boxes for these checked fixtures.
+The semantic column counts its separate root, expression/parameter/reference
+vector capacities, scope/declaration payloads, child-ID vectors, type cells, and
+map entry payloads. Shared DbString storage, Arc control blocks, allocator
+metadata, map-node slack, private-table capacity slack, and source string capacity
+slack are excluded. This is reproducible **partial retained-byte accounting**, not
+total unique heap, peak allocation, or RSS. No full source string is copied into
+each semantic node. It does not estimate production catalog-bound memory usage.
+
+### F01-PR04 one-hop mixed orientation runtime
+
+`mixed_orientation` measures preplanned `execute_pattern` including the root
+label scan, orientation filtering, bindings, and result allocation/drop. Parsing,
+planning, fixture construction, and correctness guards are outside timing.
+Degrees 8 and 1024 use respectively 9 and 1025 nodes. The directed and mixed
+controls share node/edge identities and topology; half of the mixed edges are
+intrinsically undirected. All rows produce exactly `degree` distinct edge IDs,
+checked against the independent contiguous fixture ID sequence before timing.
+There are no index-performance or pre/post speedup claims from this topology
+comparison. The separate `mixed_edge_storage` target measures storage incidence,
+not this GQL runtime operation.
+
+Command: `scripts/run-benches.sh --profile full --bench mixed_orientation --sample-size 30 --measurement-time 5`.
+Measured 2026-09-09 on Apple M5 (10 cores, 16 GiB), macOS 27.0 (26A5425a),
+rustc 1.97.1 / LLVM 22.1.6, native aarch64. Full measurements used 30 samples,
+3-second warmup, 5-second measurement, mimalloc, and the workspace bench profile
+(opt-level 3, thin LTO, one codegen unit). Compilation completed before the
+serialized run; no competing Cargo/benchmark run was active.
+
+| Runtime row | Degree | Criterion time estimate | 95% interval |
+|---|---:|---:|---:|
+| `directed_right` | 8 | 909.18 ns | 906.45–913.36 ns |
+| `directed_any` | 8 | 920.00 ns | 912.69–926.98 ns |
+| `mixed_any` | 8 | 940.58 ns | 935.89–946.30 ns |
+| `directed_right` | 1024 | 109.39 µs | 109.35–109.42 µs |
+| `directed_any` | 1024 | 109.77 µs | 109.53–110.16 µs |
+| `mixed_any` | 1024 | 110.16 µs | 110.04–110.32 µs |
+
+The mixed/Any point estimate is 2.24% above directed/Any at degree 8 and 0.36%
+above at degree 1024 (the high-degree intervals overlap). These are topology
+controls, **not** before/after speedups. The new benchmark did not exist at the
+supplied baseline; no baseline checkout/build was made and no historical
+performance claim is inferred. This run does not measure indexed expansion.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -2254,6 +3916,20 @@ The first four are scale-independent (single-query CPU).
 | `procedure_call_repeat/no_cache` | 2.958 ms | 100 short-lived sessions, parse/analyze/plan each. |
 | `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
 | `procedure_call_pipeline/match_call_repeat/1000` | 254.62 µs (quick) | Warm plan-cache `MATCH` over 1k input nodes feeding regular `CALL bench.repeat()`; covers direct procedure-call row growth beyond one-row source calls. |
+| `gql_profile_conformance/generated_capability_lookup` | 2.484 µs (quick) | One typed lookup for each of the 208 generated capability records. |
+| `gql_profile_flagger/parse_admitted_and_rejected` | 23.02 µs (quick) | Parses one admitted direct-selected parameter query and one rejected `CREATE GRAPH ... LIKE` query (referenced-only feature GG04). |
+| `procedure_feature_status/shared_cache_generated_capabilities` | 54.58 µs (quick) | Warm shared-cache `selene.feature_status()` call returning the generated inventory. |
+
+PR-local generated-profile smoke commands:
+
+- `scripts/run-benches.sh --profile quick --bench parse --filter gql_profile`
+- `scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_feature_status`
+
+The quick parse run measured `gql_parse_corpus/m5c` at 1.134 ms
+(1.126–1.147 ms), compared with the supplied base row's 1.763 ms median
+(1.716–1.844 ms). The generated lookup processed all 208 records in 2.484 µs
+(2.479–2.490 µs). The feature-status command measured the ten-column, 208-row
+procedure at 54.58 µs (54.40–54.82 µs).
 
 PR-local quick procedure-call row-extension A/B:
 
@@ -2550,10 +4226,8 @@ indexes. B20 makes per-group aggregate slots borrow the immutable plan
 
 ### §5b `write_e2e` — GQL write end-to-end
 
-Two families. The **in-memory CPU** family runs on a no-WAL `SharedGraph` to
-isolate parse/plan/execute + in-memory commit CPU. The **durable** family
-(`*_with_flush`, `direct_*`) keeps a real WAL on `OnFlushOnly` /
-`CommitBatching::Off`. The `match_*` / `insert_node_with_edge` arms scan the
+All arms run on a no-WAL in-memory `SharedGraph` to isolate parse/plan/execute
++ in-memory commit CPU. The `match_*` / `insert_node_with_edge` arms scan the
 fixture and so scale with N; the single-node arms are flat.
 
 | Bench | 10k | 50k | 100k | Notes |
@@ -2569,9 +4243,11 @@ fixture and so scale with N; the single-node arms are flat.
 | `write_e2e/gql_multi_statement_txn_preplanned` | 280 µs | 191 µs | 350 µs | START, three INSERTs, COMMIT. |
 | `write_e2e/explicit_txn_3_inserts_rust_api` | 275 µs | 223 µs | 363 µs | Three inserts via the Rust txn API. |
 | `write_e2e/explicit_txn_3_inserts_rollback` | 279 µs | 198 µs | 355 µs | Same, rolled back. |
-| `write_e2e/gql_insert_single_node_preplanned_with_flush` | 4.22 ms | 4.27 ms | 3.95 ms | Durable: preplanned insert + WAL flush. |
-| `write_e2e/direct_insert_single_node_with_wal_flush` | 4.20 ms | 4.30 ms | 4.17 ms | Direct mutation + one WAL flush. |
-| `write_e2e/direct_insert_single_node_with_wal_flush_every10` | 30.5 ms | 32.2 ms | 32.4 ms | Ten direct inserts over one flush. |
+
+The durable family (`gql_insert_single_node_preplanned_with_flush`,
+`direct_insert_single_node_with_wal_flush`, `..._every10`) was retired in
+F02-PR08 with the format-1 WAL: durable commit baselines live in
+`durable_commit` / `durable_checkpoint`, not in these CPU arms.
 
 PR-local B18/B20 write-control guard (`scripts/run-benches.sh --profile full
 --bench write_e2e`, followed by an isolated rerun of the noisy direct-WAL 50k
@@ -2583,7 +4259,6 @@ row):
 | `write_e2e/gql_cached_json_read_patch_r60w40/100000` | 5.3239 ms | 5.2953 ms | No statistically significant change; JSON read/patch guard. |
 | `write_e2e/gql_match_set_preplanned/100000` | 11.020 ms | 10.500 ms | −4.7% median; scan/set row benefits from runtime binding-index hoisting. |
 | `write_e2e/gql_match_delete_preplanned/100000` | 12.167 ms | 11.566 ms | −4.9% median. |
-| `write_e2e/direct_insert_single_node_with_wal_flush/50000` | 4.2367 ms | 4.1545 ms | Isolated rerun after one transient 14.791 ms sample; no reproducible direct-WAL regression. |
 
 PR-local quick JSON mixed row:
 
@@ -4244,6 +5919,49 @@ cycle on writes:
 | `graph_vector_active_set_maintenance_pressure/materialized_set_r60w40/...covbp10000_curbp10000_precbp10000` | 6.904 ms (`c31`) | 26.41 ms (`c32`) | Maintained active set keeps full quality and remains faster even after 40 balanced set updates per cycle. |
 | `graph_vector_active_set_maintenance_pressure/materialized_set_maintenance_w40/...` | 454.1 ns (`active248`) | 396.8 ns (`active512`) | Isolated 40-update HashSet maintenance is negligible next to exact vector rerank cost on this fixture. |
 
+## Typed physical candidate-set lifecycle
+
+Focused M04-PR02 Part 1 representation/algebra rows, measured 2026-09-01:
+
+Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_physical_candidate_set`
+
+| Bench | 1,024-element quick estimate | Notes |
+|---|---:|---|
+| `graph_physical_candidate_set/build_live_nodes/1024` | 4.3863 µs | Builds the generation/layout-bound node set from typed live rows, retains both private binding tokens, and sorts stable IDs. One high mild outlier was reported. |
+| `graph_physical_candidate_set/iterate_stable_ids/1024` | 93.951 ns | Iterates deterministic stable `NodeId` values without exposing physical rows. One high mild outlier makes this directional local evidence rather than a regression threshold. |
+| `graph_physical_candidate_set/union_full_overlap/1024` | 21.476 µs | Validates graph/generation/physical-layout/workspace-binding identity plus every stable-ID/typed-row/liveness pairing for both operands, then unions two fully overlapping sets. One high severe outlier was reported. |
+| `graph_physical_candidate_set/intersection_full_overlap/1024` | 21.682 µs | Performs the same complete identity and trusted-entry validation before intersecting two fully overlapping sets. |
+| `graph_physical_candidate_set/difference_full_overlap/1024` | 23.812 µs | Performs complete identity and trusted-entry validation before removing a fully overlapping set and producing empty output. Two high mild outliers were reported. |
+| `graph_physical_candidate_set/clone_snapshot/1024` | 61.825 ns | Clones the immutable graph snapshot while retaining physical-layout ancestry and its current private workspace binding. |
+
+Focused M04-PR02 Part 2 binding/recovery acceptance rows were measured on
+2026-09-01 with the quick Criterion profile and mimalloc on an Apple M5 with
+16 GiB RAM running macOS 26.7. These are bounded overhead observations, not
+before/after improvement claims:
+
+```text
+scripts/run-benches.sh --profile quick --bench single_graph --filter graph_physical_candidate_set
+scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set --vector-scales 1000
+scripts/run-benches.sh --profile quick --bench text_search_bm25
+scripts/run-benches.sh --profile quick --bench provider_fanout
+```
+
+| Bench | Quick estimate | Notes |
+|---|---:|---|
+| `graph_physical_candidate_set/bind_canonical_ids/1024` | 16.673 µs | Binds an already strictly ascending stable-ID input without another sort/dedup pass. |
+| `graph_physical_candidate_set/bind_noncanonical_duplicate_ids/1024` | 22.621 µs | Canonicalizes reversed duplicate stable IDs while filtering through the same liveness-only binder. |
+| `graph_physical_candidate_set/bind_vector_candidate_set/1024` | 18.232 µs | Binds a canonical stable-ID `VectorCandidateSet` without vector-property or index checks. |
+| `graph_vector_candidate_set/neighbor_candidates_depends_on_k64/1000` | 62.565 ns | Representative registered 1,000-node graph/vector row from the required bounded companion run. |
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 257.19 µs | Exact typed-candidate scan over 1,000 text nodes. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 62.088 µs | Prebuilt text-index scoring over sorted stable-ID candidates. |
+| `provider_fanout/core_only` | 178.70 µs | Representative core-only provider fan-out cycle. |
+| `provider_fanout/extra_k4` | 198.04 µs | Representative cycle with four additional providers. |
+
+The repository's registered `bfs` benchmark does not call
+`reachable_nodes_checked`, and no registered reachability row currently
+measures the changed stable-root binding path, so a BFS timing is not treated as
+relevant Part 2 evidence.
+
 ## Retrieval scoping guards
 
 Focused local P0 row, measured 2026-06-15:
@@ -4265,14 +5983,14 @@ confirm the win and guard the surrounding rows against regression.
 |---|---|---|---|
 | CORE-06 ✓ | Box `Value` `Path` + time variants (shrink `size_of`) | `core_value_clone/*` + `size_of::<Value>` stderr | **32 B** (was 128); vec 4.62 µs / pmap 53.8 ns |
 | GRAPH-05 ✓ | In-place adjacency delete O(D²)→O(D) | `graph_hub_delete` (now linear) | **4.54 ms** @ degree 10k (was 133 ms — 30×) |
-| PERSIST-04 rejected | WAL vectored write regressed append on Darwin/macOS | `persist_wal_body_size_no_fsync` (large-body arms) | measured-rejected 2026-06-01; keep contiguous `Vec` + `write_all` |
+| PERSIST-04 rejected | WAL vectored write regressed append on Darwin/macOS | retired format-1 `wal` bin (F02-PR08) | measured-rejected 2026-06-01; keep contiguous `Vec` + `write_all` |
 | ALGO-01/02/05 ✓ | CSR dense-`u32` cache on `ProjNeighbor` | `algo/projection_build` + `…_neighbor_iter` + algo medians | **pagerank −15..31% · louvain −23..26% · apsp −9..52% · triangle −6..11% · iter −4..6%**; build +4–7% one-time (24→32 B/neighbor) |
 | GQLRT-05 ✓ | Memoize correlated-subquery target schema (per statement, by expr id) | `gql_correlated_subquery/{exists,count}` | **−2 to −7%** — memo elides the per-row `schema_for_pattern` walk |
 | B3 ✓ | Short-circuit scans already bound by the correlated outer row | `gql_correlated_subquery/{exists,count}` + `read_pipeline` guard | **~339x EXISTS / ~349x COUNT @10k**; ordinary read-pipeline rows remain noise-scale |
 | B5 ✓ | Use `FxBuildHasher` for immutable maps keyed only by engine-assigned ids | `graph_node_fetch` + `gql_correlated_subquery/{exists,count}` + `bulk_mutation` guard | **graph_node_fetch −22.7% @1k quick; post-B3 correlated residual −11.8..15.3%**; update-batch writes remain noisy/no claimed win |
 | B18/B20 ✓ | Hoist runtime column resolution and borrow aggregate descriptors | `read_pipeline` + `gql_correlated_subquery/{exists,count}` + `write_e2e` guard | **read_pipeline −3.8..11.7% on significant rows; correlated residual −4.7..5.9%**; mixed write guards neutral, isolated WAL spike not reproduced |
 | D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
-| D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 32 ms / dec 183 ms @100k |
+| D14 (guard, retired F02-PR08) | Snapshot rkyv encode/positional recovery | `logical_wal` (format-2 successor) | historical: enc 32 ms / dec 183 ms @100k |
 
 ## Update protocol
 

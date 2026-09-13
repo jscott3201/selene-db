@@ -32,11 +32,13 @@ label.
 ## Exporter Wiring
 
 Enable the feature on the crate graph and install any `metrics` recorder before
-executing statements:
+executing statements. The alpha coordinate follows the current source and may
+not yet be published; a checkout can use the same package alias with a path
+dependency.
 
 ```toml
 [dependencies]
-selene-gql = { version = "1.1.0", features = ["metrics"] }
+selene-gql = { package = "selene-db-gql", version = "2.0.0-alpha.1", features = ["metrics"] }
 ```
 
 ```rust

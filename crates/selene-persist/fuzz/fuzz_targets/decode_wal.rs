@@ -1,23 +1,28 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use selene_persist::WalReader;
+use selene_persist::logical_frame::Boundary;
+mod wal_stream;
 
-// Drives the whole streaming WAL decode on attacker bytes: SLDB file-header
-// decode, per-entry header decode (fixed + replicated tail + principal),
-// payload-length-vs-remaining bound, and `body()` = xxh3 checksum + bounded
-// zstd decompress + postcard `Vec<Change>` decode. Only a panic/OOM/hang fails;
-// any malformed input yields a typed error and the stream self-stops.
-fuzz_target!(|bytes: &[u8]| {
-    let Ok(stream) = WalReader::from_bytes(bytes) else {
+// Pure format-2 stream consumption: no filesystem selection, truncation or repair.
+// Structured frames keep payload decoding and digest/sequence advancement reachable.
+fuzz_target!(|input: &[u8]| {
+    if input.len() > 65_536 {
         return;
-    };
-    for item in stream {
-        match item {
-            Ok(view) => {
-                let _ = view.body();
-            }
-            Err(_) => break,
-        }
+    }
+    let (stream, count) = wal_stream::synthesize(input, false);
+    let (mutated, _) = wal_stream::synthesize(input, true);
+    let cut = input.get(..2).map_or(0, |b| {
+        usize::from(u16::from_le_bytes([b[0], b[1]])) % (stream.len() + 1)
+    });
+    for boundary in [
+        Boundary::UnsealedEnd,
+        Boundary::SealedEnd,
+        Boundary::Interior,
+    ] {
+        wal_stream::drive(input, boundary);
+        assert_eq!(wal_stream::drive(&stream, boundary), count);
+        wal_stream::drive(&stream[..cut], boundary);
+        wal_stream::drive(&mutated, boundary);
     }
 });

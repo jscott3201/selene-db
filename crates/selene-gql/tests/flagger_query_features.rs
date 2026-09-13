@@ -2,8 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::feature_register::{FeatureId, SUPPORTED_FEATURES};
 use selene_gql::{feature_walk, parse};
+use selene_profile::{CapabilityStatus, FeatureId, capability};
 
 fn observed_features(source: &str) -> BTreeSet<FeatureId> {
     feature_walk(&parse(source).expect(source))
@@ -14,8 +14,14 @@ fn observed_features(source: &str) -> BTreeSet<FeatureId> {
 
 #[test]
 fn otherwise_and_let_use_their_distinct_iso_feature_ids() {
-    assert!(SUPPORTED_FEATURES.contains(&FeatureId::GQ02));
-    assert!(SUPPORTED_FEATURES.contains(&FeatureId::GQ09));
+    assert_eq!(
+        capability(FeatureId::GQ02).unwrap().status,
+        CapabilityStatus::Supported
+    );
+    assert_eq!(
+        capability(FeatureId::GQ09).unwrap().status,
+        CapabilityStatus::Supported
+    );
 
     let otherwise = observed_features("RETURN 1 AS n OTHERWISE RETURN 2 AS n");
     assert!(otherwise.contains(&FeatureId::GQ02));

@@ -25,6 +25,13 @@
 
 use std::time::Duration;
 
+#[path = "parser_dos_artifacts/contract.rs"]
+mod contract;
+#[path = "parser_dos_artifacts/query_reentry.rs"]
+mod query_reentry;
+#[path = "parser_dos_artifacts/quoted_calls.rs"]
+mod quoted_calls;
+
 // Each artifact is valid UTF-8 and uses only `[` openers (no `{`/`(`). The
 // trailing `\xd8\xb1` (a 2-byte UTF-8 ARABIC LETTER REH) and embedded control
 // bytes are reproduced exactly from the on-disk corpus so the regression
@@ -145,6 +152,103 @@ mod dos {
     /// longer than this is well above the dedicated `[`-depth complexity cap of
     /// 32 and must be rejected by the complexity guard before pest runs.
     const NESTING_CAP: usize = 64;
+
+    #[test]
+    fn bare_query_brace_timeout_rejects_before_pest() {
+        // F06-QUAL-04: minimized from timeout-9623e2a3 (57 bytes). Thirteen
+        // openers plus 0x1e still hit -timeout=20; twelve took about 10 seconds.
+        // Embed the minimized UTF-8 input, never depend on ignored artifacts.
+        let source = "{{{{{{{{{{{{{\u{1e}";
+        let start = Instant::now();
+        let error = parse(source).expect_err("malformed bare query nesting must reject");
+        assert!(start.elapsed() < PARSE_BUDGET);
+        assert!(matches!(
+            error,
+            ParserError::ComplexityLimitExceeded { limit: 7, .. }
+        ));
+        assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+    }
+
+    #[test]
+    fn bare_query_budget_counts_open_wrappers_not_text_or_total_braces() {
+        // Comments cannot reset the active wrappers; nor can non-brace tokens
+        // inside a wrapper (which still multiplies any later failed descent).
+        for source in [
+            format!("{}\u{1e}", "{ /* }} */ // }}\n".repeat(9)),
+            format!("{}RETURN 1{}", "{".repeat(9), "}".repeat(9)),
+            format!("{}RETURN VALUE {{ {{ {{\u{1e}", "{".repeat(7)),
+        ] {
+            let error = parse(&source).expect_err("over-budget bare wrappers reject");
+            assert!(matches!(
+                error,
+                ParserError::ComplexityLimitExceeded { limit: 7, .. }
+            ));
+            assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+        }
+
+        parse(&format!("{}RETURN 1{}", "{".repeat(8), "}".repeat(8)))
+            .expect("eight bare levels remain admitted");
+        let branches = vec!["{{ RETURN 1 }}"; 20].join(" UNION ALL ");
+        parse(&branches).expect("closed sibling wrappers do not accumulate");
+        let record = format!("RETURN {}1{}", "{a: ".repeat(32), "}".repeat(32));
+        parse(&record).expect("record nesting retains the existing general cap");
+        parse("RETURN '{{{{{{{{{{{{{', \"{{{{{{{{{{{{{\", 1 AS `{{{{{{{{{{{{{`")
+            .expect("quoted braces are not query wrappers");
+    }
+
+    #[test]
+    fn in_list_predicate_timeout_rejects_before_pest() {
+        // F06-QUAL-04 follow-up: minimized from timeout-d359fea7 (245 bytes).
+        // Seventeen active `IN [` wrappers still hit -timeout=20 after removing
+        // every unrelated binding and all optional whitespace (74 bytes).
+        let source = "LET x=0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[0in[";
+        let start = Instant::now();
+        let error = parse(source).expect_err("malformed IN-list nesting must reject");
+        assert!(start.elapsed() < PARSE_BUDGET);
+        assert!(matches!(
+            error,
+            ParserError::ComplexityLimitExceeded { limit: 8, .. }
+        ));
+        assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+    }
+
+    #[test]
+    fn in_list_predicate_budget_counts_active_wrappers() {
+        let commented = format!("LET x={}0", "0 IN /* guard */ [".repeat(9));
+        let error = parse(&commented).expect_err("comments cannot hide active IN-list wrappers");
+        assert!(matches!(
+            error,
+            ParserError::ComplexityLimitExceeded { limit: 8, .. }
+        ));
+        assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+
+        let nested = format!("LET x={}0{} RETURN x", "0 IN [".repeat(8), "]".repeat(8));
+        parse(&nested).expect("eight active IN-list wrappers remain admitted");
+
+        let siblings = vec!["0 IN [0]"; 20].join(", ");
+        parse(&format!("RETURN {siblings}")).expect("closed sibling IN lists do not accumulate");
+        parse("RETURN 'in[in[in[in[in[in[in[in[in['").expect("quoted IN-list text is not syntax");
+    }
+
+    #[test]
+    fn in_list_predicate_budget_follows_numeric_tokens() {
+        for numeric in ["0.", "0m", "0e0", "0x0"] {
+            let source = format!(
+                "LET x={}0{} RETURN x",
+                format!("{numeric}IN[").repeat(9),
+                "]".repeat(9)
+            );
+            let error = parse(&source).expect_err("numeric adjacency cannot hide IN-list wrappers");
+            assert!(matches!(
+                error,
+                ParserError::ComplexityLimitExceeded { limit: 8, .. }
+            ));
+            assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+        }
+
+        parse("RETURN n.IN, $IN")
+            .expect("property and parameter identifiers named IN remain admitted");
+    }
 
     #[test]
     fn bracket_complexity_limit_enforced_on_artifacts() {
@@ -493,13 +597,13 @@ mod recursion_crash {
         let statement = parse(&source).expect("a wide flat RETURN parses without a budget cap");
         let elapsed = start.elapsed();
 
-        // Loose tripwire: generous against CI jitter, but a super-linear
-        // regression on a 2000-item flat list would blow well past it. Ubuntu
-        // release runners have measured above 1s for this unoptimized test.
-        let budget = Duration::from_secs(2);
+        // Coarse wall-clock tripwire: hosted Ubuntu jitter has crossed 2 seconds
+        // (2.018s observed), so the 5-second budget guards only against a
+        // catastrophic or super-linear regression. It is not a benchmark claim.
+        let budget = Duration::from_secs(5);
         assert!(
             elapsed < budget,
-            "flat RETURN of {n} items took {elapsed:?} (budget {budget:?}); parse cost should be ~linear in N"
+            "flat RETURN of {n} items took {elapsed:?} (budget {budget:?}); coarse catastrophic/super-linear regression tripwire exceeded"
         );
 
         // Cardinality: all N projection items survive into the AST (linearity is

@@ -1,10 +1,10 @@
 //! ISO record type form coverage.
 
-use selene_core::feature_register::FeatureId;
 use selene_gql::{
     GqlType, IsCheckKind, ParserError, PipelineStatement, RecordType, Statement, ValueExpr,
     ast::format_read_statement, feature_walk, parse,
 };
+use selene_profile::FeatureId;
 
 #[test]
 fn iso_record_type_forms_parse_to_open_or_closed_ast() {

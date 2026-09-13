@@ -6,8 +6,11 @@ use selene_gql::{
     PipelineStatement, ProcedureOutputColumn, ProcedureParameter, ProcedureRegistry, Statement,
     analyze, parse,
 };
+use selene_testing::MockProcedureRegistry;
 use selene_testing::analyzed_corpus::load_default_analyzed_gql_corpus;
-use selene_testing::{MockProcedureRegistry, default_corpus_registry};
+
+#[path = "support/analyze_bind_catalog.rs"]
+mod catalog_fixture;
 
 fn analyze_one(source: &str) -> Result<selene_gql::AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
@@ -39,8 +42,9 @@ fn db_string(value: &str) -> DbString {
 
 #[test]
 fn positive_corpus_analyzes_and_resolves_references() {
-    let registry = default_corpus_registry();
-    let positives = load_default_analyzed_gql_corpus(&registry).expect("positive corpus analyzes");
+    let (registry, environment) = catalog_fixture::fixture();
+    let positives =
+        load_default_analyzed_gql_corpus(&registry, environment).expect("positive corpus analyzes");
     assert!(!positives.is_empty());
 
     for entry in positives {
@@ -354,7 +358,7 @@ fn mixed_yield_star_binds_explicit_columns() {
 #[test]
 fn analyzed_statement_preserves_top_level_shape() {
     let analyzed = analyze_one("MATCH (n) RETURN n").expect("analyzes");
-    let selene_gql::AnalyzedStatementKind::Query(query) = analyzed.statement else {
+    let Statement::Query(query) = analyzed.source() else {
         panic!("expected query");
     };
     assert!(matches!(query.statements[0], PipelineStatement::Match(_)));
@@ -362,4 +366,238 @@ fn analyzed_statement_preserves_top_level_shape() {
     let Statement::Call(_) = parse("CALL pkg.fn()").expect("parses") else {
         panic!("expected call");
     };
+}
+
+// ---------------------------------------------------------------------------
+// ISO §14.10 SR 4)c)i)2)A)III defines ORDER_REFS in three cases, and SR IV makes
+// membership mandatory. The plain case is permissive and the planner carries the
+// binding across the projection; the other two close the set, and a reference
+// outside it has to be rejected rather than silently evaluate to NULL.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn order_by_accepts_a_discarded_binding_under_a_plain_return() {
+    for source in [
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY n.score",
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY n.score + 0 DESC",
+        "MATCH (n:Person) RETURN 1 AS one ORDER BY n.score, n.name",
+    ] {
+        analyze_one(source)
+            .unwrap_or_else(|err| panic!("{source} is legal under GA07, got {err:?}"));
+    }
+}
+
+#[test]
+fn order_by_rejects_a_discarded_binding_under_distinct_or_aggregation() {
+    for source in [
+        // DISTINCT: ORDER_REFS is RETURN_IDENTIFIERS alone.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY n.score",
+        // An aggregate return item with no GROUP BY: likewise.
+        "MATCH (n:Person) RETURN count(*) AS c ORDER BY n.score",
+        // GROUP BY: ORDER_REFS adds the bindings the grouping keys reference,
+        // and `e` is not one of them.
+        "MATCH (n:Person)-[e:KNOWS]->() RETURN count(*) AS c GROUP BY n.tenant ORDER BY e.score",
+        // SR IV applies to every sort key, not just the first: the leading term
+        // is in scope and only the second one escapes it.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY name, n.score",
+        "MATCH (n:Person) RETURN count(*) AS c ORDER BY c DESC, n.score",
+    ] {
+        let err = analyze_one(source)
+            .expect_err("a projection that discards the row cannot be ordered by it");
+        assert!(
+            matches!(err, AnalysisError::SortKeyReferenceNotInScope { .. }),
+            "{source} should reject with SortKeyReferenceNotInScope, got {err:?}"
+        );
+        assert_eq!(err.gqlstatus().as_str(), "42001");
+    }
+}
+
+/// A sort key naming a variable that is bound nowhere is an undefined
+/// reference, not an SR IV violation.
+///
+/// SR IV is about a reference that *resolves* but is outside ORDER_REFS. This
+/// one resolves to nothing, and saying so — with "declare the variable before
+/// this reference" — is the more actionable diagnostic. It used to report
+/// `SortKeyReferenceNotInScope`, because the SR IV check ran before the sort key
+/// was bound and so could not tell the two apart.
+#[test]
+fn a_sort_key_naming_an_unbound_variable_is_an_undefined_reference() {
+    let err = analyze_one("FOR x IN [1, 2] RETURN x AS x GROUP BY x ORDER BY y")
+        .expect_err("y is bound nowhere");
+    assert!(
+        matches!(err, AnalysisError::UndefinedReference { .. }),
+        "expected an undefined reference for a name that does not exist, got {err:?}"
+    );
+}
+
+#[test]
+fn order_by_accepts_grouping_keys_and_output_columns_under_aggregation() {
+    for source in [
+        // A grouping key is in ORDER_REFS even when it is not projected.
+        "FOR x IN [1, 2] RETURN count(*) AS c GROUP BY x ORDER BY x",
+        // SR III case 2 is unconditional on DISTINCT: a GROUP BY clause keeps
+        // its grouping keys in ORDER_REFS even under a set quantifier.
+        "FOR x IN [1, 2] RETURN DISTINCT count(*) AS c GROUP BY x ORDER BY x",
+        // Every sort key is checked, so a multi-term list of in-scope names
+        // must still be accepted.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name, n.score AS score \
+         ORDER BY score DESC, name",
+        // Output columns are always in ORDER_REFS.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY name",
+        "MATCH (n:Person) RETURN count(*) AS c ORDER BY c",
+    ] {
+        analyze_one(source)
+            .unwrap_or_else(|err| panic!("{source} orders by an in-scope name, got {err:?}"));
+    }
+}
+
+/// `RETURN *` keeps the whole input row, so the closing rules do not apply.
+///
+/// The `DISTINCT` case is the one that makes the star check load-bearing: a
+/// star projection has no return items, so without the early return it would
+/// fall through to `Closed([])` and reject every sort key.
+#[test]
+fn order_by_accepts_any_incoming_binding_under_return_star() {
+    for source in [
+        "MATCH (n:Person) RETURN * ORDER BY n.score",
+        "MATCH (n:Person) RETURN DISTINCT * ORDER BY n.score",
+    ] {
+        analyze_one(source)
+            .unwrap_or_else(|err| panic!("{source} keeps every incoming column, got {err:?}"));
+    }
+}
+
+/// ISO §14.10 SR IV reaches into an `EXISTS` body. §5.3.2.1 makes "contain"
+/// transitive, so the free outer `n` is a binding variable reference contained
+/// in the sort key; under DISTINCT or an aggregate, SR III case 3 makes
+/// ORDER_REFS the return identifiers alone, so `n` is outside it.
+#[test]
+fn an_exists_sort_key_with_a_free_outer_reference_is_rejected_under_distinct() {
+    for source in [
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name \
+         ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }",
+        "MATCH (n:Person) RETURN count(*) AS c ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }",
+    ] {
+        let err = analyze_one(source)
+            .expect_err("a projection that discards the row cannot be ordered by it");
+        assert!(
+            matches!(&err, AnalysisError::SortKeyReferenceNotInScope { name, .. } if name == "n"),
+            "{source} should reject naming n, got {err:?}"
+        );
+        assert_eq!(err.gqlstatus().as_str(), "42001");
+    }
+}
+
+/// The converse, and the reason the rejection has to subtract subquery-defined
+/// variables rather than reject on any name it sees. §14.10 CR 4 exempts a
+/// binding "defined by an intervening BNF non-terminal instance simply
+/// contained in the <sort key>".
+#[test]
+fn an_exists_sort_key_binding_only_its_own_variables_is_accepted_under_distinct() {
+    for source in [
+        // Nothing in the body refers outward, so ORDER_REFS is not consulted.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name ORDER BY EXISTS { MATCH (x:Person) }",
+        // `m` is defined inside the sort key; only `n` would be a reference, and
+        // here the body does not mention it.
+        "MATCH (n:Person) RETURN DISTINCT n.name AS name \
+         ORDER BY EXISTS { MATCH (m:Person)-[:KNOWS]->() }",
+    ] {
+        analyze_one(source).unwrap_or_else(|err| panic!("{source} should analyze: {err}"));
+    }
+}
+
+/// Without DISTINCT or aggregation, SR III case 1 puts every incoming column in
+/// ORDER_REFS, so the same correlated sort key is legal and gets carried.
+#[test]
+fn a_correlated_exists_sort_key_is_accepted_without_distinct() {
+    analyze_one(
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { MATCH (n)-[:KNOWS]->() }",
+    )
+    .expect("SR III case 1 admits every incoming column");
+}
+
+/// ISO §14.10 SR 4)c)i)2)A)I: no sort key may contain a
+/// `<nested query specification>`. The fifth `<exists predicate>` alternative
+/// (§19.4) is exactly that, so an EXISTS body carrying a RETURN is rejected
+/// while the graph-pattern and match-block forms are not.
+#[test]
+fn a_sort_key_containing_a_nested_query_specification_is_rejected() {
+    for source in [
+        // The EXISTS nested-query-specification form.
+        "MATCH (n:Person) RETURN n.name AS name \
+         ORDER BY EXISTS { MATCH (n)-[:KNOWS]->(m) RETURN m }",
+        // The pre-existing VALUE spelling, which is `VALUE <nested query
+        // specification>` per §20.6.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY VALUE { MATCH (m:Person) RETURN m.name }",
+    ] {
+        let err = analyze_one(source).expect_err("SR I rejects a nested query specification");
+        assert!(
+            matches!(err, AnalysisError::SortKeyContainsNestedQuery { .. }),
+            "{source} should reject with SortKeyContainsNestedQuery, got {err:?}"
+        );
+    }
+}
+
+/// ISO §5.3.2.1 makes *contain* transitive, so SR I reaches a nested query
+/// specification at any depth — including one buried inside an `EXISTS` body
+/// whose own form is the legal graph-pattern spelling.
+///
+/// The sort key's own expression tree does not reach these: `for_each_child`
+/// yields nothing for a subquery node, by design. Every site below is a place a
+/// `ValueExpr` lives under a `MatchClause`, so each one is a way the body can
+/// smuggle a `VALUE { ... }` past a guard that only walks the key.
+#[test]
+fn a_nested_query_inside_an_exists_body_is_rejected() {
+    for source in [
+        // Clause-level WHERE — the spelling reported on the issue.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person) WHERE m.score > VALUE { MATCH (k) RETURN count(k) } }",
+        // Node inline property value.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person { score: VALUE { MATCH (k) RETURN count(k) } }) }",
+        // Node inline WHERE.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person WHERE m.score > VALUE { MATCH (k) RETURN count(k) }) }",
+        // Edge inline property value.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person)-[:KNOWS { since: VALUE { MATCH (k) RETURN count(k) } }]->() }",
+        // Edge inline WHERE.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person)-[e:KNOWS WHERE e.since > VALUE { MATCH (k) RETURN count(k) }]->() }",
+        // Two levels down: the inner EXISTS body is itself the legal pattern
+        // form, and the nested query sits inside *its* WHERE.
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person) WHERE EXISTS { \
+         MATCH (p:Person) WHERE p.score > VALUE { MATCH (k) RETURN count(k) } } }",
+    ] {
+        let err = analyze_one(source)
+            .expect_err("SR I reaches a nested query specification inside an EXISTS body");
+        assert!(
+            matches!(err, AnalysisError::SortKeyContainsNestedQuery { .. }),
+            "{source} should reject with SortKeyContainsNestedQuery, got {err:?}"
+        );
+    }
+}
+
+/// The companion to the rejection above, and the reason it cannot be written as
+/// "an EXISTS body in a sort key is illegal".
+///
+/// #1112 settled that §19.4 SR 2/3's rewrite of the *pattern* forms does not
+/// feed §14.10 SR I (§5.3.2.4: an inner "effectively replaced by" rewrite does
+/// not feed an outer Syntax Rule). A guard that descends into EXISTS bodies has
+/// to descend looking for a nested query specification specifically, not reject
+/// on arrival.
+#[test]
+fn descending_into_an_exists_body_keeps_the_pattern_forms_legal() {
+    for source in [
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { MATCH (m:Person) }",
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person) WHERE m.score > 10 }",
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person { name: 'x' })-[:KNOWS]->() }",
+        "MATCH (n:Person) RETURN n.name AS name ORDER BY EXISTS { \
+         MATCH (m:Person) WHERE EXISTS { MATCH (p:Person) WHERE p.score > 10 } }",
+    ] {
+        analyze_one(source).unwrap_or_else(|err| panic!("{source} should analyze: {err}"));
+    }
 }

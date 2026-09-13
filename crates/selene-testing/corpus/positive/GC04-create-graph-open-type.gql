@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GC04
+// also-covers: GG01
+// expects: parse-ok
+CREATE GRAPH /memory/episodes ANY

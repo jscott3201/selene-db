@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jscott3201/selene-db/blob/development/docs/v2/roadmap/plan.schema.json",
+  "title": "Selene DB 2.0 Finish Plan",
+  "type": "object",
+  "required": [
+    "title",
+    "reviewed_on",
+    "repository",
+    "branch",
+    "status",
+    "authority",
+    "baseline",
+    "milestones",
+    "pull_requests",
+    "integration_gates",
+    "issues",
+    "legacy_work_items",
+    "delivery_policy_changes",
+    "sources_file",
+    "entrypoint"
+  ],
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "reviewed_on": {
+      "type": "string"
+    },
+    "repository": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "authority": {
+      "type": "string"
+    },
+    "baseline": {
+      "type": "object",
+      "required": [
+        "workspace_version",
+        "rust_version_observed",
+        "workspace_crates_observed",
+        "live_plan_items",
+        "fully_merged_plan_items",
+        "partial_item",
+        "latest_reviewed_planning_pr",
+        "rust_workspace_tests_run_in_this_review"
+      ],
+      "properties": {
+        "workspace_version": {
+          "type": "string"
+        },
+        "rust_version_observed": {
+          "type": "string"
+        },
+        "workspace_crates_observed": {
+          "type": "integer"
+        },
+        "live_plan_items": {
+          "type": "integer"
+        },
+        "fully_merged_plan_items": {
+          "type": "integer"
+        },
+        "partial_item": {
+          "type": "string"
+        },
+        "latest_reviewed_planning_pr": {
+          "type": "integer"
+        },
+        "rust_workspace_tests_run_in_this_review": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "milestones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "file",
+          "lane",
+          "exit"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "exit": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "pull_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "milestone",
+          "title",
+          "state",
+          "file",
+          "depends_on",
+          "replaces",
+          "skills",
+          "issues"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "milestone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "replaces": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "integration_gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "requires",
+          "meaning"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "meaning": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "number",
+          "title",
+          "closure_owner"
+        ],
+        "properties": {
+          "number": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "closure_owner": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "legacy_work_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "state",
+          "new_owners",
+          "note"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "merged",
+              "unmerged",
+              "partial"
+            ]
+          },
+          "new_owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "delivery_policy_changes": {
+      "type": "object",
+      "required": [
+        "D-021",
+        "D-022"
+      ],
+      "properties": {
+        "D-021": {
+          "type": "string"
+        },
+        "D-022": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sources_file": {
+      "type": "string"
+    },
+    "entrypoint": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

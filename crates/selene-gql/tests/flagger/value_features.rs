@@ -1,5 +1,5 @@
-use selene_core::feature_register::FeatureId;
 use selene_gql::{GqlStatus, ParserError, feature_walk, parse};
+use selene_profile::FeatureId;
 
 use super::{assert_read_execution, assert_read_plan};
 
@@ -204,7 +204,7 @@ fn record_value_form_flags_gv45_while_type_spellings_flag_gv46_47_48() {
     // The `RECORD{..}` VALUE constructor is GV45 (ISO §20.18 <record constructor>) and is
     // distinct from the record TYPE spellings: open `RECORD` is GV47, closed `RECORD{..}`
     // is GV46, nested is GV48. Pins that the record surface is actually flagged per clause
-    // 24.6 (not merely listed in SUPPORTED_FEATURES) and that the value form is GV45 — not
+    // 24.6 (not merely listed in the runtime inventory) and that the value form is GV45 — not
     // GV47, which belongs to the open record *type*.
     let ids = |statement| {
         feature_walk(statement)

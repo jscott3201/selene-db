@@ -27,7 +27,7 @@ impl Rule for RangeIndexScan {
         let Some(catalog) = ctx.index_catalog else {
             return Transformed::unchanged(plan);
         };
-        let mut changed = false;
+        let mut changed = super::expression_index_scan::rewrite(&mut plan, ctx);
         if let Some(pattern) = &mut plan.pattern_plan {
             changed |= rewrite_tree(&mut pattern.join_tree, &pattern.bindings, catalog);
         }
@@ -46,18 +46,14 @@ fn rewrite_tree(
     catalog: &dyn crate::IndexCatalog,
 ) -> bool {
     match tree {
-        JoinTree::Unit => false,
+        JoinTree::Unit | JoinTree::Paths(_) => false,
         JoinTree::Scan(scan) => rewrite_scan(scan, bindings, catalog),
-        JoinTree::Expand { child, edge, .. } | JoinTree::Questioned { child, edge, .. } => {
+        JoinTree::Expand { child, edge, .. } => {
             rewrite_tree(child, bindings, catalog) | rewrite_edge(edge, bindings, catalog)
         }
-        JoinTree::Repeat { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
-        JoinTree::PathSearch { child, .. }
-        | JoinTree::PathModeFilter { child, .. }
-        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
         // Walk each per-label branch; the disjunctive_label_expansion rule
         // runs at slot 5 (before this rule), so DisjunctiveScan only carries
@@ -411,7 +407,9 @@ fn compare_literals(a: &Literal, b: &Literal) -> Option<std::cmp::Ordering> {
         (Literal::LocalTime(lhs, _, _), Literal::LocalTime(rhs, _, _)) => Some(lhs.cmp(rhs)),
         (Literal::ZonedTime(lhs, _, _), Literal::ZonedTime(rhs, _, _)) => Some(lhs.cmp(rhs)),
         (Literal::Duration(lhs, _, _), Literal::Duration(rhs, _, _)) => {
-            Some(selene_core::duration_order_key(lhs).cmp(&selene_core::duration_order_key(rhs)))
+            let lhs = selene_core::duration_order_key(lhs);
+            let rhs = selene_core::duration_order_key(rhs);
+            selene_core::duration_keys_comparable(lhs, rhs).then(|| lhs.cmp(&rhs))
         }
         (Literal::Bool(lhs, _), Literal::Bool(rhs, _)) => Some(lhs.cmp(rhs)),
         _ => None,

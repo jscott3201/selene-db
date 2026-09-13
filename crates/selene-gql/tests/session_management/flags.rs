@@ -38,6 +38,8 @@ fn flagger_stamps_set_time_zone_gs15() {
 #[test]
 fn flagger_stamps_reset_targets() {
     assert!(walked_features("SESSION RESET").contains(&FeatureId::GS04));
+    assert!(walked_features("SESSION RESET SCHEMA").contains(&FeatureId::GS05));
+    assert!(walked_features("SESSION RESET GRAPH").contains(&FeatureId::GS06));
     assert!(walked_features("SESSION RESET PARAMETERS").contains(&FeatureId::GS08));
     assert!(walked_features("SESSION RESET TIME ZONE").contains(&FeatureId::GS07));
     assert!(walked_features("SESSION RESET PARAMETER $p").contains(&FeatureId::GS16));
@@ -75,5 +77,5 @@ fn flagger_does_not_stamp_session_close() {
 }
 
 // ---------------------------------------------------------------------------
-// Deferred D1-blocked forms (GS01 / GS02 / GS05 / GS06)
+// Deferred D1-blocked forms (GS01 / GS02)
 // ---------------------------------------------------------------------------

@@ -11,20 +11,34 @@
 
 mod error;
 mod ir;
-mod lowering;
+pub mod logical;
+pub(crate) mod lowering;
 pub mod optimize;
 
 pub use error::PlannerError;
 pub use ir::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
     BuildSide, CatalogOp, DeleteTargetPlan, EdgeMatch, ExecutionPlan, FilterPredicate,
-    FilterPredicateKind, HiddenBindingId, HopContributor, ImplDefinedCaps, IndexKey,
-    InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp, NodeIdOrdering,
-    NodeOrEdgeScan, OrderAccess, OrderKey, OuterBindingRef, PathContributor, PathPlan, PatternPlan,
-    PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery, PlannedTableSubquery,
-    PlannedTableSubqueryYield, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
-    PlannedYieldItem, ProjectExpr, PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SessionOp,
-    SubqueryBody, SubqueryKind, SubqueryRegistry, TailBinding, TxOp, TypedIndexBounds, YieldKind,
+    FilterPredicateKind, HiddenBindingId, ImplDefinedCaps, IndexKey, InsertEndpointRef,
+    InsertSiteId, JoinTree, LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess,
+    OrderKey, OuterBindingRef, PathConditions, PathProgram, PatternPlan, PipelineOp, PipelineOpId,
+    PlannedCall, PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
+    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
+    PropertyInit, ScanAccess, ScanKind, SessionOp, SubqueryBody, SubqueryKind, SubqueryRegistry,
+    TxOp, TypedIndexBounds, YieldKind,
+};
+pub use logical::{
+    AutomatonStats, BindingExposure, EdgeQuantifierKind, EdgeTest, EffectSummary, LogicalAggregate,
+    LogicalCallDescriptor, LogicalCatalogKind, LogicalControlKind, LogicalEffect,
+    LogicalMultiplicity, LogicalMutationDescriptor, LogicalOp, LogicalOrderKey, LogicalOrdering,
+    LogicalPageAmount, LogicalPlan, LogicalScanDescriptor, LoweredPathSet, NodeTest,
+    OrientationAcceptance, PATH_AUTOMATA_CONTRACT_VERSION, PathAutomaton, PathFeatureInventory,
+    PathLoweringLimits, PathModeScope, PathSemanticElement, PathSemanticPattern, PathState,
+    PathStateId, PathTransition, PathTransitionId, SelectorScope, TemporaryBinding, TransitionKind,
+    acceptance_for, check_gp18, classify_analyzed, classify_plan, explain as explain_logical,
+    explain_automaton, explain_set, is_selective_selector, lower_logical, lower_path_automata,
+    lower_path_automata_with_defaults, measure_lowering_cost, measure_path_lowering,
+    supported_path_inventory, verify_plan_effects,
 };
 pub use lowering::{plan, plan_with_caps};
 pub use optimize::{

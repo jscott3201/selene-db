@@ -1,7 +1,7 @@
 //! Typed mutation funnel per spec 03 section 4.3.
 
 mod assignment;
-mod catalog;
+pub(crate) mod catalog;
 mod catalog_alter;
 mod composite_property_index;
 mod delete;
@@ -9,22 +9,24 @@ mod delete_set;
 mod factory_reset;
 mod property_index;
 mod remove;
+pub(crate) mod schema_event;
 mod text_index;
 mod vector_index;
 
 use std::sync::Arc;
 
+use immutable_chunkmap::map::MapM;
 use roaring::RoaringBitmap;
 use selene_core::{
-    Change, DbString, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-    SchemaChange,
+    Change, DbString, EdgeId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
 };
 
 use crate::adjacency::AdjacencyEdge;
 use crate::error::{GraphError, GraphResult};
 use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
+use crate::id_map::get_or_insert_default;
 use crate::index_provider::{IndexProvider, ProviderTag};
-use crate::store::RowIndex;
+use crate::store::{EdgeRow, NodeRow};
 use crate::type_validator::{EntityId, TypeViolation};
 use crate::write_txn::WriteTxn;
 
@@ -35,6 +37,13 @@ pub struct Mutator<'tx, 'g> {
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
     pub(crate) fn new(txn: &'tx mut WriteTxn<'g>) -> Self {
+        // A transaction may expose its COW working graph through `read()`. Give
+        // every mutable-workspace lease a distinct candidate binding before
+        // any mutation can occur, so candidates from aborted work cannot
+        // validate against the restored published snapshot. Reacquisition
+        // remints conservatively and never changes persisted generation
+        // semantics.
+        txn.guard_mut().remint_candidate_binding();
         Self { txn }
     }
 
@@ -45,9 +54,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Returns [`GraphError::RowSpaceExhausted`] when the dense row store fills
     /// the v1 row-index range (max 2^32 rows).
     pub fn create_node(&mut self, labels: LabelSet, mut props: PropertyMap) -> GraphResult<NodeId> {
+        props.validate_stored_values()?;
         fill_node_defaults(self.txn.read(), &labels, &mut props)?;
         assignment::coerce_node_properties(self.txn.read(), &labels, &mut props)?;
-        let id = self.txn.allocator.allocate_node();
+        props.validate_stored_values()?;
+        let id = self.txn.allocator.allocate_node()?;
         {
             let graph = self.txn.guard_mut();
             // BRIEF-Item-4c: append at the dense end (row = current row count)
@@ -66,6 +77,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                     rows: graph.node_store.len() as u64,
                     max_rows: u32::MAX as u64,
                 })?;
+            let row = NodeRow::new(row);
             // BRIEF-153 fix-cycle C2: run property-index admission BEFORE
             // mutating row state so a cap-exhaustion error rolls back
             // cleanly with no half-written row. Index updates only touch
@@ -76,25 +88,42 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &mut graph.property_index,
                 &labels,
                 &props,
-                row,
+                row.get(),
             )?;
             crate::composite_property_index::apply_node_create(
                 &mut graph.composite_property_index,
                 &labels,
                 &props,
-                row,
+                row.get(),
             )?;
-            crate::vector_index::apply_node_create(&mut graph.vector_index, &labels, &props, row)?;
-            crate::text_index::apply_node_create(&mut graph.text_index, &labels, &props, row, id);
+            crate::vector_index::apply_node_create(
+                &mut graph.vector_index,
+                &labels,
+                &props,
+                row.get(),
+            )?;
+            crate::text_index::apply_node_create(
+                &mut graph.text_index,
+                &labels,
+                &props,
+                row.get(),
+                id,
+            );
             graph.node_store.labels.push(labels.clone());
+            crate::expression_index::update(
+                &mut graph.expression_indexes,
+                None,
+                Some((&labels, &props)),
+                row.get(),
+            );
             graph.node_store.properties.push(props.clone());
             graph.node_store.row_to_id.push(id);
-            graph.node_store.alive_mut().insert(row);
+            graph.node_store.mark_alive(row);
             // BRIEF-Item-4a: bind the external id to its row in both directions.
             // The live commit path never re-runs `rebuild_id_maps`, so the
             // `id -> row` map must be populated here. The row is remappable once
             // 4b compaction renumbers rows under stable ids.
-            graph.node_id_to_row.insert(id, RowIndex::new(row));
+            graph.node_rows.insert_cow(id, row);
             insert_node_labels(&mut graph.idx_label, row, &labels);
         }
         self.txn.changes.push(Change::NodeCreated {
@@ -111,19 +140,89 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         label: DbString,
         source: NodeId,
         target: NodeId,
+        props: PropertyMap,
+    ) -> GraphResult<EdgeId> {
+        self.create_mixed_edge(
+            label,
+            source,
+            target,
+            selene_core::EdgeDirectionality::Directed,
+            props,
+        )
+    }
+
+    /// Create one edge identity with intrinsic directionality. Undirected
+    /// endpoints are canonicalized; reverse construction still creates a new
+    /// parallel edge, never a second directed half of an existing identity.
+    ///
+    /// Directionality is immutable for the lifetime of an identity. Directed
+    /// endpoint/type validation retains commit-time behavior; undirected
+    /// endpoints are checked before incidence is staged, matching either order
+    /// against the closed type's endpoint declarations. Ambiguous unordered
+    /// declarations are rejected rather than choosing a property schema.
+    ///
+    /// # Errors
+    /// Returns an error for absent endpoints, incompatible closed endpoint
+    /// types, invalid properties, or exhausted identity/row space.
+    ///
+    /// ```
+    /// use selene_core::{EdgeDirectionality, GraphId, LabelSet, PropertyMap, db_string};
+    /// use selene_graph::SharedGraph;
+    /// let graph = SharedGraph::new(GraphId::new(1));
+    /// let mut tx = graph.begin_write();
+    /// let mut m = tx.mutator();
+    /// let a = m.create_node(LabelSet::new(), PropertyMap::new())?;
+    /// let b = m.create_node(LabelSet::new(), PropertyMap::new())?;
+    /// let edge = m.create_mixed_edge(db_string("E")?, b, a,
+    ///     EdgeDirectionality::Undirected, PropertyMap::new())?;
+    /// tx.commit()?;
+    /// assert_eq!(graph.read().edge_endpoints(edge), Some((a, b)));
+    /// assert_eq!(graph.read().undirected_edges(b).unwrap().len(), 1);
+    /// # Ok::<(), selene_graph::GraphError>(())
+    /// ```
+    pub fn create_mixed_edge(
+        &mut self,
+        label: DbString,
+        first: NodeId,
+        second: NodeId,
+        directionality: selene_core::EdgeDirectionality,
         mut props: PropertyMap,
     ) -> GraphResult<EdgeId> {
+        let (source, target) = directionality.canonical_endpoints(first, second);
+        props.validate_stored_values()?;
         self.require_live_node(source)?;
         self.require_live_node(target)?;
-        fill_edge_defaults(self.txn.read(), label.clone(), source, target, &mut props)?;
+        fill_edge_defaults(
+            self.txn.read(),
+            label.clone(),
+            source,
+            target,
+            directionality,
+            &mut props,
+        )?;
         assignment::coerce_edge_properties(
             self.txn.read(),
             label.clone(),
             source,
             target,
+            directionality,
             &mut props,
         )?;
-        let id = self.txn.allocator.allocate_edge();
+        let id = self.txn.allocator.allocate_edge()?;
+        props.validate_stored_values()?;
+        if directionality == selene_core::EdgeDirectionality::Undirected
+            && let Some(type_def) = self.txn.read().meta.bound_type.as_deref()
+        {
+            crate::type_validator::validate_edge_endpoints(
+                id,
+                label.clone(),
+                (source, target),
+                directionality,
+                self.txn.read(),
+                type_def,
+            )
+            .map_err(GraphError::TypeViolation)?;
+        }
         {
             let graph = self.txn.guard_mut();
             // BRIEF-Item-4c: append at the dense end (see create_node).
@@ -135,43 +234,55 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                     rows: graph.edge_store.len() as u64,
                     max_rows: u32::MAX as u64,
                 })?;
+            let row = EdgeRow::new(row);
             crate::property_index::apply_edge_create(
                 &mut graph.edge_property_index,
                 &label,
                 &props,
-                row,
+                row.get(),
             )?;
             graph.edge_store.label.push(label.clone());
+            graph.edge_store.directionality.push(directionality);
             graph.edge_store.source.push(source);
             graph.edge_store.target.push(target);
             graph.edge_store.properties.push(props.clone());
             graph.edge_store.row_to_id.push(id);
-            graph.edge_store.alive_mut().insert(row);
+            graph.edge_store.mark_alive(row);
             // BRIEF-Item-4a: bind the external edge id to its row (live path).
-            graph.edge_id_to_row.insert(id, RowIndex::new(row));
-            insert_index_row(&mut graph.idx_edge_label, label.clone(), row);
+            graph.edge_rows.insert_cow(id, row);
+            insert_index_row(&mut graph.idx_edge_label, label.clone(), row.get());
 
-            graph
-                .adjacency_out
-                .entry(source)
-                .or_default()
-                .add(AdjacencyEdge {
+            if directionality == selene_core::EdgeDirectionality::Directed {
+                get_or_insert_default(&mut graph.adjacency_out, source).add(AdjacencyEdge {
                     label: label.clone(),
                     neighbor: target,
                     edge_id: id,
                 });
-            graph
-                .adjacency_in
-                .entry(target)
-                .or_default()
-                .add(AdjacencyEdge {
+                get_or_insert_default(&mut graph.adjacency_in, target).add(AdjacencyEdge {
                     label: label.clone(),
                     neighbor: source,
                     edge_id: id,
                 });
+            } else {
+                get_or_insert_default(&mut graph.adjacency_undirected, source).add(AdjacencyEdge {
+                    label: label.clone(),
+                    neighbor: target,
+                    edge_id: id,
+                });
+                if source != target {
+                    get_or_insert_default(&mut graph.adjacency_undirected, target).add(
+                        AdjacencyEdge {
+                            label: label.clone(),
+                            neighbor: source,
+                            edge_id: id,
+                        },
+                    );
+                }
+            }
         }
         self.txn.changes.push(Change::EdgeCreated {
             id,
+            directionality,
             label,
             source,
             target,
@@ -187,6 +298,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         labels_diff: LabelDiff,
         mut props_diff: PropertyDiff,
     ) -> GraphResult<()> {
+        props_diff.validate_stored_values()?;
         let row = self.require_live_node(id)?;
 
         // Compute the new label set without mutating the working graph yet.
@@ -195,7 +307,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .node_store
             .labels
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let mut labels = old_labels.clone();
@@ -217,7 +329,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .node_store
             .properties
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let mut props = old_props.clone();
@@ -235,7 +347,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
@@ -243,7 +355,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::vector_index::apply_node_update(
                 &mut graph.vector_index,
@@ -251,7 +363,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
             )?;
             crate::text_index::apply_node_update(
                 &mut graph.text_index,
@@ -259,16 +371,22 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &old_props,
                 &labels,
                 &props,
-                row as u32,
+                row.get(),
                 id,
             );
-            graph.node_store.labels.set(row, labels);
-            graph.node_store.properties.set(row, props);
+            crate::expression_index::update(
+                &mut graph.expression_indexes,
+                Some((&old_labels, &old_props)),
+                Some((&labels, &props)),
+                row.get(),
+            );
+            graph.node_store.labels.set(row.index(), labels);
+            graph.node_store.properties.set(row.index(), props);
             for label in labels_diff.added.iter().cloned() {
-                insert_index_row(&mut graph.idx_label, label, row as u32);
+                insert_index_row(&mut graph.idx_label, label, row.get());
             }
             for label in labels_diff.removed.iter() {
-                remove_index_row(&mut graph.idx_label, label, row as u32);
+                remove_index_row(&mut graph.idx_label, label, row.get());
             }
         }
 
@@ -285,6 +403,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Edge labels are immutable, so property updates do not touch
     /// `idx_edge_label`.
     pub fn update_edge(&mut self, id: EdgeId, mut props_diff: PropertyDiff) -> GraphResult<()> {
+        props_diff.validate_stored_values()?;
         let row = self.require_live_edge(id)?;
         reject_immutable_edge_update(self.txn.read(), id, &props_diff)?;
         assignment::coerce_edge_property_diff(self.txn.read(), id, &mut props_diff)?;
@@ -293,7 +412,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .edge_store
             .label
-            .get(row)
+            .get(row.index())
             .cloned()
             .ok_or(GraphError::EdgeNotFound { id })?;
         let old_props = self
@@ -301,20 +420,20 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .read()
             .edge_store
             .properties
-            .get(row)
+            .get(row.index())
             .cloned()
             .unwrap_or_default();
         let mut props = old_props.clone();
         apply_property_diff(&mut props, &props_diff)?;
         {
             let graph = self.txn.guard_mut();
-            graph.edge_store.properties.set(row, props.clone());
+            graph.edge_store.properties.set(row.index(), props.clone());
             crate::property_index::apply_edge_update(
                 &mut graph.edge_property_index,
                 &label,
                 &old_props,
                 &props,
-                row as u32,
+                row.get(),
             )?;
         }
         self.txn.changes.push(Change::EdgeUpdated {
@@ -331,15 +450,21 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// (the typed catalog DDL methods on this `Mutator` — e.g. `create_node_type`
     /// — call those layers and then funnel here).
     ///
-    /// Why: this is the single, canonical funnel entry for a `SchemaChanged`
-    /// change record (hard rule 11 — every mutation routes through the one
-    /// `Mutator`). It is intentionally retained as a `pub` funnel surface even
-    /// though no GQL caller reaches it directly today: the catalog DDL methods
-    /// are the production producers, and keeping the low-level entry public means
-    /// any future schema-event producer routes through the same funnel rather
-    /// than re-implementing the write path. Tests and benches drive it directly
-    /// to exercise the raw funnel without the DDL validation layer on top.
-    pub fn schema_change(&mut self, graph: GraphId, change: SchemaChange) {
+    /// The emitted record is stamped with the live transaction's graph id. It
+    /// is not a caller parameter: since #1104 the id is load-bearing on the read
+    /// side, where a record carrying a foreign id makes the directory
+    /// unrecoverable under *every* id because recovery refuses it as
+    /// cross-wired. Deriving it here makes that state unrepresentable rather
+    /// than merely rejected.
+    ///
+    /// The catalog DDL methods are the production producers and push
+    /// [`Change::SchemaChanged`] directly rather than routing through here, so
+    /// this is a raw funnel rather than the only one. It stays `pub` so a future
+    /// schema-event producer has a low-level entry that already stamps identity
+    /// correctly instead of re-implementing the write path; tests and benches
+    /// drive it to exercise the funnel without the DDL validation layer on top.
+    pub fn schema_change(&mut self, change: SchemaChange) {
+        let graph = self.txn.read().graph_id();
         self.txn
             .changes
             .push(Change::SchemaChanged { graph, change });
@@ -361,75 +486,60 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn.read()
     }
 
-    fn require_live_node(&self, id: NodeId) -> GraphResult<usize> {
+    fn require_live_node(&self, id: NodeId) -> GraphResult<NodeRow> {
         let graph = self.txn.read();
         // Map-backed: a never-committed (aborted-tx hole) id is absent from the
         // map -> NotFound. A deleted id stays mapped to its dead row -> NotAlive.
         let row = graph
-            .row_for_node_id(id)
-            .ok_or(GraphError::NodeNotFound { id })?
-            .get();
-        if row as usize >= graph.node_store.len() {
+            .node_row_for_id(id)
+            .ok_or(GraphError::NodeNotFound { id })?;
+        if row.index() >= graph.node_store.len() {
             return Err(GraphError::NodeNotFound { id });
         }
-        if !graph.node_store.is_alive(row) {
+        if !graph.node_store.is_alive_row(row) {
             return Err(GraphError::NodeNotAlive { id });
         }
-        Ok(row as usize)
+        Ok(row)
     }
 
-    fn require_live_edge(&self, id: EdgeId) -> GraphResult<usize> {
+    fn require_live_edge(&self, id: EdgeId) -> GraphResult<EdgeRow> {
         let graph = self.txn.read();
         let row = graph
-            .row_for_edge_id(id)
-            .ok_or(GraphError::EdgeNotFound { id })?
-            .get();
-        if row as usize >= graph.edge_store.len() {
+            .edge_row_for_id(id)
+            .ok_or(GraphError::EdgeNotFound { id })?;
+        if row.index() >= graph.edge_store.len() {
             return Err(GraphError::EdgeNotFound { id });
         }
-        if !graph.edge_store.is_alive(row) {
+        if !graph.edge_store.is_alive_row(row) {
             return Err(GraphError::EdgeNotAlive { id });
         }
-        Ok(row as usize)
+        Ok(row)
     }
 }
 
-fn insert_node_labels(
-    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
-    row: u32,
-    labels: &LabelSet,
-) {
+fn insert_node_labels(index: &mut MapM<DbString, RoaringBitmap>, row: NodeRow, labels: &LabelSet) {
     for label in labels.iter().cloned() {
-        insert_index_row(index, label, row);
+        insert_index_row(index, label, row.get());
     }
 }
 
-fn remove_node_labels(
-    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
-    row: u32,
-    labels: &LabelSet,
-) {
+fn remove_node_labels(index: &mut MapM<DbString, RoaringBitmap>, row: NodeRow, labels: &LabelSet) {
     for label in labels.iter() {
-        remove_index_row(index, label, row);
+        remove_index_row(index, label, row.get());
     }
 }
 
-fn insert_index_row(index: &mut imbl::HashMap<DbString, RoaringBitmap>, label: DbString, row: u32) {
-    // In-place insert via `entry().or_default()`: the rebuild path uses the same
-    // idiom (see `consistency.rs` / `typed_index.rs`). `guard_mut` already gives
-    // unique ownership of the bitmap (Arc::make_mut), so we never clone the whole
-    // RoaringBitmap per label per node — bulk-loading one label is O(N), not O(N²).
-    index.entry(label).or_default().insert(row);
+fn insert_index_row(index: &mut MapM<DbString, RoaringBitmap>, label: DbString, row: u32) {
+    // Mutate the bitmap behind the persistent-map entry. `guard_mut` already
+    // owns the working snapshot, so bulk-loading one label remains O(N), not
+    // O(N²) from cloning the whole bitmap per row.
+    get_or_insert_default(index, label).insert(row);
 }
 
-fn remove_index_row(
-    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
-    label: &DbString,
-    row: u32,
-) {
-    // Mirror `insert_index_row`: mutate the bitmap behind the imbl entry
+fn remove_index_row(index: &mut MapM<DbString, RoaringBitmap>, label: &DbString, row: u32) {
+    // Mirror `insert_index_row`: mutate the bitmap behind the persistent entry
     // instead of cloning the whole RoaringBitmap for every row removed.
-    let now_empty = match index.get_mut(label) {
+    let now_empty = match index.get_mut_cow(label) {
         Some(bitmap) => {
             bitmap.remove(row);
             bitmap.is_empty()
@@ -437,7 +547,7 @@ fn remove_index_row(
         None => false,
     };
     if now_empty {
-        index.remove(label);
+        index.remove_cow(label);
     }
 }
 
@@ -460,6 +570,7 @@ fn fill_edge_defaults(
     label: DbString,
     source: NodeId,
     target: NodeId,
+    directionality: selene_core::EdgeDirectionality,
     props: &mut PropertyMap,
 ) -> GraphResult<()> {
     let Some(graph_type) = graph.meta.bound_type.as_deref() else {
@@ -471,7 +582,9 @@ fn fill_edge_defaults(
     let Some(target_type) = node_type_index_for_node(graph, graph_type, target) else {
         return Ok(());
     };
-    let Some(edge_type) = graph_type.find_edge_type(label, source_type, target_type) else {
+    let Some(edge_type) =
+        graph_type.find_mixed_edge_type(label, source_type, target_type, directionality)
+    else {
         return Ok(());
     };
     fill_property_defaults(&edge_type.properties, props)
@@ -532,7 +645,14 @@ fn reject_immutable_edge_update(
     let Some(target_type) = node_type_index_for_node(graph, graph_type, target) else {
         return Ok(());
     };
-    let Some(edge_type) = graph_type.find_edge_type(label, source_type, target_type) else {
+    let Some(edge_type) = graph_type.find_mixed_edge_type(
+        label,
+        source_type,
+        target_type,
+        graph
+            .edge_directionality(id)
+            .ok_or(GraphError::EdgeNotFound { id })?,
+    ) else {
         return Ok(());
     };
     reject_immutable_property_update(

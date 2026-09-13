@@ -14,12 +14,10 @@ use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use selene_core::{CancellationChecker, DbString, NodeId, Value};
+use selene_core::{CancellationChecker, DbString, NodeId};
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
-use crate::shared::SharedGraph;
-use crate::store::RowIndex;
 use crate::text_search::{
     DocumentStats, TextSearchError, TextSearchHit, TextTopK, bm25_score, tokenize_borrowed,
     unique_query_terms,
@@ -29,11 +27,15 @@ use crate::text_search::{
 mod builder;
 #[path = "text_index/candidate.rs"]
 mod candidate;
+mod contract;
 #[path = "text_index/maintenance.rs"]
 mod maintenance;
+#[cfg(test)]
+mod native_tests;
 #[path = "text_index/postings.rs"]
 mod postings;
-use builder::TextIndexBuilder;
+mod snapshot;
+pub(crate) use builder::TextIndexBuilder;
 use postings::{remove_posting, upsert_posting};
 
 type QueryDocumentFrequencies = SmallVec<[u32; 4]>;
@@ -50,6 +52,7 @@ pub(crate) use maintenance::{
 /// In-memory BM25 postings index for one node `(label, property)` pair.
 #[derive(Clone, Debug)]
 pub struct TextIndex {
+    contract_version: u32,
     label: DbString,
     property: DbString,
     rows: RoaringBitmap,
@@ -72,43 +75,26 @@ impl TextIndex {
     /// Returns [`GraphError::Inconsistent`] if the label index references a row
     /// without a resolvable node id or property row.
     pub fn build(graph: &SeleneGraph, label: DbString, property: DbString) -> GraphResult<Self> {
-        let Some(label_rows) = graph.nodes_with_label(&label) else {
+        let candidates = graph.node_candidates_with_label(&label)?;
+        let validated = graph
+            .validate_node_candidates(&candidates)
+            .map_err(|error| GraphError::Inconsistent {
+                reason: format!("fresh text-index candidates failed validation: {error}"),
+            })?;
+        if validated.is_empty() {
             return Ok(TextIndexBuilder::empty(label, property).finish());
-        };
-        let label_row_capacity = usize::try_from(label_rows.len()).unwrap_or(usize::MAX);
+        }
         let mut index = TextIndexBuilder::with_document_capacity(
             label.clone(),
             property.clone(),
-            label_row_capacity,
+            validated.len(),
         );
 
-        for raw_row in label_rows.iter() {
-            if !graph.node_store.is_alive(raw_row) {
-                continue;
-            }
-            let row = RowIndex::new(raw_row);
-            let node_id = graph
-                .node_id_for_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "label index row {raw_row} for {} has no node id",
-                        label.as_str()
-                    ),
-                })?;
-            let properties = graph
-                .node_store
-                .properties
-                .get(raw_row as usize)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "text index row {raw_row} for {} has no property row",
-                        label.as_str()
-                    ),
-                })?;
-            let Some(Value::String(text)) = properties.get(&property) else {
+        for candidate in validated.as_slice() {
+            let Some(text) = candidate.string_property(&property)? else {
                 continue;
             };
-            index.insert_document(raw_row, node_id, text.as_str());
+            candidate.insert_into_text_index(&mut index, text.as_str());
         }
         Ok(index.finish())
     }
@@ -117,6 +103,7 @@ impl TextIndex {
     #[must_use]
     pub fn empty(label: DbString, property: DbString) -> Self {
         Self {
+            contract_version: contract::VERSION,
             label,
             property,
             rows: RoaringBitmap::new(),
@@ -250,6 +237,7 @@ impl TextIndex {
         k: usize,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<TextSearchHit>, TextSearchError> {
+        self.validate_contract()?;
         checker.check()?;
         if k == 0 || self.document_lengths.is_empty() {
             return Ok(Vec::new());
@@ -496,79 +484,6 @@ pub struct TextIndexMemoryUsage {
     pub posting_bytes: usize,
     /// Estimated bytes reachable from the index object.
     pub estimated_index_bytes: usize,
-}
-
-impl SeleneGraph {
-    /// Build a reusable BM25 postings index for `label.property`.
-    ///
-    /// The returned index is tied to this graph snapshot. Mutations committed
-    /// after the snapshot is read require rebuilding or durable registration in a
-    /// later maintained-index layer.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::Inconsistent`] if graph label/property columns are
-    /// internally inconsistent while the snapshot is scanned.
-    pub fn build_text_index(
-        &self,
-        label: &DbString,
-        property: &DbString,
-    ) -> GraphResult<TextIndex> {
-        TextIndex::build(self, label.clone(), property.clone())
-    }
-
-    /// Rank string-valued node properties through a transient postings index.
-    ///
-    /// This is primarily useful for tests and benchmark comparisons. Repeated
-    /// production queries should build a [`TextIndex`] once and call
-    /// [`TextIndex::search`] directly.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::Inconsistent`] if index construction observes corrupt
-    /// graph columns.
-    pub fn indexed_text_search_nodes(
-        &self,
-        label: &DbString,
-        property: &DbString,
-        query: &str,
-        k: usize,
-    ) -> GraphResult<Vec<TextSearchHit>> {
-        Ok(self.build_text_index(label, property)?.search(query, k))
-    }
-}
-
-impl SharedGraph {
-    /// Build a reusable BM25 postings index from the current shared snapshot.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::Inconsistent`] if index construction observes corrupt
-    /// graph columns.
-    pub fn build_text_index(
-        &self,
-        label: &DbString,
-        property: &DbString,
-    ) -> GraphResult<TextIndex> {
-        self.read().build_text_index(label, property)
-    }
-
-    /// Rank string-valued node properties through a transient postings index.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::Inconsistent`] if index construction observes corrupt
-    /// graph columns.
-    pub fn indexed_text_search_nodes(
-        &self,
-        label: &DbString,
-        property: &DbString,
-        query: &str,
-        k: usize,
-    ) -> GraphResult<Vec<TextSearchHit>> {
-        self.read()
-            .indexed_text_search_nodes(label, property, query, k)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

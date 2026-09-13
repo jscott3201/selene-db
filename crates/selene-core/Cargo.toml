@@ -33,6 +33,8 @@ proptest.workspace = true
 rstest.workspace = true
 insta.workspace = true
 postcard.workspace = true
+# Keep consumer feature unification covered by the core serialization tests.
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
 pollster.workspace = true
 rayon.workspace = true
 wgpu.workspace = true
