@@ -29,12 +29,17 @@ These are separate authorities:
 - Workspace regression tests: broader behavior evidence, not an independently
   complete normative rule inventory. Parser corpus admission is not execution.
 
+<a id="known-gaps-no-silent-scope-decision"></a>
+
 ## Known gaps: no silent scope decision
 
 The canonical target still includes unsupported or partial runtime families:
 GC03, GE04, GE05, GG02, GG20, GG21, GP16, GQ01, GV66, GV67 and their unsupported
-reference/union implications GV60, GV61, GV65. Consult the generated matrix for
-the exact current rationale and closure; this list is not a new release selection.
+reference/union implications GV60, GV61, GV65. These remain canonical-target gaps;
+their completion is deferred from alpha to the
+[family backlog rows](post-ga-backlog.md#deferred-canonical-target-families).
+Consult the generated matrix for the exact current rationale and closure; the
+canonical selection is unchanged.
 In particular, richer Rust schema construction does not implement the full GQL
 closed graph-type grammar, and facade reference carriers do not establish all
 graph/table parameter language semantics.
@@ -48,11 +53,24 @@ IW004's `SharedGraph` transaction mechanism); it must not be read as the stable
 facade recipe. Source review and executed tests must resolve those entries before
 a complete claim. No evidence or claim state is promoted by this note.
 
-**Owner question:** the target and the completed finish-plan subset are not yet
-the same claim boundary. Justin must decide any proposed release-scope change;
-otherwise the selected functional/evidence gaps need completion in their owning
-lanes. This note does not mark F06-PR01's “every agreed functional slice complete”
-acceptance as met, or authorize moving unresolved agreed behavior to post-GA.
+**Owner decision (Justin, 2026-09-13):** scope 2.0-alpha to the completed finish-plan
+subset. Defer completion of the families listed above,
+[rule inventory](post-ga-backlog.md#deferred-rule-inventory-completion) and
+[pending Annex B decisions](post-ga-backlog.md#deferred-annex-b-decisions) to the
+tracked post-GA backlog, except where already decided and evidenced. This visible
+scope decision meets F06-PR01's “every agreed functional slice complete” acceptance
+under the narrowed alpha selection, not the full canonical target. It does not
+excuse incorrect agreed behavior or assert minimum conformance.
+
+**Recording method: prose only.** The existing `selected_features` and
+`release_claimable` machinery drives canonical closure, the Flagger, Annex B and
+the claim runner; it cannot represent an independent alpha selection without
+changing the canonical target. Therefore no profile/schema, claim-state, evidence,
+generator, validator, harness or generated-artifact changes record this decision.
+The formal `selected_profile` claim remains **denied-by-design for alpha**, with
+the same permitted ISO-aligned wording above. Machine-checked alpha selection is
+not introduced here; a separate selection mechanism may be considered later if
+GA needs it. Release qualification and authorization remain F06-PR02.
 
 ## Public embedding contract
 
