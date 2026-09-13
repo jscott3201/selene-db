@@ -1,0 +1,8 @@
+selene-db-core
+selene-db-profile
+selene-db-catalog
+selene-db-persist
+selene-db-graph
+selene-db-algorithms
+selene-db-gql
+selene-db

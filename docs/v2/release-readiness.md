@@ -166,3 +166,6 @@ Retain actual results in the implementation/review handoff, not fabricated
 checked-in pass manifests. Run workspace gates and separate doctests as required.
 Balanced guard rows are comparisons with the existing workload, not a new
 optimization effort. Full native artifact/crash/fuzz qualification remains F06-PR02.
+See the [local qualification evidence](release-qualification.md) and
+[release-notes draft](release-notes-alpha.md) for actual candidate results and
+explicitly unrun native/exact-head lanes; neither authorizes publication.
