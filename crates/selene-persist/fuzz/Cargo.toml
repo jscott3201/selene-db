@@ -16,10 +16,6 @@ selene-core = { package = "selene-db-core", path = "../../selene-core", version 
 selene-graph = { package = "selene-db-graph", path = "../../selene-graph", version = "2.0.0-alpha.1" }
 selene-catalog = { package = "selene-db-catalog", path = "../../selene-catalog", version = "2.0.0-alpha.1" }
 blake3 = "1.8.6"
-# Same version the workspace already uses. `decode_wal` has to author frames
-# whose checksums are correct, or WAL 3.0's integrity checks make the target
-# unreachable past its first frame.
-xxhash-rust = { version = "0.8.18", features = ["xxh3"] }
 
 [[bin]]
 name = "decode_logical_snapshot"
@@ -59,13 +55,6 @@ bench = false
 [[bin]]
 name = "decode_wal"
 path = "fuzz_targets/decode_wal.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "decode_audit"
-path = "fuzz_targets/decode_audit.rs"
 test = false
 doc = false
 bench = false

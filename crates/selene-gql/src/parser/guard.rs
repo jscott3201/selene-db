@@ -2,6 +2,10 @@
 
 use crate::{SourceSpan, error::ParserError};
 
+mod braces;
+mod quoted;
+use quoted::{skip_backtick_quoted, skip_double_quoted, skip_no_escape_quoted, skip_single_quoted};
+
 /// Maximum syntactic nesting depth admitted by the parser.
 ///
 /// This bounds pest recursion on hostile malformed expressions while leaving
@@ -40,9 +44,9 @@ pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 /// cap, by contrast, would reject a legitimate ten-hop fixed path purely for
 /// its opener count.) The cap of 32 is an order of magnitude above the deepest
 /// legitimate `[` nesting anywhere in the workspace (3, a `[[[1]]]` literal)
-/// and comfortably below the ~57-deep empirical blow-up point. `(` and `{`
-/// nesting is not a demonstrated backtracking vector (the fuzz corpus contains
-/// only `[`) and is bounded by [`MAX_NESTING_DEPTH`] alone.
+/// and comfortably below the ~57-deep empirical blow-up point. Bare nested-query
+/// braces have a separate backtracking bound in [`braces`]; ordinary record,
+/// `EXISTS` and parenthesis nesting retain [`MAX_NESTING_DEPTH`].
 pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 
 /// Maximum zero-delimiter recursive-descent depth admitted by the parser.
@@ -154,6 +158,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let mut index = 0;
     let mut depth = 0_u32;
     let mut list_depth = 0_u32;
+    let mut braces = braces::BareQueryDepth::default();
     // Recursion-pressure counters (see `MAX_RECURSION_DEPTH`). Their SUM with
     // `depth` is the bounded quantity: it tracks the native stack depth at the
     // current position. pest treats comments as whitespace, so a comment between
@@ -250,6 +255,9 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             // expression is the operand of any enclosing unary chain, which
             // stays open and must keep counting toward the combined cap.
             b'(' | b'{' => {
+                if bytes[index] == b'{' {
+                    braces.open(prev_sig_byte == Some(b'{'), index)?;
+                }
                 depth += 1;
                 prev_word = PrevWord::Other;
                 prev_sig_byte = Some(bytes[index]);
@@ -300,6 +308,9 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             // chain that wrapped it (if any) is now complete: reset both runs.
             // `case_depth` is NOT touched — a `)` closes a paren, not a `CASE`.
             b')' | b'}' => {
+                if bytes[index] == b'}' {
+                    braces.close();
+                }
                 depth = depth.saturating_sub(1);
                 sign_run = 0;
                 not_run = 0;
@@ -564,67 +575,6 @@ fn next_sig_is_colon(bytes: &[u8], from: usize) -> bool {
         }
     }
     false
-}
-
-fn skip_single_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>) -> usize {
-    while index < bytes.len() {
-        match bytes[index] {
-            // `\'` where the `'` is the final quote in the input is a *dangling*
-            // escape (pest `dangling_escape`): the `\` is literal and the `'`
-            // closes the string. Return the `'` position so the scan resumes
-            // after it and still counts any following brackets — matching pest,
-            // which closes the string here too. Any other `\X` (including a
-            // `\'` with a later quote — pest `escaped_quote`) escapes one byte.
-            b'\\' if bytes.get(index + 1) == Some(&b'\'') && Some(index + 1) == last_quote => {
-                return index + 1;
-            }
-            b'\\' => index += 2,
-            b'\'' if next_is(bytes, index, b'\'') => index += 2,
-            b'\'' => return index,
-            _ => index += 1,
-        }
-    }
-    bytes.len()
-}
-
-fn skip_double_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>) -> usize {
-    while index < bytes.len() {
-        match bytes[index] {
-            b'\\' if bytes.get(index + 1) == Some(&b'"') && Some(index + 1) == last_quote => {
-                return index + 1;
-            }
-            b'\\' => index += 2,
-            b'"' if next_is(bytes, index, b'"') => index += 2,
-            b'"' => return index,
-            _ => index += 1,
-        }
-    }
-    bytes.len()
-}
-
-fn skip_no_escape_quoted(bytes: &[u8], mut index: usize, delimiter: u8) -> usize {
-    while index < bytes.len() {
-        if bytes[index] == delimiter {
-            return index;
-        }
-        index += 1;
-    }
-    bytes.len()
-}
-
-fn skip_backtick_quoted(bytes: &[u8], mut index: usize, last_backtick: Option<usize>) -> usize {
-    while index < bytes.len() {
-        match bytes[index] {
-            b'\\' if bytes.get(index + 1) == Some(&b'`') && Some(index + 1) == last_backtick => {
-                return index + 1;
-            }
-            b'\\' => index += 2,
-            b'`' if next_is(bytes, index, b'`') => index += 2,
-            b'`' => return index,
-            _ => index += 1,
-        }
-    }
-    bytes.len()
 }
 
 fn skip_line_comment(bytes: &[u8], mut index: usize) -> usize {

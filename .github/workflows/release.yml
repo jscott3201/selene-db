@@ -296,9 +296,36 @@ jobs:
         # panic/OOM/hang. -timeout=20 fails any input that hangs; -max_len=65536
         # bounds the audit record count and the manifest/section length fields.
         run: |
-          for target in decode_control decode_manifest decode_wal decode_audit decode_snapshot; do
+          for target in decode_control decode_manifest decode_wal decode_snapshot decode_logical decode_logical_value decode_logical_snapshot; do
             cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=20 -timeout=20 -max_len=65536
           done
+
+  package-crates:
+    name: package public crates (${{ matrix.os }})
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@v2
+      - run: bash .github/scripts/check-package-release.test.sh
+      - run: bash .github/scripts/check-package-release.sh
+      # Cargo stages the selected workspace closure in dependency order, so
+      # validation does not require an earlier upload of this source version.
+      - run: cargo package --workspace --exclude selene-db-testing --locked
+      - run: bash .github/scripts/check-package-release.sh --archives target/package
+      - run: bash scripts/smoke-packaged-crates.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crates-${{ runner.os }}-${{ runner.arch }}
+          path: target/package/*.crate
+          if-no-files-found: error
 
   publish-crates:
     name: publish crates.io
@@ -362,11 +389,10 @@ jobs:
             wait_for_index "$crate" "$version"
           }
 
-          publish_crate selene-db-core
-          publish_crate selene-db-persist
-          publish_crate selene-db-graph
-          publish_crate selene-db-algorithms
-          publish_crate selene-db-gql
+          bash .github/scripts/check-package-release.sh
+          while IFS= read -r crate; do
+            publish_crate "$crate"
+          done < .github/scripts/public-crates.txt
 
   github-release:
     name: GitHub release

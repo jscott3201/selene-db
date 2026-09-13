@@ -147,6 +147,49 @@ mod dos {
     const NESTING_CAP: usize = 64;
 
     #[test]
+    fn bare_query_brace_timeout_rejects_before_pest() {
+        // F06-QUAL-04: minimized from timeout-9623e2a3 (57 bytes). Thirteen
+        // openers plus 0x1e still hit -timeout=20; twelve took about 10 seconds.
+        // Embed the minimized UTF-8 input, never depend on ignored artifacts.
+        let source = "{{{{{{{{{{{{{\u{1e}";
+        let start = Instant::now();
+        let error = parse(source).expect_err("malformed bare query nesting must reject");
+        assert!(start.elapsed() < PARSE_BUDGET);
+        assert!(matches!(
+            error,
+            ParserError::ComplexityLimitExceeded { limit: 7, .. }
+        ));
+        assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+    }
+
+    #[test]
+    fn bare_query_budget_counts_open_wrappers_not_text_or_total_braces() {
+        // Comments cannot reset the active wrappers; nor can non-brace tokens
+        // inside a wrapper (which still multiplies any later failed descent).
+        for source in [
+            format!("{}\u{1e}", "{ /* }} */ // }}\n".repeat(9)),
+            format!("{}RETURN 1{}", "{".repeat(9), "}".repeat(9)),
+            format!("{}RETURN VALUE {{ {{ {{\u{1e}", "{".repeat(7)),
+        ] {
+            let error = parse(&source).expect_err("over-budget bare wrappers reject");
+            assert!(matches!(
+                error,
+                ParserError::ComplexityLimitExceeded { limit: 7, .. }
+            ));
+            assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
+        }
+
+        parse(&format!("{}RETURN 1{}", "{".repeat(8), "}".repeat(8)))
+            .expect("eight bare levels remain admitted");
+        let branches = vec!["{{ RETURN 1 }}"; 20].join(" UNION ALL ");
+        parse(&branches).expect("closed sibling wrappers do not accumulate");
+        let record = format!("RETURN {}1{}", "{a: ".repeat(32), "}".repeat(32));
+        parse(&record).expect("record nesting retains the existing general cap");
+        parse("RETURN '{{{{{{{{{{{{{', \"{{{{{{{{{{{{{\", 1 AS `{{{{{{{{{{{{{`")
+            .expect("quoted braces are not query wrappers");
+    }
+
+    #[test]
     fn bracket_complexity_limit_enforced_on_artifacts() {
         for (label, bytes) in ARTIFACTS {
             // The fuzz target feeds raw bytes through `str::from_utf8` first;
