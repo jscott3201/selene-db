@@ -24,13 +24,20 @@ pub(super) fn build_specification(pair: Pair<'_, Rule>) -> Result<QueryPipeline,
                     span: clause_span,
                 });
             }
-            Rule::query_pipeline => pipeline = Some(query::build_query_pipeline(child)?),
-            Rule::composite_query | Rule::chained_query => {
-                return Err(ParserError::not_implemented(
-                    "composition inside an AT or nested query specification is not implemented",
-                    span(&child),
-                    None,
-                ));
+            Rule::query_expression => {
+                let expression_span = span(&child);
+                let mut parts = child.into_inner();
+                let first = parts.next().ok_or_else(ParserError::empty_program)?;
+                // Preserve the specification-level diagnostic before building
+                // either arm, even if an arm has its own unsupported surface.
+                if parts.next().is_some() {
+                    return Err(ParserError::not_implemented(
+                        "composition inside an AT or nested query specification is not implemented",
+                        expression_span,
+                        None,
+                    ));
+                }
+                pipeline = Some(query::build_query_pipeline(first)?);
             }
             _ => return Err(unexpected_pair(child, "expected query specification")),
         }

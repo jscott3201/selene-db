@@ -18,10 +18,10 @@
 
 // -- Top-level ------------------------------------------------------
 
-gql_program = { SOI ~ (explain_stmt | catalog_statement_chain | ddl_statement | transaction_control | session_command | schema_query | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+gql_program = { SOI ~ (explain_stmt | catalog_statement_chain | ddl_statement | transaction_control | session_command | schema_query | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | query_expression) ~ EOI }
 
 explain_stmt = { explain_kw ~ explainable_statement }
-explainable_statement = { ddl_statement | schema_query | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
+explainable_statement = { ddl_statement | schema_query | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | query_expression }
 explain_kw = @{ ^"EXPLAIN" ~ !(LETTER | NUMBER | "_") }
 
 // -- DDL statements -----------------------------------------------
@@ -277,9 +277,12 @@ if_exists     = { if_kw ~ exists_kw }
 if_kw = @{ ^"IF" ~ !(LETTER | NUMBER | "_") }
 exists_kw = @{ ^"EXISTS" ~ !(LETTER | NUMBER | "_") }
 
-chained_query = { query_pipeline ~ (next_kw ~ query_pipeline)+ }
+// Parse the common first pipeline only once. The tails are disjoint: choosing
+// a set-operation tail cannot subsequently admit NEXT (or vice versa).
+query_expression = { query_pipeline ~ (composite_query | chained_query)? }
+chained_query = { (next_kw ~ query_pipeline)+ }
 
-composite_query = { query_pipeline ~ (set_op ~ query_pipeline)+ }
+composite_query = { (set_op ~ query_pipeline)+ }
 set_op          = { union_op | intersect_op | except_op | otherwise_op }
 union_op        = { union_kw ~ (all_kw | distinct_kw)? }
 intersect_op    = { intersect_kw ~ (all_kw | distinct_kw)? }
@@ -389,8 +392,8 @@ select_from = { from_kw ~ (match_stmt | ident) }
 // Bounded ISO §§9.1–9.2, 14.3, 16.1–16.2 hosts. AT is only a procedure-head
 // clause; USE is never an arbitrary statement wrapper. Composition inside a
 // nested specification is recognized for an explicit unsupported diagnostic.
-schema_query = { at_schema_clause ~ (composite_query | chained_query | query_pipeline) }
-query_specification = { at_schema_clause? ~ (composite_query | chained_query | query_pipeline) }
+schema_query = { at_schema_clause ~ query_expression }
+query_specification = { at_schema_clause? ~ query_expression }
 nested_query = { "{" ~ query_specification ~ "}" }
 focused_query = { use_graph_clause ~ (nested_query | mutation_pipeline | focused_query_body) }
 focused_query_body = { simple_scope_query_statement* ~ return_stmt ~ sorting_stmt? ~ offset_stmt? ~ limit_stmt? }
@@ -843,7 +846,10 @@ is_suffix = {
   | is_kw ~ not_kw? ~ normal_form? ~ normalized_kw
   | is_kw ~ not_kw? ~ truth_value
   | is_kw ~ not_kw? ~ typed_kw ~ type_name
-  | not_kw? ~ in_kw ~ (list_lit | comparison)
+  // A comparison starting with '[' must start with the very same list_lit.
+  // If that list fails, retrying it through comparison cannot make it succeed.
+  // Keep the direct-list commitment (including its AST variant) on success.
+  | not_kw? ~ in_kw ~ (list_lit | !"[" ~ comparison)
   | string_match_op ~ comparison
 }
 labeled_kw        = @{ ^"LABELED" ~ !(LETTER | NUMBER | "_") }

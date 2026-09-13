@@ -25,6 +25,13 @@
 
 use std::time::Duration;
 
+#[path = "parser_dos_artifacts/contract.rs"]
+mod contract;
+#[path = "parser_dos_artifacts/query_reentry.rs"]
+mod query_reentry;
+#[path = "parser_dos_artifacts/quoted_calls.rs"]
+mod quoted_calls;
+
 // Each artifact is valid UTF-8 and uses only `[` openers (no `{`/`(`). The
 // trailing `\xd8\xb1` (a 2-byte UTF-8 ARABIC LETTER REH) and embedded control
 // bytes are reproduced exactly from the on-disk corpus so the regression
