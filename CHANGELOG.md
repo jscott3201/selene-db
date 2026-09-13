@@ -4,6 +4,70 @@ All notable changes to selene-db are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-alpha.1] - 2026-09-13
+
+This is a source-candidate summary, not a verified registry publication or GA
+compatibility promise. Publication, tagging and release require separate owner
+authorization; this edit authorizes none of them. See the
+[release-notes draft](docs/v2/release-notes-alpha.md) and
+[qualification evidence](docs/v2/release-qualification.md).
+
+### Added
+
+- The `selene-db` embedded Rust facade provides named graphs, owned sessions,
+  requests and results, schema construction and durable lifecycle. GQL is the
+  only query/mutation language. The native engine combines batch execution,
+  mixed directed/undirected edges, bounded paths, constraints, scalar JSON
+  expression indexes and graph/vector/text/JSON retrieval. Native values,
+  indexes and `selene.*` / `algo.*` procedures are disclosed Selene facilities,
+  not extra ISO grammar or a loadable extension ABI.
+- Eight public Rust crates package and build in dependency order with MIT OR
+  Apache-2.0 license texts, NOTICE and third-party attribution. External consumer
+  smoke tests passed with default/all features using extracted candidate packages
+  for local engine dependencies and normal version requirements in normalized
+  manifests. No new server binaries, binding releases or wheels are included.
+
+### Changed
+
+- The alpha boundary is **ISO-aligned with disclosed conformance gaps; not a
+  complete selected-profile claim**. Neither ISO minimum nor complete
+  selected-profile conformance is claimed; the formal `selected_profile` claim
+  remains **denied-by-design for alpha**. The September 13 selection narrowing is
+  prose-only: canonical feature selection, generated claims, evidence dispositions
+  and the Flagger are unchanged. Gaps remain GC03, GE04, GE05, GG02, GG20, GG21,
+  GP16, GQ01, GV66, GV67 and implied GV60/GV61/GV65; the rule inventory remains
+  `seeded_incomplete` and applicable Annex B choices remain pending.
+- Managed filesystem mode reads/writes **format 2 only** and rejects format-1
+  headers before payload decoding. There is no 1.x decoder, migration or
+  maintenance support: rebuild from application-owned source data into a fresh
+  store. No cross-alpha persisted-format compatibility is promised.
+- The infallible builder is memory-only. Fallible create/open/checkpoint use
+  retained directory handles, one writer ownership domain and eager required-index
+  reconstruction; open does not silently repair or return background readiness.
+  Cancellation, indeterminate outcomes and synchronized-but-unacknowledged
+  completion are distinct typed outcomes. Reconcile authoritative state before
+  retrying a non-idempotent write after an indeterminate result.
+- Checkpoint/rotation and explicit prune preserve selected artifacts and reader
+  leases. Verification covers a captured on-disk view, not acknowledgment, write
+  permission, physical durability or subsequent freshness. Reissue graph/node/edge
+  handles after reopen; stable IDs and process-local provenance are distinct.
+- Rust 1.97.1 / edition 2024 is the declared floor. Managed filesystem mode supports
+  native Linux/macOS on compatible storage stacks and returns typed errors for
+  unsupported platforms. The candidate was exercised on native macOS arm64;
+  **Linux qualification is unavailable, not passed**. Other CPU/filesystem
+  combinations were not qualified. Process-kill tests are not power-loss
+  certification.
+- Resources remain bounded: no unlimited intermediate state, path search or disk
+  spill is promised. Bounded fuzz campaigns are evidence, not exhaustive DoS proof.
+
+### Fixed
+
+- A pre-pest `5GQL1` program limit rejects excessive active bare nested-query
+  wrappers before descent, preventing the reproduced brace-backtracking timeout.
+  Eight consecutive bare query levels remain admitted; further active
+  brace-to-brace wrappers reject. Record and `EXISTS` nesting retain their existing
+  limits; grammar, normal result semantics and fuzz timeouts are unchanged.
+
 ## [Unreleased]
 
 ### Changed
